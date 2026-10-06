@@ -53,8 +53,9 @@ manual dispatch:
 | `shell` | PC shell test in WebKit, screenshots as artifacts |
 | `ios-compile + simulator smoke` | unsigned simulator build, launch and screenshot tour |
 | `ios-ipa (unsigned, for AltStore)` | unsigned device build packaged as an `.ipa` artifact |
+| `ios-ui-tests (simulator)` | XCUITest end to end: onboarding, restore a sample backup, read, Settings, Listen ([docs/ui-tests.md](docs/ui-tests.md)) |
 
-All four are required checks on `main`. TestFlight upload is wired but waits for an Apple Developer
+The first four are required checks on `main`. TestFlight upload is wired but waits for an Apple Developer
 account.
 
 Releases: tag `v<version>` on `main` and [`.github/workflows/release.yml`](.github/workflows/release.yml)
