@@ -25,13 +25,19 @@ and push with `--force-with-lease` (your branch only), or ask the coordinator.
 
 ## CI cost
 
-Every push to a PR runs the macOS jobs (about 15 minutes each, mostly the first simulator boot). Public
-repos get them free, but they are slow and they queue:
+The macOS jobs take about 15 minutes each (mostly the first simulator boot). Public repos get them free
+but only a few at a time, so they queue. A PR runs only the macOS jobs its files can affect: the
+`changes` job (`tools/ci-changes.ts`, unit-tested) decides, and a skipped job counts as passing.
 
-- Docs-only PRs skip them: when every changed file is under `docs/`, a `*.md` file (except
-  `THIRD_PARTY_NOTICES.md`), a `changelog.d/` fragment or a PR/issue template, the `changes` job says so
-  and the macOS jobs are skipped (skipped counts as passing). Pushes to `main`, tags and manual runs
-  always build.
+| Job | Runs on a PR when it changes |
+|---|---|
+| ios-compile + simulator smoke | anything but docs (`docs/`, `*.md` except `THIRD_PARTY_NOTICES.md`, `changelog.d/`, PR/issue templates) |
+| ios-ui-tests | app code (`src/`, `ios/`, `vendor/`), what builds the bundle (`package*.json`, Capacitor config, `tools/build.ts`, `tools/v1.ts`), or the UI test's fixtures and scripts |
+| ios-ipa | native code (`ios/`), the bundle files above, `ci/ios-unsigned-ipa.sh`, `ci/ipa-size.sh`, the model fetch, or the IPA budget |
+| voice-quality, voice-simulator | the voice engine (`ios/App/HDVoice`, `Native/Voice`, `Native/Narration`, the model lock), its UI (`src/ui/native/voice*`, `narration*`, `speech*`), `src/core/narration`, the model fetch and fixture scripts, or their tests |
+
+Changing `.github/workflows/ios.yml` or `tools/ci-changes.ts` runs everything. Pushes to `main`, tags and
+manual runs always run everything.
 
 - Push when the change is ready, not after every commit. Batch fixups into one push.
 - The Swift layer cannot be compiled on Windows; CI is the compiler. Read the `xcodebuild-*-log`
