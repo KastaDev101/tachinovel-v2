@@ -66,7 +66,7 @@ final class WebBundle: Sendable {
         func record(_ fields: [String: Any]) {
             var out = fields
             out["at"] = now
-            if out["rolledBack"] == nil { out["rolledBack"] = rolledBack ?? NSNull() }
+            if out["rolledBack"] == nil { out["rolledBack"] = rolledBack.map { $0 as Any } ?? NSNull() }
             guard let data = try? JSONSerialization.data(withJSONObject: out) else { return }
             try? FileManager.default.createDirectory(at: otaDir, withIntermediateDirectories: true)
             try? data.write(to: launchURL, options: .atomic)
