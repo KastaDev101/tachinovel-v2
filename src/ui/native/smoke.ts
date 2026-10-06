@@ -91,26 +91,36 @@ async function nativeTour(): Promise<void> {
   log('tour start');
   await closeSheets(); // What's New
 
-  // 1. Document picker: More › Backup & Restore › Restore from Files… → picker → Cancel.
+  // 1. Document picker, twice: More › Backup & Restore › Restore from Files…. SmokeResponder swipes the
+  //    first one away (UIKit calls no delegate method then) and cancels the second; both times the request
+  //    must be answered (the row comes back), and later popups must still appear (the share sheet below).
   await tap('[data-testid="tab-more"]', 'tab more');
   if (await tap('[data-testid="more-backup"]', 'open Backup & Restore')) {
-    if (await tap('[data-testid="backup-restore-files"]', 'Restore from Files… (document picker)')) {
-      await sleep(1500);
-      // The row reads "Reading Backup…" until the picker answered (cancelled).
-      await backTo('button[data-testid="backup-restore-files"]', 'Restore from Files…', 20_000);
-      await sleep(800);
+    for (const how of ['swiped away', 'cancelled']) {
+      if (await tap('button[data-testid="backup-restore-files"]', `Restore from Files… (document picker, ${how})`, 20_000)) {
+        await sleep(1500);
+        // The row reads "Reading Backup…" until the picker answered.
+        await backTo('button[data-testid="backup-restore-files"]', 'Restore from Files…', 20_000);
+        await sleep(800);
+      }
     }
     await back();
   }
 
-  // 2. Listen in the Car › Open the player › Link folder (folder picker → Cancel) › close.
-  if (await tap('[data-testid="more-narration"]', 'open Listen in the Car')) {
-    if (await tap('[data-testid="open-car-player"]', 'Open the player')) {
-      if (await tap('.tn-car [data-act="pick"]', 'Link audio folder (document picker)')) await sleep(NATIVE_SHEET_MS);
-      await tap('.tn-car [data-act="close"]', 'close the car player');
-    }
-    await back();
+  // 2. The Listen player: More › Listen (Kokoro builds), or Listen in the Car › Open the player when PC
+  //    audio is on; with PC audio, its Link folder button opens the folder picker too (cancelled).
+  const listenRow = await waitFor('[data-testid="more-listen"]', 3000);
+  if (listenRow) {
+    await tap('[data-testid="more-listen"]', 'open the Listen player');
+  } else if (await tap('[data-testid="more-narration"]', 'open Listen in the Car')) {
+    await tap('[data-testid="open-car-player"]', 'Open the player');
   }
+  if (await waitFor('.tn-car.is-open', 5000)) {
+    const pick = await waitFor('.tn-car [data-act="pick"]', 2000);
+    if (pick && (await tap('.tn-car [data-act="pick"]', 'Link audio folder (document picker)'))) await sleep(NATIVE_SHEET_MS);
+    await tap('.tn-car [data-act="close"]', 'close the car player');
+  }
+  if (!listenRow) await back();
 
   // 3. A novel from the built-in source (network): share sheet, then the reader.
   await tap('[data-testid="tab-browse"]', 'tab browse');

@@ -118,8 +118,12 @@ native_tour() {
   # Report, don't fail (yet): a hung tour shows up here; a crash already failed above.
   grep -q "smoke: tour done" "$OUT/native-tour-log.txt" || echo "::warning::The native tour did not finish (see native-tour-log.txt and the 9-native-*.png screenshots)"
   grep -q "smoke: skipped" "$OUT/native-tour-log.txt" && echo "::warning::Native tour steps were skipped (see native-tour-log.txt)"
-  # Regression: the folder picker is swiped away (no delegate call); the popup queue must not stay stuck,
-  # so the share sheet that follows must appear. (Needs the network for the novel step.)
+  # Regression: the first document picker is swiped away (no delegate call); the request must be answered
+  # and the popup queue must not stay stuck, so the share sheet later must appear (needs the network).
+  if grep -q "skipped waiting for Restore from Files" "$OUT/native-tour-log.txt"; then
+    echo "::error::A swiped-away document picker was never answered (Restore from Files… stayed busy)"
+    return 1
+  fi
   if grep -q "smoke: Share (share sheet)" "$OUT/native-tour-log.txt" && ! grep -q "native on screen: UIActivityViewController" "$OUT/native-tour-log.txt"; then
     echo "::error::The share sheet never appeared after a document picker was swiped away (native popup queue stuck)"
     return 1

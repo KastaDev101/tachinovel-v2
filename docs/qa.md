@@ -104,17 +104,20 @@ when the fix lands.
 `ci/ios-sim-smoke.sh` launches the Debug simulator build a few times with smoke arguments. After the
 screenshots of each tab, `-tachiSmokeTour native` runs `src/ui/native/smoke.ts`, which taps through:
 
-1. More › Backup & Restore › **Restore from Files…** (document picker);
-2. More › Listen in the Car › **Open the player** › **Link audio folder** (folder picker) › close;
+1. More › Backup & Restore › **Restore from Files…** twice (document picker): the first one is swiped away
+   (UIKit calls no delegate method then), the second cancelled; both times the row must come back;
+2. More › **Listen** (the Listen player; with PC audio on: Listen in the Car › **Open the player** ›
+   **Link audio folder**) › close;
 3. Browse › the built-in source › the first novel › **Share** (share sheet) › start reading;
 4. reader settings: **brightness** slider (`native.setBrightness`) and **Keep screen awake**
    (`TachiNative.setKeepAwake`);
 5. **Listen** (system voice), the **mini player** pause/resume, the **car player** (±15 s, speed,
    play/pause, next chapter), close, stop.
 
-Nobody can tap system sheets in CI, so `SmokeResponder.swift` (Debug builds only) answers them like a
-user tapping Cancel, three seconds after they appear: document pickers get `dismiss` +
-`documentPickerWasCancelled`, the share sheet gets `dismiss` + its completion handler. Each step logs
+Nobody can tap system sheets in CI, so `SmokeResponder.swift` (Debug builds only) answers them two
+seconds after they appear: the first document picker like a swipe down (`dismiss` only), the others like
+Cancel (`dismiss` + `documentPickerWasCancelled`), the share sheet with `dismiss` + its completion handler.
+The job fails if the swiped picker's request is never answered or the share sheet doesn't appear after it. Each step logs
 `smoke: …` through the core (os_log subsystem `app.tachinovel`); the job prints those lines, saves
 `native-tour-log.txt` and a screenshot every 4 s (`9-native-NN.png`), fails if the app stops running or
 leaves a crash report, and warns if the tour didn't reach `smoke: tour done` or skipped steps (step 3 needs
