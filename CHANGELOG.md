@@ -32,11 +32,15 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
 - Crash and hang reports from MetricKit, kept on the device: a summary line per report in Settings ›
   Diagnostics (Recent Problems, Send a Problem Report, Copy Full Diagnostics), and a "Share Crash & Hang
   Reports" button that shares the full reports as one JSON file. Nothing is uploaded.
+- Swift quality gates in CI: SwiftLint (pinned, strict) and complete strict-concurrency checking with a
+  warnings baseline, so new compiler warnings fail the build (CONTRIBUTING.md "Swift quality gates").
 
 ### Changed
 
 - Typechecking uses TypeScript 7 (native compiler): `npm run typecheck` takes ~0.7 s instead of ~4.5 s
   on the dev PC; same files checked, same (zero) errors. Nothing in the repo uses the TypeScript JS API.
+- Swift: main-thread-only types are now `@MainActor` (browser fetcher, presentation queue, device
+  snapshot refresh); thread-safe image helpers are `nonisolated`; 106 concurrency warnings fewer.
 - The package license field is now `UNLICENSED` (proprietary, all rights reserved; previously `MIT`).
 
 ### Fixed

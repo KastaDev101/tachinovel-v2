@@ -6,7 +6,7 @@
 //  Concurrency: every call goes straight to CoreHost's queue; calls complete independently.
 //
 
-import Capacitor
+@preconcurrency import Capacitor
 import Foundation
 import UIKit
 

@@ -14,7 +14,7 @@
 
 import Foundation
 import ImageIO
-import JavaScriptCore
+@preconcurrency import JavaScriptCore
 import os // Logger interpolation (`privacy:`) used through host.log
 import UIKit
 import UniformTypeIdentifiers
@@ -144,8 +144,18 @@ final class NativeHostAPI {
 
     private func fileSystem(in ctx: JSContext) -> JSVal {
         let o = JSVal(newObjectIn: ctx)!
-        let fm = FileManager.default
+        addFileContents(to: o)
+        addFileTree(to: o)
+        let download: @convention(block) (String, JSVal) -> Void = { [self] path, cb in
+            ICloudFiles.ensureDownloaded(path: path) { error in self.reply(cb, error: error, result: true) }
+        }
+        set(o, "download", fn(download))
+        return o
+    }
 
+    /// readText / writeText / readBase64 / writeBase64.
+    private func addFileContents(to o: JSVal) {
+        let fm = FileManager.default
         let readText: @convention(block) (String) -> JSVal = { path in
             guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { return Self.null() }
             return Self.string(s)
@@ -165,6 +175,15 @@ final class NativeHostAPI {
             guard let data = Data(base64Encoded: b64) else { return Self.raise("Invalid base64") }
             do { try data.write(to: URL(fileURLWithPath: path)) } catch { Self.raise("Write failed: \(error.localizedDescription)") }
         }
+        set(o, "readText", fn(readText))
+        set(o, "writeText", fn(writeText))
+        set(o, "readBase64", fn(readBase64))
+        set(o, "writeBase64", fn(writeBase64))
+    }
+
+    /// exists / isDirectory / remove / move / copy / list / size / modifiedAt / mkdirp.
+    private func addFileTree(to o: JSVal) {
+        let fm = FileManager.default
         let exists: @convention(block) (String) -> Bool = { path in
             fm.fileExists(atPath: path) || fm.fileExists(atPath: Self.placeholder(path))
         }
@@ -206,14 +225,6 @@ final class NativeHostAPI {
         let mkdirp: @convention(block) (String) -> Void = { path in
             do { try fm.createDirectory(atPath: path, withIntermediateDirectories: true) } catch { Self.raise("mkdir failed: \(error.localizedDescription)") }
         }
-        let download: @convention(block) (String, JSVal) -> Void = { [self] path, cb in
-            ICloudFiles.ensureDownloaded(path: path) { error in self.reply(cb, error: error, result: true) }
-        }
-
-        set(o, "readText", fn(readText))
-        set(o, "writeText", fn(writeText))
-        set(o, "readBase64", fn(readBase64))
-        set(o, "writeBase64", fn(writeBase64))
         set(o, "exists", fn(exists))
         set(o, "isDirectory", fn(isDirectory))
         set(o, "remove", fn(remove))
@@ -223,8 +234,6 @@ final class NativeHostAPI {
         set(o, "size", fn(size))
         set(o, "modifiedAt", fn(modifiedAt))
         set(o, "mkdirp", fn(mkdirp))
-        set(o, "download", fn(download))
-        return o
     }
 
     // MARK: - Timers (core queue)

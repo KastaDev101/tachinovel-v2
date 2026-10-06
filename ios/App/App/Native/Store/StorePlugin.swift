@@ -146,7 +146,11 @@ public class StorePlugin: CAPPlugin, CAPBridgedPlugin {
                 out["expiresAt"] = exp.timeIntervalSince1970 * 1000
                 if exp <= Date() { out["inGracePeriod"] = true }
             }
-            if #available(iOS 17.2, *) { out["inTrial"] = subscription.offer?.type == .introductory } else { out["inTrial"] = subscription.offerType == .introductory }
+            if #available(iOS 17.2, *) {
+                out["inTrial"] = subscription.offer?.type == .introductory
+            } else {
+                out["inTrial"] = subscription.offerType == .introductory
+            }
             return out
         }
         return ["pro": false, "source": NSNull()]

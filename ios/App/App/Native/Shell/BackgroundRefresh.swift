@@ -4,9 +4,9 @@
 //  25 s budget, then a local notification reports new chapters.
 //
 
-import BackgroundTasks
+@preconcurrency import BackgroundTasks
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 enum BackgroundRefresh {
     static let taskId = "app.tachinovel.refresh"

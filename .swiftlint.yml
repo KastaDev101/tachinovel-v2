@@ -1,0 +1,75 @@
+# SwiftLint (https://github.com/realm/SwiftLint) for the app target's own Swift code. CI runs a pinned
+# release (ci/swiftlint.sh) and tools/swift-quality.ts turns the report into pass/fail: every violation
+# fails the build (strict), except in the report-only paths listed there (code another workstream owns).
+# Defaults are SwiftLint's; the changes below match this codebase's style (wide lines, short local names
+# in small closures, long bridge-registration functions).
+
+included:
+  - ios/App/App
+excluded:
+  - ios/App/App/public
+
+opt_in_rules:
+  - array_init
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - fatal_error_message
+  - first_where
+  - flatmap_over_map_reduce
+  - identical_operands
+  - last_where
+  - legacy_multiple
+  - overridden_super_call
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - toggle_bool
+  - unhandled_throwing_task
+  - yoda_condition
+
+line_length:
+  warning: 160
+  error: 220
+  ignores_urls: true
+
+# Short names (fm, cb, ok, i, s, w, h) are idiomatic in the small closures of the bridge code.
+identifier_name:
+  min_length: 1
+  max_length:
+    warning: 50
+    error: 60
+
+function_body_length:
+  warning: 100
+  error: 200
+
+type_body_length:
+  warning: 400
+  error: 600
+
+file_length:
+  warning: 600
+  error: 1000
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+  ignores_case_statements: true
+
+function_parameter_count:
+  warning: 6
+  error: 8
+
+large_tuple:
+  warning: 3
+  error: 4
+
+# Multi-line collection literals end with a comma (smaller diffs); single-line ones don't.
+trailing_comma:
+  mandatory_comma: true
+
+reporter: xcode
