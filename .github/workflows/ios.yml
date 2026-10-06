@@ -15,8 +15,17 @@
 #  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
+#  voice-quality   macOS 26: HDVoice unit tests (swift test), then the BUNDLED Kokoro model loaded the way
+#               the app does (kokoro-check): every offered voice x fixture sentences -> audio checks, time
+#               to first audio, real-time factor, memory; ASR round trip with whisper.cpp (WER <= 15%).
+#  voice-simulator macOS 26: the Debug app from ios-compile in the simulator with -tachiVoiceSelfTest:
+#               Listen flow with Kokoro, sentence highlight, Apple fallback on a slow/failing Kokoro and back.
 #  testflight   macOS 26: signed archive + TestFlight upload. Only on tags v* or manual dispatch with
 #               upload=true, and skips cleanly until the App Store Connect secrets exist.
+#
+# The Kokoro model is bundled into the app but never committed: tools/fetch-voices.ts downloads the files
+# pinned in ios/kokoro-models.lock.json (revision + SHA-256, fails on mismatch) into
+# ios/App/App/KokoroModels/; the download cache is keyed by the lock file.
 #
 # Secrets (only for testflight): APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (Team key,
 # Admin role), optional IOS_DIST_P12_BASE64 / IOS_DIST_P12_PASSWORD / IOS_PROFILE_BASE64.
@@ -149,6 +158,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Cache the Kokoro model download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed)
+        run: node tools/fetch-voices.ts
       - run: node tools/build.ts --flavor=${FLAVOR}
       - run: npx cap sync ios
       - name: Xcode version
@@ -164,6 +180,13 @@ jobs:
             PRODUCT_BUNDLE_IDENTIFIER="${BUNDLE_ID}" \
             CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build/xcodebuild.log
+      - name: Keep the simulator app (voice-simulator job)
+        run: ditto -c -k --keepParent build/DerivedData/Build/Products/Debug-iphonesimulator/App.app build/App-simulator.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: simulator-app
+          path: build/App-simulator.zip
+          retention-days: 3
       - name: Simulator smoke test (launch + screenshots)
         # The first simulator boot on a fresh runner migrates data for ~7 min.
         timeout-minutes: 16
@@ -209,6 +232,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The app target bundles KokoroModels/ (folder reference), so the build needs it present.
+      - name: Cache the Kokoro model download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed)
+        run: node tools/fetch-voices.ts
       # Store flavor: no bundled or seeded sources, so the only source is the restored demo one.
       - run: node tools/build.ts --flavor=store
       - run: npx cap sync ios
@@ -251,6 +282,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Cache the Kokoro model download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed)
+        run: node tools/fetch-voices.ts
       - run: node tools/build.ts --flavor=${FLAVOR}
       - run: npx cap sync ios
       - name: Unsigned device build → .ipa
@@ -264,6 +302,8 @@ jobs:
           path: ${{ steps.ipa.outputs.ipa }}
           archive: false
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+      - name: Size report
+        run: bash ci/ipa-size.sh "${{ steps.ipa.outputs.ipa }}" build/DerivedData-device/Build/Products/Release-iphoneos/App.app
       - name: Keep the build log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -272,6 +312,80 @@ jobs:
           path: build/ipa/xcodebuild-device.log
           if-no-files-found: ignore
           retention-days: 7
+
+  voice-quality:
+    name: voice-quality (Kokoro on macOS + ASR)
+    needs: [web, changes]
+    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' }}
+    runs-on: macos-26
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Cache the Kokoro model download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed)
+        run: node tools/fetch-voices.ts
+      - name: Fixture sentences (through the app's narration front-end)
+        run: node tools/voice-fixtures.ts .cache/voice-fixtures.json
+      - name: Cache SwiftPM
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ios/App/HDVoice/.build
+          key: hdvoice-spm-${{ runner.os }}-${{ hashFiles('ios/App/HDVoice/Package.swift') }}
+      - name: HDVoice unit tests (scheduler, PCM, preferences, crash sentinel, ...)
+        run: swift test --package-path ios/App/HDVoice
+      - name: Build kokoro-check
+        run: swift build -c release --package-path ios/App/HDVoice --product kokoro-check
+      - name: Kokoro check (every voice x fixtures, the app's loader)
+        run: bash ci/voice-check.sh build/voice-check
+      - name: Cache whisper.cpp
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/whisper
+          key: whisper-v1.9.4-base.en-q8_0-${{ runner.os }}
+      - name: ASR round trip (whisper.cpp v1.9.4, base.en q8_0)
+        run: bash ci/voice-asr.sh build/voice-check
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: voice-check
+          path: build/voice-check
+          if-no-files-found: ignore
+          retention-days: 14
+
+  voice-simulator:
+    name: voice-simulator (Listen flow + fallback in the simulator)
+    needs: ios-compile
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: simulator-app
+          path: build
+      - run: ditto -x -k build/App-simulator.zip build
+      - name: Voice self-test (simulator)
+        timeout-minutes: 35
+        run: bash ci/ios-voice-selftest.sh build/App.app build/voice-selftest
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: voice-selftest
+          path: build/voice-selftest
+          if-no-files-found: ignore
+          retention-days: 14
 
   testflight:
     needs: ios-compile
@@ -304,7 +418,7 @@ jobs:
           node-version: 24
           cache: npm
       - if: steps.gate.outputs.ready == 'true'
-        run: npm ci && node tools/build.ts --flavor=${FLAVOR} && npx cap sync ios
+        run: npm ci && node tools/fetch-voices.ts && node tools/build.ts --flavor=${FLAVOR} && npx cap sync ios
       - name: Archive, sign and upload
         if: steps.gate.outputs.ready == 'true'
         run: bash ci/ios-testflight.sh

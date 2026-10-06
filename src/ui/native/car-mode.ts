@@ -1,16 +1,18 @@
 /**
- * Car player: a big-button, glanceable screen for listening while driving.
+ * Listen player: a big-button, glanceable screen for listening (also while driving).
  *
- *  - Links the iCloud Drive "TachiNovel Audio" folder once (document picker → bookmark; works in the
- *    free-Apple-ID sideload build, no iCloud entitlement needed).
- *  - Lists novels with PC-narrated chapters (tachinovel-narrator) and recently read novels; a tap
- *    continues where you stopped (Narration.playNovel: narrated audio first, else the system voice).
+ *  - Recently read novels; a tap continues where you stopped (Narration.playNovel) with the novel's voice:
+ *    Kokoro on device, the Apple voice standing in when Kokoro can't keep up.
+ *  - Voice: the novel's Kokoro voice (picker with ▶ samples) and its pronunciations (voices-ui.ts).
+ *  - PC-narrated audio (the iCloud Drive "TachiNovel Audio" folder, tachinovel-narrator) appears only with
+ *    Settings › Voices › Advanced › "Use PC audio when available" (off by default).
  *  - Transport: −15 s / play-pause / +15 s / next chapter, scrubbable progress, speed.
  * Lock screen, Control Center, headphones and car Bluetooth controls work without this screen (native).
  * Opened from the mini player and from More › Listen in the Car.
  */
 import { sharedClient } from '../capacitor-client.ts';
 import { Narration, type AudioNovelInfo, type NarrationState } from './narration.ts';
+import { openVoicePicker, voiceLabel } from './voices-ui.ts';
 
 const CSS = `
 .tn-car{position:fixed;inset:0;z-index:80;background:#121215;color:#f2f2f7;display:flex;flex-direction:column;
@@ -49,6 +51,8 @@ const CSS = `
 .tn-car .note{color:#a1a1aa;font-size:14px;margin:8px 4px;line-height:1.4}
 .tn-car .folder{display:flex;justify-content:space-between;align-items:center;color:#a1a1aa;font-size:14px;margin:4px 4px 0}
 .tn-car .folder button{color:#a8b4ff;padding:8px 0 8px 12px}
+.tn-car .voice{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);font-size:15px}
+.tn-car .voice span{color:#a1a1aa}
 `;
 
 const ICON = {
@@ -108,6 +112,8 @@ export function installCarMode(): CarMode {
   let folderName = '';
   let recent: Recent[] = [];
   let covers = new Map<string, string>();
+  /** Settings › Voices › Advanced › "Use PC audio when available". */
+  let usePCAudio = false;
 
   const active = (): boolean => state.status === 'playing' || state.status === 'paused' || state.status === 'loading';
 
@@ -116,7 +122,7 @@ export function installCarMode(): CarMode {
     const pos = state.position;
     const dur = state.duration;
     const pct = pos !== undefined && dur ? Math.min(100, (pos / dur) * 100) : 0;
-    const engine = state.engine === 'audio' ? 'Narrated audio' : 'System voice';
+    const engine = voiceLabel(state);
     return `<div class="now">
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
@@ -129,6 +135,7 @@ export function installCarMode(): CarMode {
         <button type="button" data-act="next" aria-label="Next chapter">${ICON.next}</button>
       </div>
       <div class="spd">${SPEEDS.map((s) => `<button type="button" data-act="speed" data-v="${s}" class="${s === rate ? 'on' : ''}">${s}×</button>`).join('')}</div>
+      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(state.voice?.kokoroName ?? 'Kokoro')} ›</span></button>` : ''}
     </div>`;
   }
 
@@ -139,10 +146,12 @@ export function installCarMode(): CarMode {
 
   function render(): void {
     const audioKeys = new Set(novels.map((n) => n.key));
-    const folder = linked
-      ? `<div class="folder"><span>Audio folder: ${esc(folderName || 'linked')}</span><button type="button" data-act="pick">Change</button></div>`
-      : `<button type="button" class="link" data-act="pick">Link “TachiNovel Audio” folder</button>
-         <p class="note">Choose iCloud Drive › TachiNovel Audio once. Chapters the PC narrated then play here with sentence highlighting; other chapters use the system voice.</p>`;
+    const folder = !usePCAudio
+      ? ''
+      : linked
+        ? `<div class="folder"><span>Audio folder: ${esc(folderName || 'linked')}</span><button type="button" data-act="pick">Change</button></div>`
+        : `<button type="button" class="link" data-act="pick">Link “TachiNovel Audio” folder</button>
+         <p class="note">Choose iCloud Drive › TachiNovel Audio once. Chapters the PC narrated then play here; other chapters use Kokoro.</p>`;
     const audioRows = novels
       .map((n) => {
         const saved = n.saved ? n.chapters.find((c) => c.chapterPath === n.saved?.chapterPath)?.title : undefined;
@@ -152,22 +161,26 @@ export function installCarMode(): CarMode {
       .join('');
     const recentRows = recent
       .filter((r) => !audioKeys.has(`${r.pluginId}:${r.path}`))
-      .map((r) => rowHtml('recent', r.pluginId, r.path, r.novelName, `${r.chapterName} · system voice`, r.cover))
+      .map((r) => rowHtml('recent', r.pluginId, r.path, r.novelName, r.chapterName, r.cover))
       .join('');
     root.innerHTML = `
       <div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div>
       ${nowHtml()}
       <div class="list">
         ${folder}
-        ${audioRows ? `<div class="sec">Narrated</div>${audioRows}` : linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
-        ${recentRows ? `<div class="sec">Continue reading aloud</div>${recentRows}` : ''}
+        ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
+        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}
       </div>`;
   }
 
   async function load(refresh: boolean): Promise<void> {
+    usePCAudio = await Narration.voiceSettings()
+      .then((v) => v.usePCAudio === true)
+      .catch(() => false);
+    const noAudio = { linked: false, novels: [] as AudioNovelInfo[] };
     const [lib, folder, hist, library] = await Promise.all([
-      Narration.audioLibrary({ refresh }).catch(() => ({ linked: false, novels: [] as AudioNovelInfo[] })),
-      Narration.audioFolder().catch(() => ({ linked: false, name: null })),
+      usePCAudio ? Narration.audioLibrary({ refresh }).catch(() => noAudio) : Promise.resolve(noAudio),
+      usePCAudio ? Narration.audioFolder().catch(() => ({ linked: false, name: null })) : Promise.resolve({ linked: false, name: null }),
       sharedClient().call('history.list', { limit: 12 }).catch(() => []),
       sharedClient().call('library.list').catch(() => []),
     ]);
@@ -224,6 +237,12 @@ export function installCarMode(): CarMode {
       case 'pick':
         void Narration.pickAudioFolder().then(() => load(true));
         return;
+      case 'voice': {
+        if (!state.pluginId || !state.novelPath) return;
+        const name = recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '';
+        openVoicePicker({ pluginId: state.pluginId, novelPath: state.novelPath, name }, () => void refreshState());
+        return;
+      }
       case 'novel': {
         const pluginId = el.dataset.plugin ?? '';
         const novelPath = el.dataset.path ?? '';

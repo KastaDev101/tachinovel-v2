@@ -17,6 +17,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         DeviceSnapshot.shared.start()
         // Crash/hang reports from MetricKit, kept on the device (Settings › Diagnostics).
         MetricDiagnostics.shared.start()
+        // Bundled Kokoro voice: crash check from the last run, memory-pressure handling, one-time warm-up.
+        KokoroService.shared.start()
         BackgroundRefresh.register()
         BackgroundRefresh.requestProvisionalNotifications()
         // With scenes, UIKit never calls applicationDidEnterBackground(_:); the app-level notification

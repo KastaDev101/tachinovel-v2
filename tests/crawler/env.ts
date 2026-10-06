@@ -23,6 +23,16 @@ import { webkit, type Browser, type BrowserContext, type Page } from 'playwright
 import type { NativeUiApi } from '../../src/core/native-api.ts';
 import { startCoreInVm, type CoreHarness } from '../helpers/native-mock.ts';
 import { headersScript, nativeBridgeJs } from '../helpers/pc-shell.ts';
+
+/** The Kokoro voices the app offers (ios/App/HDVoice/Sources/HDVoiceCore/VoiceCatalog.swift). */
+const KOKORO_VOICES = [
+  { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm, the default' },
+  { id: 'af_bella', name: 'Bella', language: 'en-US', gender: 'female', blurb: 'bright' },
+  { id: 'bf_emma', name: 'Emma', language: 'en-GB', gender: 'female', blurb: 'calm' },
+  { id: 'am_michael', name: 'Michael', language: 'en-US', gender: 'male', blurb: 'steady' },
+  { id: 'am_fenrir', name: 'Fenrir', language: 'en-US', gender: 'male', blurb: 'deep' },
+  { id: 'bm_george', name: 'George', language: 'en-GB', gender: 'male', blurb: 'classic' },
+];
 import { createFakeWeb, FIXED_NOW, type FakeWeb } from './fake-web.ts';
 import { crawlerRuntime } from './page-runtime.ts';
 import { seedStore } from './seed.ts';
@@ -182,6 +192,8 @@ export class CrawlEnv {
   readonly answers: number[] = [];
   narration: NarrationMockState = { status: 'idle' };
   audioLinked = true;
+  /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings). */
+  voicePrefs = { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, novelVoices: {} as Record<string, string> };
 
   constructor(opts: EnvOptions) {
     this.opts = opts;
@@ -463,6 +475,49 @@ export class CrawlEnv {
         }
         case 'audioTiming':
           return { hasAudio: false, json: null };
+        case 'voiceSettings': {
+          const v = this.voicePrefs;
+          const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
+          return {
+            voices: KOKORO_VOICES,
+            defaultVoice: v.defaultVoice,
+            kokoroEnabled: v.kokoroEnabled,
+            usePCAudio: v.usePCAudio,
+            kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: '006395f', bytes: 93_100_000 },
+            apple: { id: 'com.apple.voice.premium.en-US.Zoe', name: 'Zoe (Premium)', language: 'en-US', quality: 'premium', onlyDefault: false },
+            ...(key ? { novelVoice: v.novelVoices[key] ?? null, effectiveVoice: v.novelVoices[key] ?? v.defaultVoice } : {}),
+          };
+        }
+        case 'setVoiceSettings': {
+          const v = this.voicePrefs;
+          if (typeof o.defaultVoice === 'string') v.defaultVoice = o.defaultVoice;
+          if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
+          if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
+          const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
+          if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
+            const key = `${novel.pluginId}:${novel.novelPath}`;
+            if (typeof novel.voice === 'string' && novel.voice !== v.defaultVoice) v.novelVoices[key] = novel.voice;
+            else delete v.novelVoices[key];
+          }
+          return {};
+        }
+        case 'sampleVoice':
+          return { ms: 140, source: o.voice === 'apple' ? 'apple' : 'kokoro' };
+        case 'voiceLab':
+        case 'setVoiceLab':
+          return {
+            kokoro: { bundled: true, status: 'Ready', route: 'ane-cpu', routeTitle: 'Neural Engine + CPU', ahead: 3, lastLoadMs: 3200, lastLoadCold: false, memoryReleases: 0 },
+            stats: { totalSentences: 0, failures: 0, firstAudio: [], sentences: [] },
+            device: { model: 'iPhone17,3', os: 'Version 26.0', thermal: 'nominal', lowPower: false, memoryMB: 180, availableMB: 2600, computeDevices: ['CPU', 'GPU', 'Neural Engine (16 cores)'], battery: 0.8 },
+            crashes: { total: 0, consecutive: 0, disabled: false },
+            placement: [],
+            routes: [
+              { id: 'ane-cpu', title: 'Neural Engine + CPU', gpu: false },
+              { id: 'cpu', title: 'CPU only', gpu: false },
+            ],
+          };
+        case 'voicePlacement':
+          return { stages: [] };
         default:
           return {};
       }

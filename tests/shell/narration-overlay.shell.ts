@@ -111,7 +111,12 @@ describe('narration overlay over v1 screens (PC shell)', () => {
   });
 
   it('Listen in the Car: "Open the player" is centered and leaves the last rows reachable', async () => {
+    // That screen is the PC narrator's: More lists it only with Settings › Voices › Advanced › "Use PC audio
+    // when available" on (src/ui/native/v1-hooks.ts); otherwise More › Listen opens the player directly.
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({ usePCAudio: true }));
+    await shell.page.evaluate(() => window.dispatchEvent(new Event('tn-voice-settings')));
     await shell.page.getByTestId('tab-more').click();
+    await shell.page.getByTestId('more-narration').waitFor({ state: 'visible', timeout: 3000 });
     await shell.page.getByTestId('more-narration').click();
     await waitStack(2);
     const button = shell.page.getByTestId('open-car-player');

@@ -4,10 +4,13 @@
  * and this drives the v1 UI to that screen so `simctl io screenshot` captures it. Release builds never
  * inject the global, so this is inert there.
  */
+import { runVoiceSelfTest } from './voice-selftest.ts';
 
 interface SmokeConfig {
   tab?: string;
   source?: string;
+  /** "1": run the voice self-test (voice-selftest.ts) after the tour. */
+  voiceSelfTest?: string;
 }
 
 declare global {
@@ -33,12 +36,14 @@ export function runSmokeTour(): void {
   const cfg = window.__TACHI_SMOKE__;
   if (!cfg) return;
   void (async () => {
-    if (!(await waitFor('[data-testid="screen-library"]', 20_000))) return;
+    // The voice self-test runs right after a fresh simulator boot, when the first WebView load is slow.
+    if (!(await waitFor('[data-testid="screen-library"]', cfg.voiceSelfTest === '1' ? 120_000 : 20_000))) return;
     // First run shows v1's onboarding over the library: skip it like a user would.
     (await waitFor('[data-testid="onboarding-skip"]', 2500))?.click();
     await new Promise((r) => setTimeout(r, 400));
     if (cfg.tab) (await waitFor(`[data-testid="tab-${cfg.tab}"]`, 5000))?.click();
     if (cfg.source) (await waitFor(`[data-testid="source-${cfg.source}"]`, 8000))?.click();
     document.documentElement.dataset.smoke = 'done';
+    if (cfg.voiceSelfTest === '1') await runVoiceSelfTest();
   })();
 }

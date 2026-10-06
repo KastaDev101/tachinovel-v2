@@ -59,8 +59,10 @@ push, App Groups, Associated Domains). What that means while you test:
 
 ## 3. Ten-minute checklist
 
-Listening uses the **Apple voices** for now. The bundled Kokoro voices are being built in a separate PR
-(`voice-spike`); once that merges, the same Listen button uses them, with the Apple voices as the fallback.
+Listening uses the **Apple voices** on `main` for now. The bundled Kokoro voices are in the PR
+"On-device HD voices (Kokoro) with Apple fallback": its `ios-ipa` artifact has them (about 90–100 MB), and
+docs/voices.md has a 5-minute voice checklist. Once it merges, the same Listen button uses Kokoro, with the
+Apple voices as the fallback.
 
 | # | Do | Expect |
 |---|---|---|
@@ -82,7 +84,9 @@ full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot
 
 Parked for now (the PC narrator is sidelined). The player can still play chapters the PC narrator wrote to
 iCloud Drive › **TachiNovel Audio** (`<Novel>/manifest.json` + `NNNN - title.m4a` + `.json` timestamps):
-More › Listen in the Car › Open the player › **Link “TachiNovel Audio” folder** → pick that folder. Those
+More › Listen in the Car › Open the player › **Link “TachiNovel Audio” folder** → pick that folder (with
+the Kokoro PR: first turn on More › Voices › Advanced › **Use PC audio when available**; the folder link
+appears there). Those
 chapters then play the file (subtitle "Narrated audio") with the spoken sentence highlighted in the
 reader; chapters without a file, or files that can't be read, use the Apple voice. Skip this tonight
 unless you already have narrated files.

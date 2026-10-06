@@ -31,6 +31,8 @@ class MainViewController: CAPBridgeViewController {
         var config: [String: String] = [:]
         if let tab = defaults.string(forKey: "tachiSmokeTab") { config["tab"] = tab }
         if let source = defaults.string(forKey: "tachiSmokeSource") { config["source"] = source }
+        // Voice self-test (ci/ios-voice-selftest.sh): src/ui/native/voice-selftest.ts plays a synthetic chapter.
+        if defaults.bool(forKey: "tachiVoiceSelfTest") { config["voiceSelfTest"] = "1" }
         guard !config.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: data, encoding: .utf8) else { return }

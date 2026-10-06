@@ -1,0 +1,72 @@
+/**
+ * The speech script from the reader's DOM, and sentence highlighting for speech (Kokoro or Apple).
+ *
+ * "Listen from here" builds the script from exactly what the reader shows: v1's DOM walker (dom-blocks.ts,
+ * the same block rules as the narration front-end) → speech-script.ts (front-end + pronunciation lexicon).
+ * Every sentence keeps its (block, start, end) in the chapter's canonical text, so when native reports the
+ * sentence it is speaking, the reader paints exactly that sentence (CSS Custom Highlight API, no DOM
+ * mutation). Chapters the core scripted on its own (lock-screen auto-continue) are matched by hash.
+ */
+import { blockRange, domBlocks, type DomBlock } from '@v1tts/player/dom-blocks.ts';
+import type { Lexicon } from '@v1tts/frontend.ts';
+import { speechScript, type SpeechScript } from '../../core/narration/speech-script.ts';
+
+/** Index of the reader paragraph (`.rd-body > *`) that contains a node. */
+export function paragraphIndexOf(body: HTMLElement, node: Node | null): number {
+  let el: Node | null = node;
+  while (el && el.parentNode !== body) el = el.parentNode;
+  if (!el) return 0;
+  return Math.max(0, Array.prototype.indexOf.call(body.children, el));
+}
+
+export interface DomScript {
+  body: HTMLElement;
+  blocks: DomBlock[];
+  script: SpeechScript;
+}
+
+/** Script for a rendered chapter body. `title` helps the front-end recognise the title line. */
+export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexicons?: Lexicon[] } = {}): DomScript {
+  const blocks = domBlocks(body);
+  const paragraphOf = (b: number): number => {
+    const blk = blocks[b];
+    const anchor = blk?.element && blk.element !== body ? blk.element : (blk?.nodes.find((n) => n !== null) ?? null);
+    return paragraphIndexOf(body, anchor);
+  };
+  const script = speechScript(blocks, { ...(opts.title ? { title: opts.title } : {}), ...(opts.lexicons ? { lexicons: opts.lexicons } : {}), paragraphOf });
+  return { body, blocks, script };
+}
+
+/** First sentence at or after a reader paragraph ("listen from the first visible paragraph"). */
+export function startItemForParagraph(script: SpeechScript, paragraph: number): number {
+  const i = script.items.findIndex((it) => it.paragraph >= paragraph);
+  return i < 0 ? 0 : i;
+}
+
+export interface SpokenSentence {
+  block?: number;
+  start?: number;
+  end?: number;
+  hash?: number;
+}
+
+/**
+ * The DOM range of a spoken sentence. Exact when the reader's text is what was scripted (same block and
+ * hash at that position); otherwise the nearest sentence with the same hash; null if none matches.
+ */
+export function rangeForSentence(dom: DomScript, s: SpokenSentence): Range | null {
+  if (s.block === undefined || s.start === undefined || s.end === undefined) return null;
+  const items = dom.script.items;
+  let match = items.find((it) => it.block === s.block && it.start === s.start && it.end === s.end && (s.hash === undefined || it.hash === s.hash));
+  if (!match && s.hash !== undefined) {
+    let best: (typeof items)[number] | undefined;
+    for (const it of items) {
+      if (it.hash !== s.hash) continue;
+      if (!best || Math.abs(it.block - s.block) < Math.abs(best.block - s.block)) best = it;
+    }
+    match = best;
+  }
+  if (!match) return null;
+  const block = dom.blocks[match.block];
+  return block ? blockRange(block, match.start, match.end) : null;
+}

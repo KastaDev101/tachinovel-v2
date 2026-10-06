@@ -26,6 +26,13 @@ parse it: `## <Name>`, then a `- License: <SPDX expression>` line, then the noti
 | fb55 DOM and CSS libraries (entities, domhandler, domutils, domelementtype, css-select, css-what, nth-check, cheerio-select) | BSD-2-Clause | HTML entities, DOM handling and CSS selectors for sources (core). |
 | boolbase | ISC | Dependency of the CSS selector engine (core). |
 | Day.js (dayjs) | MIT | Date parsing for LNReader-format plugins (personal flavor). |
+| Kokoro-82M | Apache-2.0 | The on-device voice: model weights and the six bundled voice packs. |
+| Kokoro Core ML conversion | Apache-2.0 | Core ML build of Kokoro (FluidInference, derived from laishere/kokoro-coreml) and the English G2P model. |
+| misaki | Apache-2.0 | English pronunciation lexicon data for Kokoro. |
+| FluidAudio | Apache-2.0 | Runs Kokoro on the Neural Engine/CPU. |
+| NeMo text processing | Apache-2.0 | Reading numbers, dates and currency before speech (inside FluidAudio). |
+| rustfst | MIT OR Apache-2.0 | Text-normalization grammar runtime (inside FluidAudio). |
+| fastcluster | BSD-2-Clause | Linked into FluidAudio (not used by the voices). |
 | Apple frameworks and SF Symbols | Apple SDK terms | System APIs used by the app; no notice required |
 
 ## LNReader
@@ -367,12 +374,120 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Kokoro-82M
+
+- License: Apache-2.0
+- Source: https://huggingface.co/hexgrad/Kokoro-82M
+- Used for: The on-device voice: model weights and the six bundled voice packs (af_heart, af_bella, bf_emma, am_michael, am_fenrir, bm_george). Downloaded at build time by tools/fetch-voices.ts (pinned revision + SHA-256, ios/kokoro-models.lock.json), never committed; the bundle keeps the model's LICENSE file.
+
+```text
+Kokoro-82M v1.0
+Copyright hexgrad
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## Kokoro Core ML conversion
+
+- License: Apache-2.0
+- Source: https://huggingface.co/FluidInference/kokoro-82m-coreml (derived from https://github.com/laishere/kokoro-coreml)
+- Used for: The 7-stage Core ML build of Kokoro-82M (fp16 + int8-palettized) and the English G2P (BART) model, bundled in the app.
+
+```text
+kokoro-82m-coreml
+Copyright FluidInference; derived from laishere/kokoro-coreml, Copyright 2026 laishere,
+used with the author's permission.
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## misaki
+
+- License: Apache-2.0
+- Source: https://github.com/hexgrad/misaki
+- Used for: English pronunciation lexicon data (us_lexicon_cache.json, from misaki's gold/silver dictionaries) used by Kokoro's text-to-phoneme step, bundled in the app.
+
+```text
+misaki
+Copyright hexgrad
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## FluidAudio
+
+- License: Apache-2.0
+- Source: https://github.com/FluidInference/FluidAudio (version 0.17.5, Swift Package Manager)
+- Used for: Runs the Kokoro Core ML chain on the Neural Engine/CPU (text normalization, phonemes, synthesis).
+
+```text
+FluidAudio
+Copyright FluidInference and contributors
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## NeMo text processing
+
+- License: Apache-2.0
+- Source: https://github.com/NVIDIA/NeMo-text-processing, Rust port https://github.com/FluidInference/text-processing-rs
+- Used for: Reading numbers, dates and currency before speech (FluidAudio's NemoTextProcessing.xcframework).
+
+```text
+NeMo text processing grammars: Copyright (c) NVIDIA CORPORATION & AFFILIATES.
+text-processing-rs: Copyright FluidInference.
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## rustfst
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/Garvys/rustfst
+- Used for: Runs the compiled text-normalization grammars (inside NemoTextProcessing.xcframework). Used under the Apache License 2.0.
+
+```text
+rustfst
+Copyright (c) Alexandre Caulier and the rustfst contributors.
+
+Licensed under the Apache License, Version 2.0 (full text in "Apache License 2.0" below).
+```
+
+## fastcluster
+
+- License: BSD-2-Clause
+- Source: https://github.com/fastcluster/fastcluster (vendored in FluidAudio)
+- Used for: Linked into FluidAudio (speaker clustering; not used by the app's voices).
+
+```text
+Copyright:
+  * Until package version 1.1.23: (c) 2011 Daniel Müllner <https://danifold.net>
+  * All changes from version 1.1.24 on: (c) Google Inc. <https://www.google.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided
+that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright notice, this list of conditions and
+    the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and
+    the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
+
 <!--
-  SLOT: on-device voices, reserved for the voice work (branch voice-spike). Add one section per component in the
-  format above when it ships in the app, for example the Kokoro model weights and voice packs, FluidAudio
-  (or ONNX Runtime) and any grapheme-to-phoneme data. Check each license before shipping: model weights,
-  voice packs and phonemizer dictionaries often have licenses that differ from the engine's (some are
-  GPL or non-commercial, which would not be compatible with a proprietary App Store app).
+  Note for an App Store build: FluidAudio 0.17.5 also bundles a ~1 MB lexicon for its LuxTTS backend
+  (luxtts_en_us_lexicon.tsv.zz) that was harvested from espeak-ng's output (espeak-ng is GPL-3.0). The app never
+  uses LuxTTS, and Kokoro's path (misaki lexicon + BART G2P) contains no espeak data, but before a commercial
+  release ask upstream to make that resource optional or build FluidAudio without it (docs/voices.md).
 -->
 
 ## Apache License 2.0

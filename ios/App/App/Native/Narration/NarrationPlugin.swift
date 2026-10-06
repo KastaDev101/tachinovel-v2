@@ -5,6 +5,8 @@
 import AVFoundation
 import Capacitor
 import Foundation
+import HDVoiceCore
+import HDVoiceKokoro
 
 @objc(NarrationPlugin)
 public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -27,6 +29,14 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "unlinkAudioFolder", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "audioLibrary", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "audioTiming", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setVoiceSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "sampleVoice", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopSample", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceLab", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voicePlacement", returnType: CAPPluginReturnPromise),
     ]
 
     private var n: NarrationController { NarrationController.shared }
@@ -51,15 +61,17 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
         let raw = call.getArray("paragraphs")
-        let preferAudio = call.getString("engine") != "speech"
-        // PC-narrated audio for this chapter wins over the system voice (unless the caller asks for speech).
+        let script = NarrationController.ScriptItem.parse(call.getObject("script"))
+        // PC-narrated audio for this chapter (only with Settings › Voices › Advanced › "Use PC audio when
+        // available", off by default) wins over speech, unless the caller asks for speech.
+        let preferAudio = call.getString("engine") != "speech" && VoiceSettings.shared.prefs.usePCAudio
         let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
             if let audioChapter {
                 self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
-            } else if let raw {
-                let paragraphs: [NarrationController.Paragraph] = raw.compactMap { v in
+            } else if raw != nil || script != nil {
+                let paragraphs: [NarrationController.Paragraph] = (raw ?? []).compactMap { v in
                     guard let o = v as? JSObject else { return nil }
                     let text = (o["text"] as? String) ?? ""
                     return NarrationController.Paragraph(index: (o["index"] as? NSNumber)?.intValue ?? 0, text: text, sentences: nil,
@@ -67,7 +79,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 let ch = NarrationController.Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath,
                                                      novelName: novelName, chapterName: chapterName, coverUrl: coverUrl,
-                                                     paragraphs: paragraphs, nextPath: nil, nextName: nil)
+                                                     paragraphs: paragraphs, nextPath: nil, nextName: nil, script: script)
                 self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
             } else {
                 self.n.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
@@ -216,6 +228,159 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
             let ac = AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath)
             let json = ac.flatMap { AudioLibrary.shared.timingJSON($0) }
             call.resolve(["hasAudio": ac != nil, "json": json ?? NSNull()])
+        }
+    }
+
+    // MARK: Voices (Kokoro on device + Apple fallback)
+
+    /// Voice settings for Settings › Voices and the Listen player. Optional pluginId/novelPath add that
+    /// novel's own choice.
+    @objc func voiceSettings(_ call: CAPPluginCall) {
+        let pluginId = call.getString("pluginId")
+        let novelPath = call.getString("novelPath")
+        DispatchQueue.main.async {
+            let prefs = VoiceSettings.shared.prefs
+            let k = KokoroService.shared
+            var out: [String: Any] = [
+                "voices": VoiceCatalog.voices.map { v in
+                    ["id": v.id, "name": v.name, "language": v.language, "gender": v.gender.rawValue, "blurb": v.blurb] as [String: Any]
+                },
+                "defaultVoice": prefs.voice(forNovel: nil),
+                "kokoroEnabled": prefs.kokoroEnabled,
+                "usePCAudio": prefs.usePCAudio,
+                "kokoro": [
+                    "bundled": k.isBundled,
+                    "status": k.statusText,
+                    "ready": k.status == .ready,
+                    "crashDisabled": k.crashDisabled,
+                    "crashes": k.sentinel.current.total,
+                    "revision": k.modelInfo["revision"] ?? NSNull(),
+                    "bytes": k.modelInfo["bytes"] ?? NSNull(),
+                ] as [String: Any],
+                "apple": VoiceSettings.appleSummary(kokoroVoice: prefs.voice(forNovel: nil)),
+            ]
+            if let pluginId, let novelPath {
+                let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
+                out["novelVoice"] = prefs.novelVoices[key] ?? NSNull()
+                out["effectiveVoice"] = prefs.voice(forNovel: key)
+            }
+            call.resolve(out)
+        }
+    }
+
+    @objc func setVoiceSettings(_ call: CAPPluginCall) {
+        let defaultVoice = call.getString("defaultVoice")
+        let novel = call.getObject("novel")
+        let usePCAudio = call.getBool("usePCAudio")
+        let kokoroEnabled = call.getBool("kokoroEnabled")
+        DispatchQueue.main.async {
+            let before = VoiceSettings.shared.prefs
+            VoiceSettings.shared.update { p in
+                if let defaultVoice, VoiceCatalog.voice(defaultVoice) != nil { p.defaultVoice = defaultVoice }
+                if let novel, let pid = novel["pluginId"] as? String, let path = novel["novelPath"] as? String {
+                    p.setVoice(novel["voice"] as? String, forNovel: VoiceSettings.novelKey(pluginId: pid, novelPath: path))
+                }
+                if let usePCAudio { p.usePCAudio = usePCAudio }
+                if let kokoroEnabled { p.kokoroEnabled = kokoroEnabled }
+            }
+            if kokoroEnabled == true, KokoroService.shared.crashDisabled { KokoroService.shared.resetCrashes() }
+            if VoiceSettings.shared.prefs.kokoroEnabled != before.kokoroEnabled { KokoroService.shared.settingsChanged() }
+            call.resolve()
+        }
+    }
+
+    private let appleSampler = AVSpeechSynthesizer()
+
+    /// ▶ sample: a Kokoro voice id, or "apple" for the fallback voice. Resolves once audio starts.
+    @objc func sampleVoice(_ call: CAPPluginCall) {
+        let voice = call.getString("voice") ?? VoiceCatalog.defaultVoiceId
+        let text = call.getString("text") ?? "The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath."
+        let runs: [SpeechRun]? = call.getArray("runs")?.compactMap { v in
+            guard let o = v as? JSObject else { return nil }
+            if let p = o["p"] as? String { return SpeechRun.phonemes(p) }
+            if let t = o["t"] as? String { return SpeechRun.text(t) }
+            return nil
+        }
+        DispatchQueue.main.async {
+            KokoroService.shared.stopSample()
+            if self.appleSampler.isSpeaking { self.appleSampler.stopSpeaking(at: .immediate) }
+            if voice == "apple" {
+                NarrationController.shared.activateForSample()
+                let u = AVSpeechUtterance(string: text)
+                u.voice = VoiceSettings.appleVoice(explicit: nil, kokoroVoice: VoiceSettings.shared.prefs.voice(forNovel: nil))
+                u.rate = VoiceSettings.avRate(1)
+                self.appleSampler.usesApplicationAudioSession = true
+                self.appleSampler.speak(u)
+                return call.resolve(["ms": 0, "source": "apple"])
+            }
+            guard VoiceCatalog.voice(voice) != nil else { return call.reject("Unknown voice \(voice)", "INVALID_ARGS") }
+            KokoroService.shared.playSample(voice: voice, text: text, runs: runs?.isEmpty == false ? runs : nil) { result in
+                switch result {
+                case .success(let ms): call.resolve(["ms": ms, "source": "kokoro"])
+                case .failure(let e): call.reject(e.localizedDescription, "VOICE_UNAVAILABLE")
+                }
+            }
+        }
+    }
+
+    @objc func stopSample(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            KokoroService.shared.stopSample()
+            if self.appleSampler.isSpeaking { self.appleSampler.stopSpeaking(at: .immediate) }
+            call.resolve()
+        }
+    }
+
+    @objc func voiceLab(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(VoiceLab.snapshot()) }
+    }
+
+    /// Voice Lab controls: compute route, render-ahead, reset counters; test injection (debug/self-test).
+    @objc func setVoiceLab(_ call: CAPPluginCall) {
+        let route = call.getString("route")
+        let ahead = call.getInt("ahead")
+        let reset = call.getBool("resetStats") ?? false
+        let inject = call.getObject("inject")
+        DispatchQueue.main.async {
+            let before = VoiceSettings.shared.prefs
+            VoiceSettings.shared.update { p in
+                if let route, KokoroRoute(rawValue: route) != nil { p.route = route }
+                if let ahead { p.ahead = min(3, max(2, ahead)) }
+            }
+            if VoiceSettings.shared.prefs.route != before.route { KokoroService.shared.settingsChanged() }
+            if reset { KokoroService.shared.stats.reset() }
+            #if DEBUG
+            if let inject, let runtime = KokoroService.shared.runtime {
+                let delay = ((inject["delayMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
+                let fail = (inject["fail"] as? Bool) ?? false
+                Task.detached { await runtime.setInjection(delay: delay, fail: fail) }
+            }
+            #else
+            _ = inject
+            #endif
+            call.resolve(VoiceLab.snapshot())
+        }
+    }
+
+    /// Voice Lab: where Core ML runs each Kokoro stage on this device (MLComputePlan, no synthesis).
+    @objc func voicePlacement(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            KokoroService.shared.analyzePlacement { result in
+                call.resolve(["stages": result.map { p in
+                    ["stage": p.stage, "configured": p.configured, "ane": p.neuralEngine, "cpu": p.cpu, "gpu": p.gpu,
+                     "error": p.error ?? NSNull(), "summary": p.summary] as [String: Any]
+                }])
+            }
+        }
+    }
+
+    /// Simulator voice self-test: the UI's findings, merged with native counters into a JSON file.
+    @objc func selfTestReport(_ call: CAPPluginCall) {
+        let json = call.getString("json") ?? "{}"
+        DispatchQueue.main.async {
+            guard NarrationSelfTest.isActive else { return call.reject("not in self-test mode", "UNAVAILABLE") }
+            let url = NarrationSelfTest.shared.writeReport(json)
+            call.resolve(["path": url?.path ?? NSNull()])
         }
     }
 

@@ -1,30 +1,35 @@
 //
-//  SpeechEngine.swift — engine abstraction for narration.
+//  SpeechEngine.swift — engine abstraction for narration + text helpers.
 //
-//  SystemSpeechEngine = AVSpeechSynthesizer (ships now: free, tiny, Premium/Enhanced voices if the user
-//  downloaded them, Personal Voice on iOS 17+, IPA pronunciations).
-//  A NeuralSpeechEngine (Kokoro-82M via Core ML on the Neural Engine/CPU, Apache-2.0 G2P, model as an
-//  Apple-hosted asset pack) plugs in behind the same protocol later: docs/tts-v2.md. It must render
-//  ahead to PCM (GPU work is not allowed in the background) and play through AVAudioEngine.
+//  The speech engine is HybridSpeechEngine (Native/Voice): Kokoro-82M on device (bundled Core ML model,
+//  rendered a few sentences ahead into AVAudioEngine) with the Apple system voice (AVSpeechSynthesizer)
+//  taking over sentence by sentence whenever Kokoro can't keep up, isn't loaded, failed, or the phone is
+//  thermally throttled. PC-narrated chapter files are a separate path (AudioChapterPlayer).
 //
 
 import AVFoundation
 import Foundation
+import HDVoiceCore
 import NaturalLanguage
 
 struct SpeechSegment {
     let id: Int
+    /// Apple voice input (respellings applied, IPA lexicon attributes).
     let text: NSAttributedString
+    /// Kokoro input: plain text (respellings applied) …
+    let kokoroText: String
+    /// … or text/phoneme runs when the pronunciation lexicon has phoneme overrides in this sentence.
+    let runs: [SpeechRun]?
     /// 0.5 … 2.0, 1 = normal.
     let rate: Float
     let pitch: Float
-    let voiceIdentifier: String?
-    /// Silence after this segment (sentence/paragraph/scene pauses).
+    /// Silence after this segment (sentence/paragraph/scene pauses), already scaled for the rate.
     let pauseAfter: TimeInterval
 }
 
 protocol SpeechEngineDelegate: AnyObject {
-    func speechEngine(didStart id: Int)
+    /// Segment `id` became audible, spoken by `source`.
+    func speechEngine(didStart id: Int, source: VoiceSource)
     func speechEngine(didFinish id: Int)
     func speechEngine(willSpeak id: Int, range: NSRange)
 }
@@ -33,97 +38,12 @@ protocol SpeechEngine: AnyObject {
     var delegate: SpeechEngineDelegate? { get set }
     var isSpeaking: Bool { get }
     var isPaused: Bool { get }
-    /// Append segments to the play queue (the engine speaks them in order, gaplessly).
+    /// Replace the play queue with these segments (spoken in order, gaplessly).
     func enqueue(_ segments: [SpeechSegment])
     /// Drop everything queued or playing (no didFinish callbacks for dropped segments).
     func stop()
     func pause()
     func resume()
-}
-
-final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDelegate {
-    weak var delegate: SpeechEngineDelegate?
-    private let synth = AVSpeechSynthesizer()
-    private var ids: [ObjectIdentifier: Int] = [:]
-
-    override init() {
-        super.init()
-        synth.delegate = self
-        // Use OUR session (.playback/.spokenAudio) so speech continues on the lock screen and is the
-        // Now Playing app; otherwise the system manages a separate session.
-        synth.usesApplicationAudioSession = true
-        synth.mixToTelephonyUplink = false
-    }
-
-    var isSpeaking: Bool { synth.isSpeaking }
-    var isPaused: Bool { synth.isPaused }
-
-    func enqueue(_ segments: [SpeechSegment]) {
-        for s in segments {
-            let u = AVSpeechUtterance(attributedString: s.text)
-            u.rate = Self.avRate(s.rate)
-            u.pitchMultiplier = max(0.5, min(2, s.pitch))
-            u.voice = Self.voice(s.voiceIdentifier)
-            u.postUtteranceDelay = s.pauseAfter
-            ids[ObjectIdentifier(u)] = s.id
-            synth.speak(u)
-        }
-    }
-
-    func stop() {
-        ids.removeAll()
-        synth.stopSpeaking(at: .immediate)
-    }
-
-    func pause() { synth.pauseSpeaking(at: .word) }
-    func resume() { synth.continueSpeaking() }
-
-    /// Map 0.5…2.0 onto AVSpeech's 0…1 scale around the default rate.
-    static func avRate(_ r: Float) -> Float {
-        let base = AVSpeechUtteranceDefaultSpeechRate
-        let rate = r >= 1 ? base + (AVSpeechUtteranceMaximumSpeechRate - base) * (r - 1) / 2 : base * max(0.5, r)
-        return max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
-    }
-
-    /// The requested voice, else the best installed voice for the device language (premium > enhanced > default).
-    static func voice(_ identifier: String?) -> AVSpeechSynthesisVoice? {
-        if let identifier, let v = AVSpeechSynthesisVoice(identifier: identifier) { return v }
-        let lang = AVSpeechSynthesisVoice.currentLanguageCode()
-        let prefix = String(lang.prefix(2))
-        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(prefix) }
-        func rank(_ v: AVSpeechSynthesisVoice) -> Int {
-            var r = 0
-            if v.quality == .premium { r = 3 } else if v.quality == .enhanced { r = 2 } // .premium: iOS 16+
-            if v.language == lang { r += 1 }
-            return r
-        }
-        return candidates.max { rank($0) < rank($1) } ?? AVSpeechSynthesisVoice(language: lang)
-    }
-
-    // MARK: AVSpeechSynthesizerDelegate
-    // Delivered on main in practice (the synthesizer is created on main), but that is not documented: hop
-    // if not, because `ids` and the controller state are main-thread only. Main is FIFO, so order holds.
-    // The closures capture `utterance` so its ObjectIdentifier cannot be reused before they run.
-
-    private func onMain(_ fn: @escaping () -> Void) {
-        if Thread.isMainThread { fn() } else { DispatchQueue.main.async(execute: fn) }
-    }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        onMain { if let id = self.ids[ObjectIdentifier(utterance)] { self.delegate?.speechEngine(didStart: id) } }
-    }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        onMain { if let id = self.ids.removeValue(forKey: ObjectIdentifier(utterance)) { self.delegate?.speechEngine(didFinish: id) } }
-    }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        onMain { _ = self.ids.removeValue(forKey: ObjectIdentifier(utterance)) }
-    }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange, utterance: AVSpeechUtterance) {
-        onMain { if let id = self.ids[ObjectIdentifier(utterance)] { self.delegate?.speechEngine(willSpeak: id, range: characterRange) } }
-    }
 }
 
 // MARK: - Text helpers

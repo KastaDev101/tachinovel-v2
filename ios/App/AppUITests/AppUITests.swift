@@ -31,7 +31,7 @@ final class AppUITests: XCTestCase {
         require(web, "the app's web view", timeout: 120)
 
         // 1. First launch: onboarding.
-        tap(web, label: "Skip", timeout: 90)
+        tapUntilGone(web, label: "Skip", timeout: 90)
         shot("01-library-first-launch")
 
         // 2. Restore the sample backup like a user: More › Backup & Restore › the backup › Restore… › Merge.
@@ -95,26 +95,55 @@ final class AppUITests: XCTestCase {
     private func tap(_ root: XCUIElement, label: String, timeout: TimeInterval = 20) {
         let e = element(root, label: label)
         require(e, "\"\(label)\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
     }
 
     private func tap(_ root: XCUIElement, beginning prefix: String, timeout: TimeInterval = 20) {
         let e = element(root, beginning: prefix)
         require(e, "\"\(prefix)…\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
     }
 
     private func tap(_ root: XCUIElement, containing text: String, timeout: TimeInterval = 20) {
         let e = element(root, containing: text)
         require(e, "\"…\(text)…\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
+    }
+
+    /// Tap until the element goes away (a tap during a sheet's entrance animation can be swallowed).
+    private func tapUntilGone(_ root: XCUIElement, label: String, timeout: TimeInterval = 20) {
+        let e = element(root, label: label)
+        require(e, "\"\(label)\"", timeout: timeout)
+        for _ in 0..<3 {
+            waitUntilHittable(e)
+            if e.isHittable { e.tap() }
+            if waitUntilGone(e, timeout: 5) { return }
+        }
+        XCTAssertTrue(waitUntilGone(e, timeout: 5), "\"\(label)\" should go away after tapping it")
+    }
+
+    /// A pushed screen slides in and a loading page re-lays out: an element can exist before it can be tapped.
+    private func waitUntilHittable(_ e: XCUIElement, timeout: TimeInterval = 15) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !e.isHittable, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
     }
 
     /// A tab bar item: the lowest element on screen with that label ("Library" is also a More row).
     private func tapTab(_ root: XCUIElement, _ name: String, timeout: TimeInterval = 20) {
         let matches = root.descendants(matching: .any).matching(NSPredicate(format: "label == %@", name))
         require(matches.firstMatch, "the \(name) tab", timeout: timeout)
-        let lowest = matches.allElementsBoundByIndex.filter { $0.isHittable }.max { $0.frame.minY < $1.frame.minY }
+        // Right after a sheet closes or a screen slides, the tab bar can exist before it can be tapped.
+        var lowest: XCUIElement?
+        let deadline = Date().addingTimeInterval(15)
+        repeat {
+            lowest = matches.allElementsBoundByIndex.filter { $0.isHittable }.max { $0.frame.minY < $1.frame.minY }
+            if lowest == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
+        } while lowest == nil && Date() < deadline
         (lowest ?? matches.firstMatch).tap()
     }
 

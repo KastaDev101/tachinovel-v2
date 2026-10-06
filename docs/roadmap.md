@@ -15,7 +15,7 @@ Companion docs: architecture.md, app-store-risk.md, monetization.md, tts-v2.md.
 | Swift layer (CoreHost, HTTP, files/iCloud, native UI, Core/Narration/Store plugins, CarPlay, background refresh, audio library) | Compiles on Xcode 26.6 in CI (simulator + device); launches in the iOS Simulator (smoke screenshots per run) |
 | CI | `web`, `shell`, `ios-compile` + simulator smoke, `ios-ipa` (unsigned, free sideload); TestFlight job waits for an Apple account |
 | Backup | v1 backups restore in v2 via Settings › Backup & Restore › Restore from Files… (document picker) |
-| Narration | Apple voices (AVSpeech) with background/lock screen, Now Playing, remote commands, resume, auto-advance, full-screen Listen player; CarPlay list (needs the entitlement). Bundled **Kokoro** voices are in progress on the `voice-spike` PR (Apple voices stay the fallback). The PC-narrated audio player ("TachiNovel Audio" folder, sentence highlighting from timestamps) works but is parked: the PC narrator is sidelined |
+| Narration | Apple voices (AVSpeech) with background/lock screen, Now Playing, remote commands, resume, auto-advance, full-screen Listen player; CarPlay list (needs the entitlement). Bundled **Kokoro** voices (FluidAudio Core ML, 6 voices, ~97 MB in the app) with the Apple voices as a seamless per-sentence fallback: `voice-spike` PR, see docs/voices.md. The PC-narrated audio player ("TachiNovel Audio" folder, sentence highlighting from timestamps) works but is parked: the PC narrator is sidelined |
 | App icon / launch screen | v1's book icon; launch image follows light/dark |
 | Monetization | Ad pacing policy + AdMob wiring (off by default), StoreKit 2 plugin, feature matrix, revenue model |
 | Android | Not built (JDK 21 + Gradle downloads needed); design note in architecture.md |
@@ -41,7 +41,7 @@ Still open: D2 (go public — implied yes by D3–D5, confirm later), D6/D7 (voi
 | D3 | Public source model | A–F in app-store-risk.md §6 | **D**: owned/licensed/public-domain/permitted sources + TTS (5–15% risk). Not A/B/C | phase 4 |
 | D4 | Who is the seller | individual / LLC; EU storefronts or not (DSA trader address) | Individual for approach D with small revenue; LLC (Wyoming or home state) if anything aggregates third-party content or revenue grows | enrollment |
 | D5 | Monetization | Pro only / ads + Pro / one-time remove-ads | Ads + Pro hybrid, ladder C ($2.99 / $17.99 yr / $29.99 lifetime); consider **Pro-only, no ads** at launch if DAU < ~1k (ads add ATT/UMP/labels work for ~$5–50/month) | phase 5 |
-| D6 | HD voice engine | FluidAudio Core ML (ANE) / ONNX Runtime CPU int8 / own Core ML conversion | Decide after a 1–2-week on-device spike that includes a **locked-screen** test | phase 3 |
+| D6 | HD voice engine | FluidAudio Core ML (ANE) / ONNX Runtime CPU int8 / own Core ML conversion | **Built with FluidAudio Core ML** (bundled, Neural Engine + CPU, Apple fallback; docs/voices.md). Confirm with the phone checklist incl. a **locked-screen** test; ONNX Runtime CPU stays the plan B if the iOS 26 Core ML crash (FluidAudio #844) shows up | phase 3 |
 | D7 | iOS minimum for HD voices | iOS 26 (Apple-hosted asset packs) / iOS 17 + self-hosted download | iOS 26 for HD voices, iOS 17 for the app | phase 3 |
 | D8 | CarPlay | request the audio entitlement now / later | Request as soon as the developer account exists (approval takes weeks) | phase 2 |
 | D9 | Brand | keep "TachiNovel" for personal / neutral name for store | Neutral store name (no "Tachi") | phase 6 |

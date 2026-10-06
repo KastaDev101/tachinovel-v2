@@ -107,6 +107,35 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const paragraphs = play?.options.paragraphs as { index: number; text: string }[];
     expect(paragraphs.length).toBeGreaterThanOrEqual(4);
     expect(paragraphs.some((p) => p.text.includes('Nobody answered'))).toBe(true);
+    // The sentence script for Kokoro/Apple, built from the reader's DOM by the v1 narration front-end.
+    const script = play?.options.script as { textHash: string; items: { id: number; paragraph: number; text: string; pauseMs: number }[] };
+    expect(script.items.length).toBeGreaterThanOrEqual(4);
+    expect(script.items.some((i) => i.text.includes('Nobody answered'))).toBe(true);
+    expect(script.items.every((i) => i.paragraph >= 0 && i.paragraph < paragraphs.length && i.pauseMs > 0)).toBe(true);
+  });
+
+  it('highlights the sentence Kokoro (or the Apple voice) is speaking', async () => {
+    const play = shell.pluginCalls.find((c) => c.pluginId === 'Narration' && c.methodName === 'play');
+    const script = play?.options.script as { items: { id: number; block: number; start: number; end: number; hash: number; paragraph: number; text: string }[] };
+    const target = script.items.find((i) => i.text.includes('Nobody answered'));
+    expect(target).toBeDefined();
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'speech', chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' } });
+    shell.emitPluginEvent('Narration', 'progress', { chapterPath: 'novel/alpha/1', engine: 'speech', source: 'kokoro', segment: target?.id, block: target?.block, start: target?.start, end: target?.end, hash: target?.hash, paragraph: target?.paragraph, sentence: 0 });
+    await expect
+      .poll(
+        () =>
+          shell.page.evaluate(() => {
+            const h = (CSS as unknown as { highlights?: Map<string, Iterable<Range>> }).highlights?.get('tn-spoken');
+            return h ? [...h].map((r) => r.toString()).join('|') : (document.querySelector('.tn-speaking')?.textContent ?? '');
+          }),
+        { timeout: 5000 },
+      )
+      .toMatch(/Nobody answered/);
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Kokoro · Heart');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'speech', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', appleName: 'Ava', fallback: 'queueDry' } });
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Apple voice · Ava · Kokoro catching up');
+    await shell.page.screenshot({ path: path.join(shots, '5b-speech-highlight.png') });
+    shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
   });
 
   it('highlights the spoken SENTENCE from narrated-audio timestamps (re-aligned onto the reader DOM)', async () => {
@@ -153,6 +182,64 @@ describe('v1 UI in the v2 shell (PC)', () => {
         return r[0]?.chapterPath;
       }, { timeout: 10_000 })
       .toBe('novel/alpha/1');
+  });
+
+  it('More › Voices lists the Kokoro voices, the Apple fallback hint, and keeps PC audio under Advanced (off)', async () => {
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({
+      voices: [
+        { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' },
+        { id: 'bm_george', name: 'George', language: 'en-GB', gender: 'male', blurb: 'Classic.' },
+      ],
+      defaultVoice: 'af_heart',
+      kokoroEnabled: true,
+      usePCAudio: false,
+      kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
+      apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
+    }));
+    // Leave the reader (back to the tab root), then More.
+    for (let i = 0; i < 5 && (await shell.page.locator('.nav-root > .layer').count()) > 1; i++) {
+      const back = top().locator('[data-testid="reader-back"], [data-testid="nav-back"]').first();
+      await back.click({ force: true, timeout: 3000 });
+      await shell.page.waitForTimeout(600);
+    }
+    await shell.page.getByTestId('tab-more').click();
+    // The PC narrator's "Listen in the Car" screen is hidden (PC audio off); "Listen" opens the player.
+    await shell.page.getByTestId('more-listen').waitFor({ timeout: 5000 });
+    expect(await shell.page.getByTestId('more-narration').isVisible()).toBe(false);
+    await shell.page.getByTestId('more-listen').click();
+    const player = shell.page.getByTestId('car-player');
+    await player.waitFor({ state: 'visible', timeout: 5000 });
+    await expect.poll(() => player.textContent(), { timeout: 5000 }).toMatch(/Listen/);
+    expect((await player.textContent()) ?? '').not.toMatch(/TachiNovel Audio|Narrated on the PC/);
+    await player.locator('[data-act="close"]').click();
+    await player.waitFor({ state: 'hidden', timeout: 5000 });
+    const row = shell.page.getByTestId('more-voices');
+    await row.waitFor({ timeout: 5000 });
+    await row.click();
+    const screen = shell.page.getByTestId('screen-voices');
+    await screen.waitFor({ timeout: 5000 });
+    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Heart[\s\S]*George/);
+    const text = (await screen.textContent()) ?? '';
+    expect(text).toContain('download a Premium voice');
+    expect(text).toContain('Use PC audio when available');
+    expect(await screen.locator('input[data-act="pcaudio"]').isChecked()).toBe(false);
+    expect(text).not.toContain('Audio folder');
+    await shell.page.waitForTimeout(450); // slide-in
+    await shell.page.screenshot({ path: path.join(shots, '7-voices.png') });
+    await screen.locator('[data-act="sample"][data-voice="bm_george"]').click();
+    await expect.poll(() => shell.pluginCalls.find((c) => c.methodName === 'sampleVoice')?.options).toMatchObject({ voice: 'bm_george' });
+    await screen.locator('[data-act="close"]').click();
+  });
+
+  it('About › Open Source Licenses shows the voice components (from THIRD_PARTY_NOTICES.md) and keeps LNReader', async () => {
+    await shell.page.getByTestId('more-about').click();
+    await top().getByTestId('licenses').click();
+    const licenses = shell.page.getByTestId('screen-licenses');
+    await licenses.waitFor({ timeout: 5000 });
+    await expect.poll(() => licenses.textContent(), { timeout: 5000 }).toMatch(/LNReader/);
+    // Built from THIRD_PARTY_NOTICES.md at build time (tools/third-party.ts): the voice notices are listed.
+    const text = (await licenses.textContent()) ?? '';
+    for (const name of ['Kokoro-82M', 'Kokoro Core ML conversion', 'FluidAudio', 'misaki']) expect(text).toContain(name);
   });
 
   it('ran without page errors', () => {

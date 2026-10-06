@@ -88,3 +88,19 @@ export function blockIndexOfElement(blocks: readonly DomBlock[], el: Element): n
 }
 
 export const HIGHLIGHT_CSS = `::highlight(${HIGHLIGHT}){background-color:rgba(168,180,255,.32);color:inherit}`;
+
+/** Paint a DOM range (speech: the sentence being spoken); without the Highlight API, the paragraph. */
+export function paintRange(range: Range | null, fallback: Element | null): Element | null {
+  clearPaint();
+  const reg = registry();
+  const H = (globalThis as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+  if (range && reg && H) {
+    reg.set(HIGHLIGHT, new H(range));
+    return range.startContainer.parentElement;
+  }
+  if (fallback) {
+    paragraphEl = fallback;
+    paragraphEl.classList.add('tn-speaking');
+  }
+  return fallback;
+}
