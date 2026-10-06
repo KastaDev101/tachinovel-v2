@@ -22,8 +22,8 @@ const config: CapacitorConfig = {
     backgroundColor: '#1b1b1f',
     preferredContentMode: 'mobile',
     limitsNavigationsToAppBoundDomains: false,
-    // Safari Web Inspector for the WKWebView in debug builds (needs a Mac to attach).
-    webContentsDebuggingEnabled: true,
+    // webContentsDebuggingEnabled is left unset on purpose: Capacitor then makes the WKWebView inspectable
+    // (Safari Web Inspector) in Debug builds only. `true` here would also expose Release/App Store builds.
   },
   plugins: {
     CapacitorHttp: { enabled: false },

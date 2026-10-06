@@ -101,13 +101,25 @@ final class NativeHostAPI {
         }
         set(obj, "browserFetch", fn(browserFetch))
 
+        // Core log lines can name sources, novels and URLs. In the system log they are readable only in
+        // Debug builds (the CI smoke test reads them); Release builds keep them <private>. The app's own
+        // log file (Settings › Diagnostics) is unaffected.
         let log: @convention(block) (String, String) -> Void = { [self] level, line in
+            #if DEBUG
             switch level {
             case "error": host.log.error("\(line, privacy: .public)")
             case "warn": host.log.warning("\(line, privacy: .public)")
             case "debug": host.log.debug("\(line, privacy: .public)")
             default: host.log.info("\(line, privacy: .public)")
             }
+            #else
+            switch level {
+            case "error": host.log.error("\(line, privacy: .private)")
+            case "warn": host.log.warning("\(line, privacy: .private)")
+            case "debug": host.log.debug("\(line, privacy: .private)")
+            default: host.log.info("\(line, privacy: .private)")
+            }
+            #endif
         }
         set(obj, "log", fn(log))
 

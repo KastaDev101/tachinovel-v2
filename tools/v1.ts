@@ -12,6 +12,8 @@
  *   2. v1-store-defaults (store flavor only): no built-in Stonescape source, no pre-seeded LNReader
  *      repo, no bundled LNReader plugin verification table. Each replacement must match exactly once, or the build fails (so a v1 change can't
  *      silently re-enable them). Requested upstream as a ServicesOptions field (docs/roadmap.md).
+ *   3. licenses (UI, both flavors): More › About › Open Source Licenses lists THIRD_PARTY_NOTICES.md
+ *      (tools/third-party.ts) instead of v1's hand-written list.
  */
 import type * as esbuild from 'esbuild';
 import { existsSync, readFileSync } from 'node:fs';
@@ -57,7 +59,7 @@ export function phoneClientPlugin(): esbuild.Plugin {
   };
 }
 
-interface Patch {
+export interface Patch {
   file: string;
   find: RegExp;
   replace: string;
@@ -85,9 +87,25 @@ export const STORE_PATCHES: Patch[] = [
   },
 ];
 
-/** Applies flavor patches to v1 files; throws unless every patch matched exactly once. */
-export function v1PatchPlugin(flavor: 'personal' | 'store'): esbuild.Plugin {
-  const patches = flavor === 'store' ? STORE_PATCHES : [];
+/** Core patches for a flavor. */
+export function corePatches(flavor: 'personal' | 'store'): Patch[] {
+  return flavor === 'store' ? STORE_PATCHES : [];
+}
+
+/** UI, both flavors: v1's Licenses page shows these notices (name, license, full text) instead of its own list. */
+export function licensesPatch(licenses: { name: string; license: string; text: string }[]): Patch {
+  // `$` is special in a replacement string (`$&`, `$1`); license texts are data, so escape it.
+  const json = JSON.stringify(licenses).replaceAll('$', '$$$$');
+  return {
+    file: 'ui/screens/settings.tsx',
+    find: /const LICENSES: \{ name: string; license: string; text: string \}\[\] = \[\n[\s\S]*?\n\];/,
+    replace: `const LICENSES: { name: string; license: string; text: string }[] = ${json};`,
+    why: 'the Licenses page lists THIRD_PARTY_NOTICES.md',
+  };
+}
+
+/** Applies patches to v1 files; throws unless every patch matched exactly once. */
+export function v1PatchPlugin(patches: Patch[]): esbuild.Plugin {
   const src = v1Src();
   const applied = new Set<Patch>();
   return {
@@ -95,7 +113,7 @@ export function v1PatchPlugin(flavor: 'personal' | 'store'): esbuild.Plugin {
     setup(b) {
       if (patches.length === 0) return;
       const files = new Set(patches.map((p) => path.join(src, p.file)));
-      b.onLoad({ filter: /\.ts$/ }, (a) => {
+      b.onLoad({ filter: /\.tsx?$/ }, (a) => {
         if (!files.has(path.resolve(a.path))) return undefined;
         let text = readFileSync(a.path, 'utf8').replace(/\r\n/g, '\n');
         for (const p of patches) {
@@ -105,7 +123,7 @@ export function v1PatchPlugin(flavor: 'personal' | 'store'): esbuild.Plugin {
           text = text.replace(p.find, p.replace);
           applied.add(p);
         }
-        return { contents: text, loader: 'ts' };
+        return { contents: text, loader: a.path.endsWith('.tsx') ? 'tsx' : 'ts' };
       });
       b.onEnd((result) => {
         if (result.errors.length > 0) return;

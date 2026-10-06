@@ -59,6 +59,11 @@ struct TachiRouter: Router {
         }
         let url = URL(fileURLWithPath: path)
         if url.pathExtension.isEmpty { return basePath + "/index.html" }
+        // `path` arrives percent-decoded, so "..%2f..%2f" becomes "../../": only serve files that stay
+        // inside the web bundle (anything else gets the app page, like an unknown route).
+        let bundleRoot = URL(fileURLWithPath: basePath).standardizedFileURL.path
+        let target = URL(fileURLWithPath: basePath + path).standardizedFileURL.path
+        guard target.hasPrefix(bundleRoot + "/") else { return basePath + "/index.html" }
         return basePath + path
     }
 
