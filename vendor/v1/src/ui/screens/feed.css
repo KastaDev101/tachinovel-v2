@@ -1,0 +1,339 @@
+/* Updates and History: swipe rows, Continue card, sections, update-check progress. */
+
+/* ----- Swipe rows (lib/swipe.ts) ----- */
+.sw-row {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.sw-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  will-change: transform;
+}
+
+.sw-row.is-animating .sw-content {
+  transition: transform 260ms var(--ease-ios);
+}
+
+.sw-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  visibility: hidden;
+}
+
+.sw-actions.is-leading {
+  justify-content: flex-start;
+  background: var(--tint);
+}
+
+.sw-actions.is-trailing {
+  justify-content: flex-end;
+  background: var(--red);
+}
+
+.sw-row[data-dir='leading'] .sw-actions.is-leading,
+.sw-row[data-dir='trailing'] .sw-actions.is-trailing {
+  visibility: visible;
+}
+
+.sw-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 88px;
+  color: #fff;
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+
+.sw-actions.is-leading .sw-action {
+  color: var(--on-tint);
+}
+
+.sw-row.is-armed .sw-action {
+  transform: scale(1.08);
+  transition: transform 160ms var(--ease-out);
+}
+
+/* ----- History ----- */
+.sw-content.hist-row {
+  align-items: flex-start;
+}
+
+.hist-section .day-header {
+  padding-top: 14px;
+}
+
+.hist-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 4px var(--gutter) 10px;
+  padding: 14px;
+  border-radius: var(--radius-l);
+  background: var(--bg-grouped-2);
+}
+
+.hist-hero-main {
+  display: flex;
+  gap: 14px;
+  text-align: left;
+}
+
+.hist-hero-cover {
+  flex: none;
+  width: 96px;
+  border-radius: 10px;
+}
+
+.hist-hero-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.hist-hero-kicker {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tint);
+}
+
+.hist-hero-title {
+  font-size: var(--fs-title-3);
+  line-height: 25px;
+  font-weight: 700;
+}
+
+.hist-progress {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-2);
+}
+
+.hist-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--tint);
+  transform-origin: left center;
+}
+
+.hist-hero-meta {
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+.hist-continue {
+  width: 100%;
+}
+
+.incognito-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px var(--gutter) 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-m);
+  background: var(--tint-container);
+  color: var(--on-tint-container);
+  font-size: var(--fs-footnote);
+}
+
+.incognito-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.incognito-banner .link-btn {
+  flex: none;
+  font-weight: 600;
+  color: var(--on-tint-container);
+}
+
+/* ----- Updates ----- */
+.upd-content {
+  min-width: 0;
+}
+
+.upd-main {
+  padding-right: 4px;
+}
+
+.upd-download {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-right: 6px;
+  color: var(--label-2);
+}
+
+.upd-download.is-done {
+  color: var(--tint);
+}
+
+.upd-download:disabled {
+  cursor: default;
+}
+
+.upd-chevron {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-right: 6px;
+  color: var(--label-3);
+  transition: transform 260ms var(--ease-ios);
+  pointer-events: none;
+}
+
+.upd-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.upd-row.is-sub .upd-main {
+  min-height: 56px;
+  padding-left: 72px;
+}
+
+.upd-row.is-sub .media-sub {
+  font-size: var(--fs-subhead);
+}
+
+.upd-time {
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+.upd-row.is-sub .upd-main.is-read .media-sub {
+  color: var(--label-3);
+}
+
+.upd-children {
+  position: relative;
+}
+
+.upd-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-m);
+  background: var(--bg-grouped-2);
+}
+
+.upd-progress-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-footnote);
+  font-weight: 500;
+}
+
+.upd-progress-bar {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-2);
+}
+
+.upd-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--tint);
+  transform-origin: left center;
+  transition: transform 300ms ease;
+}
+
+.upd-progress-new {
+  font-size: var(--fs-caption);
+  color: var(--tint);
+}
+
+/* Separators sit above the (opaque) row content; groups are their own positioning context. */
+.upd-group {
+  position: relative;
+}
+
+.upd-list > * + *::before {
+  z-index: 2;
+}
+
+.upd-children > .sw-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 72px;
+  right: 0;
+  z-index: 2;
+  height: var(--hairline);
+  background: var(--separator);
+}
+
+/* Updates filter chips (All / Unread / Downloaded) */
+.upd-accessory {
+  gap: 10px;
+}
+
+.upd-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.upd-filter {
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 15px;
+  font-size: var(--fs-footnote);
+}
+
+.upd-filter-count {
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.upd-download-all {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--gutter) 0 72px;
+  color: var(--tint);
+  font-size: var(--fs-subhead);
+  font-weight: 500;
+  text-align: left;
+}
+
+.upd-download-all::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 72px;
+  right: 0;
+  height: var(--hairline);
+  background: var(--separator);
+}

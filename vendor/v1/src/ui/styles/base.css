@@ -1,0 +1,212 @@
+/* Resets and the native-feel rules that apply to every screen. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  /* No whole-page rubber band: each screen owns its scroll container. */
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* NOT position: fixed. On iOS the WebView is laid out at 300×300 off-screen before Scriptable
+   presents it, and a fixed body keeps that size after the resize (black screen on the phone, CP1).
+   A relatively positioned 100%-height body follows the viewport. */
+body {
+  position: relative;
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.29;
+  letter-spacing: -0.01em;
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* App chrome: no tap highlight, no callouts, no text selection. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+#app {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+#overlay-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+
+#overlay-root > * {
+  pointer-events: auto;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: inherit;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+a {
+  color: var(--tint);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+/* Scroll containers: native momentum, local bounce only. */
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Always scrollable so iOS bounces (and pull-to-refresh works) even with little content. */
+.scroll > .scroll-content {
+  min-height: calc(100% + 1px);
+}
+
+.hscroll {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hscroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Icons: SF Symbols (or the SVG fallback set) used as tintable masks. */
+.icon {
+  display: inline-block;
+  flex: none;
+  width: var(--icon-size, 22px);
+  height: var(--icon-size, 22px);
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+  vertical-align: middle;
+}
+
+/* Pressed states (set by the press manager on pointerdown — :active alone is unreliable on iOS). */
+.tap {
+  cursor: pointer;
+  transition: opacity 220ms ease, background-color 220ms ease, transform 220ms var(--ease-out);
+}
+
+.tap.is-pressed {
+  transition-duration: 0ms;
+}
+
+.tap-dim.is-pressed {
+  opacity: 0.35;
+}
+
+.tap-scale.is-pressed {
+  transform: scale(0.96);
+  opacity: 0.85;
+}
+
+.tap-row.is-pressed {
+  background-color: var(--fill-3);
+}
+
+.tap-fill.is-pressed {
+  filter: brightness(0.85);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-push: 1ms;
+  }
+}

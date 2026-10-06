@@ -1,0 +1,11 @@
+{
+  // Node context: tools, tests, config files.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  },
+  "include": ["tools/**/*.ts", "tests/**/*.ts", "*.config.ts", "src/types/**/*.d.ts", "vendor/v1/src/types/**/*.d.ts"]
+}

@@ -1,0 +1,12 @@
+{
+  // WebView UI context (WKWebView: DOM + JIT). Never touches Scriptable APIs or the network.
+  // Preact + @preact/signals, JSX via the automatic runtime.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": [],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../types/**/*.d.ts"]
+}

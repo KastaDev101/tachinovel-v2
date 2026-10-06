@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Intentionally empty so CI can sign without extra App ID capabilities.
+	     Copy entries from App.full.entitlements.example once the capabilities exist on the App ID:
+	     iCloud Documents (synced state, like v1's iCloud TachiNovel folder) and CarPlay audio (Apple must approve). -->
+</dict>
+</plist>

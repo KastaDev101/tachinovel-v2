@@ -1,0 +1,326 @@
+/* Browse extras: Extensions badges + "Probably broken", the Languages sheet, genre search. */
+
+/* ----- Sources tab footnote ----- */
+.footnote-line {
+  display: block;
+}
+
+.footnote-line + .footnote-line {
+  margin-top: 6px;
+}
+
+/* ----- Extensions ----- */
+.ext-search {
+  margin: 0 0 22px;
+}
+
+.ext-header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ext-update-all {
+  font-size: var(--fs-subhead);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.ext-update-all:disabled {
+  color: var(--label-2);
+}
+
+.ext-row .row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ext-name {
+  min-width: 0;
+}
+
+.ext-row .ext-pin {
+  flex: none;
+  margin-left: 0;
+}
+
+.ext-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.ext-badge.is-works {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+}
+
+.ext-badge.is-partial {
+  color: var(--label-2);
+  background: var(--fill-3);
+  font-weight: 500;
+}
+
+.ext-badge.is-broken {
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 14%, transparent);
+}
+
+.ext-row.is-broken .ext-name {
+  color: var(--label-2);
+}
+
+.ext-row.is-broken .source-icon {
+  opacity: 0.6;
+}
+
+.ext-broken-icon {
+  color: var(--orange);
+}
+
+.ext-disclosure {
+  transition: transform 260ms var(--ease-ios);
+}
+
+.ext-disclosure.is-open {
+  transform: rotate(90deg);
+}
+
+/* ----- Genre search ----- */
+.genre-header:disabled {
+  cursor: default;
+}
+
+.genre-src {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.genre-note {
+  font-size: var(--fs-footnote);
+  line-height: 16px;
+  color: var(--label-2);
+}
+
+.genre-see-all {
+  flex: none;
+  font-size: var(--fs-subhead);
+  color: var(--tint);
+}
+
+.genre-header:disabled .genre-see-all,
+.genre-header:disabled .row-chevron {
+  visibility: hidden;
+}
+
+.genre-skel-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.genre-skel-title {
+  width: 112px;
+  height: 14px;
+}
+
+.genre-unavailable {
+  padding-top: 10px;
+}
+
+/* Genre chips (several genres = AND) */
+.genre-accessory {
+  gap: 8px;
+}
+
+.genre-chips {
+  gap: 8px;
+  margin: 0 calc(var(--gutter) * -1);
+  padding: 2px var(--gutter);
+  scroll-padding: 0 var(--gutter);
+}
+
+.genre-chip {
+  gap: 6px;
+}
+
+.genre-chip:disabled {
+  color: var(--on-tint-container);
+  opacity: 1;
+}
+
+.genre-chip-x {
+  opacity: 0.7;
+}
+
+.genre-add {
+  gap: 4px;
+  color: var(--tint);
+}
+
+.genre-add:disabled {
+  opacity: 0.45;
+}
+
+/* Browse › Sources: discovery tiles (Latest, Genres) */
+.discover-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px var(--gutter) 4px;
+}
+
+.discover-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--radius-l);
+  background: var(--bg-grouped-2);
+  text-align: left;
+}
+
+.discover-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--tint-container);
+  color: var(--on-tint-container);
+}
+
+.discover-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.discover-title {
+  font-size: var(--fs-callout);
+  font-weight: 600;
+}
+
+.discover-sub {
+  overflow: hidden;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Source health: a dot on the icon when its last load failed */
+.src-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.health-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border: 2.5px solid var(--bg);
+  border-radius: 50%;
+  background: var(--orange);
+}
+
+/* Latest: what's new since the last visit */
+.new-pill {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--tint);
+  color: var(--on-tint);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.badge-new {
+  background: var(--tint);
+  color: var(--on-tint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* First run: "Add more sources" card */
+.get-started-wrap {
+  padding-top: 10px;
+}
+
+.get-started-wrap .group {
+  margin-bottom: 8px;
+}
+
+.get-started-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 14px 12px 16px;
+}
+
+.get-started-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--tint-container);
+  color: var(--on-tint-container);
+}
+
+.get-started-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.get-started-title {
+  font-size: var(--fs-headline);
+  font-weight: 600;
+}
+
+.get-started-text {
+  font-size: var(--fs-footnote);
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+/* Genres sheet */
+.genre-popular {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.genre-pop-chip {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+  font-size: var(--fs-subhead);
+}

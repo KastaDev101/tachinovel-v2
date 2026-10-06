@@ -1,0 +1,162 @@
+# TachiNovel v2 CI (nothing here runs until the repo is pushed to GitHub; it is not pushed yet).
+#
+#  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
+#  shell        ubuntu: the PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
+#  ios-compile  macOS 26: Capacitor sync + unsigned SIMULATOR build. Proves the Swift compiles. No secrets.
+#  testflight   macOS 26: signed archive + upload to App Store Connect / TestFlight. Manual or tag v*.
+#               Skips cleanly until the secrets below exist.
+#
+# Secrets (Settings → Secrets and variables → Actions). None are needed for the first two jobs.
+#   APPLE_TEAM_ID           10-character Team ID
+#   ASC_KEY_ID              App Store Connect API key id
+#   ASC_ISSUER_ID           API key issuer id
+#   ASC_KEY_P8_BASE64       base64 of AuthKey_<id>.p8 (Team key; Admin role for cloud-managed signing)
+#  Optional manual signing (use when cloud signing fails on fresh runners, see docs/architecture.md):
+#   IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD, IOS_PROFILE_BASE64
+# Variables (optional): BUNDLE_ID (default com.kasta.tachinovel), FLAVOR (personal|store, default personal)
+
+name: ios
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  # TestFlight builds expire after 90 days: re-upload the personal build every two months.
+  schedule:
+    - cron: '0 6 1 */2 *'
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: Build flavor
+        type: choice
+        options: [personal, store]
+        default: personal
+      upload:
+        description: Upload to TestFlight
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLAVOR: ${{ inputs.flavor || vars.FLAVOR || 'personal' }}
+  BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.kasta.tachinovel' }}
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node tools/build.ts --flavor=store
+      - run: node tools/build.ts --flavor=personal
+      - run: npm test
+      - run: node tools/ios-project.ts --check
+
+  shell:
+    # Built UI + Capacitor's native-bridge.js + built core, in WebKit (Linux build of Playwright's WebKit).
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps webkit
+      - run: npm run test:shell
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-screenshots
+          path: .cache/shell-shots
+          if-no-files-found: ignore
+
+  ios-compile:
+    needs: web
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node tools/build.ts --flavor=${FLAVOR}
+      - run: npx cap sync ios
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Simulator build (unsigned)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            PRODUCT_BUNDLE_IDENTIFIER="${BUNDLE_ID}" \
+            CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build/xcodebuild.log
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-simulator-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+
+  testflight:
+    needs: ios-compile
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.upload)
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+      IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+      IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+    steps:
+      - name: Secrets present?
+        id: gate
+        run: |
+          if [ -z "$APPLE_TEAM_ID" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_P8_BASE64" ]; then
+            echo "::notice::App Store Connect secrets are not configured; skipping the TestFlight upload."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - if: steps.gate.outputs.ready == 'true'
+        run: npm ci && node tools/build.ts --flavor=${FLAVOR} && npx cap sync ios
+      - name: Archive, sign and upload
+        if: steps.gate.outputs.ready == 'true'
+        run: bash ci/ios-testflight.sh
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+      - name: Keep logs
+        if: always() && steps.gate.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-logs
+          path: build/*.log
+          if-no-files-found: ignore

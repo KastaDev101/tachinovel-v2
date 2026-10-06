@@ -1,0 +1,45 @@
+{
+  "format": "tachinovel-source/1",
+  "id": "demo-library",
+  "name": "Demo Library",
+  "site": "https://novels.example.test/",
+  "version": "1.0.0",
+  "lang": "English",
+  "attribution": "Synthetic test site (tests only)",
+  "minIntervalMs": 0,
+  "popular": {
+    "url": "popular?page={page}",
+    "list": {
+      "item": ".novel-item",
+      "name": "a.title",
+      "path": { "selector": "a.title", "attr": "href" },
+      "cover": { "selector": "img", "attr": "data-src|src" }
+    }
+  },
+  "latest": { "url": "latest?page={page}" },
+  "search": { "url": "search?q={query}&page={page}" },
+  "novel": {
+    "url": "{path}",
+    "name": "h1.novel-title",
+    "cover": { "selector": ".cover img", "attr": "src" },
+    "author": ".author a",
+    "summary": { "selector": ".summary", "html": true },
+    "status": { "selector": ".status", "map": { "Publishing": "ongoing", "Finished": "completed" } },
+    "genres": { "selector": ".tags a", "all": true },
+    "chapters": {
+      "item": "ul.chapters li",
+      "name": "a",
+      "path": { "selector": "a", "attr": "href" },
+      "releaseTime": { "selector": "time", "attr": "datetime" },
+      "locked": { "selector": ".lock" },
+      "order": "desc"
+    }
+  },
+  "chapter": {
+    "url": "{path}",
+    "content": "#content",
+    "remove": [".ad"],
+    "removeHiddenByStyle": true,
+    "lockedWhen": { "selector": ".paywall" }
+  }
+}

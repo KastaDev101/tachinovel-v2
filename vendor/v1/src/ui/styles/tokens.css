@@ -1,0 +1,249 @@
+/*
+ * Design tokens (Tachimanga look, adapted to Scriptable): pure black in dark mode / white in light mode
+ * so the app blends with Scriptable's native toolbar above the WebView, #1c1c1e elevated surfaces,
+ * white text, gray secondary text and a periwinkle accent. Appearance follows the system unless
+ * <html data-appearance="light|dark"> forces one.
+ */
+:root {
+  color-scheme: light;
+
+  /* --- surfaces --- */
+  --bg: #ffffff;
+  --bg-2: #f2f1f6;
+  --bg-3: #ffffff;
+  --bg-grouped: #ffffff;
+  --bg-grouped-2: #f3f2f8;
+  --bg-grouped-3: #ebe9f1;
+  --bg-elevated: #ffffff;
+  --surface: #f3f2f8;
+  --surface-2: #e9e7f0;
+  --header-bg: #ffffff;
+  --header-bg-scrolled: #ffffff;
+
+  /* --- labels --- */
+  --label: #1b1b1f;
+  --label-2: rgba(27, 27, 31, 0.62);
+  --label-3: rgba(27, 27, 31, 0.36);
+  --label-4: rgba(27, 27, 31, 0.18);
+
+  /* --- fills & separators --- */
+  --fill: rgba(27, 27, 31, 0.16);
+  --fill-2: rgba(27, 27, 31, 0.12);
+  --fill-3: rgba(27, 27, 31, 0.07);
+  --fill-4: rgba(27, 27, 31, 0.045);
+  --separator: rgba(27, 27, 31, 0.1);
+  --separator-opaque: #dcdae2;
+
+  /* --- accent (periwinkle) --- */
+  --tint: #4a58b4;
+  --on-tint: #ffffff;
+  --tint-container: #dee1ff;
+  --on-tint-container: #0f1a5e;
+  --badge-bg: #d9ddff;
+  --badge-fg: #141c52;
+  --tab-selected: rgba(74, 88, 180, 0.12);
+
+  /* --- system tints (status, destructive, icon tiles) --- */
+  --blue: #3c6fd8;
+  --red: #d93a32;
+  --green: #2f9e57;
+  --orange: #e08a00;
+  --yellow: #e2b100;
+  --pink: #e0457b;
+  --purple: #8a55d6;
+  --indigo: #5a62d6;
+  --teal: #1f9fb5;
+  --gray: #8a8a93;
+  --gray-2: #a9a9b2;
+  --gray-3: #c9c8d0;
+  --gray-4: #dddce3;
+  --gray-5: #e9e8ee;
+  --gray-6: #f2f1f6;
+
+  /* --- materials --- */
+  --bar-bg: rgba(255, 255, 255, 0.94);
+  --bar-bg-solid: #ffffff;
+  --bar-filter: saturate(170%) blur(22px);
+  --tab-glass: rgba(255, 255, 255, 0.74);
+  --tab-glass-border: rgba(27, 27, 31, 0.08);
+  --tab-glass-shadow: 0 8px 28px rgba(20, 20, 40, 0.16), 0 1px 3px rgba(20, 20, 40, 0.08);
+  --sheet-backdrop: rgba(10, 10, 20, 0.32);
+  --hud-bg: rgba(40, 40, 46, 0.97);
+  --hud-label: #ffffff;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-float: 0 6px 20px rgba(20, 20, 40, 0.2), 0 1px 3px rgba(20, 20, 40, 0.12);
+  --shadow-push: -6px 0 24px rgba(0, 0, 0, 0.12);
+  --cover-placeholder: #e4e2ea;
+  --skeleton: rgba(27, 27, 31, 0.07);
+  --seg-thumb: #ffffff;
+  --sheet-bg: #f3f2f8;
+  --row-pressed: #e3e1ea;
+
+  /* --- type --- */
+  --font: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-rounded: ui-rounded, 'SF Pro Rounded', -apple-system, system-ui, sans-serif;
+  --fs-large-title: 34px;
+  --fs-title-1: 28px;
+  --fs-title-2: 22px;
+  --fs-title-3: 20px;
+  --fs-headline: 17px;
+  --fs-body: 17px;
+  --fs-callout: 16px;
+  --fs-subhead: 15px;
+  --fs-footnote: 13px;
+  --fs-caption: 12px;
+  --fs-caption-2: 11px;
+
+  /* --- geometry --- */
+  --gutter: 16px;
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 16px;
+  --radius-cover: 12px;
+  --hairline: 0.5px;
+  --nav-h: 56px;
+  --tab-h: 60px;
+  --tab-inset: 20px;
+  --tab-gap: 8px;
+  --row-h: 48px;
+
+  /* --- safe areas (dev builds may override these on <html>) --- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* Space content must leave for the floating tab bar. */
+  --tab-space: calc(var(--tab-h) + max(var(--safe-bottom), 12px) + var(--tab-gap) + 12px);
+
+  /* --- motion --- */
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-push: 350ms;
+  --dur-fast: 180ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-appearance='light']) {
+    color-scheme: dark;
+    --bg: #000000;
+    --bg-2: #1c1c1e;
+    --bg-3: #2c2c2e;
+    --bg-grouped: #000000;
+    --bg-grouped-2: #1c1c1e;
+    --bg-grouped-3: #2c2c2e;
+    --bg-elevated: #1c1c1e;
+    --surface: #1c1c1e;
+    --surface-2: #2c2c2e;
+    --header-bg: #000000;
+    --header-bg-scrolled: #000000;
+    --label: #f2f0f6;
+    --label-2: rgba(235, 233, 242, 0.66);
+    --label-3: rgba(235, 233, 242, 0.36);
+    --label-4: rgba(235, 233, 242, 0.16);
+    --fill: rgba(255, 255, 255, 0.2);
+    --fill-2: rgba(255, 255, 255, 0.14);
+    --fill-3: rgba(255, 255, 255, 0.085);
+    --fill-4: rgba(255, 255, 255, 0.055);
+    --separator: rgba(255, 255, 255, 0.1);
+    --separator-opaque: #2c2c2e;
+    --tint: #a8b4ff;
+    --on-tint: #10195a;
+    --tint-container: #2c4186;
+    --on-tint-container: #dde1ff;
+    --badge-bg: #c3cbff;
+    --badge-fg: #131a4a;
+    --tab-selected: rgba(255, 255, 255, 0.1);
+    --blue: #7aa7ff;
+    --red: #ff6b60;
+    --green: #4fd17c;
+    --orange: #ffb340;
+    --yellow: #ffd54f;
+    --pink: #ff7aa8;
+    --purple: #c49bff;
+    --indigo: #9aa3ff;
+    --teal: #5fd3e6;
+    --gray: #8e8e96;
+    --gray-2: #6a6a72;
+    --gray-3: #4c4c54;
+    --gray-4: #3a3a40;
+    --gray-5: #2e2e34;
+    --gray-6: #242429;
+    --bar-bg: rgba(0, 0, 0, 0.94);
+    --bar-bg-solid: #000000;
+    --tab-glass: rgba(30, 30, 34, 0.74);
+    --tab-glass-border: rgba(255, 255, 255, 0.12);
+    --tab-glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --sheet-backdrop: rgba(0, 0, 0, 0.55);
+    --hud-bg: rgba(52, 52, 58, 0.98);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+    --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-push: -6px 0 24px rgba(0, 0, 0, 0.5);
+    --cover-placeholder: #1f1f23;
+    --skeleton: rgba(255, 255, 255, 0.07);
+    --seg-thumb: #48484e;
+    --sheet-bg: #1c1c1e;
+    --row-pressed: #2c2c2e;
+  }
+}
+
+:root[data-appearance='dark'] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-2: #1c1c1e;
+  --bg-3: #2c2c2e;
+  --bg-grouped: #000000;
+  --bg-grouped-2: #1c1c1e;
+  --bg-grouped-3: #2c2c2e;
+  --bg-elevated: #1c1c1e;
+  --surface: #1c1c1e;
+  --surface-2: #2c2c2e;
+  --header-bg: #000000;
+  --header-bg-scrolled: #000000;
+  --label: #f2f0f6;
+  --label-2: rgba(235, 233, 242, 0.66);
+  --label-3: rgba(235, 233, 242, 0.36);
+  --label-4: rgba(235, 233, 242, 0.16);
+  --fill: rgba(255, 255, 255, 0.2);
+  --fill-2: rgba(255, 255, 255, 0.14);
+  --fill-3: rgba(255, 255, 255, 0.085);
+  --fill-4: rgba(255, 255, 255, 0.055);
+  --separator: rgba(255, 255, 255, 0.1);
+  --separator-opaque: #2c2c2e;
+  --tint: #a8b4ff;
+  --on-tint: #10195a;
+  --tint-container: #2c4186;
+  --on-tint-container: #dde1ff;
+  --badge-bg: #c3cbff;
+  --badge-fg: #131a4a;
+  --tab-selected: rgba(255, 255, 255, 0.1);
+  --blue: #7aa7ff;
+  --red: #ff6b60;
+  --green: #4fd17c;
+  --orange: #ffb340;
+  --yellow: #ffd54f;
+  --pink: #ff7aa8;
+  --purple: #c49bff;
+  --indigo: #9aa3ff;
+  --teal: #5fd3e6;
+  --gray: #8e8e96;
+  --gray-2: #6a6a72;
+  --gray-3: #4c4c54;
+  --gray-4: #3a3a40;
+  --gray-5: #2e2e34;
+  --gray-6: #242429;
+  --bar-bg: rgba(0, 0, 0, 0.94);
+  --bar-bg-solid: #000000;
+  --tab-glass: rgba(30, 30, 34, 0.74);
+  --tab-glass-border: rgba(255, 255, 255, 0.12);
+  --tab-glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --sheet-backdrop: rgba(0, 0, 0, 0.55);
+  --hud-bg: rgba(52, 52, 58, 0.98);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-push: -6px 0 24px rgba(0, 0, 0, 0.5);
+  --cover-placeholder: #1f1f23;
+  --skeleton: rgba(255, 255, 255, 0.07);
+  --seg-thumb: #48484e;
+  --sheet-bg: #1c1c1e;
+  --row-pressed: #2c2c2e;
+}

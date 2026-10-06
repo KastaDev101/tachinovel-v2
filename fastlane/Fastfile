@@ -1,0 +1,33 @@
+# Alternative to ci/ios-testflight.sh using fastlane (installed on GitHub's macOS runners).
+# The plain-xcodebuild script is the default; use this if you prefer fastlane's retries and
+# TestFlight changelog handling:  bundle exec fastlane ios beta   (or: fastlane ios beta)
+# Env: APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8_BASE64 BUNDLE_ID BUILD_NUMBER
+default_platform(:ios)
+
+platform :ios do
+  desc "Build the web layer, archive with cloud signing and upload to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8_BASE64"),
+      is_key_content_base64: true,
+      in_house: false
+    )
+    sh("cd .. && npm ci && node tools/build.ts --flavor=#{ENV.fetch('FLAVOR', 'personal')} && npx cap sync ios")
+    build_app(
+      project: "ios/App/App.xcodeproj",
+      scheme: "App",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "build",
+      xcargs: [
+        "-allowProvisioningUpdates",
+        "DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
+        "PRODUCT_BUNDLE_IDENTIFIER=#{ENV.fetch('BUNDLE_ID', 'com.kasta.tachinovel')}",
+        "CURRENT_PROJECT_VERSION=#{ENV.fetch('BUILD_NUMBER')}"
+      ].join(" ")
+    )
+    upload_to_testflight(api_key: api_key, skip_waiting_for_build_processing: true)
+  end
+end

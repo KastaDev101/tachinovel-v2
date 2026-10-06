@@ -1,0 +1,33 @@
+node_modules/
+dist/
+www/
+.cache/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# Capacitor / Xcode build products (the ios/ project itself is committed)
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/build/
+ios/App/DerivedData/
+ios/App/Pods/
+ios/App/output/
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/
+*.ipa
+*.xcarchive
+*.dSYM.zip
+
+# Signing material must never be committed
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/

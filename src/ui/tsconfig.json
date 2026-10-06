@@ -1,0 +1,12 @@
+{
+  // UI context: WKWebView inside the Capacitor shell (DOM + JIT). Never touches native APIs except
+  // through Capacitor plugins; never fetches site data.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../types/**/*.d.ts", "../../vendor/v1/src/types/**/*.d.ts", "../../vendor/v1/src/ui/env.d.ts"]
+}

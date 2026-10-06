@@ -1,0 +1,9 @@
+{
+  // Core context: native JavaScriptCore (no DOM, no JIT, no browser/Node globals), like v1's script.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["**/*.ts", "../types/**/*.d.ts", "../../vendor/v1/src/types/**/*.d.ts"]
+}

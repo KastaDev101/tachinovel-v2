@@ -1,0 +1,2 @@
+app_identifier(ENV.fetch("BUNDLE_ID", "com.kasta.tachinovel"))
+team_id(ENV["APPLE_TEAM_ID"])

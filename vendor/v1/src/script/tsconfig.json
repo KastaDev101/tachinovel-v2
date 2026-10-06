@@ -1,0 +1,9 @@
+{
+  // Scriptable context (JavaScriptCore, no DOM, no JIT). Scriptable globals only inside src/script/platform/**.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["scriptable-ios"]
+  },
+  "include": ["**/*.ts", "../types/**/*.d.ts"]
+}
