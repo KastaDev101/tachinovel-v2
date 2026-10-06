@@ -95,27 +95,46 @@ final class AppUITests: XCTestCase {
     private func tap(_ root: XCUIElement, label: String, timeout: TimeInterval = 20) {
         let e = element(root, label: label)
         require(e, "\"\(label)\"", timeout: timeout)
-        e.tap()
+        tapWhenHittable(e, "\"\(label)\"")
     }
 
     private func tap(_ root: XCUIElement, beginning prefix: String, timeout: TimeInterval = 20) {
         let e = element(root, beginning: prefix)
         require(e, "\"\(prefix)…\"", timeout: timeout)
-        e.tap()
+        tapWhenHittable(e, "\"\(prefix)…\"")
     }
 
     private func tap(_ root: XCUIElement, containing text: String, timeout: TimeInterval = 20) {
         let e = element(root, containing: text)
         require(e, "\"…\(text)…\"", timeout: timeout)
-        e.tap()
+        tapWhenHittable(e, "\"…\(text)…\"")
     }
 
     /// A tab bar item: the lowest element on screen with that label ("Library" is also a More row).
     private func tapTab(_ root: XCUIElement, _ name: String, timeout: TimeInterval = 20) {
         let matches = root.descendants(matching: .any).matching(NSPredicate(format: "label == %@", name))
         require(matches.firstMatch, "the \(name) tab", timeout: timeout)
-        let lowest = matches.allElementsBoundByIndex.filter { $0.isHittable }.max { $0.frame.minY < $1.frame.minY }
-        (lowest ?? matches.firstMatch).tap()
+        // The web view's accessibility tree is rebuilt while the page re-renders: retry until a match is
+        // hittable instead of tapping one that just went away ("More" not hittable, flaky).
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            let lowest = matches.allElementsBoundByIndex.filter { $0.isHittable }.max { $0.frame.minY < $1.frame.minY }
+            if let lowest { return lowest.tap() }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        tapWhenHittable(matches.firstMatch, "the \(name) tab")
+    }
+
+    /// Tap once the element exists and is hittable: right after it appears, the web view may still be
+    /// rebuilding its accessibility tree ("Skip" found, then "No matches found" at the tap — flaky).
+    private func tapWhenHittable(_ e: XCUIElement, _ what: String, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if e.exists, e.isHittable { return e.tap() }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        require(e, what, timeout: 1)
+        e.tap()
     }
 
     /// A button in a native action sheet or alert (UIAlertController).
