@@ -25,9 +25,9 @@ longer (pairing file + a VPN app), so AltStore is the faster choice for tonight.
 
 1. Open https://github.com/KastaDev101/tachinovel-v2/actions/workflows/ios.yml and pick the newest green
    run on `main` (you must be signed in to GitHub to download artifacts, even on a public repo).
-2. Under **Artifacts**, download **`TachiNovel-2.0.0-<run>-unsigned.ipa`** (about 1.5 MB; it downloads
-   as the `.ipa` itself, not a zip). From the PC you can also run
-   `gh run download <run-id> -R KastaDev101/tachinovel-v2 -p "TachiNovel-*"`.
+2. Under **Artifacts**, download **`TachiNovel-2.0.0-<run>-unsigned.ipa`** (about 1.5 MB; the browser
+   downloads the `.ipa` itself, not a zip). Use the browser: `gh run download` unpacks it into a
+   `Payload/` folder (zip it back as `Payload/…` → `.ipa` if you go that way).
 3. Put it where the phone can see it: the simplest is iCloud Drive (iCloud for Windows syncs it), or
    download it on the phone in Safari while signed in to GitHub.
 

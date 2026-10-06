@@ -211,7 +211,8 @@ What the tests prove without a Mac:
 
 Public repo https://github.com/KastaDev101/tachinovel-v2, so Actions minutes are free; the macOS jobs
 still run only on pushes to `main`, pull requests and manual dispatch (no schedule while there is no
-Apple Developer account).
+Apple Developer account), and docs-only changes (`docs/**`, `*.md`) don't trigger a run. A full run takes
+about 15 minutes, mostly the first simulator boot.
 
 | Job | Runner | Secrets | What |
 |---|---|---|---|
