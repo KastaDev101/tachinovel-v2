@@ -13,6 +13,7 @@ import { type App, createApp } from '@v1/script/app.ts';
 import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
 import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
+import { clearReports, type DiagnosticSummary, exportReports, listReports, recordPayload } from './diagnostics/metrickit.ts';
 import type { NativeHost } from './native-api.ts';
 import { narrationScript, type NarrationParagraph } from './narration/text.ts';
 import { createNativePlatform, type NativePlatform } from './platform.ts';
@@ -41,6 +42,13 @@ export interface V2Methods {
   'app.background': { args: void; result: void };
   /** tachinovel://open?… deep link while running → v1's `app.deepLink` event (installed sources only). */
   'app.openLink': { args: { pluginId: string; novelPath: string; chapterPath?: string }; result: { delivered: boolean } };
+  /** MetricKit payload JSON from MetricDiagnostics.swift: stored on the device and logged (diagnostics/metrickit.ts). */
+  'diagnostics.metricPayload': { args: { json: string }; result: { added: number } };
+  /** Stored crash/hang reports, newest first. */
+  'diagnostics.reports': { args: void; result: DiagnosticSummary[] };
+  /** Share every stored report as one JSON file through the share sheet (nothing is uploaded). */
+  'diagnostics.shareReports': { args: void; result: { shared: number } };
+  'diagnostics.clearReports': { args: void; result: { removed: number } };
 }
 
 export interface V2Info {
@@ -158,6 +166,21 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       if (typeof args.chapterPath === 'string') link.chapterPath = args.chapterPath;
       return { delivered: app.deliverDeepLink(link) };
     },
+    'diagnostics.metricPayload': async (args) => {
+      if (!args || typeof args.json !== 'string') throw Object.assign(new Error('json is required'), { code: 'INVALID_ARGS' });
+      const added = await recordPayload(platform.local, args.json, platform.now(), (level, message) => platform.log(level, message));
+      if (added > 0) await platform.flushLogs({ mirror: false });
+      return { added };
+    },
+    'diagnostics.reports': () => listReports(platform.local),
+    'diagnostics.shareReports': async () => {
+      const reports = await listReports(platform.local);
+      const file = await exportReports(platform.local, { app: opts.build, exportedAt: platform.now() });
+      if (!file) return { shared: 0 };
+      await platform.native.shareFile(platform.local.absolute(file));
+      return { shared: reports.length };
+    },
+    'diagnostics.clearReports': () => Promise.resolve({ removed: clearReports(platform.local) }),
   };
   const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>) };
 
