@@ -107,36 +107,75 @@ if ! grep -q "recovery: the web view was restarted" "$OUT/app-log.txt"; then
   status=1
 fi
 
-# Boot time per launch: tap (simctl launch) → WebView start → library painted (boot-times.txt + a notice).
+# Boot time per launch: tap (simctl launch) → process start → WebView → HTML → DOM → app.boot → library painted
+# (boot-times.txt + a run notice).
 kill "$BOOT_STREAM" 2>/dev/null || true
-python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" <<'PY' || true
+python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" "$OUT/app-log.txt" <<'PY' || true
 import re, statistics, sys
+from datetime import datetime, timezone
+# Boot time per launch (src/ui/native/boot-timing.ts logs one "boot: ..." line per launch). The "tap" is the
+# moment the script ran `simctl launch` (includes simctl's own overhead, ~1-3 s on CI); process start is the
+# app's first log line, so "process->library" is the app's own cold-start time.
 launches = [(n, int(t)) for n, t in (l.split() for l in open(sys.argv[1]) if l.strip())]
-rows = []
+TS = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\s+\S+\s+App\[(\d+):')
+def naive_ms(stamp):
+    # The log's wall-clock stamps are in the host's local zone; read them as UTC and correct by `offset`.
+    return int(datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc).timestamp() * 1000)
+start = {}
+try:
+    for line in open(sys.argv[4], errors='replace'):
+        m = TS.match(line)
+        if m and m.group(2) not in start:
+            start[m.group(2)] = naive_ms(m.group(1))
+except OSError:
+    pass
+def ms(label, line):
+    m = re.search(label + r' \+(\d+)ms', line)
+    return int(m.group(1)) if m else None
+# Local-zone offset: each boot line has the log's local stamp and the core's own UTC stamp (ISO, "...Z").
+offset = 0
+for line in open(sys.argv[2], errors='replace'):
+    m, iso = TS.match(line), re.search(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z', line)
+    if m and iso:
+        utc = int(datetime.strptime(iso.group(1), '%Y-%m-%dT%H:%M:%S.%f').replace(tzinfo=timezone.utc).timestamp() * 1000)
+        offset = round((utc - naive_ms(m.group(1))) / 900_000) * 900_000  # zones are whole quarter hours
+        break
+start = {pid: t + offset for pid, t in start.items()}
+rows = {}
 for line in open(sys.argv[2], errors='replace'):
     m = re.search(r'nav=(\d+) epoch=(\d+)', line)
     if not m:
         continue
     nav, vis = int(m.group(1)), int(m.group(2))
     before = [(n, t) for n, t in launches if t <= nav]
-    if before:
-        name, tap = before[-1]
-        rows.append((name, nav - tap, vis - nav, vis - tap))
-seen, uniq = set(), []
-for r in rows:  # one line per launch
-    if r[0] not in seen:
-        seen.add(r[0]); uniq.append(r)
+    if not before or before[-1][0] in rows:
+        continue
+    name, tap = before[-1]
+    pid = re.search(r'App\[(\d+):', line)
+    proc = start.get(pid.group(1)) if pid else None
+    rows[name] = dict(tap=tap, proc=proc, nav=nav, vis=vis, html=ms('html', line), dom=ms('dom ready', line), boot=ms('app.boot call', line), lib=vis - nav)
+def d(a, b):
+    return '-' if a is None or b is None else str(b - a)
+cols = ['launch', 'tap->process', 'process->WebView', 'WebView->HTML', 'HTML->DOM', 'DOM->app.boot', 'app.boot->library', 'process->library', 'tap->library']
 with open(sys.argv[3], 'w') as f:
-    f.write('launch                 tap->WebView  WebView->library  tap->library (ms)\n')
-    for name, a, b, c in uniq:
-        f.write(f'{name:22} {a:11} {b:16} {c:12}\n')
+    f.write('  '.join(f'{c:>17}' if i else f'{c:22}' for i, c in enumerate(cols)) + '  (ms)\n')
+    for name, _ in launches:
+        r = rows.get(name)
+        if not r:
+            f.write(f'{name:22}  no boot line (library not painted within 20 s of the page starting?)\n')
+            continue
+        nav0 = 0
+        vals = [d(r['tap'], r['proc']), d(r['proc'], r['nav']), d(nav0, r['html']), d(r['html'], r['dom']), d(r['dom'], r['boot']), d(r['boot'], r['lib']), d(r['proc'], r['vis']), d(r['tap'], r['vis'])]
+        f.write(f'{name:22}' + ''.join(f'  {v:>17}' for v in vals) + '\n')
 print(open(sys.argv[3]).read())
-if uniq:
-    later = [r[3] for r in uniq[1:]]
-    msg = f'first launch (fresh install) {uniq[0][3]} ms'
-    if later:
-        msg += f'; later cold launches median {int(statistics.median(later))} ms (n={len(later)})'
-    print(f'::notice title=Boot time (tap -> library painted, simulator)::{msg}')
+done = [rows[n] for n, _ in launches if n in rows]
+own = [r['vis'] - r['proc'] for r in done if r['proc'] is not None]
+if own:
+    first = launches[0][0] if launches else ''
+    fresh = rows.get(first)
+    msg = f'process->library median {int(statistics.median(own))} ms, best {min(own)} ms (n={len(own)})'
+    msg += f'; fresh install ({first}): ' + (f'tap->library {fresh["vis"] - fresh["tap"]} ms' if fresh else 'no boot line')
+    print(f'::notice title=Boot time (simulator, cold launches)::{msg}')
 else:
     print('::warning::No boot timing lines captured (see boot-log.txt)')
 PY
