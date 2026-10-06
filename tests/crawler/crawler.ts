@@ -376,7 +376,10 @@ export class Worker {
     for (const l of layout) findings.push(await this.shoot({ kind: 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
     const controls = await this.enumerate();
     for (const c of controls) {
-      if (c.obscuredBy && !c.disabled) findings.push(await this.shoot({ kind: 'obscured', severity: 'fail', state: node.sig, control: c.label, message: `"${c.label}" (${c.role}) at y=${c.rect.y} is covered by ${c.obscuredBy}`, repro }));
+      // A toast goes away by itself within seconds (and a tap dismisses it): covering something then is a
+      // warning, not a layout failure. Whether one is still up depends on timing, so it must not fail runs.
+      const transient = /data-testid=toast|\.toast/.test(c.obscuredBy ?? '');
+      if (c.obscuredBy && !c.disabled) findings.push(await this.shoot({ kind: 'obscured', severity: transient ? 'warn' : 'fail', state: node.sig, control: c.label, message: `"${c.label}" (${c.role}) at y=${c.rect.y} is covered by ${c.obscuredBy}`, repro }));
     }
     return { ok: true, info, layout, controls, findings };
   }
