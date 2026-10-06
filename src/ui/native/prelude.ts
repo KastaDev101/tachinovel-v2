@@ -5,14 +5,15 @@
  *    v1's reader already calls navigator.wakeLock.request('screen') for "keep screen awake").
  *  - Launch screen: hidden as soon as the library has painted its boot content (boot-timing.ts, which
  *    also logs the boot timing), at the latest after 3 s.
- *  - Status bar: follows the system appearance (the v1 UI follows it too).
+ *  - Status bar: light or dark text from what is painted under it (status-bar.ts): the app appearance
+ *    (system or forced in Settings), the reader theme, dark overlays.
  *  - Deep links: tachinovel://open?plugin=…&novel=…[&chapter=…] are handled natively (CorePlugin
  *    forwards them as `app.deepLink` core events), so nothing to do here.
  */
 import { registerPlugin } from '@capacitor/core';
 import { SplashScreen } from '@capacitor/splash-screen';
-import { StatusBar, Style } from '@capacitor/status-bar';
 import { installBootTiming } from './boot-timing.ts';
+import { installStatusBar } from './status-bar.ts';
 
 interface TachiNativePlugin {
   setKeepAwake(opts: { on: boolean }): Promise<void>;
@@ -67,15 +68,7 @@ function hideSplashAfterBoot(): void {
   installBootTiming(() => void SplashScreen.hide({ fadeOutDuration: 150 }).catch(() => undefined));
 }
 
-function followSystemStatusBar(): void {
-  const mq = window.matchMedia('(prefers-color-scheme: dark)');
-  const apply = (): void => {
-    void StatusBar.setStyle({ style: mq.matches ? Style.Dark : Style.Light }).catch(() => undefined);
-  };
-  apply();
-  mq.addEventListener('change', apply);
-}
 
 installWakeLock();
 hideSplashAfterBoot();
-followSystemStatusBar();
+installStatusBar();
