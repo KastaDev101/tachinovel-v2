@@ -248,6 +248,9 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 "defaultVoice": prefs.voice(forNovel: nil),
                 "kokoroEnabled": prefs.kokoroEnabled,
                 "usePCAudio": prefs.usePCAudio,
+                "speed": prefs.speed,
+                "volume": prefs.volume,
+                "speedPresets": SpeechSpeed.presets,
                 "kokoro": [
                     "bundled": k.isBundled,
                     "status": k.statusText,
@@ -273,9 +276,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let novel = call.getObject("novel")
         let usePCAudio = call.getBool("usePCAudio")
         let kokoroEnabled = call.getBool("kokoroEnabled")
+        let speed = call.getDouble("speed")
+        let volume = call.getDouble("volume")
         DispatchQueue.main.async {
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
+                if let speed { p.speed = SpeechSpeed.clamp(speed) }
+                if let volume { p.volume = VoiceVolume.clamp(volume) }
                 if let defaultVoice, VoiceCatalog.voice(defaultVoice) != nil { p.defaultVoice = defaultVoice }
                 if let novel, let pid = novel["pluginId"] as? String, let path = novel["novelPath"] as? String {
                     p.setVoice(novel["voice"] as? String, forNovel: VoiceSettings.novelKey(pluginId: pid, novelPath: path))

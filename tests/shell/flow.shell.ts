@@ -94,9 +94,9 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const text = (await body.textContent()) ?? '';
     expect(text).toContain('Nobody answered');
     expect(text).not.toContain('stolen');
-    await shell.page.locator('.tn-listen').waitFor({ state: 'visible', timeout: 5000 });
+    await top().getByTestId('reader-listen').waitFor({ state: 'visible', timeout: 5000 });
     await shell.page.screenshot({ path: path.join(shots, '4-reader.png') });
-    await shell.page.locator('.tn-listen').click();
+    await top().getByTestId('reader-listen').click();
     await expect.poll(() => shell.pluginCalls.find((c) => c.pluginId === 'Narration' && c.methodName === 'play')?.options).toMatchObject({
       pluginId: 'demo-library',
       novelPath: 'novel/alpha',
@@ -133,7 +133,7 @@ describe('v1 UI in the v2 shell (PC)', () => {
       .toMatch(/Nobody answered/);
     await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Kokoro · Heart');
     shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'speech', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', appleName: 'Ava', fallback: 'queueDry' } });
-    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Apple voice · Ava · Kokoro catching up');
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('System voice (fallback) · Kokoro is catching up');
     await shell.page.screenshot({ path: path.join(shots, '5b-speech-highlight.png') });
     shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
   });

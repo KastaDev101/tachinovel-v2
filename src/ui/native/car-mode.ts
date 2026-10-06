@@ -6,11 +6,15 @@
  *  - Voice: the novel's Kokoro voice (picker with ▶ samples) and its pronunciations (voices-ui.ts).
  *  - PC-narrated audio (the iCloud Drive "TachiNovel Audio" folder, tachinovel-narrator) appears only with
  *    Settings › Voices › Advanced › "Use PC audio when available" (off by default).
- *  - Transport: −15 s / play-pause / +15 s / next chapter, scrubbable progress, speed.
+ *  - Transport: −15 s / play-pause / +15 s / next chapter, scrubbable progress.
+ *  - Speed: a slider (0.5–2.5×, 0.05 steps) with preset chips (a chip snaps the slider; the slider lights up
+ *    the chip it sits on), and "Voice volume" (0–150 %; a limiter keeps it clean above 100 %). Both are
+ *    saved natively and apply to every voice (Kokoro, the system voice, PC audio).
  * Lock screen, Control Center, headphones and car Bluetooth controls work without this screen (native).
  * Opened from the mini player and from More › Listen in the Car.
  */
 import { sharedClient } from '../capacitor-client.ts';
+import { formatSpeed, presetFor, snapSpeed, SPEED_MAX, SPEED_MIN, SPEED_PRESETS, SPEED_STEP, VOLUME_MAX_PERCENT, volumePercent } from './listen-controls.ts';
 import { Narration, type AudioNovelInfo, type NarrationState } from './narration.ts';
 import { openVoicePicker, voiceLabel } from './voices-ui.ts';
 
@@ -36,9 +40,14 @@ const CSS = `
 .tn-car .ctl button{width:68px;height:68px;border-radius:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08)}
 .tn-car .ctl .pp{width:88px;height:88px;border-radius:44px;background:#a8b4ff;color:#15151a}
 .tn-car .ctl button:active{transform:scale(.94)}
-.tn-car .spd{display:flex;gap:8px;margin-top:12px;justify-content:center}
-.tn-car .spd button{padding:8px 12px;border-radius:14px;background:rgba(255,255,255,.08);font-size:15px}
+.tn-car .spd{display:flex;gap:6px;margin-top:8px;justify-content:space-between}
+.tn-car .spd button{flex:1;padding:8px 0;border-radius:14px;background:rgba(255,255,255,.08);font-size:15px;font-variant-numeric:tabular-nums}
 .tn-car .spd button.on{background:#a8b4ff;color:#15151a}
+.tn-car .lc{background:#1f1f25;border-radius:20px;padding:12px 16px 14px;margin:0 0 12px}
+.tn-car .lc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;font-size:15px}
+.tn-car .lc-row label{font-weight:600}
+.tn-car .lc-v{color:#c7cdff;font-variant-numeric:tabular-nums}
+.tn-car .lc-sld{width:100%;margin:8px 0 2px;accent-color:#a8b4ff;height:28px}
 .tn-car .list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px 12px}
 .tn-car .sec{color:#a1a1aa;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin:14px 4px 6px}
 .tn-car .row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px;border-radius:14px;background:#1b1b20;margin-bottom:8px;min-height:64px}
@@ -64,7 +73,6 @@ const ICON = {
   next: '<svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M5 5v14l9-7zM15 5h3v14h-3z"/></svg>',
 };
 
-const SPEEDS = [0.9, 1, 1.1, 1.25, 1.5];
 
 interface Recent {
   pluginId: string;
@@ -104,7 +112,14 @@ export function installCarMode(): CarMode {
   document.body.append(root);
 
   let state: NarrationState = { status: 'idle' };
+  /** Listen speed and "Voice volume" (saved natively, see listen-controls.ts). */
   let rate = 1;
+  let volume = 1;
+  /** A slider is being dragged: the 1 s refresh must not rebuild it under the finger. */
+  let dragging = false;
+  let renderPending = false;
+  let volumeSentAt = 0;
+  let volumeTimer = 0;
   let open = false;
   let poll = 0;
   let novels: AudioNovelInfo[] = [];
@@ -134,7 +149,6 @@ export function installCarMode(): CarMode {
         <button type="button" data-act="fwd" aria-label="Forward 15 seconds">${ICON.fwd15}</button>
         <button type="button" data-act="next" aria-label="Next chapter">${ICON.next}</button>
       </div>
-      <div class="spd">${SPEEDS.map((s) => `<button type="button" data-act="speed" data-v="${s}" class="${s === rate ? 'on' : ''}">${s}×</button>`).join('')}</div>
       ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(state.voice?.kokoroName ?? 'Kokoro')} ›</span></button>` : ''}
     </div>`;
   }
@@ -144,7 +158,51 @@ export function installCarMode(): CarMode {
     return `<button type="button" class="row" data-act="novel" data-kind="${kind}" data-plugin="${esc(pluginId)}" data-path="${esc(path)}" data-name="${esc(name)}">${img}<div><b>${esc(name)}</b><span>${esc(sub)}</span></div></button>`;
   }
 
+  function controlsHtml(): string {
+    const chip = presetFor(rate);
+    const pct = volumePercent(volume);
+    return `<div class="lc" data-testid="listen-controls">
+      <div class="lc-row"><label for="tn-speed">Speed</label><span class="lc-v" data-speed-val>${formatSpeed(rate)}</span></div>
+      <input id="tn-speed" type="range" class="lc-sld" data-act="speed-slider" min="${SPEED_MIN}" max="${SPEED_MAX}" step="${SPEED_STEP}" value="${rate}" aria-valuetext="${formatSpeed(rate)}">
+      <div class="spd" role="group" aria-label="Speed presets">${SPEED_PRESETS.map((s) => `<button type="button" data-act="speed" data-v="${s}" class="${s === chip ? 'on is-selected' : ''}" aria-pressed="${s === chip}">${s}×</button>`).join('')}</div>
+      <div class="lc-row"><label for="tn-volume">Voice volume</label><span class="lc-v" data-volume-val>${pct}%</span></div>
+      <input id="tn-volume" type="range" class="lc-sld" data-act="volume" min="0" max="${VOLUME_MAX_PERCENT}" step="5" value="${pct}" aria-valuetext="${pct}%">
+    </div>`;
+  }
+
+  /** Slider moved: labels and the matching chip, without rebuilding anything. */
+  function reflectControls(): void {
+    const chip = presetFor(rate);
+    const sv = root.querySelector('[data-speed-val]');
+    if (sv) sv.textContent = formatSpeed(rate);
+    root.querySelector('[data-act="speed-slider"]')?.setAttribute('aria-valuetext', formatSpeed(rate));
+    for (const b of root.querySelectorAll<HTMLElement>('[data-act="speed"]')) {
+      const on = Number(b.dataset.v) === chip;
+      b.classList.toggle('on', on);
+      b.classList.toggle('is-selected', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const vv = root.querySelector('[data-volume-val]');
+    if (vv) vv.textContent = `${volumePercent(volume)}%`;
+    root.querySelector('[data-act="volume"]')?.setAttribute('aria-valuetext', `${volumePercent(volume)}%`);
+  }
+
+  function sendVolume(final: boolean): void {
+    window.clearTimeout(volumeTimer);
+    const now = Date.now();
+    if (final || now - volumeSentAt > 150) {
+      volumeSentAt = now;
+      void Narration.setVoiceSettings({ volume }).catch(() => undefined);
+    } else {
+      volumeTimer = window.setTimeout(() => sendVolume(true), 160);
+    }
+  }
+
   function render(): void {
+    if (dragging) {
+      renderPending = true;
+      return;
+    }
     const audioKeys = new Set(novels.map((n) => n.key));
     const folder = !usePCAudio
       ? ''
@@ -166,6 +224,7 @@ export function installCarMode(): CarMode {
     root.innerHTML = `
       <div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div>
       ${nowHtml()}
+      ${controlsHtml()}
       <div class="list">
         ${folder}
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
@@ -174,9 +233,10 @@ export function installCarMode(): CarMode {
   }
 
   async function load(refresh: boolean): Promise<void> {
-    usePCAudio = await Narration.voiceSettings()
-      .then((v) => v.usePCAudio === true)
-      .catch(() => false);
+    const settings = await Narration.voiceSettings().catch(() => null);
+    usePCAudio = settings?.usePCAudio === true;
+    if (typeof settings?.speed === 'number' && !dragging) rate = snapSpeed(settings.speed);
+    if (typeof settings?.volume === 'number' && !dragging) volume = Math.min(1.5, Math.max(0, settings.volume));
     const noAudio = { linked: false, novels: [] as AudioNovelInfo[] };
     const [lib, folder, hist, library] = await Promise.all([
       usePCAudio ? Narration.audioLibrary({ refresh }).catch(() => noAudio) : Promise.resolve(noAudio),
@@ -223,8 +283,8 @@ export function installCarMode(): CarMode {
         void Narration.skip({ unit: 'paragraph', count: 100_000 });
         return;
       case 'speed':
-        rate = Number(el.dataset.v) || 1;
-        void Narration.setOptions({ rate });
+        rate = snapSpeed(Number(el.dataset.v) || 1);
+        void Narration.setVoiceSettings({ speed: rate }).catch(() => undefined);
         render();
         return;
       case 'seek': {
@@ -252,6 +312,43 @@ export function installCarMode(): CarMode {
       }
       default:
     }
+  });
+
+  // Sliders: live labels while dragging; speed is applied when released (a new speed restarts the sentence),
+  // the volume follows the finger (throttled).
+  root.addEventListener('pointerdown', (ev) => {
+    if ((ev.target as Element).matches('input[type="range"]')) dragging = true;
+  });
+  const endDrag = (): void => {
+    if (!dragging) return;
+    dragging = false;
+    if (renderPending) {
+      renderPending = false;
+      render();
+    }
+  };
+  root.addEventListener('pointerup', endDrag);
+  root.addEventListener('pointercancel', endDrag);
+  root.addEventListener('input', (ev) => {
+    const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'speed-slider') rate = snapSpeed(Number(el.value));
+    else if (el.dataset.act === 'volume') {
+      volume = Math.min(1.5, Math.max(0, Number(el.value) / 100));
+      sendVolume(false);
+    } else return;
+    reflectControls();
+  });
+  root.addEventListener('change', (ev) => {
+    const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'speed-slider') {
+      rate = snapSpeed(Number(el.value));
+      void Narration.setVoiceSettings({ speed: rate }).catch(() => undefined);
+    } else if (el.dataset.act === 'volume') {
+      volume = Math.min(1.5, Math.max(0, Number(el.value) / 100));
+      sendVolume(true);
+    } else return;
+    reflectControls();
+    endDrag();
   });
 
   void Narration.addListener('state', (s) => {

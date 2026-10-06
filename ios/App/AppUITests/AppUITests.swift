@@ -68,7 +68,12 @@ final class AppUITests: XCTestCase {
         }
         shot("07-reader")
 
-        // 5. Listen with the Apple voice (system speech synthesizer).
+        // 5. Listen (Kokoro, or the system voice while Kokoro loads). "Listen" is in the reader's bottom
+        //    bar, which a tap in the middle of the page shows if it has hidden itself.
+        let listen = element(web, label: "Listen from here")
+        if !(listen.waitForExistence(timeout: 10) && listen.isHittable) {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         tap(web, label: "Listen from here", timeout: 30)
         let pause = element(web, label: "Pause")
         let play = element(web, label: "Play")
