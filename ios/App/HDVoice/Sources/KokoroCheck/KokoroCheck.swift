@@ -145,7 +145,15 @@ struct KokoroCheck {
         let loadDelta = max(1, memLoaded - memBefore)
         let retained = (memReleased - memBefore) / loadDelta
         print(String(format: "memory: before %.0f, loaded %.0f, released %.0f MB (%.0f%% of the model's memory still held)", memBefore, memLoaded, memReleased, retained * 100))
-        if memLoaded - memBefore > 50, retained > 0.9 { problems.append("memory not released: \(Int(memReleased)) MB after release (loaded \(Int(memLoaded)) MB)") } else if retained > 0.5 { warnings.append("memory only partly released (\(Int(retained * 100))% held)") }
+        // How much one release gives back depends on the host (Core ML keeps compiled models cached: 80–95 %
+        // stayed on the CI Mac), so that is a warning. A leak shows as growth on every load/release cycle.
+        if retained > 0.5 { warnings.append("memory only partly released (\(Int(retained * 100))% held)") }
+        try await runtime.load(route: route)
+        await runtime.release()
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        let memSecond = footprintMB()
+        print(String(format: "memory after a second load/release: %.0f MB (%+.0f MB)", memSecond, memSecond - memReleased))
+        if memSecond - memReleased > 100 { problems.append("memory grows with every load/release: +\(Int(memSecond - memReleased)) MB on the second cycle") }
         if loadMs > 300_000 { problems.append("gross regression: model load took \(Int(loadMs / 1000)) s") }
         if let f = firstAudioMs, f > 360_000 { problems.append("gross regression: first audio after \(Int(f / 1000)) s") }
 
@@ -153,7 +161,7 @@ struct KokoroCheck {
         let p50 = times.isEmpty ? 0 : times[times.count / 2]
         let report: [String: Any] = [
             "route": route.rawValue, "loadMs": loadMs, "firstAudioMs": firstAudioMs ?? -1, "p50x": p50,
-            "memoryMB": ["before": memBefore, "loaded": memLoaded, "released": memReleased],
+            "memoryMB": ["before": memBefore, "loaded": memLoaded, "released": memReleased, "secondRelease": memSecond],
             "rows": rows, "problems": problems, "warnings": warnings,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "placement": placement.map { $0.summary },
