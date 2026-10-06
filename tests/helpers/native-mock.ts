@@ -32,6 +32,11 @@ export interface MockOptions {
   fsFault?: (op: string, absPath: string) => boolean;
   /** Don't evaluate core.js yet: calls made before `evaluate()` are queued like CoreHost does. */
   deferEvaluate?: boolean;
+  /**
+   * Document-picker answers, in order: an absolute source file (copied into the core's imports folder,
+   * like UIDocumentPickerViewController(asCopy:) + NativeUI.documentPicker do) or null = cancelled.
+   */
+  picks?: (string | null)[];
 }
 
 export interface CoreHarness {
@@ -109,6 +114,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
   const events: CoreHarness['events'] = [];
   const requests: NativeHttpRequest[] = [];
   const answers = [...(opts.answers ?? [])];
+  const picks = [...(opts.picks ?? [])];
   const timers = new Map<number, NodeJS.Timeout>();
   let nextTimer = 1;
   let handler: ((req: string, done: (res: string) => void) => void) | null = null;
@@ -171,7 +177,15 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       share: (_json, cb) => setImmediate(() => cb(null, true)),
       shareFile: (_p, cb) => setImmediate(() => cb(null, true)),
       shareImage: (b64, cb) => setImmediate(() => (b64 ? cb(null, true) : cb('not an image', null))),
-      pickFile: (_t, _d, cb) => setImmediate(() => cb('cancelled', null)),
+      pickFile: (_t, destDir, cb) =>
+        setImmediate(() => {
+          const src = picks.length > 0 ? picks.shift() : null;
+          if (!src) return cb('cancelled', null);
+          mkdirSync(destDir, { recursive: true });
+          const dst = path.join(destDir, path.basename(src).replace(/[^A-Za-z0-9._-]/g, '_'));
+          copyFileSync(src, dst);
+          cb(null, dst);
+        }),
       openUrl: () => undefined,
       symbol: (name) => (name.startsWith('missing') ? null : Buffer.from(`png:${name}`).toString('base64')),
       resizeImage: (b64) => b64,
