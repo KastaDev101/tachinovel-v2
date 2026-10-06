@@ -1,18 +1,22 @@
 # TachiNovel v2 — roadmap and decisions
 
-Status 2026-10-06: scaffold done (this repo). Nothing is published, pushed, signed or paid for.
+Status 2026-10-06 (evening): public repo https://github.com/KastaDev101/tachinovel-v2; CI builds and runs it on
+macOS for free; an unsigned IPA for AltStore is produced on every push to `main`. **To try it on the phone
+tonight, follow [how-to-test-tonight.md](how-to-test-tonight.md).** Nothing is published, signed or paid for.
 Companion docs: architecture.md, app-store-risk.md, monetization.md, tts-v2.md.
 
 ## Where things stand
 
 | Area | State |
 |---|---|
-| Web layer (v1 UI + Capacitor transport + shims) | Builds on Windows; typechecked; tested via unit tests |
-| Core (v1 services in a native JSContext) | Built `core.js` runs end to end in a bare JS context with a mock native host (28 tests incl. startup failure); vendored v1 = 3a25883 |
+| Web layer (v1 UI + Capacitor transport + shims) | Builds on Windows; typechecked; unit tests + PC shell test (real WebKit) |
+| Core (v1 services in a native JSContext) | Built `core.js` runs end to end in a bare JS context with a mock native host; vendored v1 = f788523 |
 | Store compliance in code | Store flavor: no bundled/seeded sources, no JS plugin host, declarative sources, paywall never on content |
-| Swift layer (CoreHost, HTTP, files/iCloud, native UI, Core/Narration/Store plugins, CarPlay, background refresh) | Written, registered in the Xcode project, statically reviewed — **not compiled yet** |
-| CI (web checks, simulator compile, TestFlight upload) | Workflow written; runs only after you push to GitHub with secrets |
-| Narration | AVSpeech baseline with lock screen, Now Playing, remote commands, auto-continue, CarPlay list |
+| Swift layer (CoreHost, HTTP, files/iCloud, native UI, Core/Narration/Store plugins, CarPlay, background refresh, audio library) | Compiles on Xcode 26.6 in CI (simulator + device); launches in the iOS Simulator (smoke screenshots per run) |
+| CI | `web`, `shell`, `ios-compile` + simulator smoke, `ios-ipa` (unsigned, free sideload); TestFlight job waits for an Apple account |
+| Backup | v1 backups restore in v2 via Settings › Backup & Restore › Restore from Files… (document picker) |
+| Narration | System voice (AVSpeech) **and** PC-narrated audio from the "TachiNovel Audio" folder: background/lock screen, Now Playing, remote commands, resume, auto-advance, sentence highlighting from the narrator's timestamps, full-screen Listen player; CarPlay list (needs the entitlement) |
+| App icon / launch screen | v1's book icon; launch image follows light/dark |
 | Monetization | Ad pacing policy + AdMob wiring (off by default), StoreKit 2 plugin, feature matrix, revenue model |
 | Android | Not built (JDK 21 + Gradle downloads needed); design note in architecture.md |
 
