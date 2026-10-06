@@ -44,21 +44,33 @@ push, App Groups, Associated Domains). What that means while you test:
 
 ## 3. Ten-minute checklist
 
+Listening uses the **Apple voices** for now. The bundled Kokoro voices are being built in a separate PR
+(`voice-spike`); once that merges, the same Listen button uses them, with the Apple voices as the fallback.
+
 | # | Do | Expect |
 |---|---|---|
 | 1 | Open the app | Dark launch screen with the book icon (white in light mode), then the onboarding; **Skip** |
 | 2 | More › **Backup & Restore** › **Restore from Files…** → iCloud Drive › Scriptable › TachiNovel › backups → newest `.json` | The Restore Backup sheet shows what it holds; restore → your library, progress and settings from v1 |
 | 3 | Library → open a novel → Resume | Reader opens at your v1 position; scrolling flows into the next chapter |
 | 4 | Browse → Stonescape → Popular → a novel | Covers load, chapter list appears, locked chapters show a lock |
-| 5 | In the reader, tap **Listen** (round button, bottom right) | System voice reads from the first visible paragraph; the paragraph is highlighted; a mini player appears |
-| 6 | Lock the phone | Lock-screen player with title and cover; play/pause and skip work; audio keeps going |
-| 7 | More › **Listen in the Car** › **Open the player** › **Link “TachiNovel Audio” folder** → iCloud Drive › TachiNovel Audio › Open | The narrated novels from the PC narrator are listed |
-| 8 | Tap a narrated chapter | The m4a plays (subtitle "Narrated audio"); in the reader the spoken sentence is highlighted; ±15 s, scrubbing and speed work; at the end it continues with the next chapter |
-| 9 | Stop, close the app (swipe it away), reopen, More › Listen in the Car › Open the player | The novel resumes where you stopped |
-| 10 | Bluetooth or the car | Steering-wheel next/previous and play/pause work; Siri announcements don't stop it for good (it resumes only if it was playing) |
+| 5 | In the reader, tap **Listen** (round button, bottom right) | The Apple voice reads from the first visible paragraph; the paragraph is highlighted and followed; a mini player appears at the bottom |
+| 6 | Lock the phone | Lock-screen player with title and cover; play/pause and next chapter work; audio keeps going |
+| 7 | Let a chapter end (or skip to its last paragraphs) | It continues into the next chapter by itself |
+| 8 | Pause, swipe the app away, reopen the novel | The reader opens where listening stopped |
+| 9 | More › **Listen in the Car** › **Open the player** › Continue reading aloud › the novel | Listening resumes at that paragraph; with the Apple voice the ↺15/15↻ buttons step a paragraph back/forward; the speed buttons work |
+| 10 | Bluetooth or the car | Steering-wheel next/previous and play/pause work; after a call or Siri it resumes only if it was playing |
 
 If something fails: More › About › Diagnostics › **Copy Full Diagnostics**, and paste it to Claude. A screenshot
 helps for anything visual.
+
+### Optional (advanced): PC-narrated audio files
+
+Parked for now (the PC narrator is sidelined). The player can still play chapters the PC narrator wrote to
+iCloud Drive › **TachiNovel Audio** (`<Novel>/manifest.json` + `NNNN - title.m4a` + `.json` timestamps):
+More › Listen in the Car › Open the player › **Link “TachiNovel Audio” folder** → pick that folder. Those
+chapters then play the file (subtitle "Narrated audio") with the spoken sentence highlighted in the
+reader; chapters without a file, or files that can't be read, use the Apple voice. Skip this tonight
+unless you already have narrated files.
 
 ## 4. Known limits of this build
 
@@ -66,7 +78,5 @@ helps for anything visual.
   newer run: data stays as long as the bundle id is the same).
 - No iCloud sync between v1 (Scriptable) and v2: they are separate apps; move data with backups.
 - Store purchases (Pro) don't load outside the App Store; everything stays in the free tier.
-- A narrated chapter that iCloud has evicted from the phone is downloaded first (a few seconds of
-  "Loading…"). If the file can't be read (no network, broken file), the same chapter continues with the
-  system voice, which needs the chapter text (network, read-ahead cache or a downloaded chapter). For a
-  drive without signal, open the audio folder in Files beforehand and choose "Keep Downloaded".
+- Listening needs the chapter text: network, the read-ahead cache or a downloaded chapter. For a drive
+  without signal, download the next chapters first (novel page › download).
