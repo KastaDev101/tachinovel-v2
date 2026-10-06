@@ -79,7 +79,7 @@ function ensureStyle(): void {
   document.head.append(style);
 }
 
-function toast(msg: string): void {
+export function toast(msg: string): void {
   const t = document.createElement('div');
   t.className = 'tn-v toast';
   t.setAttribute('role', 'status');
