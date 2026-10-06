@@ -36,7 +36,8 @@ export function runSmokeTour(): void {
   const cfg = window.__TACHI_SMOKE__;
   if (!cfg) return;
   void (async () => {
-    if (!(await waitFor('[data-testid="screen-library"]', 20_000))) return;
+    // The voice self-test runs right after a fresh simulator boot, when the first WebView load is slow.
+    if (!(await waitFor('[data-testid="screen-library"]', cfg.voiceSelfTest === '1' ? 120_000 : 20_000))) return;
     // First run shows v1's onboarding over the library: skip it like a user would.
     (await waitFor('[data-testid="onboarding-skip"]', 2500))?.click();
     await new Promise((r) => setTimeout(r, 400));

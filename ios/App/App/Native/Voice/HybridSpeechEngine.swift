@@ -476,6 +476,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func speakAppleManually(_ i: Int, utterance u: AVSpeechUtterance) {
         let g = gen
         let collector = RenderedDuration()
+        // Watchdog: if the synthesizer never reports the end (no voices on a bare simulator), move on anyway.
+        let limit = max(3, Double(u.speechString.count) / 8) + u.postUtteranceDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit + 2) { [weak self] in
+            guard let self, g == self.gen, u === self.appleUtterance, !collector.done else { return }
+            collector.done = true
+            if collector.seconds == 0 { self.began(i, .apple) }
+            self.appleFinished(u)
+        }
         synth.write(u) { [weak self] buffer in
             let frames = (buffer as? AVAudioPCMBuffer)?.frameLength ?? 0
             let rate = buffer.format.sampleRate
