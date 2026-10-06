@@ -254,23 +254,41 @@ final class KokoroService {
         }
     }
 
+    // MARK: - Placement (Voice Lab)
+
+    /// Where Core ML runs each stage on this device with the current route (MLComputePlan), last result.
+    private(set) var lastPlacement: [StagePlacement] = []
+
+    func analyzePlacement(completion: @escaping ([StagePlacement]) -> Void) {
+        guard let dir = modelsDirectory else { return completion([]) }
+        let route = self.route
+        Task.detached(priority: .utility) {
+            let result = await KokoroPlacement.analyze(modelsDirectory: dir, route: route)
+            DispatchQueue.main.async {
+                self.lastPlacement = result
+                completion(result)
+            }
+        }
+    }
+
     // MARK: - Warm-up
 
     private func scheduleWarmUp() {
-        guard usable else { return }
+        // The simulator self-test warms the model itself (and must not compete with the first boot).
+        guard usable, !NarrationSelfTest.isActive else { return }
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
         let key = "tachinovel.kokoroWarm.\(build)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         // After the UI is up and the core has booted; low priority, the Apple voice covers if Listen comes first.
+        // Load only (Core ML compiles the stages for the Neural Engine here, the slow part): no synthesis,
+        // so the known iOS 26 Core ML crash can never hit right after launch, only while listening.
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
             guard self.usable, self.status == .unloaded else { return }
             self.ensureLoaded { status in
                 guard status == .ready else { return }
-                self.synthesize(text: "Ready.", runs: nil, voice: VoiceCatalog.defaultVoiceId, speed: 1) { result in
-                    if case .success = result { UserDefaults.standard.set(true, forKey: key) }
-                    // Don't hold ~300 MB for nothing: release unless narration started meanwhile.
-                    if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
-                }
+                UserDefaults.standard.set(true, forKey: key)
+                // Don't hold the model for nothing: release unless narration started meanwhile.
+                if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
             }
         }
     }

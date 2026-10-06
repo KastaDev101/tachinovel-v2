@@ -190,6 +190,8 @@ export interface NarrationPlugin {
   /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
   voiceLab(): Promise<Record<string, unknown>>;
   setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
+  /** Voice Lab: where Core ML runs each Kokoro stage on this device (per-operation plan, no synthesis). */
+  voicePlacement(): Promise<{ stages: { stage: string; configured: string; ane: number; cpu: number; gpu: number; error: string | null; summary: string }[] }>;
   /** Simulator voice self-test only (-tachiVoiceSelfTest): write the report file. */
   selfTestReport(opts: { json: string }): Promise<{ path: string | null }>;
   addListener(event: 'state', fn: (s: NarrationState) => void): Promise<PluginListenerHandle>;

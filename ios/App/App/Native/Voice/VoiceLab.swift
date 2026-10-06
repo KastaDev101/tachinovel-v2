@@ -42,6 +42,8 @@ enum VoiceLab {
             "stats": k.stats.dictionary(),
             "device": device(),
             "crashes": crashes(k.sentinel.current),
+            "placement": k.lastPlacement.map { ["stage": $0.stage, "configured": $0.configured, "ane": $0.neuralEngine, "cpu": $0.cpu, "gpu": $0.gpu,
+                                                "error": $0.error ?? NSNull(), "summary": $0.summary] as [String: Any] },
             "routes": KokoroRoute.allCases.map { ["id": $0.rawValue, "title": $0.title, "gpu": $0.usesGPU] as [String: Any] },
         ]
         if let s = NarrationController.shared.speechEngine.snapshot {

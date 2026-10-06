@@ -183,7 +183,8 @@ export function openVoicesScreen(): void {
       ? '<p class="note warn">Kokoro isn’t included in this build: the Apple voice reads everything.</p>'
       : k.crashDisabled
         ? `<p class="note warn">Kokoro was turned off after it crashed twice (a known iOS Core ML issue). <button type="button" data-act="kokoro-on" style="color:#a8b4ff;padding:0">Turn it back on</button></p>`
-        : `<p class="note">Kokoro runs on this iPhone, built into the app${size}. No download, no internet needed.</p>`;
+        : `<p class="note">Kokoro runs on this iPhone, built into the app${size}. No download, no internet needed.</p>
+           <p class="note">iOS 26.4 and later have a known Core ML crash that can hit Kokoro (FluidAudio #844). This build carries FluidAudio’s fix for it (0.17), not yet proven on an iPhone. If Kokoro still crashes twice in a row, the app switches to the Apple voice by itself and says so here.</p>`;
     p.body.innerHTML = `
       <div class="sec">Voice</div>
       <div class="card">${voiceRows(info, info.defaultVoice)}</div>

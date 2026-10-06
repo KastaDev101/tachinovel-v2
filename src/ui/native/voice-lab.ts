@@ -1,7 +1,8 @@
 /**
  * Voice Lab — hidden (Settings › About › tap the version 5 times). Live numbers from the on-device voice
- * for tonight's phone test: time to first audio, per-sentence real-time factor, model load (cold/warm),
- * compute units, memory, thermal state, fallbacks to the Apple voice and crashes. "Copy report" puts it
+ * for tonight's phone test: whether the crash safety fallback tripped, where Core ML runs each Kokoro stage
+ * (Neural Engine / CPU / GPU, from its compute plan), time to first audio, per-sentence real-time factor,
+ * model load (cold/warm), memory, thermal state and fallbacks to the Apple voice. "Copy report" puts it
  * all on the clipboard as JSON.
  */
 import type { SourceBlock } from '@v1tts/frontend.ts';
@@ -87,7 +88,19 @@ export function openVoiceLab(): void {
     const stages = obj(k.stages);
     const fallbacks = obj(ses.fallbacks);
     const lastFirst = first[first.length - 1];
+    const placement = Array.isArray(lab.placement) ? (lab.placement as Obj[]) : [];
+    const tripped = crashes.disabled === true;
+    const crashCount = typeof crashes.total === 'number' ? crashes.total : 0;
     body.innerHTML = `
+      <h2>Safety fallback</h2>
+      <div class="kv">
+        <span>Status</span><span class="big">${tripped ? 'TRIPPED: Kokoro off' : crashCount > 0 ? `armed (${crashCount} crash${crashCount === 1 ? '' : 'es'})` : 'not tripped'}</span>
+        <span>Crashes in Core ML</span><span>${fmt(crashes.total)} total, ${fmt(crashes.consecutive)} in a row${crashes.lastAt ? ` · last ${esc(str(crashes.lastAt))}` : ''}</span>
+        <span>Last crash during</span><span>${esc(str(crashes.lastContext, '–'))}</span>
+      </div>
+      <h2>Where each stage runs (Core ML plan)</h2>
+      <div class="kv">${placement.length > 0 ? placement.map((p) => `<span>${esc(str(p.stage))}</span><span>${p.error ? esc(str(p.error)) : `${esc(str(p.configured))} → ANE ${fmt(p.ane)} · CPU ${fmt(p.cpu)} · GPU ${fmt(p.gpu)} ops`}</span>`).join('') : '<span>–</span><span>Tap “Check placement”</span>'}</div>
+      <div class="acts"><button type="button" data-act="placement">Check placement</button></div>
       <h2>Now</h2>
       <div class="kv">
         <span>Time to first audio</span><span class="big">${lastFirst ? `${fmt(lastFirst.ms)} ms` : '–'}</span>
@@ -166,6 +179,12 @@ export function openVoiceLab(): void {
       case 'reset':
         void Narration.setVoiceLab({ resetStats: true }).then(refresh);
         return;
+      case 'placement':
+        el.textContent = 'Checking…';
+        void Narration.voicePlacement()
+          .then(refresh)
+          .catch(() => (el.textContent = 'Check failed'));
+        return;
       case 'stop':
         void Narration.stop();
         return;
@@ -193,5 +212,8 @@ export function openVoiceLab(): void {
   });
   render();
   void refresh();
+  void Narration.voicePlacement()
+    .then(refresh)
+    .catch(() => undefined);
   poll = window.setInterval(() => void refresh(), 1000);
 }

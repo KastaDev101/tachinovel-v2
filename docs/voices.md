@@ -128,13 +128,48 @@ There is no espeak-ng (GPL) in the Kokoro path. One caveat for a store build: Fl
 LuxTTS lexicon that was harvested from espeak-ng output. TachiNovel doesn't use it; strip it or get
 upstream to make it optional before a commercial release.
 
+## The iOS 26 Core ML crash (FluidAudio #844): what we know and what this build does
+
+**The reports.** On iOS 26.4–26.6 (#587, #817, #844) and iOS 27 (#889), Kokoro synthesis sometimes kills
+the app with `EXC_BAD_ACCESS` in Apple's `libBNNS` (`BNNSGraphContextExecute_v2` →
+`E5RT::Ops::BnnsCpuInferenceOperation::ExecuteSync`, queue `com.apple.e5rt.concurrentExecutionQueue`).
+It happens with any compute placement, `.cpuOnly` included (#587), because Core ML runs the ops the Neural
+Engine can't take through BNNS on the CPU whatever you ask for. Some inputs crash and others don't (#587:
+"specific input words"). The more sentences a session synthesizes, the more likely it is (#844). It is
+not memory (SIGSEGV, not jetsam) and not a corrupt model.
+
+**The trigger, as far as it is known.** A BNNS CPU kernel reads a few bytes past the end of the Vocoder's
+fp16 input `x_source_0` (`[1, 256, 20·T]`, 10,240·T bytes). Whenever that size is a whole number of
+16 KB pages (T a multiple of 8), the overread can land on an unmapped page and fault, depending on what
+happens to be mapped next to it. That explains "some sentences", "more sentences, more crashes" and
+"time/environment-gated". FluidAudio found it on macOS 27 and fixed it in **0.17.0** (PR #950, 2026-09-23):
+every chain input is now allocated with a zeroed 16 KB tail, so the overread reads zeros instead of
+faulting. Upstream calls the iOS reports "probably the same class, not verified on iOS". There is no
+report from an iPhone running ≥ 0.17.0 yet, either way.
+
+**What this build does:**
+
+| Measure | Why |
+|---|---|
+| FluidAudio **0.17.5** (includes the 0.17.0 padding fix) | The only fix that addresses the root cause. No routing avoids BNNS |
+| GPU-free placement (Neural Engine + CPU) | Keeps the RNN stages off the GPU (the GPU RNN JIT abort, #667), and works on the lock screen, where iOS forbids GPU work. iOS 26's FluidAudio default (`aneTailGpu`) crashed the same way in #844 anyway |
+| Warm-up only **loads** the model (Neural Engine compile), it never synthesizes | A Core ML crash can't happen right after launch, only while you listen |
+| Crash sentinel (a file written before each synthesis, checked at launch) | Two crashes in a row → Kokoro off, Apple voice, a "Turn it back on" button in Settings › Voices |
+| Voice Lab: "Safety fallback" (tripped or not, crash count, what was being synthesized) and "Where each stage runs" (Core ML's per-operation plan: Neural Engine / CPU / GPU ops per stage) | So tonight's test tells us whether it held, and how much of each stage runs on the CPU (where BNNS lives) |
+
+Not available, considered and rejected: forcing a stage onto the Neural Engine only (Core ML still sends
+unsupported ops to BNNS); `.cpuAndGPU` (no GPU in the background, and it doesn't remove BNNS); an older
+FluidAudio (no fix); bypassing Core ML for the Tail with Accelerate (an unmerged experiment in #889); ONNX
+Runtime on the CPU, which read a whole book without a crash in #889. That last one is the fallback plan if
+the phone still crashes with 0.17.5 (docs/tts-v2.md D6).
+
+A separate class, #979: on an A12 iPhone with iOS 18.7, BNNS overflowed Core ML's 512 KB worker stack in
+the Noise stage on the CPU route. There are no reports on newer chips or iOS 26, and the app can't change
+that thread's stack. The sentinel covers it too.
+
 ## Known risks (watch these on the phone)
 
-1. **Core ML crash on iOS 26.4+** (FluidAudio #817/#844/#889): Apple's BNNS runtime can SIGSEGV inside the
-   Kokoro stages, intermittently and on any compute placement. It is reported on iOS 26.6 (A19 Pro), and
-   it is more likely the more sentences a session synthesizes. Your phone runs iOS 26.6.1. Containment:
-   crash sentinel → Kokoro off after 2 crashes in a row (Voice Lab shows crashes). If it happens, note
-   the time and the Voice Lab "crashes" line.
+1. **The Core ML crash above.** If it happens, note the time and the Voice Lab "Safety fallback" lines.
 2. **First compile:** the first load after install/update compiles the model for the Neural Engine (tens
    of seconds). The app warms it up in the background ~6 s after launch.
 3. **Memory:** about 300–900 MB while loaded (FluidAudio's Mac peak 881 MB). It is released when idle or on

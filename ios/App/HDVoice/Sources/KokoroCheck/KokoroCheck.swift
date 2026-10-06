@@ -92,6 +92,8 @@ struct KokoroCheck {
         let loadMs = Date().timeIntervalSince(t0) * 1000
         let memLoaded = footprintMB()
         print(String(format: "load: %.0f ms (route %@), memory %.0f → %.0f MB", loadMs, route.rawValue, memBefore, memLoaded))
+        let placement = await KokoroPlacement.analyze(modelsDirectory: models, route: route)
+        for p in placement { print("placement: \(p.summary)") }
 
         var firstAudioMs: Double?
         for voice in VoiceCatalog.ids {
@@ -154,6 +156,7 @@ struct KokoroCheck {
             "memoryMB": ["before": memBefore, "loaded": memLoaded, "released": memReleased],
             "rows": rows, "problems": problems, "warnings": warnings,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
+            "placement": placement.map { $0.summary },
         ]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: out.appendingPathComponent("report.json"))

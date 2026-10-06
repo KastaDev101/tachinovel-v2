@@ -45,6 +45,14 @@ running() {
   grep -qF "$BUNDLE" <<<"$list"
 }
 
+# Warm-up launch: on a freshly booted simulator the first WebView + core start can take longer than the
+# UI's 30 s bridge timeout ("The source took too long to respond"). The smoke test absorbs that with its
+# first screenshot; here a plain launch does it, then the real one runs the self-test.
+xcrun simctl launch "$UDID" "$BUNDLE" > /dev/null
+sleep 60
+xcrun simctl terminate "$UDID" "$BUNDLE" || true
+sleep 3
+
 DATA=$(xcrun simctl get_app_container "$UDID" "$BUNDLE" data)
 REPORT="$DATA/Documents/voice-selftest.json"
 rm -f "$REPORT"

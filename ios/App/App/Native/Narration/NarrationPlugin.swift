@@ -6,6 +6,7 @@ import AVFoundation
 import Capacitor
 import Foundation
 import HDVoiceCore
+import HDVoiceKokoro
 
 @objc(NarrationPlugin)
 public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -35,6 +36,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "voiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voicePlacement", returnType: CAPPluginReturnPromise),
     ]
 
     private var n: NarrationController { NarrationController.shared }
@@ -357,6 +359,18 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
             _ = inject
             #endif
             call.resolve(VoiceLab.snapshot())
+        }
+    }
+
+    /// Voice Lab: where Core ML runs each Kokoro stage on this device (MLComputePlan, no synthesis).
+    @objc func voicePlacement(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            KokoroService.shared.analyzePlacement { result in
+                call.resolve(["stages": result.map { p in
+                    ["stage": p.stage, "configured": p.configured, "ane": p.neuralEngine, "cpu": p.cpu, "gpu": p.gpu,
+                     "error": p.error ?? NSNull(), "summary": p.summary] as [String: Any]
+                }])
+            }
         }
     }
 
