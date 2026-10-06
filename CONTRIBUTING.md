@@ -46,6 +46,8 @@ repos get them free, but they are slow and they queue:
   `tests/helpers/native-mock.ts` change together, in one PR.
 - **New Swift files:** run `node tools/ios-project.ts` to register them in the Xcode project.
 - **Imports** use explicit `.ts` extensions; TypeScript is strict; no `any` without a comment saying why.
+- **GitHub Actions** are pinned to full commit SHAs with the version in a comment
+  (`uses: actions/checkout@<sha> # v7.0.1`); Dependabot updates both, and a test rejects unpinned ones.
 - **Line endings** are LF (`.gitattributes`, `.editorconfig`). Don't run formatters over whole files.
 - **Tests** for logic that can be tested on a PC (Vitest); UI flows in the PC shell test.
 - **Third-party code or assets:** add them to `THIRD_PARTY_NOTICES.md` with their license before they
