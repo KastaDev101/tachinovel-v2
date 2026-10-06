@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import HDVoiceCore
 import UIKit
 import UniformTypeIdentifiers
 
@@ -261,62 +262,4 @@ final class AudioLibrary: NSObject, UIDocumentPickerDelegate {
     }
 }
 
-/// Decoded narration timestamp manifest (v1 experiments/tts/manifest.ts, schema 1).
-struct NarrationTiming {
-    struct Segment {
-        let id: Int
-        let block: Int
-        let start: Int
-        let end: Int
-        let t0: Double // seconds, chapter time
-        let t1: Double
-    }
-
-    let segments: [Segment]
-    /// Chapter start inside the audio file (bundles), seconds.
-    let offset: Double
-    let duration: Double
-    let nextChapterPath: String?
-    let nextTitle: String?
-
-    init?(json: String) {
-        guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
-              obj["kind"] as? String == "tachinovel.narration" else { return nil }
-        let audio = obj["audio"] as? [String: Any] ?? [:]
-        offset = ((audio["offsetMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
-        duration = ((audio["durationMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
-        let chapter = obj["chapter"] as? [String: Any] ?? [:]
-        let next = chapter["next"] as? [String: Any]
-        nextChapterPath = next?["chapterPath"] as? String
-        nextTitle = next?["title"] as? String
-        var segs: [Segment] = []
-        for raw in obj["segments"] as? [[Any]] ?? [] {
-            let n = raw.compactMap { ($0 as? NSNumber)?.doubleValue }
-            guard n.count >= 6 else { continue }
-            segs.append(Segment(id: Int(n[0]), block: Int(n[1]), start: Int(n[2]), end: Int(n[3]), t0: n[4] / 1000, t1: n[5] / 1000))
-        }
-        segments = segs.sorted { $0.t0 < $1.t0 }
-    }
-
-    /// Segment playing at chapter time `t` (the last one starting at or before it), or nil before the first.
-    func segmentIndex(at t: Double) -> Int? {
-        var lo = 0
-        var hi = segments.count - 1
-        var ans: Int?
-        while lo <= hi {
-            let mid = (lo + hi) / 2
-            if segments[mid].t0 <= t {
-                ans = mid
-                lo = mid + 1
-            } else {
-                hi = mid - 1
-            }
-        }
-        return ans
-    }
-
-    /// Chapter time of the first segment in `block` or after it ("listen from this paragraph").
-    func time(forBlock block: Int) -> Double? {
-        segments.first { $0.block >= block }?.t0
-    }
-}
+// NarrationTiming (the timestamp manifest) lives in HDVoiceCore (NarrationManifest.swift).

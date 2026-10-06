@@ -3,7 +3,9 @@
 //
 //  Requires the com.apple.developer.carplay-audio entitlement, which Apple grants on request
 //  (https://developer.apple.com/carplay/). Without it this scene never connects; narration still plays
-//  through the car and shows in CarPlay's own Now Playing screen via MPNowPlayingInfoCenter.
+//  through the car and shows in CarPlay's own Now Playing screen via MPNowPlayingInfoCenter (CarAudio.swift).
+//  Switched off until then by the TNCarPlayTemplates flag (build setting TN_CARPLAY_TEMPLATES = YES turns it
+//  on, together with the entitlement; docs/car.md).
 //
 //  Root: "Continue listening" (recent history from the core). Tapping a novel narrates from where you
 //  left off: the core's `narration.resumePoint` returns the last chapter and its saved paragraph (written
@@ -15,6 +17,16 @@
 
 import CarPlay
 import UIKit
+
+/// Whether the CarPlay templates app is offered (Info.plist TNCarPlayTemplates ← $(TN_CARPLAY_TEMPLATES)).
+enum CarPlayFeature {
+    static var templatesEnabled: Bool {
+        let raw = Bundle.main.object(forInfoDictionaryKey: "TNCarPlayTemplates")
+        if let b = raw as? Bool { return b }
+        guard let s = raw as? String else { return false }
+        return ["yes", "true", "1"].contains(s.lowercased())
+    }
+}
 
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPInterfaceControllerDelegate {
     private var interfaceController: CPInterfaceController?

@@ -41,6 +41,8 @@
 		7DCD373B6C91F75EC29B4532 /* KokoroModels in Resources */ = {isa = PBXBuildFile; fileRef = D7F3C92A13EB7D44431F05E9 /* KokoroModels */; };
 		B39966270AA09334B4F8E5D4 /* HDVoiceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */; };
 		766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */; };
+		97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D19C36D763DD38A51A524D7 /* CarAudio.swift */; };
+		047E190744D786077B79A114 /* DrivePrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +92,8 @@
 		CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceLab.swift"; sourceTree = "<group>"; };
 		92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSettings.swift"; sourceTree = "<group>"; };
 		D7F3C92A13EB7D44431F05E9 /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };
+		3D19C36D763DD38A51A524D7 /* CarAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/CarAudio.swift"; sourceTree = "<group>"; };
+		6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/DrivePrep.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -175,6 +179,8 @@
 				CAEB9E91E7C6E2B3C059CA77 /* KokoroService.swift */,
 				CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */,
 				92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */,
+				3D19C36D763DD38A51A524D7 /* CarAudio.swift */,
+				6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -325,6 +331,8 @@
 				D52860A1F0B50DD6E08A1492 /* KokoroService.swift in Sources */,
 				35FE6311BE4C8C43152A2014 /* VoiceLab.swift in Sources */,
 				7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */,
+				97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */,
+				047E190744D786077B79A114 /* DrivePrep.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

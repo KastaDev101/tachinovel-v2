@@ -31,6 +31,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     var kokoroVoice = VoiceCatalog.defaultVoiceId
     /// A system voice the user picked explicitly (Narration.setOptions voiceId), else automatic.
     var explicitAppleVoice: String?
+    /// The next chapter's first sentences: once this chapter is fully rendered, Kokoro renders these into
+    /// its warm cache, so the chapter change starts with Kokoro at once (NarrationController sets them).
+    var lookahead: [SpeechSegment] = []
+    private var prewarming = false
 
     private(set) var currentSource: VoiceSource?
     private(set) var lastFallback: FallbackReason?
@@ -86,6 +90,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func enqueue(_ segs: [SpeechSegment]) {
         stop()
         gen += 1
+        lookahead = []
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -193,12 +198,23 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     // MARK: - Kokoro
 
     private func pumpRender() {
-        guard !paused, let i = scheduler?.nextRender() else { return }
+        guard !paused else { return }
+        guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let seg = segments[i]
         let g = gen
         let voice = kokoroVoice
         KokoroService.shared.synthesize(text: seg.kokoroText, runs: seg.runs, voice: voice, speed: seg.rate) { [weak self] result in
             self?.rendered(i, gen: g, voice: voice, result: result)
+        }
+    }
+
+    private func prewarmLookahead() {
+        guard !prewarming, !lookahead.isEmpty, let s = scheduler, s.allRendered, !s.throttled, kokoroState() == .ready else { return }
+        let seg = lookahead.removeFirst()
+        prewarming = true
+        KokoroService.shared.prewarm(text: seg.kokoroText, runs: seg.runs, voice: kokoroVoice, speed: seg.rate) { [weak self] in
+            self?.prewarming = false
+            self?.prewarmLookahead()
         }
     }
 
