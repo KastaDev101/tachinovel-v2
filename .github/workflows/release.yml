@@ -9,12 +9,23 @@
 #  publish  ubuntu: build provenance attestation for the IPA, then `gh release create` (pre-release when
 #           the version has a suffix such as -alpha.1). The only job with write access.
 #
+# Dry run (manual run with a version): the same jobs on main with `release.ts prepare <version>` applied on
+# the runner only; publish makes a draft release instead (no tag, no attestation), checks it, deletes it.
+#
 # The ios workflow also runs on the same tag (web checks, simulator smoke, TestFlight once secrets exist).
 name: release
 
 on:
   push:
     tags: ['v*']
+  # Rehearsal (docs/release.md "Dry run"): prepares <version> on the runner only, builds the IPA, then
+  # creates a DRAFT release (visible to maintainers only, no tag, no attestation), checks it and deletes it.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to rehearse, e.g. 2.0.0-alpha.2 (nothing is committed, tagged or published)'
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -41,15 +52,23 @@ jobs:
         with:
           node-version: 24
       - name: Tagged commit is on main
+        if: github.event_name == 'push'
         run: |
           git fetch --quiet origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; tag a commit that has been merged."
             exit 1
           fi
+      - name: 'Dry run: prepare the release on the runner (not committed)'
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/release.ts prepare "$VERSION"
       - name: Tag, version and changelog agree
         id: check
-        run: node tools/release.ts verify-tag "$GITHUB_REF_NAME" --notes=release-notes.md
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+        run: node tools/release.ts verify-tag "$TAG" --notes=release-notes.md
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-notes
@@ -66,6 +85,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Before npm ci (needs only node): package.json and the lockfile change together, so npm ci agrees.
+      - name: 'Dry run: prepare the release on the runner (not committed)'
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/release.ts prepare "$VERSION"
       - run: npm ci
       - name: Cache the Kokoro model download
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -115,13 +140,15 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Build provenance
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*.ipa
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}-dryrun-{1}', inputs.version, github.run_id) || github.ref_name }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
           VERSION: ${{ needs.verify.outputs.version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         run: |
@@ -137,6 +164,30 @@ jobs:
             echo "**Verify:** compare the SHA-256 with \`SHA256SUMS.txt\`, or run"
             echo "\`gh attestation verify TachiNovel-${VERSION}-unsigned.ipa --repo ${GITHUB_REPOSITORY}\`."
           } > notes.md
-          flags=(--verify-tag --title "TachiNovel ${VERSION}" --notes-file notes.md)
+          flags=(--notes-file notes.md)
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
-          gh release create "$TAG" dist/*.ipa dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          if [ "$DRY_RUN" != true ]; then
+            gh release create "$TAG" dist/*.ipa dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "TachiNovel ${VERSION}" "${flags[@]}"
+            exit 0
+          fi
+          # Dry run: a draft on this commit. Drafts create no tag and only maintainers can see them; it is
+          # deleted again even if a check below fails.
+          trap 'gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true' EXIT
+          gh release create "$TAG" dist/*.ipa dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --draft \
+            --target "$GITHUB_SHA" --title "DRY RUN: TachiNovel ${VERSION}" "${flags[@]}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,isPrerelease,assets \
+            --jq '"\(.name) draft=\(.isDraft) prerelease=\(.isPrerelease)", (.assets[] | "  \(.name) \(.size) bytes")' | tee dry-run.txt
+          grep -q 'unsigned\.ipa ' dry-run.txt && grep -q 'SHA256SUMS\.txt ' dry-run.txt
+          if [ "$PRERELEASE" = true ]; then grep -q 'prerelease=true' dry-run.txt; fi
+          {
+            echo "### Release dry run: v${VERSION}"
+            echo
+            echo 'A real tag would publish this release (draft created, checked and deleted; no tag pushed).'
+            echo
+            echo '```'
+            cat dry-run.txt
+            echo '```'
+            echo
+            cat notes.md
+          } >> "$GITHUB_STEP_SUMMARY"

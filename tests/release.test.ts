@@ -1,5 +1,7 @@
 /** Versioning and release notes (tools/release.ts, docs/release.md). */
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkFragments, mergeFragments, parseFragment, readFragments } from '../tools/changelog.ts';
@@ -122,5 +124,47 @@ describe('changelog fragments', () => {
 
   it('every fragment in changelog.d/ is well formed', () => {
     expect(() => readFragments(root)).not.toThrow();
+  });
+});
+
+describe('release rehearsal (the CLI steps release.yml runs, on a copy of this tree)', () => {
+  it('prepare then verify-tag yields the version outputs and the assembled notes', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'tachi-release-'));
+    try {
+      for (const f of ['package.json', 'package-lock.json', 'CHANGELOG.md', 'tools/release.ts', 'tools/changelog.ts', 'ios/App/App.xcodeproj/project.pbxproj']) {
+        mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true });
+        cpSync(path.join(root, f), path.join(tmp, f));
+      }
+      cpSync(path.join(root, 'changelog.d'), path.join(tmp, 'changelog.d'), { recursive: true });
+      // Right after a release Unreleased is empty; one extra fragment keeps the rehearsal meaningful.
+      writeFileSync(path.join(tmp, 'changelog.d', 'zz-rehearsal.md'), '### Fixed\n\n- Rehearsal entry.\n');
+      const pending = readFragments(tmp).length;
+      const run = (...args: string[]) => {
+        const r = spawnSync(process.execPath, [path.join(tmp, 'tools', 'release.ts'), ...args], {
+          encoding: 'utf8',
+          env: { ...process.env, GITHUB_OUTPUT: path.join(tmp, 'out.txt') },
+        });
+        expect(r.status, `${args.join(' ')}: ${r.stderr}`).toBe(0);
+        return r.stdout;
+      };
+
+      expect(run('prepare', '99.1.0-rc.1')).toContain(`${pending} fragment(s) merged and removed`);
+      expect(readdirSync(path.join(tmp, 'changelog.d')).filter((n) => n !== 'README.md')).toEqual([]);
+      run('verify-tag', 'v99.1.0-rc.1', `--notes=${path.join(tmp, 'notes.md')}`);
+      expect(readFileSync(path.join(tmp, 'out.txt'), 'utf8')).toBe('version=99.1.0-rc.1\nmarketing=99.1.0\nprerelease=true\n');
+      const notes = readFileSync(path.join(tmp, 'notes.md'), 'utf8');
+      expect(notes).toContain('### Fixed');
+      expect(notes).toContain('- Rehearsal entry.');
+      expect(changelogSection(readFileSync(path.join(tmp, 'CHANGELOG.md'), 'utf8'), 'Unreleased')).toBe('');
+      expect(projectMarketingVersions(readFileSync(path.join(tmp, 'ios/App/App.xcodeproj/project.pbxproj'), 'utf8'))).toEqual(['99.1.0', '99.1.0']);
+      expect(packageVersion(tmp)).toBe('99.1.0-rc.1');
+
+      // A tag that does not match the prepared version is refused.
+      const wrong = spawnSync(process.execPath, [path.join(tmp, 'tools', 'release.ts'), 'verify-tag', 'v99.1.0'], { encoding: 'utf8' });
+      expect(wrong.status).toBe(1);
+      expect(wrong.stderr).toMatch(/does not match/);
+    } finally {
+      if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
