@@ -375,11 +375,14 @@ describe('narration overlay over v1 screens (PC shell)', () => {
   it('sits above the reader bottom bar and gives the chapter room at its end', async () => {
     await expect.poll(() => playerVs('.reader.bars-visible .rd-bottom'), { timeout: 3000 }).toMatchObject({ gap: 8 });
     expect(await shell.page.evaluate(() => document.documentElement.classList.contains('tn-player-on'))).toBe(true);
+    // The room is the player's height + 12 px (the player grows with the text size).
     const room = await shell.page.evaluate(() => {
       const c = document.querySelector('.reader-content');
-      return c ? getComputedStyle(c, '::after').height : '';
+      const p = document.querySelector<HTMLElement>('.tn-player');
+      return c && p ? { room: getComputedStyle(c, '::after').height, player: p.offsetHeight } : null;
     });
-    expect(room).toBe('72px');
+    expect(room?.player).toBeGreaterThan(40);
+    expect(room?.room).toBe(`${(room?.player ?? 0) + 12}px`);
   });
 
   it("doesn't cover the novel page's Resume button", async () => {
