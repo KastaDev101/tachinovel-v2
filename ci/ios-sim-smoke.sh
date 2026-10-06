@@ -42,35 +42,44 @@ xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --ba
 xcrun simctl install "$UDID" "$APP"
 
 running() {
-  xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE"
+  # The simulator's launchd lists the app as UIKitApplication:<bundle>[…]; any match counts.
+  xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qF "$BUNDLE"
+}
+
+collect_crashes() {
+  # Simulator app crash reports land in the HOST's DiagnosticReports.
+  find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 \( -name "App-*.ips" -o -name "App_*.ips" -o -name "App-*.crash" \) -newer "$APP/Info.plist"     -exec cp {} "$OUT/" \; 2>/dev/null || true
 }
 
 shot() {
-  local name="$1"
-  shift
+  local name="$1" wait="$2"
+  shift 2
   echo "--- $name $*"
   xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE" "$@"
-  sleep "$WAIT"
+  sleep "$wait"
   xcrun simctl io "$UDID" screenshot "$OUT/$name.png"
   if ! running; then
     echo "::error::App is not running after '$name' (crashed?)"
+    collect_crashes
     return 1
   fi
 }
 
 status=0
-shot 1-first-launch || status=1                       # fresh install: v1 onboarding over the library
-shot 2-library -tachiSmokeTab library || status=1
-shot 3-browse -tachiSmokeTab browse || status=1
-shot 4-updates -tachiSmokeTab updates || status=1
-shot 5-history -tachiSmokeTab history || status=1
-shot 6-more -tachiSmokeTab more || status=1
-# Personal flavor only (built-in source): a live source list over the network. Informational.
+# Fresh install: the first WebView launch on a just-booted simulator is slow.
+shot 1-first-launch $((WAIT + 18)) || status=1        # v1 onboarding over the library
+shot 2-library "$WAIT" -tachiSmokeTab library || status=1
+shot 3-browse "$WAIT" -tachiSmokeTab browse || status=1
+shot 4-updates "$WAIT" -tachiSmokeTab updates || status=1
+shot 5-history "$WAIT" -tachiSmokeTab history || status=1
+shot 6-more "$WAIT" -tachiSmokeTab more || status=1
+# Personal flavor only (built-in source): a live source list over the network.
 if [ "${SMOKE_SOURCE:-}" != "" ]; then
-  SMOKE_WAIT_SAVED="$WAIT"; WAIT=$((WAIT + 8))
-  shot 7-source-"$SMOKE_SOURCE" -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
-  WAIT="$SMOKE_WAIT_SAVED"
+  shot 7-source-"$SMOKE_SOURCE" $((WAIT + 8)) -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
 fi
+# Stability: the app must still be alive a while after the last launch (launch tasks run ~5 s in).
+sleep 10
+if ! running; then echo "::error::App exited after the tour"; collect_crashes; status=1; fi
 
 # App + core logs (os_log subsystem app.tachinovel) for debugging failures.
 xcrun simctl spawn "$UDID" log show --last 10m --style compact \

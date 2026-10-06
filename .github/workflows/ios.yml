@@ -115,6 +115,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build/xcodebuild.log
       - name: Simulator smoke test (launch + screenshots)
+        # The first simulator boot on a fresh runner migrates data for ~7 min.
+        timeout-minutes: 16
         run: bash ci/ios-sim-smoke.sh build/DerivedData/Build/Products/Debug-iphonesimulator/App.app build/screenshots
         env:
           # Personal flavor ships the Stonescape source: also screenshot a live source list.
