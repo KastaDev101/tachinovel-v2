@@ -20,6 +20,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "voices", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestPersonalVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "state", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "playNovel", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickAudioFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "unlinkAudioFolder", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioLibrary", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioTiming", returnType: CAPPluginReturnPromise),
     ]
 
     private var n: NarrationController { NarrationController.shared }
@@ -44,9 +51,14 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
         let raw = call.getArray("paragraphs")
+        let preferAudio = call.getString("engine") != "speech"
+        // PC-narrated audio for this chapter wins over the system voice (unless the caller asks for speech).
+        let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
-            if let raw {
+            if let audioChapter {
+                self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
+            } else if let raw {
                 let paragraphs: [NarrationController.Paragraph] = raw.compactMap { v in
                     guard let o = v as? JSObject else { return nil }
                     let text = (o["text"] as? String) ?? ""
@@ -123,6 +135,88 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func state(_ call: CAPPluginCall) {
         DispatchQueue.main.async { call.resolve(self.n.stateDict()) }
+    }
+
+    /// Audio mode: jump to a chapter time (seconds).
+    @objc func seek(_ call: CAPPluginCall) {
+        let seconds = call.getDouble("seconds") ?? 0
+        onMain(call) { $0.seekAudio(toChapterTime: seconds) }
+    }
+
+    /// Continue a novel where reading/listening stopped: narrated audio first, else the system voice.
+    @objc func playNovel(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath") else {
+            return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
+        }
+        let name = call.getString("novelName") ?? ""
+        let cover = call.getString("coverUrl")
+        onMain(call) { $0.playNovel(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover) }
+    }
+
+    // MARK: PC-narrated audio folder
+
+    @objc func audioFolder(_ call: CAPPluginCall) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let name = AudioLibrary.shared.folderName
+            call.resolve(["linked": name != nil, "name": name ?? NSNull()])
+        }
+    }
+
+    @objc func pickAudioFolder(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            AudioLibrary.shared.pickFolder { result in
+                switch result {
+                case .success(let name): call.resolve(["linked": true, "name": name])
+                case .failure(let error):
+                    if case AudioLibrary.AudioError.cancelled = error { call.resolve(["linked": AudioLibrary.shared.folderName != nil, "cancelled": true]) } else {
+                        call.reject(error.localizedDescription, "AUDIO_FOLDER")
+                    }
+                }
+            }
+        }
+    }
+
+    @objc func unlinkAudioFolder(_ call: CAPPluginCall) {
+        AudioLibrary.shared.unlink()
+        call.resolve(["linked": false])
+    }
+
+    /// Novels with narrated chapters in the linked folder.
+    @objc func audioLibrary(_ call: CAPPluginCall) {
+        let refresh = call.getBool("refresh", false)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let novels = try AudioLibrary.shared.scan(refresh: refresh)
+                let out: [[String: Any]] = novels.map { nv in
+                    [
+                        "key": nv.key, "pluginId": nv.pluginId, "novelPath": nv.novelPath, "name": nv.name,
+                        "chapters": nv.chapters.map { c in
+                            ["chapterPath": c.chapterPath, "title": c.title, "number": c.number.isFinite && c.number < 1e12 ? c.number : NSNull(),
+                             "hasTiming": c.timingURL != nil] as [String: Any]
+                        },
+                        "saved": NarrationController.savedPosition(novelKey: nv.key).map { ["chapterPath": $0.chapterPath, "seconds": $0.seconds] as [String: Any] } ?? NSNull(),
+                    ]
+                }
+                call.resolve(["linked": true, "novels": out])
+            } catch AudioLibrary.AudioError.notLinked {
+                call.resolve(["linked": false, "novels": [] as [Any]])
+            } catch {
+                call.reject(error.localizedDescription, "AUDIO_FOLDER")
+            }
+        }
+    }
+
+    /// The sentence-timestamp manifest (JSON text) of a narrated chapter, for highlighting in the reader.
+    @objc func audioTiming(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath"),
+              let chapterPath = call.getString("chapterPath") else {
+            return call.reject("pluginId, novelPath and chapterPath are required", "INVALID_ARGS")
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ac = AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath)
+            let json = ac.flatMap { AudioLibrary.shared.timingJSON($0) }
+            call.resolve(["hasAudio": ac != nil, "json": json ?? NSNull()])
+        }
     }
 
     private func onMain(_ call: CAPPluginCall, _ fn: @escaping (NarrationController) -> Void) {

@@ -7,6 +7,8 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
+import { buildScript, htmlToBlocks } from '@v1tts/frontend.ts';
+import { encodeSegments } from '@v1tts/manifest.ts';
 import type { Route } from '../helpers/native-mock.ts';
 import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
 
@@ -96,6 +98,42 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const paragraphs = play?.options.paragraphs as { index: number; text: string }[];
     expect(paragraphs.length).toBeGreaterThanOrEqual(4);
     expect(paragraphs.some((p) => p.text.includes('Nobody answered'))).toBe(true);
+  });
+
+  it('highlights the spoken SENTENCE from narrated-audio timestamps (re-aligned onto the reader DOM)', async () => {
+    // What tachinovel-narrator would write next to the .m4a: segments over the chapter's canonical blocks.
+    const ch = await shell.core.call<{ html: string; title: string }>('chapter.get', { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1' });
+    const script = buildScript(htmlToBlocks(ch.html), { title: ch.title });
+    const manifest = {
+      schemaVersion: 1,
+      kind: 'tachinovel.narration',
+      createdAt: '2026-10-06T00:00:00Z',
+      engine: { name: 'test', runtime: 'test', voice: 'af_heart', speed: 1, frontendVersion: script.frontendVersion },
+      chapter: { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', title: ch.title },
+      audio: { file: '0001 - Chapter 1.m4a', durationMs: script.segments.length * 1000, codec: 'aac', sampleRate: 24000, bytes: 1 },
+      textHash: script.textHash,
+      blockCount: script.blocks.length,
+      segments: encodeSegments(
+        script,
+        script.segments.map((s) => [s.id * 1000, s.id * 1000 + 900] as const),
+      ),
+    };
+    shell.pluginReplies.set('Narration.audioTiming', () => ({ hasAudio: true, json: JSON.stringify(manifest) }));
+    const target = script.segments.find((s) => /Nobody answered/.test(htmlToBlocks(ch.html)[s.block]?.text.slice(s.start, s.end) ?? ''));
+    expect(target).toBeDefined();
+    shell.emitPluginEvent('Narration', 'progress', { chapterPath: 'novel/alpha/1', engine: 'audio', segment: target?.id, paragraph: target?.block, t: 1 });
+    await expect
+      .poll(
+        () =>
+          shell.page.evaluate(() => {
+            const h = (CSS as unknown as { highlights?: Map<string, Iterable<Range>> }).highlights?.get('tn-spoken');
+            return h ? [...h].map((r) => r.toString()).join('|') : (document.querySelector('.tn-speaking')?.textContent ?? '');
+          }),
+        { timeout: 5000 },
+      )
+      .toMatch(/Nobody answered/);
+    console.log('alignment', await shell.page.evaluate(() => document.documentElement.dataset.tnAlign));
+    await shell.page.screenshot({ path: path.join(shots, '5-sentence-highlight.png') });
   });
 
   it('saved reading progress through the core', async () => {

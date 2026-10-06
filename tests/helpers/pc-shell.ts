@@ -26,7 +26,13 @@ type Rtype = 'promise' | 'callback' | null;
 const PLUGINS: Record<string, Record<string, Rtype>> = {
   Core: { call: 'promise' },
   TachiNative: { setKeepAwake: 'promise' },
-  Narration: { play: 'promise', pause: 'promise', resume: 'promise', stop: 'promise', skip: 'promise', setOptions: 'promise', voices: 'promise', requestPersonalVoice: 'promise', state: 'promise' },
+  // Keep in sync with NarrationPlugin.swift pluginMethods.
+  Narration: Object.fromEntries(
+    ['play', 'pause', 'resume', 'stop', 'skip', 'setOptions', 'voices', 'requestPersonalVoice', 'state', 'seek', 'playNovel', 'audioFolder', 'pickAudioFolder', 'unlinkAudioFolder', 'audioLibrary', 'audioTiming'].map(
+      (m) => [m, 'promise' as Rtype],
+    ),
+  ),
+  Haptics: { impact: 'promise', notification: 'promise', vibrate: 'promise', selectionStart: 'promise', selectionChanged: 'promise', selectionEnd: 'promise' },
   Store: { products: 'promise', purchase: 'promise', restore: 'promise', entitlements: 'promise', manageSubscriptions: 'promise', redeemOfferCode: 'promise' },
   SplashScreen: { show: 'promise', hide: 'promise' },
   StatusBar: { setStyle: 'promise', setBackgroundColor: 'promise', show: 'promise', hide: 'promise', getInfo: 'promise', setOverlaysWebView: 'promise' },
@@ -60,6 +66,10 @@ export interface PcShell {
   readonly pluginCalls: PluginCall[];
   readonly pageErrors: string[];
   readonly consoleErrors: string[];
+  /** Push a plugin event to the page's listeners, like CAPPlugin.notifyListeners. */
+  emitPluginEvent(plugin: string, event: string, data: Record<string, unknown>): void;
+  /** Canned answers for non-Core plugin methods (default: {}). */
+  readonly pluginReplies: Map<string, (options: Record<string, unknown>) => unknown>;
   close(): Promise<void>;
 }
 
@@ -105,6 +115,7 @@ export async function startPcShell(opts: {
   const context = await browser.newContext({ ...devices['iPhone 15 Pro'], colorScheme: 'dark' });
   page = await context.newPage();
   const pluginCalls: PluginCall[] = [];
+  const pluginReplies = new Map<string, (options: Record<string, unknown>) => unknown>();
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -126,7 +137,10 @@ export async function startPcShell(opts: {
       return;
     }
     pluginCalls.push({ pluginId: msg.pluginId, methodName: msg.methodName, options: msg.options });
+    const canned = pluginReplies.get(`${msg.pluginId}.${msg.methodName}`);
+    if (canned) return reply(true, canned(msg.options));
     if (msg.pluginId === 'Narration' && msg.methodName === 'state') return reply(true, { status: 'idle' });
+    if (msg.pluginId === 'Narration' && msg.methodName === 'audioTiming') return reply(true, { hasAudio: false, json: null });
     if (msg.pluginId === 'Store' && msg.methodName === 'entitlements') return reply(true, { pro: false, source: null });
     reply(true, {});
   });
@@ -148,6 +162,11 @@ export async function startPcShell(opts: {
     pluginCalls,
     pageErrors,
     consoleErrors,
+    pluginReplies,
+    emitPluginEvent(plugin, event, data) {
+      const id = listeners.get(`${plugin}:${event}`);
+      if (id) fromNative({ callbackId: id, pluginId: plugin, methodName: 'addListener', success: true, data, save: true });
+    },
     async close() {
       await browser.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));

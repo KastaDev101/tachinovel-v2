@@ -8,6 +8,9 @@
 //    so the reader resumes where listening stopped (v1 ChapterPosition.paragraph).
 //  - Audio session .playback + .spokenAudio (not mixable → eligible as Now Playing app); interruptions
 //    pause/resume; unplugging headphones / leaving the car pauses.
+//  - Two engines behind one queue: PC-narrated chapter AUDIO (AudioLibrary + AudioChapterPlayer, with
+//    sentence timestamps) when the chapter has a file, otherwise the system voice (AVSpeechSynthesizer).
+//    Chapter-to-chapter flow picks the engine per chapter, so a missing file falls back to speech.
 //
 
 import AVFoundation
@@ -20,6 +23,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     static let shared = NarrationController()
 
     enum Status: String { case idle, loading, playing, paused, ended, error }
+    enum Mode: String { case speech, audio }
 
     struct Paragraph {
         let index: Int
@@ -74,9 +78,21 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     /// Interruption bookkeeping (calls, Siri, other audio). See InterruptionPolicy.
     private var interruption = InterruptionPolicy()
 
+    // Audio mode (PC-narrated files)
+    private(set) var mode: Mode = .speech
+    private let audio = AudioChapterPlayer()
+    private var audioChapter: AudioChapter?
+    private var timing: NarrationTiming?
+    private var lastSegment: Int?
+    private var lastAudioSaveAt = Date.distantPast
+    private static let positionsKey = "tachinovel.audioPositions"
+
     override private init() {
         super.init()
         engine.delegate = self
+        audio.onTime = { [weak self] t in self?.audioTick(fileTime: t) }
+        audio.onEnd = { [weak self] in self?.finishChapter() }
+        audio.onFail = { [weak self] message in self?.fail(message) }
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(interrupted(_:)), name: AVAudioSession.interruptionNotification, object: nil)
         nc.addObserver(self, selector: #selector(routeChanged(_:)), name: AVAudioSession.routeChangeNotification, object: nil)
@@ -88,6 +104,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         interruption.userActed()
         generation += 1
         engine.stop()
+        stopAudio()
+        mode = .speech
         chapter = ch
         items = Self.items(for: ch.paragraphs, paragraphPause: paragraphPause, scenePause: scenePause)
         current = items.firstIndex { $0.paragraph >= startParagraph && ($0.paragraph > startParagraph || $0.sentence >= startSentence) } ?? 0
@@ -123,7 +141,12 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     private func pauseInternal() {
         guard status == .playing else { return }
-        engine.pause()
+        if mode == .audio {
+            audio.pause()
+            saveAudioPosition(force: true)
+        } else {
+            engine.pause()
+        }
         set(.paused)
         saveProgress(force: true)
     }
@@ -131,7 +154,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     private func resumeInternal() {
         guard status == .paused else { return }
         activateSession()
-        if engine.isPaused { engine.resume() } else { enqueueFromCurrent() }
+        if mode == .audio {
+            audio.resume(rate: rate)
+        } else if engine.isPaused {
+            engine.resume()
+        } else {
+            enqueueFromCurrent()
+        }
         set(.playing)
     }
 
@@ -139,7 +168,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         interruption.userActed()
         generation += 1
         engine.stop()
+        if mode == .audio { saveAudioPosition(force: true) }
         saveProgress(force: true)
+        stopAudio()
         set(.idle)
         sleepTimer?.cancel()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -148,6 +179,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     func skip(unit: String, count: Int) {
         interruption.userActed()
+        if mode == .audio { return skipAudio(unit: unit, count: count) }
         guard chapter != nil, !items.isEmpty else { return }
         var target = current
         if unit == "paragraph" {
@@ -162,9 +194,205 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     }
 
     func nextChapter() {
-        guard let ch = chapter, let next = ch.nextPath else { return finishChapter() }
+        guard let ch = chapter, let next = ch.nextPath ?? nextAudioChapter()?.chapterPath else { return endOfQueue() }
         saveProgress(force: true, finished: true)
-        playFromCore(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next, novelName: ch.novelName)
+        if mode == .audio { clearAudioPosition(novelKey: "\(ch.pluginId):\(ch.novelPath)") }
+        playChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next, novelName: ch.novelName, startParagraph: 0)
+    }
+
+    private func endOfQueue() {
+        saveProgress(force: true, finished: true)
+        set(.ended)
+    }
+
+    /// Play a chapter with the best engine: its narrated audio file if there is one, else the system voice.
+    func playChapter(pluginId: String, novelPath: String, chapterPath: String, novelName: String, startParagraph: Int) {
+        set(.loading)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ac = AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath)
+            DispatchQueue.main.async {
+                if let ac {
+                    self.playAudio(ac, startParagraph: startParagraph, startTime: nil)
+                } else {
+                    self.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
+                }
+            }
+        }
+    }
+
+    /// "Continue listening" for a novel (car player, CarPlay): where reading/listening stopped, audio first.
+    func playNovel(pluginId: String, novelPath: String, novelName: String, coverUrl: String?) {
+        let key = "\(pluginId):\(novelPath)"
+        let narration = self
+        set(.loading)
+        CoreHost.shared.request("narration.resumePoint", args: ["pluginId": pluginId, "novelPath": novelPath]) { ok, result in
+            let point = ok ? result as? [String: Any] : nil
+            DispatchQueue.global(qos: .userInitiated).async {
+                let novel = AudioLibrary.shared.novel(key)
+                let saved = Self.savedPosition(novelKey: key)
+                var chapterPath = point?["chapterPath"] as? String
+                var paragraph = (point?["paragraph"] as? NSNumber)?.intValue ?? 0
+                var audioChapter: AudioChapter?
+                var startTime: Double?
+                if let novel {
+                    // A listening position saved by the player beats the reader's paragraph for the same chapter.
+                    if let saved, chapterPath == nil || saved.chapterPath == chapterPath,
+                       let ac = novel.chapters.first(where: { $0.chapterPath == saved.chapterPath }) {
+                        audioChapter = ac
+                        startTime = saved.seconds
+                    } else if let cp = chapterPath {
+                        let number = novel.chapters.first { $0.chapterPath == cp }?.number
+                        audioChapter = AudioLibrary.shared.chapter(atOrAfter: cp, in: novel, number: number)
+                        if audioChapter?.chapterPath != cp { paragraph = 0 }
+                    } else {
+                        audioChapter = novel.chapters.first
+                    }
+                    if chapterPath == nil { chapterPath = audioChapter?.chapterPath }
+                }
+                DispatchQueue.main.async {
+                    if let audioChapter {
+                        narration.playAudio(audioChapter, startParagraph: paragraph, startTime: startTime, coverUrl: coverUrl)
+                    } else if let cp = chapterPath {
+                        narration.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: cp, novelName: novelName, startParagraph: paragraph)
+                    } else {
+                        narration.fail("Nothing to play yet: read a chapter first")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Audio mode
+
+    /// Play a narrated chapter file. `startTime` (chapter seconds) wins over `startParagraph`.
+    func playAudio(_ ac: AudioChapter, startParagraph: Int, startTime: Double?, coverUrl: String? = nil) {
+        interruption.userActed()
+        generation += 1
+        engine.stop()
+        stopAudio()
+        mode = .audio
+        audioChapter = ac
+        timing = nil
+        lastSegment = nil
+        items = []
+        current = 0
+        chapter = Chapter(pluginId: ac.pluginId, novelPath: ac.novelPath, chapterPath: ac.chapterPath, novelName: ac.novelName,
+                          chapterName: ac.title, coverUrl: coverUrl ?? chapter?.coverUrl, paragraphs: [], nextPath: nil, nextName: nil)
+        set(.loading)
+        let gen = generation
+        DispatchQueue.global(qos: .userInitiated).async {
+            var loadError: String?
+            do { try AudioLibrary.shared.ensureDownloaded(ac.audioURL) } catch { loadError = error.localizedDescription }
+            let parsed = AudioLibrary.shared.timingJSON(ac).flatMap { NarrationTiming(json: $0) }
+            DispatchQueue.main.async {
+                guard gen == self.generation else { return } // superseded
+                if let loadError { return self.fail(loadError) }
+                self.timing = parsed
+                self.chapter?.nextPath = parsed?.nextChapterPath ?? self.nextAudioChapter()?.chapterPath
+                self.chapter?.nextName = parsed?.nextTitle
+                var chapterTime = startTime ?? 0
+                if startTime == nil, startParagraph > 0, let t = parsed?.time(forBlock: startParagraph) { chapterTime = t }
+                self.activateSession()
+                self.installRemoteCommands()
+                self.loadArtwork(self.chapter?.coverUrl)
+                self.audio.load(url: ac.audioURL, at: (parsed?.offset ?? 0) + chapterTime, rate: self.rate)
+                self.set(.playing)
+            }
+        }
+    }
+
+    private func stopAudio() {
+        audio.stop()
+        if mode == .audio {
+            audioChapter = nil
+            timing = nil
+        }
+    }
+
+    private func nextAudioChapter() -> AudioChapter? {
+        guard let ac = audioChapter, let novel = AudioLibrary.shared.novel(ac.novelKey),
+              let i = novel.chapters.firstIndex(where: { $0.chapterPath == ac.chapterPath }) else { return nil }
+        return novel.chapters[safe: i + 1]
+    }
+
+    /// Chapter-relative time (bundles: minus the chapter's offset in the file).
+    private var audioChapterTime: Double { max(0, audio.currentTime - (timing?.offset ?? 0)) }
+
+    private func audioTick(fileTime: Double) {
+        guard mode == .audio, let ch = chapter else { return }
+        let t = max(0, fileTime - (timing?.offset ?? 0))
+        // Bundles (.m4b) don't end per chapter: stop at this chapter's length.
+        if let timing, timing.offset > 0, timing.duration > 0, t >= timing.duration { return finishChapter() }
+        if let timing, let i = timing.segmentIndex(at: t), i != lastSegment {
+            lastSegment = i
+            let seg = timing.segments[i]
+            onProgress?(["chapterPath": ch.chapterPath, "engine": "audio", "segment": seg.id, "paragraph": seg.block,
+                         "charStart": seg.start, "charEnd": seg.end, "t": t])
+            saveProgress(force: false)
+        }
+        saveAudioPosition(force: false)
+    }
+
+    private func skipAudio(unit: String, count: Int) {
+        guard audio.isLoaded else { return }
+        var target = audioChapterTime
+        switch unit {
+        case "sentence", "paragraph":
+            if let timing, !timing.segments.isEmpty {
+                let i = timing.segmentIndex(at: audioChapterTime) ?? 0
+                var j = i + count
+                if unit == "paragraph", let cur = timing.segments[safe: i] {
+                    let wanted = cur.block + count
+                    j = count > 0 ? (timing.segments.firstIndex { $0.block >= wanted } ?? timing.segments.count)
+                                  : (timing.segments.firstIndex { $0.block >= max(0, wanted) } ?? 0)
+                }
+                if j >= timing.segments.count { return nextChapter() }
+                target = timing.segments[max(0, j)].t0
+            } else {
+                target += Double(count) * 15
+            }
+        default: // "seconds"
+            target += Double(count)
+        }
+        seekAudio(toChapterTime: target)
+    }
+
+    func seekAudio(toChapterTime t: Double) {
+        guard mode == .audio else { return }
+        let clamped = max(0, min(t, max(0, (timing?.duration ?? audio.fileDuration) - 0.5)))
+        lastSegment = nil
+        audio.seek(to: (timing?.offset ?? 0) + clamped) { [weak self] in
+            self?.updateNowPlaying()
+            self?.saveAudioPosition(force: true)
+        }
+    }
+
+    // Saved listening positions: novel key → chapter + seconds (UserDefaults; small).
+    struct SavedPosition {
+        let chapterPath: String
+        let seconds: Double
+    }
+
+    static func savedPosition(novelKey: String) -> SavedPosition? {
+        guard let all = UserDefaults.standard.dictionary(forKey: positionsKey),
+              let entry = all[novelKey] as? [String: Any], let cp = entry["chapterPath"] as? String,
+              let s = (entry["seconds"] as? NSNumber)?.doubleValue else { return nil }
+        return SavedPosition(chapterPath: cp, seconds: s)
+    }
+
+    private func saveAudioPosition(force: Bool) {
+        guard mode == .audio, let ac = audioChapter else { return }
+        guard force || Date().timeIntervalSince(lastAudioSaveAt) > 5 else { return }
+        lastAudioSaveAt = Date()
+        var all = UserDefaults.standard.dictionary(forKey: Self.positionsKey) ?? [:]
+        all[ac.novelKey] = ["chapterPath": ac.chapterPath, "seconds": audioChapterTime, "at": Date().timeIntervalSince1970]
+        UserDefaults.standard.set(all, forKey: Self.positionsKey)
+    }
+
+    private func clearAudioPosition(novelKey: String) {
+        var all = UserDefaults.standard.dictionary(forKey: Self.positionsKey) ?? [:]
+        all.removeValue(forKey: novelKey)
+        UserDefaults.standard.set(all, forKey: Self.positionsKey)
     }
 
     func setSleepTimer(minutes: Double) {
@@ -177,7 +405,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     func applyRate(_ r: Float) {
         rate = max(0.5, min(2, r))
-        if status == .playing { restartFromCurrent() }
+        if mode == .audio {
+            audio.setRate(rate)
+        } else if status == .playing {
+            restartFromCurrent()
+        }
         updateNowPlaying()
     }
 
@@ -189,7 +421,15 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             d["chapterPath"] = ch.chapterPath
             d["chapterName"] = ch.chapterName
         }
-        if let it = items[safe: current] {
+        d["engine"] = mode.rawValue
+        if mode == .audio {
+            d["position"] = audioChapterTime
+            d["duration"] = timing?.duration ?? audio.fileDuration
+            if let i = lastSegment, let seg = timing?.segments[safe: i] {
+                d["paragraph"] = seg.block
+                d["segment"] = seg.id
+            }
+        } else if let it = items[safe: current] {
             d["paragraph"] = it.paragraph
             d["sentence"] = it.sentence
         }
@@ -261,7 +501,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     private func finishChapter() {
         saveProgress(force: true, finished: true)
-        if autoContinue, chapter?.nextPath != nil { return nextChapter() }
+        if autoContinue, chapter?.nextPath != nil || (mode == .audio && nextAudioChapter() != nil) { return nextChapter() }
+        if mode == .audio, let key = audioChapter?.novelKey { clearAudioPosition(novelKey: key) }
+        audio.stop()
         set(.ended)
     }
 
@@ -296,13 +538,23 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     }
 
     private func saveProgress(force: Bool, finished: Bool = false) {
-        guard let ch = chapter, let it = items[safe: min(current, max(0, items.count - 1))] else { return }
+        guard let ch = chapter else { return }
+        let paragraph: Int
+        let percent: Double
+        if mode == .audio {
+            paragraph = lastSegment.flatMap { timing?.segments[safe: $0]?.block } ?? 0
+            let duration = timing?.duration ?? audio.fileDuration
+            percent = finished ? 1 : (duration > 0 ? min(0.99, audioChapterTime / duration) : 0)
+        } else {
+            guard let it = items[safe: min(current, max(0, items.count - 1))] else { return }
+            paragraph = it.paragraph
+            percent = finished ? 1 : Double(current) / Double(max(1, items.count))
+        }
         guard force || Date().timeIntervalSince(lastSavedAt) > 5 else { return }
         lastSavedAt = Date()
-        let percent = finished ? 1 : Double(current) / Double(max(1, items.count))
         var args: [String: Any] = [
             "pluginId": ch.pluginId, "novelPath": ch.novelPath, "chapterPath": ch.chapterPath,
-            "position": ["percent": percent, "paragraph": it.paragraph, "offset": 0] as [String: Any],
+            "position": ["percent": percent, "paragraph": paragraph, "offset": 0] as [String: Any],
         ]
         if finished { args["finished"] = true }
         CoreHost.shared.request("progress.save", args: args)
@@ -357,18 +609,27 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         }
     }
 
-    /// Rough time model so the lock screen shows a progress bar (~15 characters per second at 1×).
+    /// Audio mode: the file's real time. Speech: a rough model (~15 characters per second at 1×).
     private func updateNowPlaying() {
         guard let ch = chapter, status != .idle else { return }
-        let charsPerSecond = 15.0 * Double(rate)
-        let total = items.reduce(0) { $0 + $1.text.count }
-        let done = items.prefix(current).reduce(0) { $0 + $1.text.count }
+        var duration: Double
+        var elapsed: Double
+        if mode == .audio {
+            duration = timing?.duration ?? audio.fileDuration
+            elapsed = audioChapterTime
+        } else {
+            let charsPerSecond = 15.0 * Double(rate)
+            duration = Double(items.reduce(0) { $0 + $1.text.count }) / charsPerSecond
+            elapsed = Double(items.prefix(current).reduce(0) { $0 + $1.text.count }) / charsPerSecond
+        }
+        if !duration.isFinite { duration = 0 }
+        if !elapsed.isFinite { elapsed = 0 }
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: ch.chapterName,
             MPMediaItemPropertyArtist: ch.novelName,
             MPMediaItemPropertyAlbumTitle: "TachiNovel",
-            MPMediaItemPropertyPlaybackDuration: Double(total) / charsPerSecond,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(done) / charsPerSecond,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
             MPNowPlayingInfoPropertyPlaybackRate: status == .playing ? Double(rate) : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
@@ -412,15 +673,34 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         c.previousTrackCommand.addTarget { [weak self] _ in
             guard let self else { return .commandFailed }
             self.interruption.userActed()
-            self.current = 0
-            self.restartFromCurrent()
+            if self.mode == .audio {
+                self.seekAudio(toChapterTime: 0)
+            } else {
+                self.current = 0
+                self.restartFromCurrent()
+            }
             return .success
         }
-        // Skip buttons move by paragraph (the lock screen shows them as ±15 s glyphs).
+        // Skip buttons: ±15 s of audio; with the system voice, ±1 paragraph (shown as ±15 s glyphs).
         c.skipForwardCommand.preferredIntervals = [15]
-        c.skipForwardCommand.addTarget { [weak self] _ in self?.skip(unit: "paragraph", count: 1); return .success }
+        c.skipForwardCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            if self.mode == .audio { self.skip(unit: "seconds", count: 15) } else { self.skip(unit: "paragraph", count: 1) }
+            return .success
+        }
         c.skipBackwardCommand.preferredIntervals = [15]
-        c.skipBackwardCommand.addTarget { [weak self] _ in self?.skip(unit: "paragraph", count: -1); return .success }
+        c.skipBackwardCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            if self.mode == .audio { self.skip(unit: "seconds", count: -15) } else { self.skip(unit: "paragraph", count: -1) }
+            return .success
+        }
+        // Scrubbing on the lock screen / in the car (audio files only).
+        c.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, self.mode == .audio, let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self.interruption.userActed()
+            self.seekAudio(toChapterTime: e.positionTime)
+            return .success
+        }
         c.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         c.changePlaybackRateCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
@@ -428,7 +708,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             return .success
         }
         for cmd in [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand, c.nextTrackCommand, c.previousTrackCommand,
-                    c.skipForwardCommand, c.skipBackwardCommand, c.changePlaybackRateCommand] {
+                    c.skipForwardCommand, c.skipBackwardCommand, c.changePlaybackRateCommand, c.changePlaybackPositionCommand] {
             cmd.isEnabled = true
         }
     }

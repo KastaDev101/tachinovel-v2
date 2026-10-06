@@ -30,6 +30,8 @@
 		3B1E0F5B4FEA99BF02856928 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2E2EEF90DB7072A418508D9 /* MainViewController.swift */; };
 		A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E7DB03FA36592670553932 /* StorePlugin.swift */; };
 		1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */; };
+		FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */; };
+		2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +61,8 @@
 		D5E7DB03FA36592670553932 /* StorePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Store/StorePlugin.swift"; sourceTree = "<group>"; };
 		A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		5462AE7AE519E66588E5B106 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioChapterPlayer.swift"; sourceTree = "<group>"; };
+		335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioLibrary.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +129,8 @@
 				3CA674BB9A11644C860737A6 /* CorePlugin.swift */,
 				A2E2EEF90DB7072A418508D9 /* MainViewController.swift */,
 				D5E7DB03FA36592670553932 /* StorePlugin.swift */,
+				D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */,
+				335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -226,6 +232,8 @@
 				6FFE2257FBC14C007547DF6E /* CorePlugin.swift in Sources */,
 				3B1E0F5B4FEA99BF02856928 /* MainViewController.swift in Sources */,
 				A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */,
+				FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */,
+				2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
