@@ -248,7 +248,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let g = gen
         let e = epoch
         queued.append(i)
-        player.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        // Real output: when the sentence has actually been heard. Headless (manual rendering): when it was rendered.
+        player.scheduleBuffer(buf, completionCallbackType: manualOutput ? .dataRendered : .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async { self?.kokoroFinished(i, gen: g, epoch: e) }
         }
     }
