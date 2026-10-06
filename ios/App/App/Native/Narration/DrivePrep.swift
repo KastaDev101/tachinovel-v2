@@ -17,6 +17,7 @@ import AVFoundation
 @preconcurrency import BackgroundTasks
 import Foundation
 import HDVoiceCore
+import HDVoiceKokoro
 import Network
 import os
 import UIKit
