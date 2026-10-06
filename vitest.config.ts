@@ -3,7 +3,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
-    alias: [{ find: /^@v1\/(.*)$/, replacement: path.resolve(import.meta.dirname, 'vendor/v1/src/$1') }],
+    alias: [
+      { find: /^@v1\/(.*)$/, replacement: path.resolve(import.meta.dirname, 'vendor/v1/src/$1') },
+      { find: /^@v1tts\/(.*)$/, replacement: path.resolve(import.meta.dirname, 'vendor/v1/experiments/tts/$1') },
+    ],
   },
   define: {
     __BUILD_VERSION__: JSON.stringify('test'),

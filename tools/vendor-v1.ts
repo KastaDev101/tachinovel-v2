@@ -9,7 +9,19 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import path from 'node:path';
 import { root } from './v1.ts';
 
-const PATHS = ['src/shared', 'src/script', 'src/plugin-host', 'src/ui', 'src/types', 'plugins/stonescape.ts', 'plugins/verified.json'];
+const PATHS = [
+  'src/shared',
+  'src/script',
+  'src/plugin-host',
+  'src/ui',
+  'src/types',
+  'plugins/stonescape.ts',
+  'plugins/verified.json',
+  // Narration text front-end + timestamp manifest + DOM block walker (portable; used by v2's player).
+  'experiments/tts/frontend.ts',
+  'experiments/tts/manifest.ts',
+  'experiments/tts/player/dom-blocks.ts',
+];
 const from = path.resolve(root, process.env.V1_SOURCE ?? '../tachinovel');
 const dest = path.join(root, 'vendor', 'v1');
 const worktree = process.argv.includes('--worktree');

@@ -37,6 +37,8 @@ export function v1AliasPlugin(): esbuild.Plugin {
     name: 'v1-alias',
     setup(b) {
       b.onResolve({ filter: /^@v1\// }, (a) => ({ path: path.join(src, a.path.slice('@v1/'.length)) }));
+      // v1's narration front-end (experiments/tts): text canonicalization, timestamp manifests, DOM blocks.
+      b.onResolve({ filter: /^@v1tts\// }, (a) => ({ path: path.join(v1Root(), 'experiments', 'tts', a.path.slice('@v1tts/'.length)) }));
     },
   };
 }
