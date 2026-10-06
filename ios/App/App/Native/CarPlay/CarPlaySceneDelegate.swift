@@ -90,8 +90,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let narration = NarrationController.shared
         let state = narration.stateDict()
         // Already the current narration (paused or playing): continue it instead of restarting.
-        if (narration.status == .paused || narration.status == .playing),
-           state["pluginId"] as? String == pluginId, state["novelPath"] as? String == novelPath {
+        let active = narration.status == .paused || narration.status == .playing
+        if active, state["pluginId"] as? String == pluginId, state["novelPath"] as? String == novelPath {
             narration.resume()
             return showNowPlaying()
         }

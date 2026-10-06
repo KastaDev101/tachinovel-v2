@@ -5,7 +5,9 @@
 #  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
 #  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
 #               simulator smoke test: install, launch, screenshot the first screens (artifact
-#               "simulator-screenshots"); fails if the app crashes.
+#               "simulator-screenshots"); fails if the app crashes. Then the Swift gates: no new compiler
+#               warnings (strict concurrency, baseline ci/swift-warnings-baseline.txt) and SwiftLint
+#               (pinned, ci/swiftlint.sh); both via tools/swift-quality.ts.
 #  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
@@ -112,6 +114,7 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
       - name: Simulator build (unsigned)
+        id: build
         run: |
           set -o pipefail
           mkdir -p build
@@ -144,6 +147,13 @@ jobs:
           path: build/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7
+      # Swift gates run last (and even when the smoke test failed) so one run reports everything.
+      - name: Swift warnings (new ones fail)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tools/swift-quality.ts warnings build/xcodebuild.log
+      - name: SwiftLint
+        if: ${{ !cancelled() }}
+        run: bash ci/swiftlint.sh build/swiftlint.json && node tools/swift-quality.ts lint build/swiftlint.json
 
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)

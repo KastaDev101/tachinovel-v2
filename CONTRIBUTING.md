@@ -57,6 +57,27 @@ repos get them free, but they are slow and they queue:
   (`import ts from '@typescript/typescript6'`), never `typescript`.
   TODO: revisit when TypeScript 7.1 ships its stable API, then drop this rule.
 
+## Swift quality gates
+
+The `ios-compile` job ends with two gates (both in `tools/swift-quality.ts`, unit-tested on the PC):
+
+- **No new compiler warnings.** The app target builds with `SWIFT_STRICT_CONCURRENCY = complete` (Swift 5
+  mode: concurrency problems are warnings). Existing warnings are listed in
+  `ci/swift-warnings-baseline.txt`; any warning not in it fails the job. Matching ignores line numbers.
+  When you fix warnings, shrink the baseline: download the `xcodebuild-simulator-log` artifact and run
+  `node tools/swift-quality.ts warnings xcodebuild.log --update`. Never add to the baseline to get a PR
+  through; fix the warning (or explain why not in the PR).
+- **SwiftLint** ([`.swiftlint.yml`](.swiftlint.yml), pinned release in `ci/swiftlint.sh`): strict, every
+  violation fails. SwiftLint can't run on Windows; the annotations on the PR's checks show each
+  violation with its file and line.
+
+Paths owned by another workstream are **report-only** for both gates (listed in
+`tools/swift-quality.ts` `REPORT_ONLY`, currently the voice and narration code): their findings show as
+notices and don't fail the build. Remove a path from the list once its owner has cleaned it up.
+
+If the Swift compiler itself crashes (seen once with Swift 6.3.3 in the `SendNonSendable` pass), the log
+names the function; restructure that closure or revert the change that triggered it.
+
 ## Public repository hygiene
 
 The repository is public. Never commit:
