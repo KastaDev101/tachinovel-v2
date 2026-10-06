@@ -45,8 +45,12 @@ final class AudioChapterPlayer {
         didSet { AudioGraphParts.apply(volume: volume, gain: gain, limiter: limiter) }
     }
 
+    private var configObserver: NSObjectProtocol?
+
     init() {
-        NotificationCenter.default.addObserver(self, selector: #selector(configurationChanged(_:)), name: .AVAudioEngineConfigurationChange, object: nil)
+        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
+            self?.configurationChanged(note)
+        }
     }
 
     var isLoaded: Bool { file != nil }
@@ -225,14 +229,12 @@ final class AudioChapterPlayer {
     }
 
     /// The engine stopped itself (route or format change, e.g. Bluetooth): continue where it was.
-    @objc private func configurationChanged(_ note: Notification) {
-        DispatchQueue.main.async {
-            guard (note.object as? AVAudioEngine) === self.engine, self.file != nil, self.playing else { return }
-            let t = self.currentTime
-            self.playing = false
-            self.schedule(from: t)
-            self.start()
-        }
+    private func configurationChanged(_ note: Notification) {
+        guard (note.object as? AVAudioEngine) === engine, file != nil, playing else { return }
+        let t = currentTime
+        playing = false
+        schedule(from: t)
+        start()
     }
 }
 
