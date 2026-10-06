@@ -6,6 +6,7 @@
  *  - `__native` semantics mirror NativeHostAPI.swift: FileManager-like fs (write needs the parent
  *    folder, remove/list of missing paths throw, move onto an existing file throws), callbacks once.
  */
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,8 @@ export interface MockOptions {
   answers?: number[];
   syncedAvailable?: boolean;
   launchReason?: 'ui' | 'background-refresh' | 'narration';
+  /** The web update bundle this launch runs (WebBundle.swift's choice); default: the embedded one. */
+  webBundle?: string | null;
   /** Called for every core event (the PC shell forwards them to the page like CorePlugin does). */
   onEmit?: (event: string, payloadJson: string) => void;
   /** Fault injection: make an fs operation throw (e.g. mkdirp of the local root → boot failure). */
@@ -152,6 +155,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       syncedRoot: opts.syncedAvailable === false ? null : syncedRoot,
       documentsRoot: opts.documentsAvailable === false ? null : documentsRoot,
       launchReason: opts.launchReason ?? 'ui',
+      webBundle: opts.webBundle ?? null,
     },
     fs: fsApi(opts.fsFault),
     http(requestJson, cb) {
@@ -210,6 +214,19 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       setBrightness: () => undefined,
       solveChallenge: (_u, cb) => setImmediate(() => cb(null, false)),
       ...opts.ui,
+    },
+    crypto: {
+      sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex'),
+      verifyEd25519(publicKeyBase64, message, signatureBase64) {
+        try {
+          // Raw 32-byte Ed25519 key → SPKI DER (what CryptoKit's rawRepresentation is).
+          const der = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(publicKeyBase64, 'base64')]);
+          const key = createPublicKey({ key: der, format: 'der', type: 'spki' });
+          return verifySignature(null, Buffer.from(message, 'utf8'), key, Buffer.from(signatureBase64, 'base64'));
+        } catch {
+          return false;
+        }
+      },
     },
     log(level, line) {
       logs.push({ level, line });
