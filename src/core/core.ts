@@ -13,6 +13,7 @@ import { type App, createApp } from '@v1/script/app.ts';
 import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
 import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
+import { deepLinkProblem } from './deep-link.ts';
 import { clearReports, type DiagnosticSummary, exportReports, listReports, recordPayload } from './diagnostics/metrickit.ts';
 import type { NativeHost } from './native-api.ts';
 import { narrationScript, type NarrationParagraph } from './narration/text.ts';
@@ -165,6 +166,9 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       }
       const link: { pluginId: string; novelPath: string; chapterPath?: string } = { pluginId: args.pluginId, novelPath: args.novelPath };
       if (typeof args.chapterPath === 'string') link.chapterPath = args.chapterPath;
+      // Links can come from any app or web page: keep the paths on the source's own site (security review SR-6).
+      const problem = deepLinkProblem(link, app.services.sources.get(link.pluginId)?.site);
+      if (problem) return Promise.reject(Object.assign(new Error(`Deep link refused (${problem})`), { code: 'INVALID_ARGS' }));
       return Promise.resolve({ delivered: app.deliverDeepLink(link) });
     },
     'diagnostics.metricPayload': async (args) => {
