@@ -45,3 +45,20 @@ scheme from Xcode by hand does nothing harmful.
 The test finds elements by their visible text or `aria-label`. When a label it uses changes (for example
 "Listen from here" or "Backup & Restore"), update `AppUITests.swift` in the same PR. Keep fixtures
 synthetic: no real sites, novels or user data.
+
+## Flakiness
+
+The CI simulator runs on a busy VM (a first launch has taken 78 s, first paint 43 s), and the test has
+failed for reasons that were not the app's:
+
+| Seen | What the test does about it |
+|---|---|
+| A tap landed where a row *was*: its hit point was computed during v1's push animation (`{396,646}` while the row ends at x 386 once in place) | Every tap waits until the element stops moving (the same frame twice, 150 ms apart, its center on screen), then taps the element, or that fresh frame's center when XCUITest calls the element not hittable |
+| A tap was swallowed, or a tab tap picked a moving "More" title instead of the tab | Taps that are safe to repeat (navigation, dismissing) check their effect (the next element appears, or the tapped one goes away) and tap again from a fresh snapshot, up to 3 times. Tabs are looked up in the bottom 30 % of the screen |
+| The page went blank right after onboarding appeared: the web view kept only its scroll bars (a WebContent process that ended: the app reloads the page and rebuilds its screen stack, `WebContentRecovery.swift` and `src/ui/native/recovery.ts`) | Once the page has been seen, a web view without any readable element counts as blank: the test keeps a screenshot and the accessibility tree, waits up to 150 s for the reload, and starts the current step over: it skips onboarding again if it reappears, then goes back from the restored screens to the tab bar, where every step starts |
+
+Every workaround prints a `UITEST-…` line. `ci/ios-ui-tests.sh` turns those into warnings on the run,
+and for a blank page it saves WebKit's own log lines about the WebContent process
+(`webcontent-events.txt`, plus any WebContent crash report) to the `ui-test-screenshots` artifact. The
+full app and WebKit log is `app-webkit.log` in `ui-test-logs`. A warning that comes back often is worth
+reading: it may be a real problem in the app rather than the simulator.
