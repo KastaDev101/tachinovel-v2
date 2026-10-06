@@ -56,6 +56,10 @@ everything.
   (`uses: actions/checkout@<sha> # v7.0.1`); Dependabot updates both, and a test rejects unpinned ones.
 - **Line endings** are LF (`.gitattributes`, `.editorconfig`). Don't run formatters over whole files.
 - **Tests** for logic that can be tested on a PC (Vitest); UI flows in the PC shell test.
+- **Accessibility:** every control has a VoiceOver name (visible text, or an `aria-label` on icon-only
+  buttons; `tests/shell/a11y.shell.ts` and the simulator UI test check it). v2's own overlays size text
+  with `fs()` from `src/ui/native/type.ts`, so it follows Dynamic Type like v1's screens, and use
+  `min-height` rather than `height` for anything holding text.
 - **Third-party code or assets:** add them to `THIRD_PARTY_NOTICES.md` with their license before they
   ship. Check that the license allows use in a proprietary App Store app.
 
