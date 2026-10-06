@@ -1,0 +1,27 @@
+TachiNovel v2
+Copyright (c) 2026 KastaDev101. All rights reserved.
+
+This software is proprietary. The repository is public so that its source can be read and reviewed;
+publishing it does not grant a license.
+
+No permission is granted to use, copy, modify, merge, publish, distribute, sublicense or sell copies of
+this software, in whole or in part, without the prior written permission of the copyright holder, except
+for the rights GitHub's Terms of Service give GitHub users for public repositories (viewing and forking on
+GitHub) and any use that applicable law allows without permission.
+
+Third-party components
+----------------------
+Third-party components included in or distributed with this software keep their own licenses. They are
+listed, with their copyright notices and license texts, in THIRD_PARTY_NOTICES.md. Nothing in this notice
+limits the rights those licenses give you for those components.
+
+The files under vendor/v1/ are a snapshot of TachiNovel v1 by the same author. Their license is stated in
+vendor/v1/VENDORED.md.
+
+Disclaimer
+----------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
