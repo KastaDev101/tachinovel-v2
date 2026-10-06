@@ -43,7 +43,11 @@ xcrun simctl install "$UDID" "$APP"
 
 running() {
   # The simulator's launchd lists the app as UIKitApplication:<bundle>[…]; any match counts.
-  xcrun simctl spawn "$UDID" launchctl list 2>/dev/null | grep -qF "$BUNDLE"
+  # Capture first: with pipefail, `launchctl list | grep -q` fails at random (grep exits on the first
+  # match, launchctl gets SIGPIPE), which reported live apps as crashed.
+  local list
+  list=$(xcrun simctl spawn "$UDID" launchctl list 2>/dev/null || true)
+  grep -qF "$BUNDLE" <<<"$list"
 }
 
 collect_crashes() {
