@@ -21,9 +21,9 @@ device (nothing the app does should reach beyond its own sandbox).
 | SR-5 | Cookie copy from the challenge WebView matched domains by bare suffix (`notexample.com` matched `example.com`) | Low (cookies keep their own domain, so nothing was sent to the wrong site) | **Fixed**: RFC 6265 domain match (`cookieDomainMatches`) |
 | SR-6 | Deep links (`tachinovel://open?plugin=…&novel=…`) accepted any `novel`/`chapter` path for an installed source, including an absolute URL on another host, so another app or a web page could make the app fetch an arbitrary URL | Low | **Fixed**: the core rejects paths with control characters or backslashes, overlong paths, `user@host` authorities and absolute or scheme-relative URLs whose host isn't the source's site (`src/core/deep-link.ts`, tested) |
 | SR-7 | Backup import reads the picked file whole; no size cap | Low (user-initiated; a huge file can only exhaust the app's own memory) | Accepted; v1 validates every field and bounds plugin settings. Revisit if imports from other apps are added |
-| SR-8 | Dependabot alert #1: `uuid` (via `@capacitor/cli` → `xcode`), missing buffer bounds check | Low (dev-only CLI dependency, not shipped; the vulnerable `buf` argument isn't used) | Recommend dismissing as "tolerable risk"; it goes away when Capacitor's CLI updates `xcode` |
+| SR-8 | Dependabot alert #1: `uuid` (via `@capacitor/cli` → `xcode`), missing buffer bounds check | Low (dev-only CLI dependency, not shipped; the vulnerable `buf` argument isn't used) | **Open, by decision**: left open while the maintainer decides; options are dismissing it as "tolerable risk" or waiting for Capacitor's CLI to update `xcode` |
 | SR-9 | CodeQL alerts on `main`: `js/bad-code-sanitization` in `tests/helpers/pc-shell.ts` (test helper) and `vendor/v1/src/script/lib/browser-post.ts`; `js/incomplete-multi-character-sanitization` in three `vendor/v1` files | Info | Triage: the test helper builds a script for a local test browser; v2 doesn't use v1's `browser-post` (its POST runs through `callAsyncJavaScript` with arguments, no string building); the `vendor/v1` ones are text clean-up, not HTML sanitizing (DOMPurify does that). Fix upstream in v1 or dismiss with these reasons |
-| SR-10 | GitHub Actions are pinned to major tags (`actions/checkout@v7`), not commit SHAs | Low (supply chain) | Recommendation: pin to SHAs; Dependabot keeps SHA pins current |
+| SR-10 | GitHub Actions are pinned to major tags (`actions/checkout@v7`), not commit SHAs | Low (supply chain) | **Fixed** in #31: every action pinned to a full commit SHA with its version in a comment; Dependabot updates both; a test rejects unpinned actions |
 | SR-11 | LNReader JS plugins (personal flavor) run in the core's JavaScriptCore context with v1's global shadowing, which is not a real sandbox | Info (by design) | Accepted for the personal flavor (trusted repositories only, documented). The store flavor has no JS plugin host at all |
 
 ## Notes by OWASP category
@@ -82,6 +82,6 @@ Protection (default class) encrypts it at rest. No secrets are stored; backups a
 
 - On every pull request: CodeQL, the CSP and flavor tests (tests/build.test.ts), the privacy manifest
   test, the deep-link and router checks (tests/security.test.ts), ESLint's context rules.
-- Before a store submission: re-run this review, resolve SR-8 to SR-10, and review any ad SDK (it changes
+- Before a store submission: re-run this review, decide SR-8, settle SR-9, and review any ad SDK (it changes
   M6 and M8).
 - Report vulnerabilities privately: [SECURITY.md](../SECURITY.md).
