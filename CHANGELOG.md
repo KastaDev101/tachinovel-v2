@@ -25,6 +25,8 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
 - Narration with Apple voices: background and lock-screen playback, Now Playing and remote commands,
   resume, auto-advance, full-screen Listen player, CarPlay list (needs the entitlement).
 - Restore a v1 backup picked from Files.
+- `node tools/revendor-v1.ts <v1 commit>`: one command to move `vendor/v1` to a v1 commit, re-check the
+  build-time patches on both flavors, typecheck and test, with rollback on failure.
 - Car listening: in-app player for PC-narrated audio, with sentence highlighting.
 - App icon and a launch screen that follows light and dark mode.
 - CI: web checks, PC shell test in WebKit, unsigned simulator build with a smoke tour and screenshots,
