@@ -13,7 +13,7 @@
 set -euo pipefail
 
 : "${APPLE_TEAM_ID:?}" "${ASC_KEY_ID:?}" "${ASC_ISSUER_ID:?}" "${ASC_KEY_P8_BASE64:?}" "${BUNDLE_ID:?}" "${BUILD_NUMBER:?}"
-MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('./package.json').version.split('-')[0]")}"
+MARKETING_VERSION="${MARKETING_VERSION:-$(node tools/release.ts version)}"
 
 ROOT="$(pwd)"
 OUT="$ROOT/build"

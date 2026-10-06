@@ -7,6 +7,9 @@
 #    @capacitor/* versions (CI regenerates it before every build), so Capacitor's Swift package moves with
 #    the npm "capacitor" group. When a hand-maintained Swift package lands (for example the on-device voice
 #    engine), add a `package-ecosystem: swift` entry for its directory.
+#  - Major versions: groups (except Capacitor, which must move together) take minor and patch updates
+#    only, so a breaking major (TypeScript 7, actions/checkout v8...) arrives as its own PR that can be
+#    reviewed or closed alone.
 #  - The Playwright container image in .github/workflows/ios.yml (`mcr.microsoft.com/playwright:vX-noble`)
 #    must match the `playwright-core` devDependency, so playwright-core is ignored here: bump both by hand
 #    in one PR.
@@ -25,15 +28,17 @@ updates:
     commit-message:
       prefix: Deps
     groups:
-      # Core, iOS runtime, CLI and plugins must stay on matching versions.
+      # Core, iOS runtime, CLI and plugins must stay on matching versions, majors included.
       capacitor:
         patterns: ['@capacitor/*']
       runtime:
         dependency-type: production
         exclude-patterns: ['@capacitor/*']
+        update-types: [minor, patch]
       dev-tools:
         dependency-type: development
         exclude-patterns: ['@capacitor/*']
+        update-types: [minor, patch]
     ignore:
       - dependency-name: playwright-core
 
@@ -51,3 +56,4 @@ updates:
     groups:
       actions:
         patterns: ['*']
+        update-types: [minor, patch]

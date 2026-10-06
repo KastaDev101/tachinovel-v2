@@ -14,6 +14,10 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
 - Repository standards: README, contributing guide for people and agents, proprietary LICENSE,
   third-party notices, security policy, Dependabot (npm and GitHub Actions, weekly, grouped), pull
   request template and `.editorconfig`.
+- Versioning and releases: `package.json` is the single version source (iOS marketing version =
+  `major.minor.patch`, build number = CI run number); `node tools/release.ts prepare <version>`; a
+  `release` workflow on `v*` tags publishes the unsigned IPA, its SHA-256 and a provenance attestation
+  as a GitHub Release with these notes (docs/release.md).
 - Native iOS shell (Capacitor 8.5, iOS 17+) around the v1 reader UI, with the v1 script core running in
   a Swift-owned JavaScriptCore context.
 - Two build flavors: `personal` (built-in sources, LNReader JS plugins) and `store` (no bundled

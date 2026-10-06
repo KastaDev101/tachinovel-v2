@@ -20,7 +20,8 @@
     "cap:copy": "npm run build && npx cap copy ios",
     "test:shell": "vitest run --config vitest.shell.config.ts",
     "ios:project": "node tools/ios-project.ts",
-    "revenue": "node tools/revenue-model.ts"
+    "revenue": "node tools/revenue-model.ts",
+    "release:prepare": "node tools/release.ts prepare"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.2",

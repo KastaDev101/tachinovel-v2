@@ -55,6 +55,10 @@ manual dispatch:
 All four are required checks on `main`. TestFlight upload is wired but waits for an Apple Developer
 account.
 
+Releases: tag `v<version>` on `main` and [`.github/workflows/release.yml`](.github/workflows/release.yml)
+publishes the unsigned IPA as a GitHub Release with the CHANGELOG notes. Versioning and the release
+procedure: [docs/release.md](docs/release.md).
+
 ## Contributing
 
 `main` is protected: every change goes through a pull request with green checks. The workflow (also for
