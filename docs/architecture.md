@@ -207,14 +207,37 @@ What the tests prove without a Mac:
 - `App.entitlements` is empty on purpose (CI can sign without extra capabilities);
   `App.full.entitlements.example` adds iCloud Documents and CarPlay audio once the App ID has them.
 
-## 9. CI/CD (`.github/workflows/ios.yml`, not pushed)
+## 9. CI/CD (`.github/workflows/ios.yml`)
+
+Public repo https://github.com/KastaDev101/tachinovel-v2, so Actions minutes are free; the macOS jobs
+still run only on pushes to `main`, pull requests and manual dispatch (no schedule while there is no
+Apple Developer account).
 
 | Job | Runner | Secrets | What |
 |---|---|---|---|
 | `web` | ubuntu | none | typecheck, both flavors, tests, project check |
-| `shell` | ubuntu | none | PC shell test in Playwright's Linux WebKit; screenshots as artifacts |
-| `ios-compile` | macos-26 (Xcode 26.6 default, https://github.com/actions/runner-images) | none | `cap sync` + unsigned simulator build — **the first real compile of the Swift** |
-| `testflight` | macos-26 | ASC API key, team id | archive + export with `destination=upload` → App Store Connect → TestFlight; on tags, manual dispatch, and every 2 months (builds expire after 90 days) |
+| `shell` | ubuntu | none | PC shell test in Playwright's Linux WebKit; artifact `shell-screenshots` |
+| `ios-compile` | macos-26 (Xcode 26.6 default, https://github.com/actions/runner-images) | none | `cap sync` + unsigned simulator build, then the **simulator smoke test** (`ci/ios-sim-smoke.sh`): boot the newest iPhone simulator, install, launch, screenshot first launch / Library / Browse / Updates / History / More (+ a live Stonescape list in the personal flavor); fails if the app is not running afterwards. Artifacts `simulator-screenshots` (incl. `app-log.txt` with the core's os_log lines) and `xcodebuild-simulator-log` |
+| `ios-ipa` | macos-26 | none | push to `main` / manual only: unsigned **device** build (`iphoneos`, arm64, `CODE_SIGNING_ALLOWED=NO`) packaged as `Payload/App.app` → artifact **`TachiNovel-<version>-<run>-unsigned.ipa`** (uploaded unzipped), for AltStore/SideStore |
+| `testflight` | macos-26 | ASC API key, team id | archive + export with `destination=upload` → App Store Connect → TestFlight; only on tags `v*` or manual dispatch with `upload=true`; skips without secrets |
+
+The smoke tour is driven by launch arguments: `-tachiSmokeTab <tab>` / `-tachiSmokeSource <id>`
+(NSArgumentDomain) → `MainViewController` injects `window.__TACHI_SMOKE__` (Debug builds only) →
+`src/ui/native/smoke.ts` skips onboarding and taps the tab/source.
+
+### Sideloading the unsigned IPA (free Apple ID)
+AltStore/SideStore re-sign the app with the user's free Apple ID (7-day certificate, 3 active apps). A
+free account can't use iCloud containers, CarPlay, push or App Groups, so the IPA embeds **no
+entitlements** (empty `App.entitlements`, signing off; the build script fails if any restricted
+entitlement shows up). What happens without them:
+
+| Capability | Without the entitlement |
+|---|---|
+| iCloud Documents (synced store) | `url(forUbiquityContainerIdentifier:)` returns nil → everything lives in local storage (v1's "iCloud unavailable" fallback); use Backup → Share to move data |
+| CarPlay audio templates | the CarPlay scene never connects; narration still plays through the car with Now Playing + steering-wheel controls |
+| Background audio, background fetch | work (Info.plist background modes, not entitlements) |
+| StoreKit (Pro) | products don't load outside the App Store; the app stays in the free tier |
+| Notifications | local notifications work (no push used) |
 
 Signing: cloud-managed signing via `-allowProvisioningUpdates -authenticationKey*` needs a **Team API key
 with Admin role** (https://developer.apple.com/forums/thread/698117); fresh runners sometimes fail with a
@@ -237,7 +260,7 @@ Build numbers come from `GITHUB_RUN_NUMBER`.
 
 | Verified on Windows | Unverified (needs macOS CI or a device) |
 |---|---|
-| TS typechecks (core/ui/node) incl. vendored v1 | Swift compiles (CI job `ios-compile`) |
+| TS typechecks (core/ui/node) incl. vendored v1 | Swift compiles and the app launches in the simulator (CI `ios-compile`) |
 | Built core runs in a bare JS context end to end | JSContext behaviour on device (microtasks, memory, speed without JIT) |
 | v1 UI ↔ Capacitor native-bridge.js ↔ core protocol (PC shell) | Real WKWebView, safe areas, 120 Hz feel, SF Symbols |
 | Declarative engine, narration text, ad policy, bridge client | Capacitor plugin registration, `TachiRouter` covers |

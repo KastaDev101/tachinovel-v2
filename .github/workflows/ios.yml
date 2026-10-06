@@ -1,18 +1,19 @@
-# TachiNovel v2 CI (nothing here runs until the repo is pushed to GitHub; it is not pushed yet).
+# TachiNovel v2 CI. Free on a public repo; macOS jobs are the expensive ones, so they run only on pushes
+# to main, pull requests and manual dispatch (no schedule while there is no Apple Developer account).
 #
 #  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
-#  shell        ubuntu: the PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
-#  ios-compile  macOS 26: Capacitor sync + unsigned SIMULATOR build. Proves the Swift compiles. No secrets.
-#  testflight   macOS 26: signed archive + upload to App Store Connect / TestFlight. Manual or tag v*.
-#               Skips cleanly until the secrets below exist.
+#  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
+#  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
+#               simulator smoke test: install, launch, screenshot the first screens (artifact
+#               "simulator-screenshots"); fails if the app crashes.
+#  ios-ipa      macOS 26 (push to main / manual only): unsigned DEVICE build packaged as an .ipa for
+#               sideloading with AltStore/SideStore and a free Apple ID (artifact
+#               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
+#  testflight   macOS 26: signed archive + TestFlight upload. Only on tags v* or manual dispatch with
+#               upload=true, and skips cleanly until the App Store Connect secrets exist.
 #
-# Secrets (Settings → Secrets and variables → Actions). None are needed for the first two jobs.
-#   APPLE_TEAM_ID           10-character Team ID
-#   ASC_KEY_ID              App Store Connect API key id
-#   ASC_ISSUER_ID           API key issuer id
-#   ASC_KEY_P8_BASE64       base64 of AuthKey_<id>.p8 (Team key; Admin role for cloud-managed signing)
-#  Optional manual signing (use when cloud signing fails on fresh runners, see docs/architecture.md):
-#   IOS_DIST_P12_BASE64, IOS_DIST_P12_PASSWORD, IOS_PROFILE_BASE64
+# Secrets (only for testflight): APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (Team key,
+# Admin role), optional IOS_DIST_P12_BASE64 / IOS_DIST_P12_PASSWORD / IOS_PROFILE_BASE64.
 # Variables (optional): BUNDLE_ID (default com.kasta.tachinovel), FLAVOR (personal|store, default personal)
 
 name: ios
@@ -22,9 +23,6 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
-  # TestFlight builds expire after 90 days: re-upload the personal build every two months.
-  schedule:
-    - cron: '0 6 1 */2 *'
   workflow_dispatch:
     inputs:
       flavor:
@@ -33,13 +31,16 @@ on:
         options: [personal, store]
         default: personal
       upload:
-        description: Upload to TestFlight
+        description: Upload to TestFlight (needs the App Store Connect secrets)
         type: boolean
         default: false
 
 concurrency:
   group: ios-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   FLAVOR: ${{ inputs.flavor || vars.FLAVOR || 'personal' }}
@@ -50,8 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -63,13 +64,12 @@ jobs:
       - run: node tools/ios-project.ts --check
 
   shell:
-    # Built UI + Capacitor's native-bridge.js + built core, in WebKit (Linux build of Playwright's WebKit).
     needs: web
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -77,19 +77,21 @@ jobs:
       - run: npx playwright-core install --with-deps webkit
       - run: npm run test:shell
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: shell-screenshots
           path: .cache/shell-shots
           if-no-files-found: ignore
+          retention-days: 14
 
   ios-compile:
+    name: ios-compile + simulator smoke
     needs: web
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -108,17 +110,66 @@ jobs:
             PRODUCT_BUNDLE_IDENTIFIER="${BUNDLE_ID}" \
             CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build/xcodebuild.log
+      - name: Simulator smoke test (launch + screenshots)
+        run: bash ci/ios-sim-smoke.sh build/DerivedData/Build/Products/Debug-iphonesimulator/App.app build/screenshots
+        env:
+          # Personal flavor ships the Stonescape source: also screenshot a live source list.
+          SMOKE_SOURCE: ${{ env.FLAVOR == 'personal' && 'stonescape' || '' }}
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: simulator-screenshots
+          path: build/screenshots
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Keep the build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: xcodebuild-simulator-log
           path: build/xcodebuild.log
           if-no-files-found: ignore
+          retention-days: 7
+
+  ios-ipa:
+    name: ios-ipa (unsigned, for AltStore)
+    needs: web
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node tools/build.ts --flavor=${FLAVOR}
+      - run: npx cap sync ios
+      - name: Unsigned device build → .ipa
+        id: ipa
+        run: bash ci/ios-unsigned-ipa.sh build/ipa
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.ipa.outputs.ipa }}
+          archive: false
+          retention-days: 30
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcodebuild-device-log
+          path: build/ipa/xcodebuild-device.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   testflight:
     needs: ios-compile
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.upload)
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.upload)
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -139,9 +190,9 @@ jobs:
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.gate.outputs.ready == 'true'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.gate.outputs.ready == 'true'
         with:
           node-version: 24
@@ -155,7 +206,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
       - name: Keep logs
         if: always() && steps.gate.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testflight-logs
           path: build/*.log

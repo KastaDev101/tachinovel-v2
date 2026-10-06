@@ -9,8 +9,10 @@ import '@v1/ui/main.ts';
 import { installAds } from './monetization/ads.ts';
 import { Narration } from './native/narration.ts';
 import { installNarrationOverlay } from './native/narration-overlay.ts';
+import { runSmokeTour } from './native/smoke.ts';
 
 installNarrationOverlay();
+runSmokeTour();
 
 if (__ADS__) {
   let narrating = false;
