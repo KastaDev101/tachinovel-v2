@@ -83,7 +83,7 @@ export function simulate(dau: number, ads: AdAssumptions, pro: ProAssumptions, p
   const mix = { ...(price.mix ?? pro.mix) };
   if (price.annual === null && mix.annual > 0) {
     const t = mix.monthly + mix.lifetime;
-    mix.monthly = (mix.monthly + mix.annual * (mix.monthly / t)) as number;
+    mix.monthly = (mix.monthly + mix.annual * (mix.monthly / t));
     mix.lifetime = 1 - mix.monthly;
     mix.annual = 0;
   }

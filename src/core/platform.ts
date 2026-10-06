@@ -252,15 +252,20 @@ export function createNativePlatform(host: NativeHost): NativePlatform {
     }
   }
 
-  async function importLazy<T>(name: 'plugin-host'): Promise<T> {
-    // Store builds ship no JS plugin host at all; refuse explicitly (defense in depth for 2.5.2).
-    if (__FLAVOR__ === 'store') throw new Error(`${name} is not part of this build`);
-    const factory = host.bundle.loadModule(`lib/${name}.js`);
-    const mod: { exports: unknown } = { exports: {} };
-    factory(mod, mod.exports, (id: string) => {
-      throw new Error(`${name}.js: require("${id}") is not available in the core context`);
-    });
-    return mod.exports as T;
+  /** Loads a lazy bundle; any failure (including the store-flavor refusal) is a rejected promise. */
+  function importLazy<T>(name: 'plugin-host'): Promise<T> {
+    try {
+      // Store builds ship no JS plugin host at all; refuse explicitly (defense in depth for 2.5.2).
+      if (__FLAVOR__ === 'store') throw new Error(`${name} is not part of this build`);
+      const factory = host.bundle.loadModule(`lib/${name}.js`);
+      const mod: { exports: unknown } = { exports: {} };
+      factory(mod, mod.exports, (id: string) => {
+        throw new Error(`${name}.js: require("${id}") is not available in the core context`);
+      });
+      return Promise.resolve(mod.exports as T);
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   /** GET: hidden WKWebView loads the page; POST: fetch() inside a page on the URL's origin (v1 parity). */

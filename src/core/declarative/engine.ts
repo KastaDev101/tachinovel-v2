@@ -37,8 +37,8 @@ export function jsonPath(value: unknown, path: string): unknown {
     for (const v of current) {
       if (t === '*') {
         multi = true;
-        if (Array.isArray(v)) next.push(...v);
-        else if (v && typeof v === 'object') next.push(...Object.values(v));
+        if (Array.isArray(v)) next.push(...(v as unknown[]));
+        else if (v && typeof v === 'object') next.push(...(Object.values(v) as unknown[]));
       } else if (Array.isArray(v) && /^\d+$/.test(t)) {
         next.push(v[Number(t)]);
       } else if (v && typeof v === 'object') {
@@ -87,7 +87,7 @@ function htmlValue(scope: Extract<Scope, { kind: 'html' }>, f: FieldSpec, el: Se
 }
 
 function select(scope: Extract<Scope, { kind: 'html' }>, f: FieldSpec): Sel {
-  return f.selector ? (scope.el.find(f.selector) as Sel) : scope.el;
+  return f.selector ? scope.el.find(f.selector) : scope.el;
 }
 
 /** All values of a field (genres). */
@@ -101,7 +101,7 @@ export function readAll(scope: Scope, field: Field | undefined): string[] {
   }
   const out: string[] = [];
   select(scope, f).each((_, node) => {
-    const v = postProcess(htmlValue(scope, f, scope.$(node) as Sel), f);
+    const v = postProcess(htmlValue(scope, f, scope.$(node)), f);
     if (v) out.push(v);
   });
   return out;
@@ -115,10 +115,14 @@ export function readOne(scope: Scope, field: Field | undefined): string {
   let v = '';
   if (scope.kind === 'json') {
     const raw = jsonPath(scope.value, f.json ?? f.selector ?? '');
-    const first = Array.isArray(raw) ? raw[0] : raw;
-    v = first === undefined || first === null ? '' : postProcess(typeof first === 'string' ? first : String(first), f);
+    const first: unknown = Array.isArray(raw) ? (raw as unknown[])[0] : raw;
+    if (first !== undefined && first !== null) {
+      // Strings as they are, numbers/booleans as text, anything else as JSON (like readAll), never "[object Object]".
+      const text = typeof first === 'string' ? first : typeof first === 'number' || typeof first === 'boolean' ? String(first) : JSON.stringify(first);
+      v = postProcess(text, f);
+    }
   } else {
-    const el = select(scope, f).first() as Sel;
+    const el: Sel = select(scope, f).first();
     if (el.length > 0) v = postProcess(htmlValue(scope, f, el), f);
   }
   return v || f.default || '';
@@ -194,17 +198,17 @@ export function createDeclarativeAdapter(spec: SourceSpec, deps: PluginHostDeps,
   }
 
   function rootScope(doc: Doc): Scope {
-    return doc.kind === 'json' ? { kind: 'json', value: doc.data } : { kind: 'html', $: doc.$, el: doc.$.root() as Sel };
+    return doc.kind === 'json' ? { kind: 'json', value: doc.data } : { kind: 'html', $: doc.$, el: doc.$.root() };
   }
 
   function items(doc: Doc, list: ListSpec): Scope[] {
     if (doc.kind === 'json') {
       const arr = jsonPath(doc.data, list.item);
-      return (Array.isArray(arr) ? arr : []).map((value) => ({ kind: 'json', value }));
+      return (Array.isArray(arr) ? (arr as unknown[]) : []).map((value) => ({ kind: 'json', value }));
     }
     const out: Scope[] = [];
     doc.$(list.item).each((_, node) => {
-      out.push({ kind: 'html', $: doc.$, el: doc.$(node) as Sel });
+      out.push({ kind: 'html', $: doc.$, el: doc.$(node) });
     });
     return out;
   }

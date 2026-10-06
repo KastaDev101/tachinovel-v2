@@ -11,8 +11,8 @@ parallel and merged by a coordinator. These rules keep that safe. They apply to 
    git worktree add ../tachinovel-v2-<topic> -b <topic> origin/main
    ```
 2. **Keep the PR small and about one thing.** Unrelated fixes go in their own PR.
-3. **Check locally before pushing:** `npm run check` (typecheck, both flavors, tests, Xcode project
-   check). Run `npm run test:shell` too when you touch the UI, the bridge or the core.
+3. **Check locally before pushing:** `npm run check` (typecheck, lint, both flavors, tests, Xcode
+   project check). Run `npm run test:shell` too when you touch the UI, the bridge or the core.
 4. **Open the PR** with `gh pr create` and fill in the template (what/why, how tested, checklist).
 5. **Required checks** must pass: `web`, `shell`, `ios-compile + simulator smoke`,
    `ios-ipa (unsigned, for AltStore)`. Conversations must be resolved.
@@ -48,14 +48,20 @@ repos get them free, but they are slow and they queue:
 
 ## Toolchain
 
-- **TypeScript 7** (the native compiler) typechecks everything: `npm run typecheck` (tools/typecheck.ts).
-- TypeScript 7.0 has **no stable JavaScript API** (`require('typescript')` only exposes the version).
-  Nothing in this repo needs the API today: esbuild and Vitest strip types themselves, and Capacitor's CLI
-  (8.5.2+) loads `capacitor.config.ts` with Node's built-in type stripping when the API is missing. A tool
-  that does need the compiler API (a lint plugin with type-aware rules, a codegen script) must depend on
-  Microsoft's compatibility package `@typescript/typescript6` and import it
-  (`import ts from '@typescript/typescript6'`), never `typescript`.
-  TODO: revisit when TypeScript 7.1 ships its stable API, then drop this rule.
+- **TypeScript side by side** (Microsoft's recommended setup while TypeScript 7.0 has no stable JS API,
+  https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/):
+  - `@typescript/native` = TypeScript 7, the native compiler. `npm run typecheck` (tools/typecheck.ts)
+    and `npx tsc` use it.
+  - `typescript` = an alias of `@typescript/typescript6`, the TypeScript 6 API (and a `tsc6` binary).
+    typescript-eslint and Capacitor's CLI load it with `require('typescript')`.
+  - Typechecking is TypeScript 7's verdict; a TS 6-only error would not fail CI (and vice versa for the
+    lint job's type information).
+  - TODO: when TypeScript 7.1 ships its stable API and typescript-eslint supports it, drop the alias and
+    let `typescript` be TypeScript 7 again.
+- **ESLint** (`npm run lint`, CI job `lint`): `eslint.config.js`, typescript-eslint with type-aware
+  rules, for src/, tools/, tests/ and config files (vendor/v1 is linted in the v1 repo). Per-context
+  globals: the core (`src/core`, a JavaScriptCore context) can't use DOM, browser or Node globals; the
+  UI (`src/ui`) can't use Node globals, the network, or the core's `__native`. `--max-warnings=0`.
 
 ## Swift quality gates
 

@@ -29,7 +29,7 @@ const PLUGINS: Record<string, Record<string, Rtype>> = {
   // Keep in sync with NarrationPlugin.swift pluginMethods.
   Narration: Object.fromEntries(
     ['play', 'pause', 'resume', 'stop', 'skip', 'setOptions', 'voices', 'requestPersonalVoice', 'state', 'seek', 'playNovel', 'audioFolder', 'pickAudioFolder', 'unlinkAudioFolder', 'audioLibrary', 'audioTiming'].map(
-      (m) => [m, 'promise' as Rtype],
+      (m) => [m, 'promise'],
     ),
   ),
   Haptics: { impact: 'promise', notification: 'promise', vibrate: 'promise', selectionStart: 'promise', selectionChanged: 'promise', selectionEnd: 'promise' },

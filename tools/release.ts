@@ -71,7 +71,8 @@ export function changelogSection(changelog: string, version: string): string | n
   const headings = [...text.matchAll(HEADING)];
   const i = headings.findIndex((h) => h[1] === version);
   if (i < 0) return null;
-  const start = headings[i]!.index! + headings[i]![0].length;
+  const heading = headings[i]!;
+  const start = heading.index + heading[0].length;
   const next = headings[i + 1]?.index ?? text.length;
   // Link reference definitions ("[1.0.0]: https://…") at the end belong to the file, not the section.
   const lines = text.slice(start, next).split('\n');
@@ -123,7 +124,7 @@ function fail(message: string): never {
 function main(argv: string[]): void {
   const [cmd, arg] = argv;
   const version = packageVersion();
-  switch (cmd) {
+  switch (cmd ?? '') {
     case 'version':
       console.log(parseVersion(version).marketing);
       return;

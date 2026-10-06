@@ -35,7 +35,7 @@ export function htmlToParagraphs(html: string): string[] {
   let pendingBreaks = 0;
 
   const flush = (): void => {
-    const t = current.replace(/[\s ​]+/g, ' ').trim();
+    const t = current.replace(/[\s\u00A0\u200B]+/g, ' ').trim();
     if (t) out.push(t);
     current = '';
     pendingBreaks = 0;
