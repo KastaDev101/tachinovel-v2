@@ -95,19 +95,30 @@ final class AppUITests: XCTestCase {
     private func tap(_ root: XCUIElement, label: String, timeout: TimeInterval = 20) {
         let e = element(root, label: label)
         require(e, "\"\(label)\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
     }
 
     private func tap(_ root: XCUIElement, beginning prefix: String, timeout: TimeInterval = 20) {
         let e = element(root, beginning: prefix)
         require(e, "\"\(prefix)…\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
     }
 
     private func tap(_ root: XCUIElement, containing text: String, timeout: TimeInterval = 20) {
         let e = element(root, containing: text)
         require(e, "\"…\(text)…\"", timeout: timeout)
+        waitUntilHittable(e)
         e.tap()
+    }
+
+    /// A pushed screen slides in and a loading page re-lays out: an element can exist before it can be tapped.
+    private func waitUntilHittable(_ e: XCUIElement, timeout: TimeInterval = 15) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !e.isHittable, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
     }
 
     /// A tab bar item: the lowest element on screen with that label ("Library" is also a More row).

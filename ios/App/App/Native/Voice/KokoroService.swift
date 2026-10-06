@@ -323,8 +323,11 @@ final class KokoroService {
     // MARK: - Warm-up
 
     private func scheduleWarmUp() {
-        // The simulator self-test warms the model itself (and must not compete with the first boot).
-        guard usable, !NarrationSelfTest.isActive else { return }
+        // The simulator self-test warms the model itself (and must not compete with the first boot). The UI
+        // tests (TACHI_UITEST_BACKUP) drive the UI on the simulator's CPU, where the one-time Core ML compile
+        // would compete with every tap; they don't measure Kokoro.
+        let uiTest = ProcessInfo.processInfo.environment["TACHI_UITEST_BACKUP"].map { !$0.isEmpty } ?? false
+        guard usable, !NarrationSelfTest.isActive, !uiTest else { return }
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
         let key = "tachinovel.kokoroWarm.\(build)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
