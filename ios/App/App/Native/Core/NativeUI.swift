@@ -249,7 +249,8 @@ final class Once<T> {
 ///  - A request that arrives while another is on screen WAITS for it (UIKit refuses to present on a
 ///    controller that is already presenting or animating, and v1's Scriptable did queue them).
 ///  - Every request is answered exactly once: by the user, or with "cancelled" when it can't be shown
-///    (no window, a controller stuck animating, or UIKit silently refusing the presentation).
+///    (no window, a controller stuck animating, or UIKit silently refusing the presentation) or when its
+///    controller went away without answering (a document picker swiped down calls no delegate method).
 @MainActor
 final class PresentationQueue {
     static let shared = PresentationQueue()
@@ -294,11 +295,28 @@ final class PresentationQueue {
             self?.pump()
         }
         guard let presented = next.job(host, finished) else { return finished() }
-        // UIKit refuses some presentations with only a console warning: detect that and answer the caller.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            guard !done, presented.presentingViewController == nil, !presented.isBeingPresented else { return }
-            next.cancel()
-            finished()
+        // Answer the caller when the controller goes away without answering: UIKit refused the
+        // presentation (only a console warning), or a document picker was swiped down or its view service
+        // quit (then neither documentPickerWasCancelled nor didPickDocumentsAt is called, and the queue
+        // would wait forever, blocking every later alert, share sheet and picker). Gone at two checks in a
+        // row (1–2 s) counts as cancelled, so a delegate callback right after a dismissal still wins.
+        var goneChecks = 0
+        func watch() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                guard !done else { return }
+                if presented.presentingViewController == nil, !presented.isBeingPresented {
+                    goneChecks += 1
+                    if goneChecks >= 2 {
+                        next.cancel()
+                        finished()
+                        return
+                    }
+                } else {
+                    goneChecks = 0
+                }
+                watch()
+            }
         }
+        watch()
     }
 }
