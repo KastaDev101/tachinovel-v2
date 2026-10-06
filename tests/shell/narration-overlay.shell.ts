@@ -87,7 +87,14 @@ describe('narration overlay over v1 screens (PC shell)', () => {
       },
       initStorage: { 'tachinovel.tips.reader': '1' },
     });
-    shell.pluginReplies.set('Narration.voiceSettings', () => ({ ...saved }));
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({
+      ...saved,
+      defaultVoice: 'af_heart',
+      voices: [
+        { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm' },
+        { id: 'bm_george', name: 'George', language: 'en-GB', gender: 'male', blurb: 'classic' },
+      ],
+    }));
     shell.pluginReplies.set('Narration.setVoiceSettings', (o) => {
       const a = o as { speed?: number; volume?: number; usePCAudio?: boolean };
       if (typeof a.speed === 'number') saved.speed = a.speed;
@@ -209,6 +216,42 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await expect.poll(() => shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]').inputValue()).toBe('1.5');
     expect(await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').inputValue()).toBe('130');
     await player.locator('[data-act="close"]').click();
+  });
+
+  it('the voice picker never covers the Listen player once it is closing (crawler: "obscured by voice-picker")', async () => {
+    // The player refreshes its state from Narration.state every second: report the novel being read.
+    shell.pluginReplies.set('Narration.state', () => ({
+      status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1 - Nightmare Begins',
+      voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' },
+    }));
+    await shell.page.locator('.tn-player .tn-title').click();
+    const player = shell.page.getByTestId('car-player');
+    await player.locator('[data-act="voice"]').click();
+    const picker = shell.page.getByTestId('voice-picker');
+    await picker.waitFor({ state: 'visible' });
+    /** Which dialog a tap in the middle of the player's Close button reaches. */
+    const hitAtPlayerClose = () =>
+      shell.page.evaluate(() => {
+        const b = document.querySelector('[data-testid="car-player"] [data-act="close"]')?.getBoundingClientRect();
+        if (!b) return 'no player';
+        const el = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return el?.closest('[data-testid]')?.getAttribute('data-testid') ?? 'nothing';
+      });
+    // Opened from the player, the picker sits on top of it.
+    await expect.poll(hitAtPlayerClose).toBe('voice-picker');
+    // Back: the picker slides out, and the player gets taps at once (not 340 ms later).
+    await picker.locator('[data-act="close"]').click();
+    expect(await hitAtPlayerClose()).toBe('car-player');
+    expect(await picker.evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+    // Open it again and close the player underneath: no picker outlives the player or covers it next time.
+    await player.locator('[data-act="voice"]').click();
+    await picker.waitFor({ state: 'visible' });
+    await shell.page.evaluate(() => (document.querySelector('[data-testid="car-player"] [data-act="close"]') as HTMLElement).click());
+    await expect.poll(() => shell.page.getByTestId('voice-picker').count(), { timeout: 3000 }).toBe(0);
+    await shell.page.locator('.tn-player .tn-title').click();
+    await expect.poll(hitAtPlayerClose).toBe('car-player');
+    await player.locator('[data-act="close"]').click();
+    shell.pluginReplies.delete('Narration.state');
   });
 
   it('sits above the reader bottom bar and gives the chapter room at its end', async () => {

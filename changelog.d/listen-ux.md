@@ -14,3 +14,9 @@
   (fallback)" with the reason (Kokoro is starting, catching up, the iPhone is hot, unavailable, off).
 - All voices play through the app's own audio engine: the system voice is rendered into it, and PC audio
   plays through an engine file player instead of AVPlayer, so speed and volume work the same everywhere.
+
+### Fixed
+
+- The voice picker no longer covers the Listen player: a closing panel stops catching taps at once (it used
+  to for its 340 ms slide-out), and opening or closing the player closes any Voices panel left open. The
+  player also stops rebuilding itself every second when nothing changed.
