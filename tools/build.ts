@@ -16,7 +16,8 @@ import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { phoneClientPlugin, root, v1AliasPlugin, v1PatchPlugin, v1Root, v1Src } from './v1.ts';
+import { packagesFromInputs, readNotices, reflow } from './third-party.ts';
+import { corePatches, licensesPatch, phoneClientPlugin, root, v1AliasPlugin, v1PatchPlugin, v1Root, v1Src } from './v1.ts';
 
 export type Flavor = 'personal' | 'store';
 
@@ -83,10 +84,18 @@ function replaceMarker(template: string, marker: string, value: string): string 
   return template.replace(marker, () => value);
 }
 
+/** Adds the npm packages an esbuild result bundled to `into` (third-party notices check). */
+function track(result: esbuild.BuildResult, into?: Set<string>): void {
+  if (!into || !result.metafile) return;
+  for (const p of packagesFromInputs(Object.keys(result.metafile.inputs))) into.add(p);
+}
+
 /** UI: v1's index.html template + v2 entry, everything inlined, CSP with the script's hash. */
-export async function buildUi(info: BuildInfo, opts: BuildOptions): Promise<string> {
+export async function buildUi(info: BuildInfo, opts: BuildOptions, packages?: Set<string>): Promise<string> {
   const template = readFileSync(path.join(v1Src(), 'ui', 'index.html'), 'utf8');
+  const licenses = readNotices().map(({ name, license, text }) => ({ name, license, text: reflow(text) }));
   const result = await esbuild.build({
+    metafile: true,
     entryPoints: [path.join(root, 'src', 'ui', 'main.ts')],
     bundle: true,
     write: false,
@@ -98,11 +107,12 @@ export async function buildUi(info: BuildInfo, opts: BuildOptions): Promise<stri
     legalComments: 'eof',
     define: defines(info, opts.dev),
     loader: { '.svg': 'text', '.png': 'dataurl', '.woff2': 'dataurl' },
-    plugins: [v1AliasPlugin(), phoneClientPlugin()],
+    plugins: [v1AliasPlugin(), phoneClientPlugin(), v1PatchPlugin([licensesPatch(licenses)])],
     jsx: 'automatic',
     jsxImportSource: 'preact',
     logLevel: 'silent',
   });
+  track(result, packages);
   const js = result.outputFiles.find((f) => f.path.endsWith('.js'))?.text ?? '';
   const css = result.outputFiles.find((f) => f.path.endsWith('.css'))?.text ?? '';
   const safeJs = js.replace(/<\/script/gi, '<\\/script');
@@ -130,8 +140,9 @@ export async function buildUi(info: BuildInfo, opts: BuildOptions): Promise<stri
 }
 
 /** Core entry: one IIFE for JSContext.evaluateScript. No module syntax may survive. */
-export async function buildCore(info: BuildInfo, opts: BuildOptions): Promise<string> {
+export async function buildCore(info: BuildInfo, opts: BuildOptions, packages?: Set<string>): Promise<string> {
   const result = await esbuild.build({
+    metafile: true,
     entryPoints: [path.join(root, 'src', 'core', 'main.ts')],
     bundle: true,
     write: false,
@@ -143,17 +154,19 @@ export async function buildCore(info: BuildInfo, opts: BuildOptions): Promise<st
     keepNames: true,
     legalComments: 'eof',
     define: defines(info, opts.dev),
-    plugins: [v1AliasPlugin(), v1PatchPlugin(opts.flavor)],
+    plugins: [v1AliasPlugin(), v1PatchPlugin(corePatches(opts.flavor))],
     logLevel: 'silent',
   });
+  track(result, packages);
   const code = result.outputFiles[0]?.text ?? '';
   if (/^\s*(export|import)\s[^(]/m.test(code)) throw new Error('core.js must not contain top-level import/export');
   return `// TachiNovel core ${info.version} (${info.hash}, ${info.flavor}) built ${info.time}. Generated; see src/core.\n${code}`;
 }
 
 /** Lazy CommonJS module (loaded through __native.bundle.loadModule). */
-export async function buildLazy(entry: string, info: BuildInfo, opts: BuildOptions): Promise<string> {
+export async function buildLazy(entry: string, info: BuildInfo, opts: BuildOptions, packages?: Set<string>): Promise<string> {
   const result = await esbuild.build({
+    metafile: true,
     entryPoints: [entry],
     bundle: true,
     write: false,
@@ -168,6 +181,7 @@ export async function buildLazy(entry: string, info: BuildInfo, opts: BuildOptio
     plugins: [v1AliasPlugin()],
     logLevel: 'silent',
   });
+  track(result, packages);
   return result.outputFiles[0]?.text ?? '';
 }
 
@@ -203,8 +217,13 @@ export function parseArgs(argv: string[]): BuildOptions {
   return { flavor: flavorArg, ads, dev: argv.includes('--dev'), outDir: outArg ? path.resolve(root, outArg) : path.join(root, 'www') };
 }
 
-export async function buildAll(opts: BuildOptions): Promise<{ info: BuildInfo; sizes: SizeRow[] }> {
+/**
+ * `packages`: the npm packages bundled into www/ (UI, core, lazy libraries); tests/third-party.test.ts
+ * checks each has a notice in THIRD_PARTY_NOTICES.md. Built-in plugins keep their libraries external.
+ */
+export async function buildAll(opts: BuildOptions): Promise<{ info: BuildInfo; sizes: SizeRow[]; packages: string[] }> {
   const info = buildInfo(opts);
+  const packages = new Set<string>();
   const out = opts.outDir;
   rmSync(out, { recursive: true, force: true });
   const sizes: SizeRow[] = [];
@@ -215,12 +234,12 @@ export async function buildAll(opts: BuildOptions): Promise<{ info: BuildInfo; s
     sizes.push({ file: rel, kb: Buffer.byteLength(contents) / 1024, ...(BUDGETS_KB[rel] ? { budgetKB: BUDGETS_KB[rel] } : {}) });
   };
 
-  write('index.html', await buildUi(info, opts));
-  write('core/core.js', await buildCore(info, opts));
-  write('core/lib/declarative-host.js', await buildLazy(path.join(root, 'src', 'core', 'lazy', 'declarative-host.ts'), info, opts));
+  write('index.html', await buildUi(info, opts, packages));
+  write('core/core.js', await buildCore(info, opts, packages));
+  write('core/lib/declarative-host.js', await buildLazy(path.join(root, 'src', 'core', 'lazy', 'declarative-host.ts'), info, opts, packages));
 
   if (opts.flavor === 'personal') {
-    write('core/lib/plugin-host.js', await buildLazy(path.join(v1Src(), 'script', 'lazy', 'plugin-host.ts'), info, opts));
+    write('core/lib/plugin-host.js', await buildLazy(path.join(v1Src(), 'script', 'lazy', 'plugin-host.ts'), info, opts, packages));
     const pluginsDir = path.join(v1Root(), 'plugins');
     const names: string[] = [];
     if (existsSync(pluginsDir)) {
@@ -234,7 +253,7 @@ export async function buildAll(opts: BuildOptions): Promise<{ info: BuildInfo; s
   }
 
   writeFileSync(path.join(out, 'build-info.json'), JSON.stringify(info, null, 2));
-  return { info, sizes };
+  return { info, sizes, packages: [...packages].sort() };
 }
 
 if (import.meta.main) {
