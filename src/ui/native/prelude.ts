@@ -3,7 +3,8 @@
  * no v1 change:
  *  - navigator.wakeLock → native idle-timer control (WKWebView's own Wake Lock support is unreliable;
  *    v1's reader already calls navigator.wakeLock.request('screen') for "keep screen awake").
- *  - Splash screen: hidden once the UI has painted its first real frame after app.boot.
+ *  - Launch screen: hidden as soon as the library has painted its boot content (boot-timing.ts, which
+ *    also logs the boot timing), at the latest after 3 s.
  *  - Status bar: follows the system appearance (the v1 UI follows it too).
  *  - Deep links: tachinovel://open?plugin=…&novel=…[&chapter=…] are handled natively (CorePlugin
  *    forwards them as `app.deepLink` core events), so nothing to do here.
@@ -11,7 +12,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { StatusBar, Style } from '@capacitor/status-bar';
-import { observeCalls } from '../capacitor-client.ts';
+import { installBootTiming } from './boot-timing.ts';
 
 interface TachiNativePlugin {
   setKeepAwake(opts: { on: boolean }): Promise<void>;
@@ -61,19 +62,9 @@ function installWakeLock(): void {
 }
 
 function hideSplashAfterBoot(): void {
-  let hidden = false;
-  const hide = (): void => {
-    if (hidden) return;
-    hidden = true;
-    void SplashScreen.hide({ fadeOutDuration: 150 }).catch(() => undefined);
-  };
-  const stop = observeCalls((method) => {
-    if (method !== 'app.boot') return;
-    stop();
-    // Two frames after the boot call: the library has rendered from the boot payload by then.
-    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(hide, 120)));
-  });
-  setTimeout(hide, 3000); // never leave the splash up
+  // Previously: two frames + 120 ms after the app.boot CALL, which could reveal an empty library when the
+  // boot reply was slow, and waited needlessly when it was fast. Now: the first frame with library content.
+  installBootTiming(() => void SplashScreen.hide({ fadeOutDuration: 150 }).catch(() => undefined));
 }
 
 function followSystemStatusBar(): void {
