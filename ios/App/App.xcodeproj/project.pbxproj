@@ -32,6 +32,7 @@
 		1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */; };
 		FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */; };
 		2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */; };
+		ED85BA88CA34208CCC80086F /* MetricDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +64,7 @@
 		5462AE7AE519E66588E5B106 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioChapterPlayer.swift"; sourceTree = "<group>"; };
 		335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioLibrary.swift"; sourceTree = "<group>"; };
+		E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/MetricDiagnostics.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +133,7 @@
 				D5E7DB03FA36592670553932 /* StorePlugin.swift */,
 				D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */,
 				335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */,
+				E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -234,6 +237,7 @@
 				A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */,
 				FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */,
 				2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */,
+				ED85BA88CA34208CCC80086F /* MetricDiagnostics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
