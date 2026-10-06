@@ -1,0 +1,62 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%lld new chapters in your library" : {
+      "comment" : "Body of the notification after a background library update; the number of new chapters",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld new chapter in your library"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld new chapters in your library"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "comment" : "Cancel button of an action sheet"
+    },
+    "Continue listening" : {
+      "comment" : "CarPlay: header of the recently read novels"
+    },
+    "Loading…" : {
+      "comment" : "CarPlay: placeholder row while the list loads"
+    },
+    "New chapters" : {
+      "comment" : "Title of the notification after a background library update"
+    },
+    "Novel" : {
+      "comment" : "CarPlay: name for a novel without a title"
+    },
+    "Now Playing" : {
+      "comment" : "CarPlay: row that opens the Now Playing screen"
+    },
+    "OK" : {
+      "comment" : "Dismisses an alert that has no other buttons"
+    },
+    "Read something on your iPhone first" : {
+      "comment" : "CarPlay: the list is empty (nothing read yet)"
+    },
+    "The app core could not accept the request" : {
+      "comment" : "Error when the app's core can't take a request"
+    },
+    "The app core failed to start: %@" : {
+      "comment" : "Error when the app's core can't start; the technical reason follows"
+    },
+    "The app core is not available" : {
+      "comment" : "Error when a request reaches the app's core before it is running"
+    }
+  },
+  "version" : "1.0"
+}

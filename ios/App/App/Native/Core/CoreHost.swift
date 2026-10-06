@@ -156,7 +156,13 @@ final class CoreHost {
         startupError = reason
         let queued = pending
         pending.removeAll()
-        for (json, done) in queued { done(Self.errorEnvelope(for: json, message: "The app core failed to start: \(reason)")) }
+        let message = Self.startupFailedMessage(reason)
+        for (json, done) in queued { done(Self.errorEnvelope(for: json, message: message)) }
+    }
+
+    /// Shown by the UI's error view (with Retry) when a request can't reach the core.
+    static func startupFailedMessage(_ reason: String) -> String {
+        String(localized: "The app core failed to start: \(reason)", comment: "Error when the app's core can't start; the technical reason follows")
     }
 
     /// ResponseEnvelope JSON for a failed request (same shape the core uses; code UNKNOWN, not retryable).
@@ -188,7 +194,7 @@ final class CoreHost {
     /// Core queue only: run now, buffer until the handler exists, or answer with the startup error.
     private func dispatch(_ json: String, _ done: @escaping (String) -> Void) {
         if handler != nil { return invoke(json, done) }
-        if let startupError { return done(Self.errorEnvelope(for: json, message: "The app core failed to start: \(startupError)")) }
+        if let startupError { return done(Self.errorEnvelope(for: json, message: Self.startupFailedMessage(startupError))) }
         pending.append((json, done))
     }
 
@@ -219,11 +225,13 @@ final class CoreHost {
 
     private func invoke(_ json: String, _ done: @escaping (String) -> Void) {
         guard let handler, let ctx = handler.context else {
-            return done(Self.errorEnvelope(for: json, message: "The app core is not available"))
+            let message = String(localized: "The app core is not available", comment: "Error when a request reaches the app's core before it is running")
+            return done(Self.errorEnvelope(for: json, message: message))
         }
         let block: @convention(block) (String) -> Void = { response in done(response) }
         guard let doneFn = JavaScriptCore.JSValue(object: unsafeBitCast(block, to: AnyObject.self), in: ctx) else {
-            return done(Self.errorEnvelope(for: json, message: "The app core could not accept the request"))
+            let message = String(localized: "The app core could not accept the request", comment: "Error when the app's core can't take a request")
+            return done(Self.errorEnvelope(for: json, message: message))
         }
         _ = handler.call(withArguments: [json, doneFn])
     }

@@ -70,6 +70,24 @@ repos get them free, but they are slow and they queue:
   globals: the core (`src/core`, a JavaScriptCore context) can't use DOM, browser or Node globals; the
   UI (`src/ui`) can't use Node globals, the network, or the core's `__native`. `--max-warnings=0`.
 
+## Native strings
+
+Text the Swift layer shows (alerts, CarPlay lists, notifications, labels, errors the UI displays) comes
+from the String Catalog [`ios/App/App/Localizable.xcstrings`](ios/App/App/Localizable.xcstrings),
+English only for now. Translations go in the same file later, so nothing in code changes.
+
+- Write `String(localized: "Continue listening", comment: "CarPlay: header of the recently read novels")`
+  and add the key to the catalog with the **same comment** (translators see it). Interpolated values
+  become format specifiers in the key: an `Int` is `%lld`, a `String` is `%@`. Singular/plural forms
+  are catalog variations (see "%lld new chapters in your library"); the code keeps one key.
+- `tests/localization.test.ts` (`tools/swift-strings.ts`) fails on a literal that reaches a UI sink
+  without going through the catalog, on a key missing from the catalog, and on a catalog key no code uses.
+  `node tools/swift-strings.ts` prints the findings, and `--format` rewrites the catalog in Xcode's layout.
+- Not localized: log messages, `call.reject` errors (the web UI words what users see), identifiers. For
+  a deliberate exception, put `// l10n-ignore: <why>` on the line (the app name, for example).
+- The web UI's strings belong to v1's UI and are out of scope here. Paths owned by another workstream are
+  report-only, the same as the Swift gates.
+
 ## Swift quality gates
 
 The `ios-compile` job ends with two gates (both in `tools/swift-quality.ts`, unit-tested on the PC):

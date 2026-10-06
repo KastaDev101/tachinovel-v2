@@ -34,6 +34,7 @@
 		2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */; };
 		ED85BA88CA34208CCC80086F /* MetricDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */; };
 		D98FFF876A4ACCABB4F7B63E /* AppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7A58A6D270B81377101BD7 /* AppUITests.swift */; };
+		E8EDB6A36D9ABD09081C6595 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = FA6EAF34A40B5A8EF52A9504 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 		E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/MetricDiagnostics.swift"; sourceTree = "<group>"; };
 		EE7A58A6D270B81377101BD7 /* AppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUITests.swift; sourceTree = "<group>"; };
 		BA27D91257E38C5789D4B12A /* AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA6EAF34A40B5A8EF52A9504 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -133,6 +135,7 @@
 				F2D108A23FAAF241A88B50AB /* Native */,
 				A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */,
 				5462AE7AE519E66588E5B106 /* App.entitlements */,
+				FA6EAF34A40B5A8EF52A9504 /* Localizable.xcstrings */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -263,6 +266,7 @@
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
 				1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */,
+				E8EDB6A36D9ABD09081C6595 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -462,11 +466,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 2.0.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.kasta.tachinovel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -486,10 +492,12 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.kasta.tachinovel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
