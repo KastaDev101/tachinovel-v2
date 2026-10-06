@@ -107,7 +107,7 @@ if ! grep -q "recovery: the web view was restarted" "$OUT/app-log.txt"; then
   status=1
 fi
 
-# Boot time per launch: tap (simctl launch) → process start → WebView → HTML → DOM → app.boot → library painted
+# Boot time per launch: tap (simctl launch) → process start → WebView → app.boot call → library painted
 # (boot-times.txt + a run notice).
 kill "$BOOT_STREAM" 2>/dev/null || true
 python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" "$OUT/app-log.txt" <<'PY' || true
@@ -156,7 +156,9 @@ for line in open(sys.argv[2], errors='replace'):
     rows[name] = dict(tap=tap, proc=proc, nav=nav, vis=vis, html=ms('html', line), dom=ms('dom ready', line), boot=ms('app.boot call', line), lib=vis - nav)
 def d(a, b):
     return '-' if a is None or b is None else str(b - a)
-cols = ['launch', 'tap->process', 'process->WebView', 'WebView->HTML', 'HTML->DOM', 'DOM->app.boot', 'app.boot->library', 'process->library', 'tap->library']
+# The UI is one inline-script page: its script runs while the HTML is parsed, so the app.boot call comes
+# about when the HTML is in (html / dom ready stay in the boot line for reference).
+cols = ['launch', 'tap->process', 'process->WebView', 'WebView->app.boot', 'app.boot->library', 'process->library', 'tap->library']
 with open(sys.argv[3], 'w') as f:
     f.write('  '.join(f'{c:>17}' if i else f'{c:22}' for i, c in enumerate(cols)) + '  (ms)\n')
     for name, _ in launches:
@@ -164,8 +166,7 @@ with open(sys.argv[3], 'w') as f:
         if not r:
             f.write(f'{name:22}  no boot line (library not painted within 20 s of the page starting?)\n')
             continue
-        nav0 = 0
-        vals = [d(r['tap'], r['proc']), d(r['proc'], r['nav']), d(nav0, r['html']), d(r['html'], r['dom']), d(r['dom'], r['boot']), d(r['boot'], r['lib']), d(r['proc'], r['vis']), d(r['tap'], r['vis'])]
+        vals = [d(r['tap'], r['proc']), d(r['proc'], r['nav']), d(0, r['boot']), d(r['boot'], r['lib']), d(r['proc'], r['vis']), d(r['tap'], r['vis'])]
         f.write(f'{name:22}' + ''.join(f'  {v:>17}' for v in vals) + '\n')
 print(open(sys.argv[3]).read())
 done = [rows[n] for n, _ in launches if n in rows]
