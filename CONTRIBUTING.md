@@ -25,8 +25,13 @@ and push with `--force-with-lease` (your branch only), or ask the coordinator.
 
 ## CI cost
 
-Every push to a PR runs two macOS jobs (about 15 minutes each, mostly the first simulator boot). Public
+Every push to a PR runs the macOS jobs (about 15 minutes each, mostly the first simulator boot). Public
 repos get them free, but they are slow and they queue:
+
+- Docs-only PRs skip them: when every changed file is under `docs/`, a `*.md` file (except
+  `THIRD_PARTY_NOTICES.md`), a `changelog.d/` fragment or a PR/issue template, the `changes` job says so
+  and the macOS jobs are skipped (skipped counts as passing). Pushes to `main`, tags and manual runs
+  always build.
 
 - Push when the change is ready, not after every commit. Batch fixups into one push.
 - The Swift layer cannot be compiled on Windows; CI is the compiler. Read the `xcodebuild-*-log`

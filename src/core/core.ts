@@ -248,7 +248,10 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     const fn = typeof env.method === 'string' ? table[env.method] : undefined;
     if (!fn) return fail(id, Object.assign(new Error(`Unknown method ${String(env.method)}`), { code: 'UNKNOWN_METHOD' }));
     try {
-      return respond(id, await fn(env.args as never));
+      const result = await fn(env.args as never);
+      // The UI booted from the new free-sideload layout: its old copies may go at the next launch.
+      if (env.method === 'app.boot') platform.layout?.confirm();
+      return respond(id, result);
     } catch (err) {
       return fail(id, err);
     }

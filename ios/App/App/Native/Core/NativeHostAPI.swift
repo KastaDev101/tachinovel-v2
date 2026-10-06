@@ -131,6 +131,7 @@ final class NativeHostAPI {
         set(o, "appVersion", version)
         set(o, "localRoot", host.localRoot.path)
         set(o, "syncedRoot", host.syncedRoot.map { $0.path as Any } ?? NSNull())
+        set(o, "documentsRoot", host.documentsRoot.path)
         set(o, "launchReason", launchReason)
         return o
     }

@@ -27,6 +27,7 @@ import type {
 } from '@v1/shared/contracts/platform.ts';
 import type { NativeAction } from '@v1/shared/contracts/protocol.ts';
 import type { NativeCallback, NativeHost, NativeHttpRequest, NativeHttpResponse } from './native-api.ts';
+import { type LayoutResult, prepareDocumentsLayout } from './storage/documents-layout.ts';
 
 export const APP_DIR = 'TachiNovel';
 export const IMPORTS_DIR = 'imports';
@@ -41,6 +42,8 @@ export interface NativePlatform extends Platform {
   /** Visible WebView on `url` until closed (sources.solveChallenge). */
   solveChallenge(url: string): Promise<boolean>;
   readonly host: NativeHost;
+  /** Free-sideload layout (synced store in Documents) when there is no iCloud; null with iCloud. */
+  readonly layout: LayoutResult | null;
 }
 
 /** Promise wrapper for a callback-style native call. */
@@ -95,20 +98,42 @@ function fileOps(host: NativeHost, icloud: boolean): FileOps {
   return ops;
 }
 
-export function createStores(host: NativeHost): { local: FileStore; synced: FileStore } {
-  const local = createFileStore(fileOps(host, false), joinPath(host.info.localRoot, APP_DIR), false);
+/**
+ * The two stores. Synced: iCloud when the app has the container (entitled builds); otherwise the app's
+ * Documents folder itself (free sideload: visible in Files as On My iPhone › TachiNovel, see
+ * storage/documents-layout.ts, which also moves data written by older builds); the local store as a
+ * last resort. `log` receives the layout's messages (the platform log isn't up yet).
+ */
+export function createStores(
+  host: NativeHost,
+  log: (level: 'info' | 'warn', message: string) => void = (level, message) => host.log(level, message),
+): { local: FileStore; synced: FileStore; layout: LayoutResult | null } {
+  const localDir = joinPath(host.info.localRoot, APP_DIR);
+  const local = createFileStore(fileOps(host, false), localDir, false);
   local.mkdirp('');
   const syncedRoot = host.info.syncedRoot;
   if (syncedRoot) {
     try {
       const synced = createFileStore(fileOps(host, true), joinPath(syncedRoot, APP_DIR), true);
       synced.mkdirp('');
-      return { local, synced };
+      return { local, synced, layout: null };
     } catch (err) {
-      host.log('warn', `iCloud store unavailable, using local: ${err instanceof Error ? err.message : String(err)}`);
+      log('warn', `iCloud store unavailable, using local: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return { local, synced: local };
+  const documentsRoot = host.info.documentsRoot;
+  if (documentsRoot) {
+    // Documents itself (no TachiNovel/ subfolder): Files shows On My iPhone › TachiNovel › backups, logs, …
+    const docsDir = documentsRoot;
+    const layout = prepareDocumentsLayout(host.fs, { localDir, docsDir, now: () => Date.now(), log });
+    if (layout.useDocuments) {
+      const synced = createFileStore(fileOps(host, false), docsDir, false);
+      synced.mkdirp('');
+      return { local, synced, layout };
+    }
+    return { local, synced: local, layout };
+  }
+  return { local, synced: local, layout: null };
 }
 
 function toNativeRequest(req: HttpRequest, responseType: 'text' | 'base64'): string {
@@ -191,21 +216,25 @@ export function createNative(host: NativeHost, local: FileStore): NativeUi {
   };
 }
 
-/** iCloud log mirror: overwritten in place (no temp/rename) after materializing an evicted file. */
+/**
+ * Log mirror in the synced store (iCloud, or Documents in the free sideload): overwritten in place (no
+ * temp/rename); an iCloud file is materialized first in case it was evicted.
+ */
 function syncedMirror(host: NativeHost, synced: FileStore): LogMirror {
   return {
     read: (path) => synced.readText(path),
     async write(path, text) {
       const abs = synced.absolute(path);
       synced.mkdirp(path.slice(0, path.lastIndexOf('/')));
-      if (host.fs.exists(abs)) await call<true>((cb) => host.fs.download(abs, cb)).catch(() => undefined);
+      if (synced.isSynced && host.fs.exists(abs)) await call<true>((cb) => host.fs.download(abs, cb)).catch(() => undefined);
       host.fs.writeText(abs, text);
     },
   };
 }
 
 export function createNativePlatform(host: NativeHost): NativePlatform {
-  const { local, synced } = createStores(host);
+  const layoutLog: [level: 'info' | 'warn', message: string][] = [];
+  const { local, synced, layout } = createStores(host, (level, message) => layoutLog.push([level, message]));
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolve) => {
       host.timers.set(Math.max(0, ms), resolve);
@@ -282,6 +311,9 @@ export function createNativePlatform(host: NativeHost): NativePlatform {
     return { url: r.url, status: r.status, headers: r.headers, body: r.body ?? '' };
   }
 
+  // The storage layout's messages, now that the log is up (os_log + the in-app log Diagnostics reads).
+  for (const [level, message] of layoutLog) log(level, message);
+
   return {
     host,
     http: createHttp(host),
@@ -295,5 +327,6 @@ export function createNativePlatform(host: NativeHost): NativePlatform {
     importLazy,
     flushLogs,
     solveChallenge: (url) => call<boolean>((cb) => host.ui.solveChallenge(url, cb)),
+    layout,
   };
 }
