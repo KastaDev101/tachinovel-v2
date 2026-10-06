@@ -7,6 +7,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { stripComments } from '../tools/third-party.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const appDir = path.join(root, 'ios', 'App', 'App');
@@ -60,7 +61,7 @@ function usedCategories(): Map<string, string[]> {
 /** Declared category → reasons, from the plist (simple, format-specific parse of this file). */
 function declared(): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  const xml = manifest.replace(/<!--[\s\S]*?-->/g, '');
+  const xml = stripComments(manifest);
   for (const m of xml.matchAll(/<key>NSPrivacyAccessedAPIType<\/key>\s*<string>([^<]+)<\/string>\s*<key>NSPrivacyAccessedAPITypeReasons<\/key>\s*<array>([\s\S]*?)<\/array>/g)) {
     out.set(m[1]!, [...m[2]!.matchAll(/<string>([^<]+)<\/string>/g)].map((r) => r[1]!));
   }
@@ -87,7 +88,7 @@ describe('privacy manifest', () => {
   });
 
   it('does not track and collects no data (personal and ad-free store builds)', () => {
-    const xml = manifest.replace(/<!--[\s\S]*?-->/g, '');
+    const xml = stripComments(manifest);
     expect(xml).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/);
     expect(xml).toMatch(/<key>NSPrivacyTrackingDomains<\/key>\s*<array\/>/);
     expect(xml).toMatch(/<key>NSPrivacyCollectedDataTypes<\/key>\s*<array\/>/);

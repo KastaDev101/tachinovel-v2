@@ -24,8 +24,32 @@ export interface Notice {
 
 export const NOTICES_FILE = path.resolve(import.meta.dirname, '..', 'THIRD_PARTY_NOTICES.md');
 
+/** One pass: drop each `<!-- … -->` block; an unterminated one runs to the end. */
+function stripCommentsOnce(text: string): string {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const start = text.indexOf('<!--', i);
+    if (start < 0) return out + text.slice(i);
+    out += text.slice(i, start);
+    const end = text.indexOf('-->', start + 4);
+    if (end < 0) return out;
+    i = end + 3;
+  }
+}
+
+/**
+ * Removes HTML comments until none is left (removing one can join text into a new "<!--", so repeat).
+ * For our own Markdown/plist files; not an HTML sanitizer.
+ */
+export function stripComments(text: string): string {
+  let current = text;
+  while (current.includes('<!--')) current = stripCommentsOnce(current);
+  return current;
+}
+
 export function parseNotices(markdown: string): Notice[] {
-  const md = markdown.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '');
+  const md = stripComments(markdown.replace(/\r\n/g, '\n'));
   const out: Notice[] = [];
   for (const section of md.split(/^## /m).slice(1)) {
     const name = section.slice(0, section.indexOf('\n')).trim();

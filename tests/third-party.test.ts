@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../tools/build.ts';
-import { packagesFromInputs, parseNotices, readNotices, reflow } from '../tools/third-party.ts';
+import { packagesFromInputs, parseNotices, readNotices, reflow, stripComments } from '../tools/third-party.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const out = (flavor: string): string => path.join(root, '.cache', `test-third-party-${flavor}`);
@@ -80,6 +80,13 @@ describe('parser', () => {
       { name: 'Thing', license: 'MIT', packages: ['thing'], text: 'Copyright (c) Someone' },
       { name: 'Multi', license: 'BSD-2-Clause', packages: ['a', '@scope/b'], text: 'z' },
     ]);
+  });
+
+  it('strips comments completely, even nested or unterminated ones', () => {
+    expect(stripComments('a<!-- x -->b<!--y-->c')).toBe('abc');
+    expect(stripComments('a<!--<!-- x -->-->b')).toBe('a-->b');
+    expect(stripComments('a<!-- open')).toBe('a');
+    expect(stripComments('<!<!---->--')).toBe('');
   });
 
   it('reflows hard-wrapped paragraphs for the phone screen and keeps short structured blocks', () => {
