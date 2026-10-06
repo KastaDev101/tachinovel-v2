@@ -134,10 +134,12 @@ final class CoreHost {
         self.api = api
         context = ctx
 
-        guard let url = Bundle.main.url(forResource: "core", withExtension: "js", subdirectory: "public/core"),
-              let code = try? String(contentsOf: url, encoding: .utf8) else {
-            return failStartup("public/core/core.js is missing from the app bundle (run npm run build && npx cap copy ios)")
+        // The app's core, or a web update's (WebBundle.swift decides once per launch).
+        let url = WebBundle.current.root.appendingPathComponent("core/core.js")
+        guard let code = try? String(contentsOf: url, encoding: .utf8) else {
+            return failStartup("core/core.js is missing from the web bundle at \(url.path) (run npm run build && npx cap copy ios)")
         }
+        if let update = WebBundle.current.id { log.info("Running web update \(update, privacy: .public)") }
         _ = ctx.evaluateScript(code, withSourceURL: url)
         // core.js calls __native.register() synchronously at the end of its top level. If it didn't, the
         // script threw before getting there: fail fast with the exception instead of hanging every call.
