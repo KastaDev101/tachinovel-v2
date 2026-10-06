@@ -19,13 +19,17 @@ import Foundation
 import JavaScriptCore
 import os
 
+/// Thread model: the JS state is confined to `queue`, observers are guarded by `observersLock`, and
+/// `localRoot` never changes after init (the router reads it from the main thread). Not declared
+/// `Sendable` yet: with that conformance Swift 6.3.3 crashed in its SendNonSendable pass on a caller's
+/// completion closure (NarrationController.playNovel) under complete concurrency checking.
 final class CoreHost {
     static let shared = CoreHost()
 
     let queue = DispatchQueue(label: "app.tachinovel.core", qos: .userInitiated)
     let log = Logger(subsystem: "app.tachinovel", category: "core")
 
-    private(set) var localRoot: URL
+    let localRoot: URL
     private(set) var syncedRoot: URL?
     private var context: JSContext?
     private var api: NativeHostAPI?

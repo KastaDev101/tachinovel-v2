@@ -12,7 +12,7 @@
 - [ ] `npm run check` passes locally (typecheck, both flavors build, tests, Xcode project check)
 - [ ] New Swift files registered with `node tools/ios-project.ts`
 - [ ] Tests added or updated for logic that can be tested
-- [ ] `CHANGELOG.md` updated under **Unreleased** (or not needed: docs/CI-only)
+- [ ] Changelog fragment added: `changelog.d/<branch-name>.md` (required when `src/` or `ios/` change; not `CHANGELOG.md`)
 - [ ] Docs updated (`docs/architecture.md`, `docs/roadmap.md`, README) if behavior or setup changed
 - [ ] New third-party code or assets added to `THIRD_PARTY_NOTICES.md` with their license
 - [ ] No secrets, signing material, personal paths, emails or real user data (public repo)

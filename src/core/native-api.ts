@@ -138,6 +138,6 @@ export interface NativeHost {
 }
 
 declare global {
-  // eslint-disable-next-line no-var -- installed by the native host before core.js is evaluated
+  // Installed by the native host before core.js is evaluated; core/main.ts reads it and deletes it.
   var __native: NativeHost | undefined;
 }

@@ -155,7 +155,7 @@ final class NativeUI: NSObject, UIDocumentPickerDelegate {
     // MARK: - Thread-safe rendering
 
     /// SF Symbol → PNG base64, white on transparent (the UI tints it with CSS masks), rendered @3x.
-    static func symbolPNG(name: String, size: CGFloat) -> String? {
+    nonisolated static func symbolPNG(name: String, size: CGFloat) -> String? {
         let config = UIImage.SymbolConfiguration(pointSize: max(8, size))
         guard let image = UIImage(systemName: name, withConfiguration: config)?.withTintColor(.white, renderingMode: .alwaysOriginal) else { return nil }
         let format = UIGraphicsImageRendererFormat()
@@ -166,7 +166,7 @@ final class NativeUI: NSObject, UIDocumentPickerDelegate {
     }
 
     /// Downscale with ImageIO (decodes WebP/HEIC/…; never materializes the full-size bitmap).
-    static func resizeImage(base64: String, maxWidth: Int) -> String? {
+    nonisolated static func resizeImage(base64: String, maxWidth: Int) -> String? {
         guard let data = Data(base64Encoded: base64),
               let src = CGImageSourceCreateWithData(data as CFData, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
@@ -188,23 +188,28 @@ final class NativeUI: NSObject, UIDocumentPickerDelegate {
 }
 
 /// Device info snapshot, refreshed on the main thread (UIKit state must not be read from the core queue).
-final class DeviceSnapshot {
+final class DeviceSnapshot: @unchecked Sendable { // `cached` is lock-protected; UIKit is read on the main actor only
     static let shared = DeviceSnapshot()
     private let lock = NSLock()
     private var cached = "{}"
 
     /// Call once on the main thread at launch.
-    func start() {
+    @MainActor func start() {
         UIDevice.current.isBatteryMonitoringEnabled = true
         let nc = NotificationCenter.default
-        for name in [UIDevice.batteryLevelDidChangeNotification, UIDevice.batteryStateDidChangeNotification,
-                     UIScreen.brightnessDidChangeNotification, UIApplication.didBecomeActiveNotification] {
-            nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
+        let names = [
+            UIDevice.batteryLevelDidChangeNotification,
+            UIDevice.batteryStateDidChangeNotification,
+            UIScreen.brightnessDidChangeNotification,
+            UIApplication.didBecomeActiveNotification,
+        ]
+        for name in names {
+            nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
         }
         refresh()
     }
 
-    func refresh() {
+    @MainActor func refresh() {
         let device = UIDevice.current
         let window = NativeUI.shared.keyWindow()
         let info: [String: Any] = [
@@ -245,6 +250,7 @@ final class Once<T> {
 ///    controller that is already presenting or animating, and v1's Scriptable did queue them).
 ///  - Every request is answered exactly once: by the user, or with "cancelled" when it can't be shown
 ///    (no window, a controller stuck animating, or UIKit silently refusing the presentation).
+@MainActor
 final class PresentationQueue {
     static let shared = PresentationQueue()
 

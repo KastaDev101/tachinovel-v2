@@ -4,32 +4,45 @@ This is the quickest way to get v2 onto the iPhone without an Apple Developer ac
 GitHub Actions**, re-signed on the phone with a free Apple ID by AltStore (or SideStore). The app runs for
 7 days per signature; then you refresh it (no data is lost).
 
-## 1. What to install (once, about 20 minutes)
+## 1. Setup (tonight starts at step 1)
 
-| Where | What |
-|---|---|
-| Windows PC | **iTunes and iCloud downloaded from apple.com**, not the Microsoft Store versions (AltServer needs Apple's versions; https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows) |
-| Windows PC | **AltServer** from https://altstore.io. Run it as administrator; it sits in the tray |
-| iPhone | Connect it by USB, unlock it, tap Trust; in iTunes, turn on "Sync with this iPhone over Wi-Fi" |
-| PC → iPhone | AltServer tray icon → **Install AltStore** → your iPhone → sign in with your Apple ID (AltServer sends it only to Apple) |
-| iPhone | Settings › General › VPN & Device Management → trust your Apple ID. Then Settings › Privacy & Security › **Developer Mode** → on (the phone restarts) |
+Already done on the PC: **iTunes from apple.com**, **AltServer**, and the iPhone has been seen over USB.
+**iCloud stays as it is**: the PC's iCloud is the Microsoft Store version, and it is what syncs the
+Scriptable folder (v1 deploys through it). Don't uninstall or reinstall it.
+
+| # | Where | Do |
+|---|---|---|
+| 1 | PC | Start menu → type "AltServer" → **Run as administrator** (allow private networks if asked); it sits in the tray |
+| 2 | iPhone | Connect by USB, unlock, tap Trust if asked |
+| 3 | PC → iPhone | AltServer tray icon → **Install AltStore** → your iPhone → sign in with your Apple ID (AltServer sends it only to Apple) |
+| 4 | iPhone | Settings › General › VPN & Device Management → trust your Apple ID. Then Settings › Privacy & Security › **Developer Mode** → on (the phone restarts; confirm "Turn On") |
+
+**If AltServer reports an iCloud error** (for example "iCloud is not installed" or anything about
+AppleiCloudServices/anisette): **stop and ask** before changing anything. AltStore's FAQ has a workaround
+for the Microsoft Store iCloud (https://faq.altstore.io/altstore-classic/troubleshooting-guide), but it
+temporarily swaps iCloud installations, which could disturb the Scriptable folder sync.
 
 Free Apple ID limits: 3 sideloaded apps at once (AltStore counts as one), 10 new app IDs per 7 days, and
 apps stop opening after 7 days until AltStore refreshes them. AltStore refreshes in the background when the
-PC with AltServer is on the same Wi-Fi; you can also open AltStore › My Apps › Refresh All.
+PC with AltServer is on the same Wi-Fi (in iTunes, turn on "Sync with this iPhone over Wi-Fi" for that);
+you can also open AltStore › My Apps › Refresh All.
 
 SideStore (https://sidestore.io) is an alternative that refreshes without the PC after setup. Setup is
 longer (pairing file + a VPN app), so AltStore is the faster choice for tonight.
 
 ## 2. Get the IPA
 
+**Option A (easiest):** a ready `.ipa` is waiting in **iCloud Drive › TachiNovel-Builds**. Nothing to
+download: pick it from Files in the install step below.
+
+**Option B (any newer build):**
 1. Open https://github.com/KastaDev101/tachinovel-v2/actions/workflows/ios.yml and pick the newest green
    run on `main` (you must be signed in to GitHub to download artifacts, even on a public repo).
-2. Under **Artifacts**, download **`TachiNovel-2.0.0-<run>-unsigned.ipa`** (about 1.5 MB; the browser
+2. Under **Artifacts**, download **`TachiNovel-<version>-<run>-unsigned.ipa`** (about 1.5 MB; the browser
    downloads the `.ipa` itself, not a zip). Use the browser: `gh run download` unpacks it into a
    `Payload/` folder (zip it back as `Payload/…` → `.ipa` if you go that way).
-3. Put it where the phone can see it: the simplest is iCloud Drive (iCloud for Windows syncs it), or
-   download it on the phone in Safari while signed in to GitHub.
+3. Put it where the phone can see it: iCloud Drive (iCloud for Windows syncs it), or download it on the
+   phone in Safari while signed in to GitHub.
 
 Install: AltStore › **My Apps** › **+** (top left) → pick the `.ipa` in Files. The first install takes
 ~30 s. The app appears on the home screen as "TachiNovel".

@@ -1,0 +1,77 @@
+# Swift compiler warnings tolerated in the app target (tools/swift-quality.ts warnings).
+# Any warning not listed here fails CI. Fix warnings rather than adding them; after fixing some,
+# refresh with: node tools/swift-quality.ts warnings <xcodebuild.log> --update
+# Format: <count><TAB><file><TAB><message>
+1	ios/App/App/Native/Core/CoreHost.swift	capture of 'args' with non-Sendable type '[String : Any]' in a '@Sendable' closure
+1	ios/App/App/Native/Core/CoreHost.swift	capture of 'completion' with non-Sendable type '((Bool, Any?) -> Void)?' in a '@Sendable' closure
+1	ios/App/App/Native/Core/CoreHost.swift	capture of 'completion' with non-Sendable type '((Bool, Any?) -> Void)?' in an isolated closure
+1	ios/App/App/Native/Core/CoreHost.swift	capture of 'completion' with non-Sendable type '(String) -> Void' in a '@Sendable' closure
+3	ios/App/App/Native/Core/CoreHost.swift	capture of 'self' with non-Sendable type 'CoreHost' in a '@Sendable' closure
+1	ios/App/App/Native/Core/CoreHost.swift	capture of 'self' with non-Sendable type 'CoreHost?' in a '@Sendable' closure
+1	ios/App/App/Native/Core/CoreHost.swift	static property 'shared' is not concurrency-safe because non-'Sendable' type 'CoreHost' may have shared mutable state; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Core/NativeHTTP.swift	capture of 'finish' with non-Sendable type '(Result<String, any Error>) -> ()' in a '@Sendable' closure
+1	ios/App/App/Native/Core/NativeHTTP.swift	concurrently-executed local function 'finish' must be marked as '@Sendable'
+1	ios/App/App/Native/Core/NativeHostAPI.swift	capture of 'completion' with non-Sendable type '(String?) -> Void' in a '@Sendable' closure
+1	ios/App/App/Native/Core/NativeHostAPI.swift	capture of 'items' with non-Sendable type '[Any]' in a '@Sendable' closure
+1	ios/App/App/Native/Core/NativeHostAPI.swift	capture of 'result' with non-Sendable type 'Any?' in a '@Sendable' closure
+8	ios/App/App/Native/Core/NativeHostAPI.swift	capture of 'self' with non-Sendable type 'NativeHostAPI' in a '@Sendable' closure
+8	ios/App/App/Native/Core/NativeHostAPI.swift	capture of 'self' with non-Sendable type 'NativeHostAPI' in an isolated closure
+1	ios/App/App/Native/Core/NativeHostAPI.swift	reference to captured var 'items' in concurrently-executing code
+1	ios/App/App/Native/Core/NativeHostAPI.swift	sending 'cb' risks causing data races; this is an error in the Swift 6 language mode
+8	ios/App/App/Native/Core/NativeHostAPI.swift	sending 'self' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/AudioChapterPlayer.swift	capture of 'completion' with non-Sendable type '(() -> Void)?' in a '@Sendable' closure
+3	ios/App/App/Native/Narration/AudioChapterPlayer.swift	capture of 'self' with non-Sendable type 'AudioChapterPlayer?' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/AudioChapterPlayer.swift	reference to captured var 'self' in concurrently-executing code
+1	ios/App/App/Native/Narration/AudioChapterPlayer.swift	sending 'completion' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/AudioChapterPlayer.swift	sending 'self' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationController.swift	call to main actor-isolated instance method 'chapter(atOrAfter:in:number:)' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationController.swift	call to main actor-isolated instance method 'chapter(pluginId:novelPath:chapterPath:)' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationController.swift	call to main actor-isolated instance method 'ensureDownloaded(_:timeout:)' in a synchronous nonisolated context
+2	ios/App/App/Native/Narration/NarrationController.swift	call to main actor-isolated instance method 'novel' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationController.swift	call to main actor-isolated instance method 'timingJSON' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'apply' with non-Sendable type '(UIImage) -> Void' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'completion' with non-Sendable type '(NarrationController.Chapter?) -> Void' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'narration' with non-Sendable type 'NarrationController' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'point' with non-Sendable type '[String : Any]?' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'result' with non-Sendable type 'Any?' in a '@Sendable' closure
+5	ios/App/App/Native/Narration/NarrationController.swift	capture of 'self' with non-Sendable type 'NarrationController' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	capture of 'self' with non-Sendable type 'NarrationController?' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationController.swift	implicit capture of 'self' requires that 'NarrationController' conforms to 'Sendable'
+5	ios/App/App/Native/Narration/NarrationController.swift	main actor-isolated static property 'shared' can not be referenced from a Sendable closure
+1	ios/App/App/Native/Narration/NarrationController.swift	main actor-isolated static property 'shared' can not be referenced from a nonisolated context
+1	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'audioChapter' in concurrently-executing code
+1	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'chapterPath' in concurrently-executing code
+1	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'loadError' in concurrently-executing code
+2	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'paragraph' in concurrently-executing code
+2	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'self' in concurrently-executing code
+1	ios/App/App/Native/Narration/NarrationController.swift	reference to captured var 'startTime' in concurrently-executing code
+1	ios/App/App/Native/Narration/NarrationController.swift	sending 'completion' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationController.swift	sending 'narration' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationController.swift	sending 'result' risks causing data races; this is an error in the Swift 6 language mode
+7	ios/App/App/Native/Narration/NarrationController.swift	sending 'self' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationController.swift	static property 'shared' is not concurrency-safe because non-'Sendable' type 'NarrationController' may have shared mutable state; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	add '@preconcurrency' to suppress 'Sendable'-related warnings from module 'Capacitor'
+2	ios/App/App/Native/Narration/NarrationPlugin.swift	call to main actor-isolated instance method 'chapter(pluginId:novelPath:chapterPath:)' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	call to main actor-isolated instance method 'scan(refresh:)' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	call to main actor-isolated instance method 'timingJSON' in a synchronous nonisolated context
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	call to main actor-isolated instance method 'unlink()' in a synchronous nonisolated context
+8	ios/App/App/Native/Narration/NarrationPlugin.swift	capture of 'call' with non-Sendable type 'CAPPluginCall' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	capture of 'call' with non-Sendable type 'CAPPluginCall' in an isolated closure
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	capture of 'fn' with non-Sendable type '(NarrationController) -> Void' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	capture of 'raw' with non-Sendable type 'JSArray?' (aka 'Optional<Array<any JSValue>>') in a '@Sendable' closure
+4	ios/App/App/Native/Narration/NarrationPlugin.swift	capture of 'self' with non-Sendable type 'NarrationPlugin' in a '@Sendable' closure
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	main actor-isolated property 'folderName' can not be referenced from a Sendable closure
+3	ios/App/App/Native/Narration/NarrationPlugin.swift	main actor-isolated static property 'shared' can not be referenced from a Sendable closure
+3	ios/App/App/Native/Narration/NarrationPlugin.swift	main actor-isolated static property 'shared' can not be referenced from a nonisolated context
+4	ios/App/App/Native/Narration/NarrationPlugin.swift	sending 'call' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	sending 'fn' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/NarrationPlugin.swift	sending 'raw' risks causing data races; this is an error in the Swift 6 language mode
+4	ios/App/App/Native/Narration/NarrationPlugin.swift	sending 'self' risks causing data races; this is an error in the Swift 6 language mode
+1	ios/App/App/Native/Narration/SpeechEngine.swift	passing non-Sendable parameter 'fn' to function expecting a '@Sendable' closure
+1	ios/App/App/Native/Narration/SpeechEngine.swift	stored property 'delegate' of 'Sendable'-conforming class 'SystemSpeechEngine' is mutable
+2	ios/App/App/Native/Shell/BackgroundRefresh.swift	capture of 'completion' with non-Sendable type '() -> Void' in a '@Sendable' closure
+1	ios/App/App/Native/Shell/BackgroundRefresh.swift	mutation of captured var 'completed' in concurrently-executing code
+1	ios/App/App/Native/Shell/BackgroundRefresh.swift	reference to captured var 'completed' in concurrently-executing code
+1	ios/App/App/Native/Shell/BackgroundRefresh.swift	sending 'completed' risks causing data races; this is an error in the Swift 6 language mode
+5	ios/App/App/Native/Store/StorePlugin.swift	passing closure as a 'sending' parameter risks causing data races between code in the current task and concurrent execution of the closure; this is an error in the Swift 6 language mode
+2	ios/App/App/Native/Store/StorePlugin.swift	sending 'call' risks causing data races; this is an error in the Swift 6 language mode

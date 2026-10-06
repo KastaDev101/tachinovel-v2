@@ -216,7 +216,7 @@ export function openVoicesScreen(): void {
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el || !info) return;
-    switch (el.dataset.act) {
+    switch (el.dataset.act ?? '') {
       case 'sample':
         void sample(el as HTMLButtonElement, el.dataset.voice ?? 'af_heart');
         return;
@@ -360,7 +360,7 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
     const i = Number(el.dataset.i);
-    switch (el.dataset.act) {
+    switch (el.dataset.act ?? '') {
       case 'add': {
         const match = field('match');
         const say = field('say');

@@ -1,9 +1,10 @@
 //
 //  MainViewController.swift — the Capacitor bridge view controller for TachiNovel.
 //   - registers the app-target plugins (Capacitor only auto-registers npm plugins);
-//   - routes capacitor://localhost/covers/<file> to the core's local store, so v1's relative cover
-//     paths ("covers/ab12.jpg", written by the core's CoverCache) load exactly like they did next to
-//     v1's index.html in Scriptable.
+//   - routes capacitor://localhost/covers/<file> and /cache/img-<file> to the core's local store, so
+//     v1's relative image paths (covers: "covers/ab12.jpg" from CoverCache; chapter illustrations the
+//     site blocks: "cache/img-ab12.jpg" from images.fetch) load exactly like they did next to v1's
+//     index.html in Scriptable.
 //
 
 import Capacitor
@@ -45,20 +46,28 @@ class MainViewController: CAPBridgeViewController {
     }
 }
 
-/// Capacitor's default routing, plus /covers/* → <Application Support>/TachiNovel/covers/*.
+/// Capacitor's default routing, plus the core's images in <Application Support>/TachiNovel:
+///   /covers/<file>      → covers/<file>      (library and history covers, v1 CoverCache)
+///   /cache/img-<file>   → cache/img-<file>   (chapter illustrations fetched by the core, v1 images.fetch)
 struct TachiRouter: Router {
     var basePath: String = ""
 
     func route(for path: String) -> String {
-        if path.hasPrefix("/covers/") {
-            let name = String(path.dropFirst("/covers/".count))
-            // Flat file names only (the core writes covers/<hash>.<ext>); no traversal.
-            if !name.isEmpty, !name.contains("/"), !name.contains("..") {
-                return CoreHost.shared.localAppDir.appendingPathComponent("covers").appendingPathComponent(name).path
-            }
+        if let file = Self.localImage(path, prefix: "/covers/", dir: "covers", namePrefix: "")
+            ?? Self.localImage(path, prefix: "/cache/", dir: "cache", namePrefix: "img-") {
+            return file
         }
         let url = URL(fileURLWithPath: path)
         if url.pathExtension.isEmpty { return basePath + "/index.html" }
         return basePath + path
+    }
+
+    /// `<prefix><name>` → <local store>/<dir>/<name>, for flat names starting with `namePrefix` only (the
+    /// core writes <dir>/<hash>.<ext>): no subfolders, no traversal, nothing else in the store is served.
+    static func localImage(_ path: String, prefix: String, dir: String, namePrefix: String) -> String? {
+        guard path.hasPrefix(prefix) else { return nil }
+        let name = String(path.dropFirst(prefix.count))
+        guard name.count > namePrefix.count, name.hasPrefix(namePrefix), !name.contains("/"), !name.contains("..") else { return nil }
+        return CoreHost.shared.localAppDir.appendingPathComponent(dir).appendingPathComponent(name).path
     }
 }

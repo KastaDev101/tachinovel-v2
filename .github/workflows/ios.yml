@@ -2,10 +2,13 @@
 # to main, pull requests and manual dispatch (no schedule while there is no Apple Developer account).
 #
 #  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
+#  lint         ubuntu: ESLint (typescript-eslint, type-aware) on src/, tools/, tests/.
 #  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
 #  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
 #               simulator smoke test: install, launch, screenshot the first screens (artifact
-#               "simulator-screenshots"); fails if the app crashes.
+#               "simulator-screenshots"); fails if the app crashes. Then the Swift gates: no new compiler
+#               warnings (strict concurrency, baseline ci/swift-warnings-baseline.txt) and SwiftLint
+#               (pinned, ci/swiftlint.sh); both via tools/swift-quality.ts.
 #  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
@@ -79,6 +82,20 @@ jobs:
       - run: npm test
       - run: node tools/ios-project.ts --check
 
+  # ESLint with typescript-eslint type-aware rules and per-context globals (eslint.config.js). Separate
+  # from web so a lint finding and a test failure show up as two clear checks.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
   shell:
     needs: web
     runs-on: ubuntu-latest
@@ -128,6 +145,7 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
       - name: Simulator build (unsigned)
+        id: build
         run: |
           set -o pipefail
           mkdir -p build
@@ -167,6 +185,13 @@ jobs:
           path: build/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7
+      # Swift gates run last (and even when the smoke test failed) so one run reports everything.
+      - name: Swift warnings (new ones fail)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tools/swift-quality.ts warnings build/xcodebuild.log
+      - name: SwiftLint
+        if: ${{ !cancelled() }}
+        run: bash ci/swiftlint.sh build/swiftlint.json && node tools/swift-quality.ts lint build/swiftlint.json
 
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)
@@ -330,3 +355,21 @@ jobs:
           name: testflight-logs
           path: build/*.log
           if-no-files-found: ignore
+
+  # Pull requests that change the app (src/, ios/) add a changelog fragment (changelog.d/README.md);
+  # docs/CI/dependency-only PRs just get a reminder. Fragment format errors fail here and in npm test.
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Changelog fragment
+        env:
+          BASE: ${{ github.base_ref }}
+        run: node tools/release.ts fragments-check "origin/$BASE"

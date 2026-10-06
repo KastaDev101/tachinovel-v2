@@ -130,9 +130,14 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
 
 ## 5. Reusing v1
 
-- `vendor/v1/` is a read-only snapshot of v1's committed state (commit `3a25883`, refreshed
-  2026-10-06; see `vendor/v1/VENDORED.md`); `@v1/*` imports resolve there. `V1_ROOT=../tachinovel npm run build` builds
-  against the live v1 repo instead; `npm run vendor:v1` refreshes the snapshot.
+- `vendor/v1/` is a read-only snapshot of v1's committed state (the commit is in `vendor/v1/VENDORED.md`);
+  `@v1/*` imports resolve there. `V1_ROOT=../tachinovel npm run build` builds against the live v1 repo
+  instead.
+- **Moving to a newer v1:** `node tools/revendor-v1.ts <v1 commit>` snapshots that commit (read-only
+  `git archive`), lists the v1 commits that touch the vendored paths, then typechecks, builds both
+  flavors (every build-time patch must still match exactly once) and runs the unit tests. On failure it
+  restores the previous snapshot (`--keep` keeps the new one to fix v2 against it). Then branch, commit,
+  PR. `npm run vendor:v1` is the plain copy of v1's HEAD without checks.
 - **No v1 file is edited.** Build-time adjustments (tools/v1.ts), each asserted to match exactly once:
   1. v1's `src/ui/bridge/phone-client.ts` import → `src/ui/capacitor-client.ts` (same export name);
   2. store flavor: `BUILTIN_SOURCES = []`, `DEFAULT_REPOS = []`, empty LNReader verification table.

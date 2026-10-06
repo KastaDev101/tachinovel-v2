@@ -10,15 +10,21 @@
  * Usage:
  *   node tools/release.ts version                 print the iOS marketing version (for CI scripts)
  *   node tools/release.ts check                   fail unless the Xcode project matches package.json
- *   node tools/release.ts prepare <version>       bump package.json + lockfile + Xcode project, move
- *                                                 CHANGELOG "Unreleased" into a dated <version> section
+ *   node tools/release.ts prepare <version>       bump package.json + lockfile + Xcode project, merge the
+ *                                                 changelog.d/ fragments into CHANGELOG "Unreleased" (and
+ *                                                 delete them), move it into a dated <version> section
  *   node tools/release.ts verify-tag <tag> [--notes=<file>]
  *                                                 release workflow gate: tag == v<package version>, project
  *                                                 in sync, CHANGELOG section present (written to <file>)
  *   node tools/release.ts notes <version>         print that version's CHANGELOG section
+ *   node tools/release.ts changelog               preview "Unreleased" with the pending fragments merged
+ *   node tools/release.ts fragments-check <base>  pull request check (CI job "changelog"): app changes
+ *                                                 since <base> come with a changelog.d/ fragment
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { checkFragments, FRAGMENTS_DIR, listFragments, mergeFragments, parseFragment, readFragments } from './changelog.ts';
 
 export const root = path.resolve(import.meta.dirname, '..');
 export const REPO_URL = 'https://github.com/KastaDev101/tachinovel-v2';
@@ -71,7 +77,8 @@ export function changelogSection(changelog: string, version: string): string | n
   const headings = [...text.matchAll(HEADING)];
   const i = headings.findIndex((h) => h[1] === version);
   if (i < 0) return null;
-  const start = headings[i]!.index! + headings[i]![0].length;
+  const heading = headings[i]!;
+  const start = heading.index + heading[0].length;
   const next = headings[i + 1]?.index ?? text.length;
   // Link reference definitions ("[1.0.0]: https://…") at the end belong to the file, not the section.
   const lines = text.slice(start, next).split('\n');
@@ -123,7 +130,7 @@ function fail(message: string): never {
 function main(argv: string[]): void {
   const [cmd, arg] = argv;
   const version = packageVersion();
-  switch (cmd) {
+  switch (cmd ?? '') {
     case 'version':
       console.log(parseVersion(version).marketing);
       return;
@@ -137,13 +144,16 @@ function main(argv: string[]): void {
       if (!arg) fail('usage: node tools/release.ts prepare <version>');
       const next = parseVersion(arg);
       if (!existsSync(CHANGELOG)) fail('CHANGELOG.md not found');
-      const changelog = prepareChangelog(readFileSync(CHANGELOG, 'utf8'), next.version, today());
+      const fragments = readFragments(root);
+      const merged = mergeFragments(readFileSync(CHANGELOG, 'utf8'), fragments.map((f) => f.entries));
+      const changelog = prepareChangelog(merged, next.version, today());
       writeFileSync(path.join(root, 'package.json'), setPackageVersion(readFileSync(path.join(root, 'package.json'), 'utf8'), next.version));
       const lockPath = path.join(root, 'package-lock.json');
       if (existsSync(lockPath)) writeFileSync(lockPath, setLockVersion(readFileSync(lockPath, 'utf8'), next.version));
       writeFileSync(PBXPROJ, setProjectMarketingVersion(readFileSync(PBXPROJ, 'utf8'), next.marketing));
       writeFileSync(CHANGELOG, changelog);
-      console.log(`prepared ${next.version} (iOS ${next.marketing}${next.prerelease ? ', pre-release' : ''}): package.json, package-lock.json, project.pbxproj, CHANGELOG.md`);
+      for (const f of fragments) rmSync(path.join(root, f.file));
+      console.log(`prepared ${next.version} (iOS ${next.marketing}${next.prerelease ? ', pre-release' : ''}): package.json, package-lock.json, project.pbxproj, CHANGELOG.md (${fragments.length} fragment(s) merged and removed)`);
       console.log(`next: open a "Release ${next.version}" PR; after it merges, tag main: git tag -a v${next.version} -m "TachiNovel ${next.version}" && git push origin v${next.version}`);
       return;
     }
@@ -169,8 +179,26 @@ function main(argv: string[]): void {
       console.log(notes);
       return;
     }
+    case 'changelog': {
+      const merged = mergeFragments(readFileSync(CHANGELOG, 'utf8'), readFragments(root).map((f) => f.entries));
+      console.log(changelogSection(merged, 'Unreleased') ?? '');
+      return;
+    }
+    case 'fragments-check': {
+      if (!arg) fail('usage: node tools/release.ts fragments-check <base-ref>');
+      const changed = execFileSync('git', ['diff', '--name-only', `${arg}...HEAD`], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
+      const present = new Set(listFragments(root).map((n) => `${FRAGMENTS_DIR}/${n}`));
+      const fragments = changed.filter((f) => present.has(f));
+      // Every fragment in the tree must parse (also checked by tests/release.test.ts).
+      for (const f of present) parseFragment(readFileSync(path.join(root, f), 'utf8'), f);
+      const r = checkFragments(changed, fragments);
+      const level = r.level === 'error' ? 'error' : r.level === 'notice' ? 'warning' : 'notice';
+      console.log(`::${level} title=Changelog::${r.message}`);
+      if (r.level === 'error') process.exit(1);
+      return;
+    }
     default:
-      fail('usage: node tools/release.ts version | check | prepare <version> | verify-tag <tag> [--notes=<file>] | notes [<version>]');
+      fail('usage: node tools/release.ts version | check | prepare <version> | verify-tag <tag> [--notes=<file>] | notes [<version>] | changelog | fragments-check <base>');
   }
 }
 

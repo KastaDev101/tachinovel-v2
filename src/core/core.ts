@@ -137,14 +137,15 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     }
   }
   const v2: { [K in keyof V2Methods]: (args: V2Methods[K]['args']) => Promise<V2Methods[K]['result']> } = {
-    'v2.info': async () => ({
-      flavor: __FLAVOR__,
-      build: opts.build,
-      jsPlugins: jsPluginsAllowed(),
-      ads: __ADS__,
-      platform: host.info.platform,
-      launchReason: host.info.launchReason,
-    }),
+    'v2.info': () =>
+      Promise.resolve({
+        flavor: __FLAVOR__,
+        build: opts.build,
+        jsPlugins: jsPluginsAllowed(),
+        ads: __ADS__,
+        platform: host.info.platform,
+        launchReason: host.info.launchReason,
+      }),
     'narration.chapterText': async (args) => {
       const get = v1['chapter.get'] as (a: unknown) => ReturnType<MethodHandlers['chapter.get']>;
       const ch = await get({ pluginId: args.pluginId, novelPath: args.novelPath, chapterPath: args.chapterPath });
@@ -210,13 +211,13 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       await app.flush();
       await platform.flushLogs();
     },
-    'app.openLink': async (args) => {
+    'app.openLink': (args) => {
       if (!args || typeof args.pluginId !== 'string' || typeof args.novelPath !== 'string') {
-        throw Object.assign(new Error('pluginId and novelPath are required'), { code: 'INVALID_ARGS' });
+        return Promise.reject(Object.assign(new Error('pluginId and novelPath are required'), { code: 'INVALID_ARGS' }));
       }
       const link: { pluginId: string; novelPath: string; chapterPath?: string } = { pluginId: args.pluginId, novelPath: args.novelPath };
       if (typeof args.chapterPath === 'string') link.chapterPath = args.chapterPath;
-      return { delivered: app.deliverDeepLink(link) };
+      return Promise.resolve({ delivered: app.deliverDeepLink(link) });
     },
     'diagnostics.metricPayload': async (args) => {
       if (!args || typeof args.json !== 'string') throw Object.assign(new Error('json is required'), { code: 'INVALID_ARGS' });

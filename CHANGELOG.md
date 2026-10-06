@@ -4,8 +4,8 @@ All notable changes to TachiNovel v2 are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for the app version (`package.json`).
 
-Add a line under **Unreleased** in every pull request that changes what the app does, how it is built or
-how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed or Security.
+Pull requests don't edit this file: each adds a fragment in [changelog.d/](changelog.d/README.md), and
+`node tools/release.ts prepare <version>` merges the fragments in here at release time.
 
 ## [Unreleased]
 
@@ -32,11 +32,18 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
 - Crash and hang reports from MetricKit, kept on the device: a summary line per report in Settings ›
   Diagnostics (Recent Problems, Send a Problem Report, Copy Full Diagnostics), and a "Share Crash & Hang
   Reports" button that shares the full reports as one JSON file. Nothing is uploaded.
+- Swift quality gates in CI: SwiftLint (pinned, strict) and complete strict-concurrency checking with a
+  warnings baseline, so new compiler warnings fail the build (CONTRIBUTING.md "Swift quality gates").
 
 ### Changed
 
+- ESLint for v2's own code: typescript-eslint type-aware rules and per-context globals (core: no
+  DOM/browser/Node; UI: no Node, no network, no `__native`); CI job `lint`. TypeScript runs side by side:
+  TypeScript 7 typechecks, the TypeScript 6 API (`@typescript/typescript6` alias) serves typescript-eslint.
 - Typechecking uses TypeScript 7 (native compiler): `npm run typecheck` takes ~0.7 s instead of ~4.5 s
-  on the dev PC; same files checked, same (zero) errors. Nothing in the repo uses the TypeScript JS API.
+  on the dev PC; same files checked, same (zero) errors.
+- Swift: main-thread-only types are now `@MainActor` (browser fetcher, presentation queue, device
+  snapshot refresh); thread-safe image helpers are `nonisolated`; 106 concurrency warnings fewer.
 - The package license field is now `UNLICENSED` (proprietary, all rights reserved; previously `MIT`).
 
 ### Fixed

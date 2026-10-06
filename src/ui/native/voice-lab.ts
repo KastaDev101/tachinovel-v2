@@ -51,6 +51,8 @@ function esc(s: string): string {
 }
 
 type Obj = Record<string, unknown>;
+/** A string or number from the lab JSON as text, else the fallback. */
+const str = (x: unknown, fallback = '–'): string => (typeof x === 'string' || typeof x === 'number' ? String(x) : fallback);
 const obj = (x: unknown): Obj => (x && typeof x === 'object' ? (x as Obj) : {});
 
 let open = false;
@@ -89,16 +91,16 @@ export function openVoiceLab(): void {
       <h2>Now</h2>
       <div class="kv">
         <span>Time to first audio</span><span class="big">${lastFirst ? `${fmt(lastFirst.ms)} ms` : '–'}</span>
-        <span>…from</span><span>${esc(String(lastFirst?.source ?? '–'))}</span>
+        <span>…from</span><span>${esc(str(lastFirst?.source, '–'))}</span>
         <span>Speed (all sentences)</span><span class="big">${fmt(stats.aggregateX, 1, '× real time')}</span>
         <span>Median / slowest 5%</span><span>${fmt(stats.p50X, 1, '×')} / ${fmt(stats.p05X, 1, '×')}</span>
         <span>Sentences / failures</span><span>${fmt(stats.totalSentences)} / ${fmt(stats.failures)}</span>
       </div>
       <h2>Kokoro</h2>
       <div class="kv">
-        <span>Status</span><span>${esc(String(k.status ?? '–'))}</span>
+        <span>Status</span><span>${esc(str(k.status, '–'))}</span>
         <span>Model load</span><span>${fmt(k.lastLoadMs)} ms${k.lastLoadCold ? ' (cold: first load this launch)' : ''}</span>
-        <span>Model</span><span>${esc(String(model.revision ?? '–').slice(0, 10))} · ${fmt(typeof model.bytes === 'number' ? model.bytes / 1e6 : undefined, 0, ' MB')}</span>
+        <span>Model</span><span>${esc(str(model.revision, '–').slice(0, 10))} · ${fmt(typeof model.bytes === 'number' ? model.bytes / 1e6 : undefined, 0, ' MB')}</span>
         <span>Render ahead</span><span>${fmt(k.ahead)} sentences</span>
         <span>Stages</span><span>${Object.entries(stages).map(([s, u]) => `${esc(s)} ${esc(String(u))}`).join(', ')}</span>
         <span>Memory releases</span><span>${fmt(k.memoryReleases)}</span>
@@ -107,7 +109,7 @@ export function openVoiceLab(): void {
       <div class="acts">${[2, 3].map((n) => `<button type="button" data-act="ahead" data-v="${n}" class="${n === k.ahead ? 'on' : ''}">Ahead ${n}</button>`).join('')}</div>
       <h2>This session</h2>
       <div class="kv">
-        <span>Speaking</span><span>${esc(String(ses.source ?? '–'))}${ses.lastFallback ? ` (${esc(String(ses.lastFallback))})` : ''}</span>
+        <span>Speaking</span><span>${esc(str(ses.source, '–'))}${ses.lastFallback ? ` (${esc(str(ses.lastFallback))})` : ''}</span>
         <span>Kokoro / Apple sentences</span><span>${fmt(ses.kokoroSentences)} / ${fmt(ses.appleSentences)}</span>
         <span>Queue ran dry</span><span>${fmt(ses.underruns)}</span>
         <span>Fallbacks</span><span>${Object.entries(fallbacks).map(([r, n]) => `${esc(r)} ${String(n)}`).join(', ') || 'none'}</span>
@@ -116,18 +118,18 @@ export function openVoiceLab(): void {
       </div>
       <h2>Device</h2>
       <div class="kv">
-        <span>iPhone</span><span>${esc(String(dev.model ?? '–'))} · ${esc(String(dev.os ?? ''))}</span>
+        <span>iPhone</span><span>${esc(str(dev.model, '–'))} · ${esc(str(dev.os, ''))}</span>
         <span>Compute units</span><span>${Array.isArray(dev.computeDevices) ? esc((dev.computeDevices as string[]).join(', ')) : '–'}</span>
         <span>Memory (app)</span><span>${fmt(dev.memoryMB, 0, ' MB')} · ${fmt(dev.availableMB, 0, ' MB')} available</span>
-        <span>Thermal</span><span>${esc(String(dev.thermal ?? '–'))}${dev.lowPower ? ' · Low Power Mode' : ''}</span>
+        <span>Thermal</span><span>${esc(str(dev.thermal, '–'))}${dev.lowPower ? ' · Low Power Mode' : ''}</span>
         <span>Battery</span><span>${typeof dev.battery === 'number' && dev.battery >= 0 ? `${Math.round(dev.battery * 100)}%` : '–'}</span>
-        <span>Crashes in Kokoro</span><span>${fmt(crashes.total)}${crashes.disabled ? ' · Kokoro turned off' : ''}${crashes.lastAt ? ` · last ${esc(String(crashes.lastAt))}` : ''}</span>
+        <span>Crashes in Kokoro</span><span>${fmt(crashes.total)}${crashes.disabled ? ' · Kokoro turned off' : ''}${crashes.lastAt ? ` · last ${esc(str(crashes.lastAt))}` : ''}</span>
       </div>
       <h2>Time to first audio (last ${first.length})</h2>
       <div class="kv">${first
         .slice()
         .reverse()
-        .map((f) => `<span>${esc(String(f.at ?? '').slice(11, 19))}</span><span>${fmt(f.ms)} ms · ${esc(String(f.source ?? ''))}</span>`)
+        .map((f) => `<span>${esc(str(f.at, '').slice(11, 19))}</span><span>${fmt(f.ms)} ms · ${esc(str(f.source, ''))}</span>`)
         .join('') || '<span>–</span><span></span>'}</div>
       <h2>Sentences (newest first)</h2>
       <table><tr><th>#</th><th>chars</th><th>synth</th><th>audio</th><th>× RT</th><th>RTF</th></tr>
@@ -148,7 +150,7 @@ export function openVoiceLab(): void {
   root.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
-    switch (el.dataset.act) {
+    switch (el.dataset.act ?? '') {
       case 'close':
         open = false;
         window.clearInterval(poll);

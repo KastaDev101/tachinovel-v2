@@ -206,7 +206,7 @@ export function installCarMode(): CarMode {
   root.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
-    const act = el.dataset.act;
+    const act = el.dataset.act ?? '';
     switch (act) {
       case 'close':
         return api.close();

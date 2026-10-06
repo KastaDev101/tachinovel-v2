@@ -41,6 +41,10 @@ updates:
         update-types: [minor, patch]
     ignore:
       - dependency-name: playwright-core
+      # `typescript` is an alias of @typescript/typescript6 (the TS 6 API for typescript-eslint);
+      # TypeScript 7 is `@typescript/native`. TODO: remove once TypeScript 7.1 has a stable API.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /

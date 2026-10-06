@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { checkFragments, mergeFragments, parseFragment, readFragments } from '../tools/changelog.ts';
 import { changelogSection, packageVersion, parseVersion, prepareChangelog, projectMarketingVersions, projectVersionProblems, setProjectMarketingVersion } from '../tools/release.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -85,5 +86,41 @@ describe('changelog', () => {
     expect(() => prepareChangelog(empty, '1.3.0', '2026-10-07', REPO)).toThrow(/no entries/);
     expect(() => prepareChangelog(CHANGELOG, '1.1.0', '2026-10-06', REPO)).toThrow(/already/);
     expect(() => prepareChangelog('# Changelog\n', '1.0.0', '2026-10-06', REPO)).toThrow(/Unreleased/);
+  });
+});
+
+describe('changelog fragments', () => {
+  const FRAGMENT = '### Added\n\n- Crash reports in Diagnostics.\n  Kept on the device.\n\n### Fixed\n\n- A typo.\n';
+
+  it('parses sections and multi-line bullets, and rejects anything else', () => {
+    const f = parseFragment(FRAGMENT, 'x.md');
+    expect([...f.keys()]).toEqual(['Added', 'Fixed']);
+    expect(f.get('Added')).toEqual(['- Crash reports in Diagnostics.\n  Kept on the device.']);
+    expect(() => parseFragment('', 'a.md')).toThrow(/no entries/);
+    expect(() => parseFragment('- no section\n', 'b.md')).toThrow(/before any/);
+    expect(() => parseFragment('### Improved\n\n- x\n', 'c.md')).toThrow(/unknown section/);
+    expect(() => parseFragment('### Added\n\nSome prose.\n', 'd.md')).toThrow(/unexpected line/);
+    expect(() => parseFragment('### Added\n\n### Fixed\n\n- x\n', 'e.md')).toThrow(/no entries/);
+  });
+
+  it('merges fragments into Unreleased after what is there, in Keep a Changelog order', () => {
+    const merged = mergeFragments(CHANGELOG, [parseFragment(FRAGMENT, 'x.md'), parseFragment('### Added\n\n- Second.\n', 'y.md')]);
+    expect(changelogSection(merged, 'Unreleased')).toBe('### Added\n\n- Thing three.\n- Crash reports in Diagnostics.\n  Kept on the device.\n- Second.\n\n### Fixed\n\n- A typo.');
+    expect(changelogSection(merged, '1.1.0')).toBe('### Fixed\n\n- Thing two.');
+    const released = prepareChangelog(merged, '1.2.0', '2026-10-07', REPO);
+    expect(changelogSection(released, '1.2.0')).toContain('- Second.');
+    expect(mergeFragments('# Changelog\n\n## [Unreleased]\n\n[Unreleased]: x\n', [])).toBe('# Changelog\n\n## [Unreleased]\n\n[Unreleased]: x\n');
+  });
+
+  it('asks app-changing PRs for a fragment and only reminds the others', () => {
+    expect(checkFragments(['src/core/core.ts', 'changelog.d/x.md'], ['changelog.d/x.md']).level).toBe('ok');
+    expect(checkFragments(['ios/App/App/AppDelegate.swift'], []).level).toBe('error');
+    expect(checkFragments(['docs/roadmap.md', '.github/workflows/ios.yml'], []).level).toBe('notice');
+    expect(checkFragments(['CHANGELOG.md', 'package.json', 'package-lock.json', 'changelog.d/x.md'], []).level).toBe('ok');
+    expect(checkFragments(['CHANGELOG.md', 'src/ui/main.ts', 'changelog.d/x.md'], ['changelog.d/x.md']).level).toBe('notice');
+  });
+
+  it('every fragment in changelog.d/ is well formed', () => {
+    expect(() => readFragments(root)).not.toThrow();
   });
 });

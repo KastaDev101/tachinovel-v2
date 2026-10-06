@@ -33,7 +33,8 @@ npm run typecheck            # node, core and UI contexts
 npm run build                # personal flavor → www/   (npm run build:store for the store flavor)
 npm test                     # unit + core-in-a-bare-JS-context tests (vitest)
 npm run test:shell           # UI + core in WebKit with Capacitor's real bridge (needs Playwright's WebKit)
-npm run check                # typecheck + build + test + Xcode project check
+npm run lint                 # ESLint (type-aware, per-context globals)
+npm run check                # typecheck + lint + build + test + Xcode project check
 node tools/ios-project.ts    # register new Swift files in the Xcode project (no Xcode needed)
 npx cap sync ios             # copy www/ into the iOS project
 ```
@@ -48,6 +49,7 @@ manual dispatch:
 | Job | What |
 |---|---|
 | `web` | typecheck, both flavors, unit tests, Xcode project check |
+| `lint` | ESLint with type-aware rules |
 | `shell` | PC shell test in WebKit, screenshots as artifacts |
 | `ios-compile + simulator smoke` | unsigned simulator build, launch and screenshot tour |
 | `ios-ipa (unsigned, for AltStore)` | unsigned device build packaged as an `.ipa` artifact |
@@ -62,8 +64,8 @@ procedure: [docs/release.md](docs/release.md).
 ## Contributing
 
 `main` is protected: every change goes through a pull request with green checks. The workflow (also for
-AI agents working in this repo) is in [CONTRIBUTING.md](CONTRIBUTING.md); notable changes go in
-[CHANGELOG.md](CHANGELOG.md). Security issues: [SECURITY.md](SECURITY.md).
+AI agents working in this repo) is in [CONTRIBUTING.md](CONTRIBUTING.md); notable changes go in a
+[changelog fragment](changelog.d/README.md) and end up in [CHANGELOG.md](CHANGELOG.md) at release time. Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 

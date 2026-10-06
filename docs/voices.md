@@ -101,6 +101,17 @@ Make `voice-quality` and `voice-simulator` required checks only after they have 
 The macOS runner is a VM: Core ML there runs on CPU/GPU, not on the Neural Engine, so speeds from CI are
 lower than on the phone.
 
+### Measured in CI (2026-10-06, PR #7)
+
+| What | Result |
+|---|---|
+| IPA (download) / installed app | 96.7 MB / 115.4 MB (model 93.1 MB, app binary 18.3 MB incl. FluidAudio + NeMo text normalization) |
+| Kokoro on the CI Mac (VM, no Neural Engine: CPU) | model load 4.8 s cold, first audio 6.4–7.7 s (load + the first sentence, which also warms the G2P), **median 6.3–8.4× real time** over 36 sentences (6 voices × 6 fixtures), 0 NaN or clipped samples, RMS 0.04–0.10, 119–239 words per minute |
+| ASR round trip (whisper.cpp base.en) | 3/3 sentences transcribed word for word (WER 0%) |
+| Memory | 318 MB with the model loaded. About 80% stays counted after the model is released (Core ML keeps compiled stages cached; iOS can reclaim them under pressure). Watch the Voice Lab's memory line on the phone |
+
+The phone has a Neural Engine and a faster CPU, so expect faster than this.
+
 ## Licenses (commercial use)
 
 Everything in the voice path is **Apache-2.0** and fine in a closed, paid app with attribution. Notices

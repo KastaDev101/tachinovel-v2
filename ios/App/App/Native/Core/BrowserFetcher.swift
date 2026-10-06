@@ -32,7 +32,13 @@ private let challengeCheckJS =
     "||!!document.querySelector('#challenge-form,#challenge-stage,#cf-challenge-running,.cf-browser-verification,#turnstile-wrapper');" +
     "return (cf||document.readyState!=='complete')?'challenge':'ok';})()"
 
+/// The loaded page as {u: final URL, ct: content type, h: HTML (or text for non-HTML documents)}.
+private let readPageJS =
+    "JSON.stringify({u: location.href, ct: document.contentType, h: document.contentType && /html|xml/i.test(document.contentType)" +
+    " ? document.documentElement.outerHTML : document.body ? document.body.innerText : ''})"
+
 /// Copy the WebView's cookies for `host` into the URLSession cookie storage.
+@MainActor
 func syncWebCookies(to host: String?, completion: @escaping () -> Void) {
     WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
         for c in cookies where host == nil || host!.hasSuffix(c.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
@@ -42,6 +48,7 @@ func syncWebCookies(to host: String?, completion: @escaping () -> Void) {
     }
 }
 
+@MainActor
 final class BrowserFetcher {
     /// JSON from the core (`__native.browserFetch`): {url, timeoutMs, method, headers?, body?}.
     struct Request {
@@ -122,7 +129,7 @@ final class BrowserFetcher {
         }
 
         func readPage() {
-            web.evaluateJavaScript("JSON.stringify({u: location.href, ct: document.contentType, h: document.contentType && /html|xml/i.test(document.contentType) ? document.documentElement.outerHTML : document.body ? document.body.innerText : ''})") { raw, error in
+            web.evaluateJavaScript(readPageJS) { raw, error in
                 guard let raw = raw as? String, let data = raw.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     return finish(.failure(WebFetchError.failed(error?.localizedDescription ?? "page read failed")))

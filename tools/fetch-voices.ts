@@ -71,7 +71,7 @@ export function voiceJsonToBin(json: string): Buffer {
     const values = obj[String(row)];
     if (!Array.isArray(values) || values.length !== VOICE_COLS) throw new Error(`voice JSON row ${row} missing or not ${VOICE_COLS} numbers`);
     for (let c = 0; c < VOICE_COLS; c++) {
-      const v = values[c];
+      const v: unknown = values[c];
       if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`voice JSON row ${row} col ${c} is not a finite number`);
       out.writeFloatLE(v, ((row - 1) * VOICE_COLS + c) * 4); // Math.fround: same rounding as NSNumber.floatValue
     }

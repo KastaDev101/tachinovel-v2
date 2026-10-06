@@ -59,8 +59,17 @@ describe('v1 UI in the v2 shell (PC)', () => {
     await shell.page.getByTestId('onboarding-skip').click();
     await shell.page.getByTestId('onboarding').waitFor({ state: 'detached', timeout: 5000 });
     await shell.page.screenshot({ path: path.join(shots, '1-library.png') });
-    // The splash is hidden once app.boot went through the Capacitor bridge.
+    // The launch screen is hidden once the library painted its boot content (not by the 3 s fallback),
+    // and the boot timing line reaches the core log (ci/ios-sim-smoke.sh reads it on the simulator).
     await expect.poll(() => shell.pluginCalls.some((c) => c.pluginId === 'SplashScreen' && c.methodName === 'hide'), { timeout: 5000 }).toBe(true);
+    type Boot = { bootCall: number | null; content: number | null; splash: number | null; fallback: boolean }; // src/ui/native/boot-timing.ts
+    const boot = await shell.page.evaluate(() => (window as unknown as { __tnBoot?: Boot }).__tnBoot);
+    expect(boot?.fallback).toBe(false);
+    expect(boot?.content).toBeGreaterThan(boot?.bootCall ?? Infinity);
+    expect(boot?.splash).toBeGreaterThanOrEqual(boot?.content ?? Infinity);
+    await expect
+      .poll(() => shell.core.logs.find((l) => l.line.includes('boot: library visible'))?.line ?? '', { timeout: 5000 })
+      .toMatch(/boot: library visible \+\d+ms after WebView start, app\.boot call \+\d+ms, launch screen hidden \+\d+ms; nav=\d+ epoch=\d+$/);
   });
 
   it('browses the declarative source and opens a novel', async () => {
