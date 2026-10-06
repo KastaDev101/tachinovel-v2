@@ -314,7 +314,7 @@ jobs:
           node-version: 24
           cache: npm
       - if: steps.gate.outputs.ready == 'true'
-        run: npm ci && node tools/build.ts --flavor=${FLAVOR} && npx cap sync ios
+        run: npm ci && node tools/fetch-voices.ts && node tools/build.ts --flavor=${FLAVOR} && npx cap sync ios
       - name: Archive, sign and upload
         if: steps.gate.outputs.ready == 'true'
         run: bash ci/ios-testflight.sh

@@ -67,6 +67,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Cache the Kokoro model download
+        uses: actions/cache@v6
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed; docs/voices.md)
+        run: node tools/fetch-voices.ts
       - run: node tools/build.ts --flavor=${FLAVOR}
       - run: npx cap sync ios
       - name: Unsigned device build → .ipa
