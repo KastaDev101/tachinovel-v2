@@ -10,6 +10,11 @@ Simulator (`ci/ios-ui-tests.sh`, target `AppUITests`, scheme `AppUITests`):
 4. Library › **Alpha Story** › **Resume** › chapter 1 text, the Reading Tips sheet (**Got It**);
 5. **Listen from here** › the mini player shows **Pause**: narration runs with the Apple (system) voice.
 
+On the Library, More, Settings, novel and reader screens, and with the mini player showing, every control
+in the app's accessibility tree (buttons, links, switches, sliders, tabs, text fields) must have a
+VoiceOver label. The findings of all screens are reported together at the end, with the accessibility
+tree attached. `tests/shell/a11y.shell.ts` checks the same on the PC for every PR and names the element.
+
 Screenshots of each step are the artifact **`ui-test-screenshots`** (`01-library-first-launch.png` …
 `08-listening.png`, plus a screen recording). On a failure the job also keeps **`ui-test-logs`**: the
 xcodebuild log, the fixture site's request log and the `.xcresult` bundle; the screenshots then include
