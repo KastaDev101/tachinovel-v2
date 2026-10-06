@@ -623,12 +623,26 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         }
         guard changed else { return }
         if mode == .audio {
-            audio.setRate(rate)
+            audio.setRate(rate) // time-stretched: instant
         } else if status == .playing {
-            restartFromCurrent()
+            // Speech is synthesized at the speed: re-render the sentence once the slider rests (it sends
+            // ~10 changes a second while dragged), not on every step.
+            rateRestart?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, self.mode == .speech, self.status == .playing else { return }
+                self.restartFromCurrent()
+            }
+            rateRestart = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+        } else if status == .paused, mode == .speech {
+            // Resume speaks the sentence again at the new speed (not the paused one at the old speed).
+            generation += 1
+            engine.stop()
         }
         publishNowPlaying(jump: true)
     }
+
+    private var rateRestart: DispatchWorkItem?
 
     func stateDict() -> [String: Any] {
         var d: [String: Any] = ["status": status.rawValue]

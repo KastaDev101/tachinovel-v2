@@ -17,6 +17,13 @@
 
 ### Fixed
 
+- The speed slider in the Listen player changes the speed (only the chips did): it applies while dragging
+  and when released, for every voice, and the player no longer rebuilds the slider under the finger. Same
+  for "Voice volume". Speech re-renders once the slider rests; PC audio follows instantly.
+- The Listen player keeps its list scrolled where you left it and its buttons in place while playing (it
+  rebuilt itself every second).
 - The voice picker no longer covers the Listen player: a closing panel stops catching taps at once (it used
-  to for its 340 ms slide-out), and opening or closing the player closes any Voices panel left open. The
-  player also stops rebuilding itself every second when nothing changed.
+  to for its 340 ms slide-out), and opening or closing the player closes any Voices panel left open.
+- Toasts ("No new chapters yet", "Bookmarked"…) no longer cover the mini player or the Listen button: they
+  sit above the mini player while it shows, and the mini player is placed above the reader's bar where the
+  bar ends up, not where it is mid-slide.
