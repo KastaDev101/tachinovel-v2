@@ -40,8 +40,11 @@ prototype in the separate `tachinovel-tts-lab` repo (local only) (Kokoro-82M v1.
 | Background | `Info.plist` | `UIBackgroundModes: audio` |
 | PC-narrated audio (car listening) | `Narration/AudioLibrary.swift`, `Narration/AudioChapterPlayer.swift`, `src/ui/native/{car-mode,highlight}.ts` | The iCloud Drive "TachiNovel Audio" folder written by the PC narrator (`<Novel>/manifest.json`, `<NNNN - title>.m4a` + `.json` timestamps, format = v1 `experiments/tts/manifest.ts`) is picked once with the document picker and kept as a security-scoped bookmark (no iCloud entitlement needed). `NarrationController` has a second mode (`AVPlayer`): chapters with a file play it, others use the system voice; evicted files are downloaded first (`NSFileCoordinator`); an unreadable file falls back to the system voice. Now Playing shows real elapsed/duration; remote commands: ±15 s, scrubbing, next/previous; per-novel resume position; auto-advance through the folder or the core's next chapter. The reader highlights the spoken **sentence** (CSS Custom Highlight API) after re-aligning the manifest's segments to the reader DOM by hash (v1 `alignSegments` + `dom-blocks`). Full-screen **Listen** player (More › Listen in the Car › Open the player, or tap the mini player): narrated novels, continue-reading list, seek bar, ±15 s, speed 0.9–1.5× |
 
-Not yet: the neural engine, render-ahead cache, word-accurate highlighting for neural voices, a voice/
-lexicon settings screen in the v1 UI (needs a v1 UI change), on-device tests.
+On-device Kokoro (bundled with the app, Apple voice as the sentence-by-sentence fallback, render-ahead,
+lexicon, sentence highlighting for every source, Voice Lab, CI checks) is in **docs/voices.md** (PR
+"On-device HD voices (Kokoro) with Apple fallback"). It uses FluidAudio's Core ML chain with the GPU-free
+placement (Neural Engine + CPU) so rendering continues on the lock screen. Not yet: word-accurate
+highlighting, asset-pack delivery for a store build, device numbers (the PR has a 5-minute phone checklist).
 
 ### Interruptions (phone calls, Siri, other apps' audio)
 

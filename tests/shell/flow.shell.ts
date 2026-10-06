@@ -212,6 +212,20 @@ describe('v1 UI in the v2 shell (PC)', () => {
     await screen.locator('[data-act="close"]').click();
   });
 
+  it('About › Open Source Licenses lists the voice components from THIRD_PARTY_NOTICES.md', async () => {
+    await shell.page.getByTestId('more-about').click();
+    await top().getByTestId('licenses').click();
+    const licenses = shell.page.getByTestId('screen-licenses');
+    await licenses.waitFor({ timeout: 5000 });
+    for (const name of ['Kokoro-82M', 'FluidAudio', 'Capacitor']) {
+      await expect.poll(() => licenses.locator('[data-tn-notice]').filter({ hasText: name }).count(), { timeout: 5000 }).toBeGreaterThan(0);
+    }
+    // v1's own entries are not duplicated.
+    expect(await licenses.locator('[data-tn-notice="LNReader"]').count()).toBe(0);
+    await licenses.locator('[data-tn-notice="Kokoro-82M"] button').click();
+    await expect.poll(() => licenses.locator('[data-tn-notice="Kokoro-82M"] pre').textContent(), { timeout: 5000 }).toMatch(/Apache License/);
+  });
+
   it('ran without page errors', () => {
     expect(shell.pageErrors).toEqual([]);
     // Remote covers are blocked on purpose (403), so only cover errors are tolerated.

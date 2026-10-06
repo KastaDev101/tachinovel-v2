@@ -112,8 +112,13 @@ final class KokoroService {
         status = .loading
         let route = self.route
         Task.detached(priority: .userInitiated) {
-            var failure: String?
-            do { try await runtime.load(route: route) } catch { failure = error.localizedDescription }
+            let failure: String?
+            do {
+                try await runtime.load(route: route)
+                failure = nil
+            } catch {
+                failure = error.localizedDescription
+            }
             let load = await runtime.lastLoad
             DispatchQueue.main.async {
                 if let failure {
