@@ -117,7 +117,7 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             Task { @MainActor in DiagnosticsFolder.shared.mirror(force: false) }
         }
-        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+        _ = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
             Task { @MainActor in DiagnosticsFolder.shared.mirrorInBackground() }
         }
     }
@@ -262,7 +262,7 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
             let local = CoreHost.shared.localAppDir
             let log = CoreHost.shared.log
             // The core's buffered log lines go to logs/app.log first (like backgrounding).
-            CoreHost.shared.request("app.background") { _, _ in
+            CoreHost.shared.request("app.background") { @Sendable _, _ in
                 DiagnosticsFiles.queue.async {
                     do {
                         try DiagnosticsFiles.mirror(root: root, local: local, extras: ["trail.json": trailData, "status.json": statusData])
@@ -350,7 +350,7 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
             let report = (try? JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys])) ?? Data()
             let local = CoreHost.shared.localAppDir
             let log = CoreHost.shared.log
-            CoreHost.shared.request("app.background") { _, _ in
+            CoreHost.shared.request("app.background") { @Sendable _, _ in
                 DiagnosticsFiles.queue.async {
                     do {
                         try DiagnosticsFiles.writeReport(root: root, folder: stamp, report: report, screenshot: screenshot, local: local)
