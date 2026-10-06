@@ -125,8 +125,11 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   globals. Plugins never share a realm with the DOM or `window.Capacitor`.
 - **Store flavor:** no JS plugin host compiled in; `importLazy('plugin-host')` refuses; sources are JSON
   specs interpreted by `src/core/declarative/engine.ts` (selectors, JSON paths, regexes — no expressions).
-- **Native surface:** bundle reads reject `..`; covers routing accepts flat file names only; `openUrl`
-  accepts http(s) only; deep links are validated by the core (installed sources only).
+- **Native surface:** bundle reads reject `..`; the `capacitor://localhost` router serves only files inside
+  the web bundle and covers by flat file name; `openUrl` and web-view navigations leaving the app accept
+  http(s) only; deep links are validated by the core (installed sources only, paths on the source's own
+  site); the web view is inspectable in Debug builds only.
+- **Review:** OWASP Mobile Top 10 findings and their status: [security-review.md](security-review.md).
 
 ## 5. Reusing v1
 

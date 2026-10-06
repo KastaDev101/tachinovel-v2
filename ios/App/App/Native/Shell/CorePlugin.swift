@@ -9,6 +9,7 @@
 @preconcurrency import Capacitor
 import Foundation
 import UIKit
+import WebKit
 
 @objc(CorePlugin)
 public class CorePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -51,6 +52,22 @@ public class TachiNativePlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise),
     ]
+
+    /// Navigation guard for the app's web view (defense in depth: chapter HTML is sanitized and the CSP
+    /// blocks scripts). Capacitor hands every top-level navigation that leaves the app to
+    /// UIApplication.open, whatever its scheme; only http(s) may go on (to Safari, Capacitor's default).
+    /// tel:, sms:, file: and other apps' URL schemes are refused.
+    override public func shouldOverrideLoad(_ navigationAction: WKNavigationAction) -> NSNumber? {
+        // Capacitor asks from its WKNavigationDelegate, so this runs on the main thread.
+        let scheme = MainActor.assumeIsolated { navigationAction.request.url?.scheme?.lowercased() }
+        guard let scheme else { return true }
+        switch scheme {
+        case "capacitor", "http", "https", "about", "data", "blob":
+            return nil // Capacitor's own handling
+        default:
+            return true // cancel
+        }
+    }
 
     /// navigator.wakeLock shim (src/ui/native/prelude.ts) → idle timer.
     @objc func setKeepAwake(_ call: CAPPluginCall) {

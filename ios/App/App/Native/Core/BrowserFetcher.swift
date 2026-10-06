@@ -37,11 +37,19 @@ private let readPageJS =
     "JSON.stringify({u: location.href, ct: document.contentType, h: document.contentType && /html|xml/i.test(document.contentType)" +
     " ? document.documentElement.outerHTML : document.body ? document.body.innerText : ''})"
 
+/// RFC 6265 domain match: `host` is the cookie's domain or a subdomain of it ("notexample.com" is not
+/// "example.com").
+func cookieDomainMatches(host: String, domain: String) -> Bool {
+    let d = domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+    let h = host.lowercased()
+    return !d.isEmpty && (h == d || h.hasSuffix("." + d))
+}
+
 /// Copy the WebView's cookies for `host` into the URLSession cookie storage.
 @MainActor
 func syncWebCookies(to host: String?, completion: @escaping () -> Void) {
     WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-        for c in cookies where host == nil || host!.hasSuffix(c.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))) {
+        for c in cookies where host.map({ cookieDomainMatches(host: $0, domain: c.domain) }) ?? true {
             HTTPCookieStorage.shared.setCookie(c)
         }
         completion()
