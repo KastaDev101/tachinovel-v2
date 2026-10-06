@@ -62,6 +62,12 @@
 			<string>Any</string>
 		</dict>
 	</dict>
+	<!-- Without iCloud (free sideload) the synced store (backups, logs, library) is in Documents/TachiNovel;
+	     these two keys make Files show it as On My iPhone › TachiNovel (src/core/storage/documents-layout.ts). -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<!-- Scenes are created in code (AppDelegate/SceneDelegate): no storyboard keys, so UIKit never
 	     instantiates a second bridge view controller. -->
 	<key>UIApplicationSceneManifest</key>

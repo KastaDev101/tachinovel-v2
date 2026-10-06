@@ -31,6 +31,9 @@ final class CoreHost {
 
     let localRoot: URL
     private(set) var syncedRoot: URL?
+    /// The app's Documents folder: Files shows it as On My iPhone › TachiNovel (Info.plist
+    /// UIFileSharingEnabled). The core keeps the synced store there when there is no iCloud (free sideload).
+    let documentsRoot: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     private var context: JSContext?
     private var api: NativeHostAPI?
     private var handler: JavaScriptCore.JSValue?
