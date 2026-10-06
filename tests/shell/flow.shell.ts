@@ -237,11 +237,9 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const licenses = shell.page.getByTestId('screen-licenses');
     await licenses.waitFor({ timeout: 5000 });
     await expect.poll(() => licenses.textContent(), { timeout: 5000 }).toMatch(/LNReader/);
+    // Built from THIRD_PARTY_NOTICES.md at build time (tools/third-party.ts): the voice notices are listed.
     const text = (await licenses.textContent()) ?? '';
-    // Built from THIRD_PARTY_NOTICES.md at build time (tools/third-party.ts, PR #9): then every voice notice is there.
-    if (/Capacitor/.test(text)) {
-      for (const name of ['Kokoro-82M', 'Kokoro Core ML conversion', 'FluidAudio', 'misaki']) expect(text).toContain(name);
-    }
+    for (const name of ['Kokoro-82M', 'Kokoro Core ML conversion', 'FluidAudio', 'misaki']) expect(text).toContain(name);
   });
 
   it('ran without page errors', () => {
