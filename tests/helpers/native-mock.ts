@@ -37,6 +37,13 @@ export interface MockOptions {
    * like UIDocumentPickerViewController(asCopy:) + NativeUI.documentPicker do) or null = cancelled.
    */
   picks?: (string | null)[];
+  /**
+   * Reuse a previous run's `dir` (its local/, icloud/ and documents/ folders) instead of a fresh one: the
+   * next launch of the same install. Such a dir is kept by `dispose()`; remove it yourself.
+   */
+  dataDir?: string;
+  /** false: a native host that doesn't send `documentsRoot` (builds before the free-sideload layout). */
+  documentsAvailable?: boolean;
 }
 
 export interface CoreHarness {
@@ -105,11 +112,13 @@ function fsApi(fault?: (op: string, absPath: string) => boolean): NativeHost['fs
 }
 
 export function startCoreInVm(opts: MockOptions): CoreHarness {
-  const dir = mkdtempSync(path.join(tmpdir(), 'tn2-core-'));
+  const dir = opts.dataDir ?? mkdtempSync(path.join(tmpdir(), 'tn2-core-'));
   const localRoot = path.join(dir, 'local');
   const syncedRoot = path.join(dir, 'icloud');
+  const documentsRoot = path.join(dir, 'documents');
   mkdirSync(localRoot, { recursive: true });
   mkdirSync(syncedRoot, { recursive: true });
+  mkdirSync(documentsRoot, { recursive: true });
   const logs: CoreHarness['logs'] = [];
   const events: CoreHarness['events'] = [];
   const requests: NativeHttpRequest[] = [];
@@ -135,6 +144,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       appVersion: 'test',
       localRoot,
       syncedRoot: opts.syncedAvailable === false ? null : syncedRoot,
+      documentsRoot: opts.documentsAvailable === false ? null : documentsRoot,
       launchReason: opts.launchReason ?? 'ui',
     },
     fs: fsApi(opts.fsFault),
@@ -260,7 +270,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
     dispose() {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
-      rmSync(dir, { recursive: true, force: true });
+      if (!opts.dataDir) rmSync(dir, { recursive: true, force: true });
     },
   };
 }
