@@ -1,0 +1,25 @@
+[
+  {
+    "id": "v1-filter-reset-noop",
+    "kind": "dead-control",
+    "state": "sheet:filter-sheet",
+    "control": "^Reset$",
+    "owner": "v1",
+    "note": "Source filters sheet: Reset is enabled while the filters already are the defaults, so it does nothing (v1 src/ui/screens/source-filters.tsx). Minor: disable it when the draft equals the defaults. Reported to the coordinator 2026-10-06."
+  },
+  {
+    "id": "v1-jump-go-empty",
+    "kind": "dead-control",
+    "state": "sheet:jump-sheet",
+    "control": "^Go$",
+    "owner": "v1",
+    "note": "Novel page > Jump to chapter: Go with an empty field does nothing (v1 novel.tsx). Minor: disable Go until something is typed. Reported to the coordinator 2026-10-06."
+  },
+  {
+    "id": "v2-car-player-rerender",
+    "kind": "timeout",
+    "state": "car-player",
+    "owner": "v2",
+    "note": "Car player rows detach every second (the state poll rebuilt the player). Fixed by PR #16. Remove this entry once #16 is on main."
+  }
+]

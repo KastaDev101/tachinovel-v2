@@ -16,12 +16,16 @@ export interface Route {
   status?: number;
   body?: string;
   headers?: Record<string, string>;
+  /** Binary body (images); wins over `body`. */
+  bytes?: Uint8Array;
 }
 
 export interface MockOptions {
   /** Built www/ directory (core.js + lib/). */
   wwwDir: string;
   routes?: Record<string, Route | ((req: NativeHttpRequest) => Route)>;
+  /** Fallback for URLs not in `routes` (a whole synthetic site); default 404. */
+  router?: (req: NativeHttpRequest) => Route | undefined;
   /** Answers for actionSheet/alert in order (default 0 = first action). */
   answers?: number[];
   syncedAvailable?: boolean;
@@ -44,6 +48,8 @@ export interface MockOptions {
   dataDir?: string;
   /** false: a native host that doesn't send `documentsRoot` (builds before the free-sideload layout). */
   documentsAvailable?: boolean;
+  /** Replace individual native UI members (action sheets, alerts, share, …), e.g. to record and steer them. */
+  ui?: Partial<NativeHost['ui']>;
 }
 
 export interface CoreHarness {
@@ -153,10 +159,11 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       requests.push(req);
       setImmediate(() => {
         const route = opts.routes?.[req.url] ?? opts.routes?.[`${req.method ?? 'GET'} ${req.url}`];
-        const r: Route = typeof route === 'function' ? route(req) : (route ?? { status: 404, body: 'not found' });
+        const r: Route = typeof route === 'function' ? route(req) : (route ?? opts.router?.(req) ?? { status: 404, body: 'not found' });
         const res: NativeHttpResponse = { url: req.url, status: r.status ?? 200, headers: { 'content-type': 'text/html; charset=utf-8', ...(r.headers ?? {}) } };
-        if (req.responseType === 'base64') res.base64 = Buffer.from(r.body ?? '').toString('base64');
-        else res.body = r.body ?? '';
+        const bytes = r.bytes ? Buffer.from(r.bytes) : Buffer.from(r.body ?? '');
+        if (req.responseType === 'base64') res.base64 = bytes.toString('base64');
+        else res.body = r.bytes ? bytes.toString('utf8') : (r.body ?? '');
         cb(null, JSON.stringify(res));
       });
     },
@@ -202,6 +209,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       device: () => JSON.stringify({ model: 'iPhone', systemVersion: '26.0', batteryLevel: 0.8, charging: false, brightness: 0.5, dark: true }),
       setBrightness: () => undefined,
       solveChallenge: (_u, cb) => setImmediate(() => cb(null, false)),
+      ...opts.ui,
     },
     log(level, line) {
       logs.push({ level, line });

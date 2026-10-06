@@ -175,7 +175,7 @@ export function installCarMode(): CarMode {
 
   async function load(refresh: boolean): Promise<void> {
     usePCAudio = await Narration.voiceSettings()
-      .then((v) => v.usePCAudio)
+      .then((v) => v.usePCAudio === true)
       .catch(() => false);
     const noAudio = { linked: false, novels: [] as AudioNovelInfo[] };
     const [lib, folder, hist, library] = await Promise.all([
