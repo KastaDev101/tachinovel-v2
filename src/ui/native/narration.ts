@@ -1,12 +1,14 @@
 /**
  * JS API of the native Narration plugin (ios/App/App/Native/Narration/NarrationPlugin.swift).
  * Audio runs natively, so playback survives the lock screen, shows in Now Playing / Control Center /
- * the car, and continues into the next chapter without the WebView. Two engines:
- *  - 'audio': PC-narrated chapter files from the linked "TachiNovel Audio" folder (tachinovel-narrator),
- *    with sentence timestamps for highlighting;
- *  - 'speech': the system voice (AVSpeechSynthesizer) for chapters without audio.
+ * the car, and continues into the next chapter without the WebView. Engines:
+ *  - 'speech': Kokoro-82M on device (bundled model, the default voice) with the Apple system voice taking
+ *    over sentence by sentence when Kokoro can't keep up; `source` says which one spoke;
+ *  - 'audio': PC-narrated chapter files from the linked "TachiNovel Audio" folder, only with
+ *    Settings › Voices › Advanced › "Use PC audio when available" (off by default).
  */
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import type { SpeechScript } from '../../core/narration/speech-script.ts';
 
 export interface NarrationParagraphIn {
   index: number;
@@ -23,10 +25,12 @@ export interface PlayOptions {
   coverUrl?: string;
   /** Paragraphs exactly as the reader rendered them (speech engine). Omit to let native ask the core. */
   paragraphs?: NarrationParagraphIn[];
+  /** Sentence script built from the reader's DOM (speech-dom.ts); preferred over `paragraphs`. */
+  script?: SpeechScript;
   start: { paragraph: number; sentence?: number };
   /** Continue into the next chapter when this one ends. Default true. */
   autoContinue?: boolean;
-  /** 'speech' forces the system voice even when a narrated file exists. Default: audio when available. */
+  /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
   engine?: 'audio' | 'speech';
 }
 
@@ -61,9 +65,24 @@ export interface NarrationOptions {
   sleepMinutes?: number;
 }
 
+export type VoiceSource = 'kokoro' | 'apple';
+
+export interface SpeakingVoice {
+  /** Kokoro voice chosen for this novel. */
+  kokoroVoice: string;
+  kokoroName: string;
+  /** Who spoke the current sentence. */
+  source?: VoiceSource;
+  /** Apple voice name while it stands in for Kokoro, and why. */
+  appleName?: string;
+  fallback?: 'modelLoading' | 'modelUnavailable' | 'queueDry' | 'thermal' | 'segmentFailed' | 'disabled';
+}
+
 export interface NarrationState {
   status: 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
   engine?: 'audio' | 'speech';
+  /** Speech: which voice speaks. */
+  voice?: SpeakingVoice;
   pluginId?: string;
   novelPath?: string;
   chapterPath?: string;
@@ -80,6 +99,13 @@ export interface NarrationState {
 export interface NarrationProgress {
   chapterPath: string;
   engine?: 'audio' | 'speech';
+  /** Speech: who speaks this sentence. */
+  source?: VoiceSource;
+  /** Speech: the sentence in the chapter's canonical blocks (speech-script.ts), for highlighting. */
+  block?: number;
+  start?: number;
+  end?: number;
+  hash?: number;
   /** Speech: reader paragraph index. Audio: the manifest's block index (the UI re-aligns, see highlight.ts). */
   paragraph: number;
   sentence?: number;
@@ -107,6 +133,27 @@ export interface AudioNovelInfo {
   saved: { chapterPath: string; seconds: number } | null;
 }
 
+export interface KokoroVoiceInfo {
+  id: string;
+  name: string;
+  language: string;
+  gender: 'female' | 'male';
+  blurb: string;
+}
+
+export interface VoiceSettingsInfo {
+  voices: KokoroVoiceInfo[];
+  defaultVoice: string;
+  kokoroEnabled: boolean;
+  usePCAudio: boolean;
+  kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
+  /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
+  apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
+  /** With pluginId/novelPath: the novel's own choice (null = the default) and the voice it uses. */
+  novelVoice?: string | null;
+  effectiveVoice?: string;
+}
+
 export interface NarrationPlugin {
   play(opts: PlayOptions): Promise<void>;
   pause(): Promise<void>;
@@ -128,6 +175,23 @@ export interface NarrationPlugin {
   audioLibrary(opts?: { refresh?: boolean }): Promise<{ linked: boolean; novels: AudioNovelInfo[] }>;
   /** Timestamp manifest JSON (v1 experiments/tts/manifest.ts) of a narrated chapter, or null. */
   audioTiming(opts: { pluginId: string; novelPath: string; chapterPath: string }): Promise<{ hasAudio: boolean; json: string | null }>;
+  /** Voices: Kokoro voices, defaults, per-novel choice, Apple fallback. */
+  voiceSettings(opts?: { pluginId?: string; novelPath?: string }): Promise<VoiceSettingsInfo>;
+  setVoiceSettings(opts: {
+    defaultVoice?: string;
+    /** voice null = use the default for this novel. */
+    novel?: { pluginId: string; novelPath: string; voice: string | null };
+    usePCAudio?: boolean;
+    kokoroEnabled?: boolean;
+  }): Promise<void>;
+  /** ▶ a sample: a Kokoro voice id, or 'apple'. Resolves when audio starts (ms = time to first audio). */
+  sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
+  stopSample(): Promise<void>;
+  /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
+  voiceLab(): Promise<Record<string, unknown>>;
+  setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
+  /** Simulator voice self-test only (-tachiVoiceSelfTest): write the report file. */
+  selfTestReport(opts: { json: string }): Promise<{ path: string | null }>;
   addListener(event: 'state', fn: (s: NarrationState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'progress', fn: (p: NarrationProgress) => void): Promise<PluginListenerHandle>;
 }

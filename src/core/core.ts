@@ -14,6 +14,8 @@ import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
 import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
 import type { NativeHost } from './native-api.ts';
+import { htmlToBlocks, validateLexicon, type Lexicon } from '@v1tts/frontend.ts';
+import { emptyLexiconStore, lexiconsFor, paragraphMapper, speechScript, type LexiconStore, type SpeechScript } from './narration/speech-script.ts';
 import { narrationScript, type NarrationParagraph } from './narration/text.ts';
 import { createNativePlatform, type NativePlatform } from './platform.ts';
 import { createGatedLoader, jsPluginsAllowed } from './sources/gate.ts';
@@ -21,11 +23,19 @@ import { createGatedLoader, jsPluginsAllowed } from './sources/gate.ts';
 /** v2-only methods (not in v1's BridgeMethods). Same envelope format. */
 export interface V2Methods {
   'v2.info': { args: void; result: V2Info };
-  /** Narration script for a chapter (fetched/cached like chapter.get, cleanup rules applied). */
+  /**
+   * Narration script for a chapter (fetched/cached like chapter.get). `script` is the sentence script for
+   * the speech engine (v1 narration front-end + the novel's pronunciation lexicon); `paragraphs` is the
+   * older paragraph/sentence form, kept for callers that don't know `script`.
+   */
   'narration.chapterText': {
     args: { pluginId: string; novelPath: string; chapterPath: string };
-    result: { chapterPath: string; title: string; paragraphs: NarrationParagraph[]; next?: ChapterMeta; prev?: ChapterMeta };
+    result: { chapterPath: string; title: string; paragraphs: NarrationParagraph[]; script: SpeechScript; next?: ChapterMeta; prev?: ChapterMeta };
   };
+  /** Pronunciation lexicons (Settings › Voices › Pronunciations): the global one, and a novel's own. */
+  'narration.lexicon.get': { args: { novelKey?: string }; result: { global: Lexicon; novel: Lexicon | null } };
+  /** Replace the global lexicon (no novelKey) or a novel's. Validated like the PC narrator's lexicons. */
+  'narration.lexicon.set': { args: { novelKey?: string; lexicon: Lexicon }; result: { entries: number } };
   /**
    * Where narration should resume for a novel (CarPlay "Continue listening", lock-screen resume): the
    * last chapter read and its saved paragraph; if that chapter was finished, the start of the next one.
@@ -60,6 +70,9 @@ export interface Core {
 }
 
 type AnyHandler = (args: never) => Promise<unknown>;
+
+/** Pronunciation lexicons (synced store). */
+const LEXICON_FILE = 'narration-lexicons.json';
 
 /** A chapter counts as finished for resume purposes from this scroll/listen fraction on. */
 const FINISHED_AT = 0.98;
@@ -99,6 +112,22 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
   app.attachEvents((event, payload) => host.emit(event, JSON.stringify(payload ?? null)));
 
   const v1 = app.handlers as unknown as Record<string, AnyHandler>;
+
+  async function loadLexicons(): Promise<LexiconStore> {
+    const text = await platform.synced.readText(LEXICON_FILE).catch(() => null);
+    if (!text) return emptyLexiconStore();
+    try {
+      const s = JSON.parse(text) as Partial<LexiconStore>;
+      const base = emptyLexiconStore();
+      return {
+        schemaVersion: 1,
+        global: s.global && validateLexicon(s.global).length === 0 ? s.global : base.global,
+        novels: Object.fromEntries(Object.entries(s.novels ?? {}).filter(([, l]) => validateLexicon(l).length === 0)),
+      };
+    } catch {
+      return emptyLexiconStore();
+    }
+  }
   const v2: { [K in keyof V2Methods]: (args: V2Methods[K]['args']) => Promise<V2Methods[K]['result']> } = {
     'v2.info': async () => ({
       flavor: __FLAVOR__,
@@ -111,13 +140,36 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     'narration.chapterText': async (args) => {
       const get = v1['chapter.get'] as (a: unknown) => ReturnType<MethodHandlers['chapter.get']>;
       const ch = await get({ pluginId: args.pluginId, novelPath: args.novelPath, chapterPath: args.chapterPath });
+      const paragraphs = narrationScript(ch.html, ch.title);
+      const blocks = htmlToBlocks(ch.html);
+      const lexicons = lexiconsFor(await loadLexicons(), novelKeyString({ pluginId: args.pluginId, path: args.novelPath }));
       return {
         chapterPath: ch.chapterPath,
         title: ch.title,
-        paragraphs: narrationScript(ch.html, ch.title),
+        paragraphs,
+        script: speechScript(blocks, { title: ch.title, lexicons, paragraphOf: paragraphMapper(blocks, paragraphs.map((p) => p.text)) }),
         ...(ch.next ? { next: ch.next } : {}),
         ...(ch.prev ? { prev: ch.prev } : {}),
       };
+    },
+    'narration.lexicon.get': async (args) => {
+      const store = await loadLexicons();
+      const key = typeof args?.novelKey === 'string' ? args.novelKey : undefined;
+      return { global: store.global, novel: key ? (store.novels[key] ?? null) : null };
+    },
+    'narration.lexicon.set': async (args) => {
+      const problems = validateLexicon(args?.lexicon);
+      if (problems.length > 0) throw Object.assign(new Error(`Invalid pronunciation list: ${problems.slice(0, 3).join('; ')}`), { code: 'INVALID_ARGS' });
+      const lexicon: Lexicon = { schemaVersion: 1, entries: args.lexicon.entries };
+      const store = await loadLexicons();
+      if (typeof args.novelKey === 'string' && args.novelKey) {
+        if (lexicon.entries.length > 0) store.novels[args.novelKey] = lexicon;
+        else delete store.novels[args.novelKey];
+      } else {
+        store.global = lexicon;
+      }
+      await platform.synced.writeText(LEXICON_FILE, JSON.stringify(store));
+      return { entries: lexicon.entries.length };
     },
     'narration.resumePoint': async (args) => {
       if (!args || typeof args.pluginId !== 'string' || typeof args.novelPath !== 'string') {

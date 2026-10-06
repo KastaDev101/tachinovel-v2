@@ -23,15 +23,17 @@ const nativeBridgeJs = path.join(root, 'node_modules', '@capacitor', 'ios', 'Cap
 
 type Rtype = 'promise' | 'callback' | null;
 /** Plugin headers as JSExport.swift builds them (base methods + the plugin's own). */
+/** `CAPPluginMethod(name: "…")` entries of a native plugin under ios/App/App/Native. */
+function swiftPluginMethods(rel: string): string[] {
+  const src = readFileSync(path.join(import.meta.dirname, '..', '..', 'ios', 'App', 'App', 'Native', rel), 'utf8');
+  return [...src.matchAll(/CAPPluginMethod\(name: "([A-Za-z]+)"/g)].map((m) => m[1] as string);
+}
+
 const PLUGINS: Record<string, Record<string, Rtype>> = {
   Core: { call: 'promise' },
   TachiNative: { setKeepAwake: 'promise' },
-  // Keep in sync with NarrationPlugin.swift pluginMethods.
-  Narration: Object.fromEntries(
-    ['play', 'pause', 'resume', 'stop', 'skip', 'setOptions', 'voices', 'requestPersonalVoice', 'state', 'seek', 'playNovel', 'audioFolder', 'pickAudioFolder', 'unlinkAudioFolder', 'audioLibrary', 'audioTiming'].map(
-      (m) => [m, 'promise' as Rtype],
-    ),
-  ),
+  // Exactly the methods NarrationPlugin.swift registers (read from the Swift source, so they can't drift).
+  Narration: Object.fromEntries(swiftPluginMethods('Narration/NarrationPlugin.swift').map((m) => [m, 'promise' as Rtype])),
   Haptics: { impact: 'promise', notification: 'promise', vibrate: 'promise', selectionStart: 'promise', selectionChanged: 'promise', selectionEnd: 'promise' },
   Store: { products: 'promise', purchase: 'promise', restore: 'promise', entitlements: 'promise', manageSubscriptions: 'promise', redeemOfferCode: 'promise' },
   SplashScreen: { show: 'promise', hide: 'promise' },

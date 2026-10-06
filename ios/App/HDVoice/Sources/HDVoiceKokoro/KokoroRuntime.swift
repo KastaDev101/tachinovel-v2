@@ -1,0 +1,217 @@
+//
+//  KokoroRuntime.swift — the bundled Kokoro-82M model, loaded read-only, one sentence at a time.
+//
+//  The model ships inside the app (tools/fetch-voices.ts → KokoroModels/, a folder reference in Copy
+//  Bundle Resources): FluidAudio's 7-stage Core ML chain (fp16 + int8-palettized "ANE" build), the
+//  English G2P, the Misaki lexicon and the six offered voices, pre-converted. Nothing is downloaded:
+//  `ModelHub.offlineMode` is switched on, so a missing file is an error, never a silent 100 MB download.
+//
+//  Layout (models directory = KokoroAneManager's `directory`):
+//    <dir>/kokoro-82m-coreml/ANE/*.mlmodelc, vocab.json, <voice>.bin     ← read in place
+//    <dir>/kokoro-82m-coreml/G2P*.mlmodelc, g2p_vocab.json, us_lexicon_cache.json
+//  FluidAudio reads the G2P and lexicon from a fixed cache path (TtsCacheDirectory: Application Support
+//  on iOS, ~/.cache on macOS), so those four entries are SYMLINKED there, pointing into the bundle (the
+//  bundle path changes on every app update, so the links are refreshed on each load).
+//
+//  Shared by the app (via KokoroService) and the CI voice check (KokoroCheck), so CI tests exactly the
+//  code and files that ship.
+//
+
+import CoreML
+import FluidAudio
+import Foundation
+import HDVoiceCore
+
+public struct KokoroAudio: Sendable {
+    public let samples: [Float]
+    public let sampleRate: Int
+    /// Wall time of the synthesis call (G2P + 7 stages).
+    public let synthMs: Double
+    public var durationMs: Double { sampleRate > 0 ? Double(samples.count) * 1000 / Double(sampleRate) : 0 }
+}
+
+public enum KokoroRuntimeError: Error, LocalizedError, Equatable {
+    case modelMissing(String)
+    case notLoaded
+    case injected(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .modelMissing(let detail): return "The bundled Kokoro model is missing or incomplete: \(detail)"
+        case .notLoaded: return "The Kokoro model isn't loaded."
+        case .injected(let what): return "Injected failure (test): \(what)"
+        }
+    }
+}
+
+extension KokoroRoute {
+    /// Per-stage Core ML placement for FluidAudio's chain.
+    public var computeUnits: KokoroAneComputeUnits {
+        switch self {
+        case .backgroundSafe: return .aneTailCpu
+        case .gpuTail: return .aneTailGpu
+        case .allNeuralEngine: return .allAne
+        case .cpuOnly: return .cpuOnly
+        }
+    }
+}
+
+public actor KokoroRuntime {
+    public enum State: Equatable, Sendable {
+        case unloaded
+        case loading
+        case ready
+        case failed(String)
+    }
+
+    public private(set) var state: State = .unloaded
+    public private(set) var route: KokoroRoute = .backgroundSafe
+    /// Wall time of the last successful load, and whether it was the first load of this process.
+    public private(set) var lastLoad: (ms: Double, first: Bool)?
+    private var manager: KokoroAneManager?
+    private var loading: Task<Void, Error>?
+    private var loadedOnce = false
+    private let modelsDirectory: URL
+
+    /// Test hooks (Voice Lab in debug builds, the simulator voice self-test): slow down or fail synthesis.
+    public var injectedDelay: TimeInterval = 0
+    public var injectedFailure = false
+
+    public init(modelsDirectory: URL) {
+        self.modelsDirectory = modelsDirectory
+    }
+
+    /// Files that must exist in a usable bundle (checked before loading).
+    public static let requiredFiles = [
+        "kokoro-82m-coreml/ANE/vocab.json",
+        "kokoro-82m-coreml/ANE/af_heart.bin",
+        "kokoro-82m-coreml/ANE/KokoroVocoder.mlmodelc/coremldata.bin",
+        "kokoro-82m-coreml/G2PEncoder.mlmodelc/coremldata.bin",
+        "kokoro-82m-coreml/g2p_vocab.json",
+        "kokoro-82m-coreml/us_lexicon_cache.json",
+    ]
+
+    public static func missingFiles(in dir: URL) -> [String] {
+        var missing = requiredFiles.filter { !FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        for v in VoiceCatalog.ids where !FileManager.default.fileExists(atPath: dir.appendingPathComponent("kokoro-82m-coreml/ANE/\(v).bin").path) {
+            missing.append("kokoro-82m-coreml/ANE/\(v).bin")
+        }
+        return missing
+    }
+
+    public func setInjection(delay: TimeInterval, fail: Bool) {
+        injectedDelay = max(0, delay)
+        injectedFailure = fail
+    }
+
+    /// Load (or reuse) the model with this compute placement. Concurrent callers share one load.
+    public func load(route: KokoroRoute) async throws {
+        if state == .ready, self.route == route, manager != nil { return }
+        if let loading {
+            try await loading.value
+            if state == .ready, self.route == route { return }
+        }
+        if manager != nil, self.route != route { await releaseNow() }
+        self.route = route
+        state = .loading
+        let dir = modelsDirectory
+        let first = !loadedOnce
+        let task = Task { () throws -> Void in
+            let missing = KokoroRuntime.missingFiles(in: dir)
+            guard missing.isEmpty else { throw KokoroRuntimeError.modelMissing(missing.prefix(3).joined(separator: ", ")) }
+            ModelHub.offlineMode = true
+            try KokoroRuntime.linkSharedAssets(from: dir)
+            let t0 = Date()
+            let m = KokoroAneManager(variant: .english, defaultVoice: VoiceCatalog.defaultVoiceId, directory: dir, computeUnits: route.computeUnits)
+            try await m.initialize(preloadVoices: Set(VoiceCatalog.ids))
+            await self.didLoad(m, ms: Date().timeIntervalSince(t0) * 1000, first: first)
+        }
+        loading = task
+        do {
+            try await task.value
+            loading = nil
+        } catch {
+            loading = nil
+            state = .failed(error.localizedDescription)
+            throw error
+        }
+    }
+
+    private func didLoad(_ m: KokoroAneManager, ms: Double, first: Bool) {
+        manager = m
+        loadedOnce = true
+        lastLoad = (ms: ms, first: first)
+        state = .ready
+    }
+
+    /// Drop the loaded model (memory pressure, idle). The next load reads it from disk again.
+    public func release() async {
+        if let loading { _ = try? await loading.value }
+        await releaseNow()
+    }
+
+    private func releaseNow() async {
+        let m = manager
+        manager = nil
+        if state == .ready { state = .unloaded }
+        await m?.cleanup()
+    }
+
+    /// One sentence. `runs` carries lexicon phoneme overrides (see PhonemeJoiner); without overrides the
+    /// plain text goes through Kokoro's own normalization + G2P.
+    public func synthesize(text: String, runs: [SpeechRun]?, voice: String, speed: Float) async throws -> KokoroAudio {
+        guard let m = manager, state == .ready else { throw KokoroRuntimeError.notLoaded }
+        let t0 = Date()
+        if injectedDelay > 0 { try await Task.sleep(nanoseconds: UInt64(injectedDelay * 1e9)) }
+        if injectedFailure { throw KokoroRuntimeError.injected("synthesis") }
+        let result: KokoroAneSynthesisResult
+        if let runs, runs.contains(where: { if case .phonemes = $0 { return true } else { return false } }) {
+            var parts: [(run: SpeechRun, phonemes: String)] = []
+            for run in runs {
+                switch run {
+                case .phonemes(let p):
+                    parts.append((run: run, phonemes: p))
+                case .text(let t):
+                    let ph: String
+                    if PhonemeJoiner.isSilent(t) {
+                        ph = PhonemeJoiner.punctuationOnly(t)
+                    } else {
+                        ph = try await m.phonemes(for: t)
+                    }
+                    parts.append((run: run, phonemes: ph))
+                }
+            }
+            let phonemes = PhonemeJoiner.join(parts)
+            if PhonemeJoiner.fits(phonemes), !phonemes.isEmpty {
+                result = try await m.synthesizeFromPhonemesDetailed(phonemes, voice: voice, speed: speed)
+            } else {
+                // Too long for one pass with overrides: the text path chunks by itself (overrides dropped).
+                result = try await m.synthesizeDetailed(text: text, voice: voice, speed: speed)
+            }
+        } else {
+            result = try await m.synthesizeDetailed(text: text, voice: voice, speed: speed)
+        }
+        return KokoroAudio(samples: result.samples, sampleRate: result.sampleRate, synthMs: Date().timeIntervalSince(t0) * 1000)
+    }
+
+    /// Symlink the G2P + lexicon into FluidAudio's fixed cache path (see the header).
+    public static func linkSharedAssets(from dir: URL) throws {
+        let source = dir.appendingPathComponent("kokoro-82m-coreml")
+        let root = try TtsCacheDirectory.ensure()
+        let target = root.appendingPathComponent("Models").appendingPathComponent("kokoro-82m-coreml")
+        let fm = FileManager.default
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        for name in ["G2PEncoder.mlmodelc", "G2PDecoder.mlmodelc", "g2p_vocab.json", "us_lexicon_cache.json"] {
+            let link = target.appendingPathComponent(name)
+            let dest = source.appendingPathComponent(name)
+            if let existing = try? fm.destinationOfSymbolicLink(atPath: link.path), existing == dest.path { continue }
+            if (try? fm.attributesOfItem(atPath: link.path)) != nil { try fm.removeItem(at: link) }
+            try fm.createSymbolicLink(at: link, withDestinationURL: dest)
+        }
+        // Only links live there, but keep the folder out of iCloud/iTunes backups all the same.
+        var rootURL = root
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? rootURL.setResourceValues(values)
+    }
+}

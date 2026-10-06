@@ -144,6 +144,25 @@ describe.each(['store', 'personal'] as const)('core.js in a bare JS context (%s 
     expect(n.paragraphs[2]?.sentences).toEqual(['Well. The door — old and grey — creaked.']);
   });
 
+  it('adds the sentence script (v1 front-end + the novel lexicon) for Kokoro / Apple, and stores lexicons', async () => {
+    const args = { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1' };
+    type Script = { items: { text: string; paragraph: number; runs?: { t?: string; p?: string }[]; pauseMs: number; kind: string }[] };
+    const before = await core.call<{ script: Script }>('narration.chapterText', args);
+    expect(before.script.items[0]).toMatchObject({ text: 'Chapter 1. Nightmare Begins.', kind: 'title', paragraph: 0 });
+    expect(before.script.items.some((i) => i.text.includes('Mister Smith'))).toBe(true);
+    expect(before.script.items.some((i) => i.runs)).toBe(false);
+    await expect(core.call('narration.lexicon.set', { novelKey: 'demo-library:novel/alpha', lexicon: { schemaVersion: 1, entries: [{ match: 'Aspirant', ipa: 'ɐspˈIɹᵊnt' }] } })).resolves.toEqual({ entries: 1 });
+    await expect(core.call('narration.lexicon.set', { lexicon: { schemaVersion: 1, entries: [{ match: '', say: 'x' }] } })).rejects.toThrow(/Invalid pronunciation/);
+    const after = await core.call<{ script: Script }>('narration.chapterText', args);
+    const aspirant = after.script.items.find((i) => i.text.includes('Aspirant'));
+    expect(aspirant?.runs?.some((r) => r.p === 'ɐspˈIɹᵊnt')).toBe(true);
+    const lex = await core.call<{ global: { entries: unknown[] }; novel: { entries: { match: string }[] } | null }>('narration.lexicon.get', { novelKey: 'demo-library:novel/alpha' });
+    expect(lex.global.entries).toEqual([]);
+    expect(lex.novel?.entries[0]?.match).toBe('Aspirant');
+    await core.call('narration.lexicon.set', { novelKey: 'demo-library:novel/alpha', lexicon: { schemaVersion: 1, entries: [] } });
+    await expect(core.call('narration.lexicon.get', { novelKey: 'demo-library:novel/alpha' })).resolves.toMatchObject({ novel: null });
+  });
+
   it('resume point for narration/CarPlay: saved paragraph, or the next chapter once finished', async () => {
     await expect(core.call('narration.resumePoint', { pluginId: 'demo-library', novelPath: 'novel/nothing' })).resolves.toBeNull();
     await core.call('progress.save', { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', position: { percent: 0.4, paragraph: 3, offset: 12 } });

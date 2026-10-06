@@ -32,6 +32,13 @@
 		1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */; };
 		FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */; };
 		2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */; };
+		254E775E7FE94083E693EE1E /* HybridSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBB9D6F6A29E01AC18BD05F /* HybridSpeechEngine.swift */; };
+		D52860A1F0B50DD6E08A1492 /* KokoroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB9E91E7C6E2B3C059CA77 /* KokoroService.swift */; };
+		35FE6311BE4C8C43152A2014 /* VoiceLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */; };
+		7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */; };
+		7DCD373B6C91F75EC29B4532 /* KokoroModels in Resources */ = {isa = PBXBuildFile; fileRef = D7F3C92A13EB7D44431F05E9 /* KokoroModels */; };
+		B39966270AA09334B4F8E5D4 /* HDVoiceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */; };
+		766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +70,11 @@
 		5462AE7AE519E66588E5B106 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioChapterPlayer.swift"; sourceTree = "<group>"; };
 		335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioLibrary.swift"; sourceTree = "<group>"; };
+		DEBB9D6F6A29E01AC18BD05F /* HybridSpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/HybridSpeechEngine.swift"; sourceTree = "<group>"; };
+		CAEB9E91E7C6E2B3C059CA77 /* KokoroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/KokoroService.swift"; sourceTree = "<group>"; };
+		CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceLab.swift"; sourceTree = "<group>"; };
+		92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSettings.swift"; sourceTree = "<group>"; };
+		D7F3C92A13EB7D44431F05E9 /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -71,6 +83,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
+				B39966270AA09334B4F8E5D4 /* HDVoiceCore in Frameworks */,
+				766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +123,7 @@
 				F2D108A23FAAF241A88B50AB /* Native */,
 				A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */,
 				5462AE7AE519E66588E5B106 /* App.entitlements */,
+				D7F3C92A13EB7D44431F05E9 /* KokoroModels */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -131,6 +146,10 @@
 				D5E7DB03FA36592670553932 /* StorePlugin.swift */,
 				D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */,
 				335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */,
+				DEBB9D6F6A29E01AC18BD05F /* HybridSpeechEngine.swift */,
+				CAEB9E91E7C6E2B3C059CA77 /* KokoroService.swift */,
+				CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */,
+				92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -153,6 +172,8 @@
 			name = App;
 			packageProductDependencies = (
 				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
+				9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */,
+				5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -185,6 +206,7 @@
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
 				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
+				C8E92A3FCA8D00247721AF0D /* XCLocalSwiftPackageReference "HDVoice" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -207,6 +229,7 @@
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
 				1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */,
+				7DCD373B6C91F75EC29B4532 /* KokoroModels in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -234,6 +257,10 @@
 				A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */,
 				FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */,
 				2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */,
+				254E775E7FE94083E693EE1E /* HybridSpeechEngine.swift in Sources */,
+				D52860A1F0B50DD6E08A1492 /* KokoroService.swift in Sources */,
+				35FE6311BE4C8C43152A2014 /* VoiceLab.swift in Sources */,
+				7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -442,6 +469,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "CapApp-SPM";
 		};
+		C8E92A3FCA8D00247721AF0D /* XCLocalSwiftPackageReference "HDVoice" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = HDVoice;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -449,6 +480,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
+		};
+		9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C8E92A3FCA8D00247721AF0D /* XCLocalSwiftPackageReference "HDVoice" */;
+			productName = HDVoiceCore;
+		};
+		5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C8E92A3FCA8D00247721AF0D /* XCLocalSwiftPackageReference "HDVoice" */;
+			productName = HDVoiceKokoro;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

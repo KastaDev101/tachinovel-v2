@@ -1,23 +1,28 @@
 /**
  * Listening UI layered over the v1 UI (v1 itself is not modified):
  *
- * - Reader: a "Listen" button (headphones). Tap = listen from the first visible paragraph: the chapter's
- *   PC-narrated audio if the linked folder has it, else the system voice reading exactly the paragraphs
- *   the reader shows (so highlight indexes match v1's ChapterPosition.paragraph).
- * - While listening: a mini player on every screen (title, engine, play/pause, stop); tapping the title
- *   opens the car player (car-mode.ts).
- * - Highlighting: narrated audio → the spoken SENTENCE (timestamps re-aligned onto the reader's DOM,
- *   highlight.ts); system voice → the spoken paragraph. The view follows along unless the user
- *   scrolled in the last few seconds.
+ * - Reader: a "Listen" button (headphones). Tap = listen from the first visible paragraph with the novel's
+ *   voice: Kokoro on device (bundled), the Apple voice standing in sentence by sentence when Kokoro can't
+ *   keep up. The sentence script is built from exactly what the reader shows (speech-dom.ts, the v1
+ *   narration front-end + the pronunciation lexicon). PC-narrated audio only with Settings › Voices ›
+ *   Advanced › "Use PC audio when available".
+ * - While listening: a mini player on every screen (title, voice, play/pause, stop); tapping the title
+ *   opens the Listen player (car-mode.ts).
+ * - Highlighting: the spoken SENTENCE for every source (speech: from the script's canonical ranges;
+ *   narrated audio: timestamps re-aligned onto the reader's DOM, highlight.ts). The view follows along
+ *   unless the user scrolled in the last few seconds.
  * - More › Listen in the Car (v1 screen): an "Open player" button at the bottom.
  * pluginId/novelPath for a chapter come from observed bridge calls (chapter.get / progress.save).
  */
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
-import { observeCalls } from '../capacitor-client.ts';
+import type { Lexicon } from '@v1tts/frontend.ts';
+import { callCore, observeCalls } from '../capacitor-client.ts';
 import { installCarMode } from './car-mode.ts';
-import { alignChapter, clearPaint, HIGHLIGHT_CSS, paintSegment, type ChapterAlignment } from './highlight.ts';
+import { alignChapter, clearPaint, HIGHLIGHT_CSS, paintRange, paintSegment, type ChapterAlignment } from './highlight.ts';
 import { Narration, type NarrationProgress, type NarrationState } from './narration.ts';
 import { chapterBody, locateReadingPoint, paragraphsOf, readerRoot } from './reader-dom.ts';
+import { domSpeechScript, rangeForSentence, type DomScript } from './speech-dom.ts';
+import { voiceLabel } from './voices-ui.ts';
 
 interface ChapterRef {
   pluginId: string;
@@ -64,6 +69,8 @@ export function installNarrationOverlay(): void {
   /** Timestamp alignment per chapter (re-made when the reader re-renders the chapter body). */
   const alignments = new Map<string, ChapterAlignment | null>();
   const timingRequests = new Map<string, Promise<string | null>>();
+  /** Speech: the reader's own script per chapter (re-made when the reader re-renders the body). */
+  const speechScripts = new Map<string, DomScript>();
   const car = installCarMode();
 
   // Learn which novel each chapter belongs to from bridge traffic.
@@ -116,7 +123,7 @@ export function installNarrationOverlay(): void {
     toggle.setAttribute('aria-label', state.status === 'paused' ? 'Play' : 'Pause');
     (titleBtn.querySelector('b') as HTMLElement).textContent = state.chapterName ?? '';
     (titleBtn.querySelector('small') as HTMLElement).textContent =
-      state.status === 'loading' ? 'Loading…' : state.engine === 'audio' ? 'Narrated audio' : state.status === 'error' ? (state.error ?? 'Error') : 'System voice';
+      state.status === 'loading' ? 'Loading…' : state.status === 'error' ? (state.error ?? 'Error') : voiceLabel(state);
   }
 
   listen.addEventListener('click', () => {
@@ -131,16 +138,29 @@ export function installNarrationOverlay(): void {
     tapFeedback();
     const novelName = root.querySelector('.rd-top-novel')?.textContent ?? '';
     const chapterName = root.querySelector('.rd-top-chapter')?.textContent ?? point.chapterPath;
-    void Narration.play({
-      pluginId: ref.pluginId,
-      novelPath: ref.novelPath,
-      chapterPath: ref.chapterPath,
-      novelName,
-      chapterName,
-      paragraphs: paragraphsOf(body),
-      start: { paragraph: point.paragraph },
-      autoContinue: true,
-    });
+    void (async () => {
+      // The novel's pronunciation lexicon (global + its own), then the script from the reader's DOM.
+      const l = await callCore<{ global?: Lexicon; novel?: Lexicon | null }>('narration.lexicon.get', { novelKey: `${ref.pluginId}:${ref.novelPath}` }).catch(() => null);
+      const lexicons = [l?.global, l?.novel].filter((x): x is Lexicon => !!x);
+      let script: DomScript | null = null;
+      try {
+        script = domSpeechScript(body, { title: chapterName, lexicons });
+        speechScripts.set(ref.chapterPath, script);
+      } catch (err) {
+        console.warn('speech script failed; native splits the paragraphs', err);
+      }
+      await Narration.play({
+        pluginId: ref.pluginId,
+        novelPath: ref.novelPath,
+        chapterPath: ref.chapterPath,
+        novelName,
+        chapterName,
+        paragraphs: paragraphsOf(body),
+        ...(script && script.script.items.length > 0 ? { script: script.script } : {}),
+        start: { paragraph: point.paragraph },
+        autoContinue: true,
+      });
+    })();
   });
   toggle.addEventListener('click', () => {
     tapFeedback();
@@ -200,7 +220,20 @@ export function installNarrationOverlay(): void {
         return follow(paintSegment(al, p.segment));
       }
     }
-    // System voice (or audio without usable timestamps): the paragraph.
+    if (p.engine === 'speech' && p.block !== undefined) {
+      let dom = speechScripts.get(p.chapterPath);
+      if (!dom || dom.body !== body) {
+        dom = domSpeechScript(body);
+        speechScripts.set(p.chapterPath, dom);
+      }
+      const range = rangeForSentence(dom, p);
+      if (range) {
+        paragraphEl?.classList.remove('tn-speaking');
+        paragraphEl = null;
+        return follow(paintRange(range, body.children[p.paragraph] ?? null));
+      }
+    }
+    // No sentence position (or audio without usable timestamps): the paragraph.
     clearPaint();
     const el = body.children[p.paragraph] ?? null;
     if (el === paragraphEl) return;

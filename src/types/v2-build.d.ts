@@ -3,3 +3,9 @@
 declare const __FLAVOR__: 'personal' | 'store';
 /** Ads compiled in (store flavor only; off unless built with --ads). */
 declare const __ADS__: boolean;
+
+/** Plain-text files bundled into the UI (tools/build.ts loader '.txt': 'text'), e.g. licenses/Apache-2.0.txt. */
+declare module '*.txt' {
+  const text: string;
+  export default text;
+}

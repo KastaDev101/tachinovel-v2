@@ -9,6 +9,10 @@ Thumbs.db
 
 # Capacitor / Xcode build products (the ios/ project itself is committed)
 ios/App/App/public/
+# Bundled Kokoro voice model: fetched (pinned + checksummed) by tools/fetch-voices.ts, never committed
+ios/App/App/KokoroModels/
+ios/App/HDVoice/.build/
+ios/App/HDVoice/.swiftpm/
 ios/App/App/capacitor.config.json
 ios/App/App/config.xml
 ios/App/build/

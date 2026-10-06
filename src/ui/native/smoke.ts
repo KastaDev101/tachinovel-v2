@@ -4,10 +4,13 @@
  * and this drives the v1 UI to that screen so `simctl io screenshot` captures it. Release builds never
  * inject the global, so this is inert there.
  */
+import { runVoiceSelfTest } from './voice-selftest.ts';
 
 interface SmokeConfig {
   tab?: string;
   source?: string;
+  /** "1": run the voice self-test (voice-selftest.ts) after the tour. */
+  voiceSelfTest?: string;
 }
 
 declare global {
@@ -40,5 +43,6 @@ export function runSmokeTour(): void {
     if (cfg.tab) (await waitFor(`[data-testid="tab-${cfg.tab}"]`, 5000))?.click();
     if (cfg.source) (await waitFor(`[data-testid="source-${cfg.source}"]`, 8000))?.click();
     document.documentElement.dataset.smoke = 'done';
+    if (cfg.voiceSelfTest === '1') await runVoiceSelfTest();
   })();
 }

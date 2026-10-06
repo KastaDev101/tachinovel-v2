@@ -1,0 +1,211 @@
+import XCTest
+@testable import HDVoiceCore
+
+/// Render everything the window allows right now (as if each render finished instantly).
+private func renderAll(_ s: inout HybridScheduler, ok: Bool = true) -> [Int] {
+    var done: [Int] = []
+    while let i = s.nextRender() {
+        s.renderDone(i, ok: ok)
+        done.append(i)
+    }
+    return done
+}
+
+/// Drives the scheduler the way HybridSpeechEngine does: render → decide → start/finish.
+final class HybridSchedulerTests: XCTestCase {
+    func testRendersOnlyAheadWindowAndOneAtATime() {
+        var s = HybridScheduler(count: 10, kokoro: .ready, config: .init(ahead: 3))
+        XCTAssertEqual(s.nextRender(), 0)
+        XCTAssertNil(s.nextRender(), "one render in flight at a time")
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.nextRender(), 1)
+        s.renderDone(1, ok: true)
+        XCTAssertEqual(s.nextRender(), 2)
+        s.renderDone(2, ok: true)
+        XCTAssertNil(s.nextRender(), "nothing playing yet: window is 3 sentences")
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        // Playing 0: window is (0, 3] → sentence 3 may render now.
+        XCTAssertEqual(s.nextRender(), 3)
+        s.renderDone(3, ok: true)
+        XCTAssertNil(s.nextRender())
+    }
+
+    func testGaplessPrefetchWhileKokoroPlays() {
+        var s = HybridScheduler(count: 5, kokoro: .ready, config: .init(ahead: 2))
+        _ = renderAll(&s)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        XCTAssertEqual(s.prefetchNext(), 1, "the next rendered sentence is queued right behind")
+        XCTAssertNil(s.prefetchNext(), "2 isn't rendered yet")
+        _ = renderAll(&s) // renders 2 (window (0, 2])
+        XCTAssertEqual(s.prefetchNext(), 2)
+        s.finished(0)
+        s.started(1)
+        _ = renderAll(&s) // window (1, 3] → 3
+        s.finished(1)
+        s.started(2)
+        _ = renderAll(&s)
+        XCTAssertEqual(s.prefetchNext(), 3)
+        XCTAssertEqual(s.prefetchNext(), 4)
+        XCTAssertEqual(s.decide(now: 9), .finished)
+        XCTAssertEqual(s.kokoroSentences, 5)
+        XCTAssertEqual(s.appleSentences, 0)
+    }
+
+    func testWaitsAtStartThenFallsBackWhenFirstRenderIsSlow() {
+        var s = HybridScheduler(count: 4, kokoro: .ready, config: .init(startGrace: 2, dryGrace: 0.25))
+        XCTAssertEqual(s.nextRender(), 0)
+        XCTAssertEqual(s.decide(now: 10), .wait(2))
+        guard case .wait(let w) = s.decide(now: 11) else { return XCTFail("expected wait") }
+        XCTAssertEqual(w, 1, accuracy: 0.001)
+        XCTAssertEqual(s.decide(now: 12.5), .apple(0, .queueDry))
+        XCTAssertEqual(s.source, .apple)
+        XCTAssertEqual(s.underruns, 0, "not an underrun: nothing had played yet")
+        // The late render of 0 is discarded.
+        s.renderDone(0, ok: true)
+        XCTAssertFalse(s.isReady(0))
+    }
+
+    func testQueueRunsDryMidChapterFallsBackThenReturnsWhenAhead() {
+        var s = HybridScheduler(count: 8, kokoro: .ready, config: .init(ahead: 3, returnAhead: 2, dryGrace: 0.25))
+        XCTAssertEqual(s.nextRender(), 0)
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        XCTAssertEqual(s.nextRender(), 1) // slow render of 1, still in flight when 0 ends
+        s.finished(0)
+        XCTAssertEqual(s.decide(now: 5), .wait(0.25))
+        XCTAssertEqual(s.decide(now: 5.3), .apple(1, .queueDry))
+        XCTAssertEqual(s.underruns, 1)
+        XCTAssertEqual(s.fallbacks[.queueDry], 1)
+        s.started(1)
+        s.renderDone(1, ok: true) // too late: Apple has it
+        XCTAssertFalse(s.isReady(1))
+        // While Apple speaks 1, Kokoro renders 2, 3, 4.
+        XCTAssertEqual(renderAll(&s), [2, 3, 4])
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 9), .kokoro(2), "two or more ready: back to Kokoro")
+        XCTAssertEqual(s.source, .kokoro)
+        XCTAssertEqual(s.returnsToKokoro, 1)
+    }
+
+    func testStaysWithAppleUntilEnoughIsReady() {
+        var s = HybridScheduler(count: 6, kokoro: .loading, config: .init(returnAhead: 2, startGrace: 1))
+        XCTAssertNil(s.nextRender(), "no renders while the model loads")
+        XCTAssertEqual(s.decide(now: 0), .wait(1), "a warm load gets the start grace")
+        XCTAssertEqual(s.decide(now: 1.5), .apple(0, .modelLoading))
+        s.started(0)
+        s.kokoro = .ready
+        XCTAssertEqual(s.nextRender(), 1)
+        s.renderDone(1, ok: true)
+        s.finished(0)
+        // Only one sentence ready: keep Apple (no flip-flopping)…
+        XCTAssertEqual(s.decide(now: 3), .apple(1, .modelLoading))
+        XCTAssertFalse(s.isReady(1))
+        s.started(1)
+        XCTAssertEqual(renderAll(&s), [2, 3, 4])
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 5), .kokoro(2))
+    }
+
+    func testStartsMidChapter() {
+        var s = HybridScheduler(count: 3, start: 2, kokoro: .ready, config: .init(returnAhead: 2))
+        XCTAssertEqual(s.cursor, 2)
+        XCTAssertEqual(s.nextRender(), 2)
+        s.renderDone(2, ok: true)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(2))
+    }
+
+    func testThermalThrottlingStopsRendersUsesWhatIsReadyThenApple() {
+        var s = HybridScheduler(count: 6, kokoro: .ready, config: .init(ahead: 2))
+        _ = renderAll(&s) // 0, 1
+        s.throttled = true
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        XCTAssertNil(s.nextRender(), "no new renders while throttled")
+        XCTAssertEqual(s.prefetchNext(), 1, "already rendered audio still plays")
+        s.finished(0)
+        s.started(1)
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 1), .apple(2, .thermal))
+        s.started(2)
+        s.throttled = false
+        XCTAssertEqual(renderAll(&s), [3, 4])
+        s.finished(2)
+        XCTAssertEqual(s.decide(now: 2), .kokoro(3))
+    }
+
+    func testPausedRendersNothing() {
+        var s = HybridScheduler(count: 4, kokoro: .ready)
+        s.paused = true
+        XCTAssertNil(s.nextRender())
+        s.paused = false
+        XCTAssertEqual(s.nextRender(), 0)
+    }
+
+    func testOneFailedSentenceGoesToAppleKokoroContinues() {
+        var s = HybridScheduler(count: 4, kokoro: .ready, config: .init(ahead: 3))
+        XCTAssertEqual(s.nextRender(), 0)
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.nextRender(), 1)
+        s.renderDone(1, ok: false)
+        XCTAssertEqual(s.nextRender(), 2)
+        s.renderDone(2, ok: true)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        s.finished(0)
+        XCTAssertEqual(s.decide(now: 1), .apple(1, .segmentFailed))
+        XCTAssertEqual(s.source, .kokoro, "a single failure doesn't change the voice")
+        s.started(1)
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 2), .kokoro(2))
+    }
+
+    func testRepeatedFailuresMakeKokoroUnavailable() {
+        var s = HybridScheduler(count: 6, kokoro: .ready, config: .init(ahead: 3, maxConsecutiveFailures: 3))
+        for _ in 0..<3 {
+            guard let i = s.nextRender() else { return XCTFail("expected a render") }
+            s.renderDone(i, ok: false)
+        }
+        XCTAssertEqual(s.kokoro, .unavailable)
+        XCTAssertNil(s.nextRender())
+        XCTAssertEqual(s.decide(now: 0), .apple(0, .segmentFailed))
+        s.started(0)
+        s.finished(0)
+        XCTAssertEqual(s.decide(now: 1), .apple(1, .segmentFailed))
+        s.started(1)
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 2), .apple(2, .segmentFailed))
+        s.started(2)
+        s.finished(2)
+        XCTAssertEqual(s.decide(now: 3), .apple(3, .modelUnavailable))
+    }
+
+    func testModelReleasedMidRenderAbandonsTheRender() {
+        var s = HybridScheduler(count: 4, kokoro: .ready)
+        XCTAssertEqual(s.nextRender(), 0)
+        s.kokoro = .unavailable // memory pressure
+        XCTAssertNil(s.rendering)
+        s.renderDone(0, ok: true) // late result is ignored
+        XCTAssertFalse(s.isReady(0))
+        XCTAssertEqual(s.decide(now: 0), .apple(0, .modelUnavailable))
+    }
+
+    func testDisabledAndUnavailableStartWithApple() {
+        var d = HybridScheduler(count: 2, kokoro: .disabled)
+        XCTAssertEqual(d.source, .apple)
+        XCTAssertNil(d.nextRender())
+        XCTAssertEqual(d.decide(now: 0), .apple(0, .disabled))
+        var u = HybridScheduler(count: 2, kokoro: .unavailable)
+        XCTAssertEqual(u.decide(now: 0), .apple(0, .modelUnavailable))
+    }
+
+    func testEmptyAndStartBeyondEnd() {
+        var e = HybridScheduler(count: 0, kokoro: .ready)
+        XCTAssertNil(e.nextRender())
+        XCTAssertEqual(e.decide(now: 0), .finished)
+        var b = HybridScheduler(count: 3, start: 7, kokoro: .ready)
+        XCTAssertEqual(b.decide(now: 0), .finished)
+    }
+}

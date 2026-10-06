@@ -15,6 +15,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // first start() wins, so pass the reason here (logged and reported by v2.info).
         CoreHost.shared.start(launchReason: application.applicationState == .background ? "background-refresh" : "ui")
         DeviceSnapshot.shared.start()
+        // Bundled Kokoro voice: crash check from the last run, memory-pressure handling, one-time warm-up.
+        KokoroService.shared.start()
         BackgroundRefresh.register()
         BackgroundRefresh.requestProvisionalNotifications()
         // With scenes, UIKit never calls applicationDidEnterBackground(_:); the app-level notification

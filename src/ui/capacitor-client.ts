@@ -148,3 +148,11 @@ export function sharedClient(): BridgeClient {
 export function createPhoneBridge(_opts: unknown = {}): BridgeClient {
   return sharedClient();
 }
+
+/**
+ * Call a v2-only core method (src/core/core.ts V2Methods, e.g. narration.lexicon.get), which v1's typed
+ * client doesn't know. Same transport, ids and observers as the v1 calls.
+ */
+export function callCore<T = unknown>(method: string, args?: unknown): Promise<T> {
+  return (sharedClient().call as unknown as (m: string, a?: unknown) => Promise<T>)(method, args);
+}
