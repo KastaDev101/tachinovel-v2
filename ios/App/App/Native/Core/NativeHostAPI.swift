@@ -327,10 +327,16 @@ final class NativeHostAPI {
         }
         let share: @convention(block) (String, JSVal) -> Void = { [self] json, cb in
             let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
-            var items: [Any] = []
-            if let text = obj["text"] as? String { items.append(text) }
-            if let s = obj["url"] as? String, let url = URL(string: s) { items.append(url) }
-            DispatchQueue.main.async { NativeUI.shared.share(items) { self.reply(cb, error: nil, result: true) } }
+            // Only Sendable values cross into the main-queue closure, and the [Any] is built there: capturing
+            // a mutable [Any] made swift-frontend 6.3.3 crash in its SendNonSendable diagnostics (CI, Debug).
+            let text = obj["text"] as? String
+            let url = (obj["url"] as? String).flatMap { URL(string: $0) }
+            DispatchQueue.main.async {
+                var items: [Any] = []
+                if let text { items.append(text) }
+                if let url { items.append(url) }
+                NativeUI.shared.share(items) { self.reply(cb, error: nil, result: true) }
+            }
         }
         let shareFile: @convention(block) (String, JSVal) -> Void = { [self] path, cb in
             DispatchQueue.main.async { NativeUI.shared.share([URL(fileURLWithPath: path)]) { self.reply(cb, error: nil, result: true) } }
