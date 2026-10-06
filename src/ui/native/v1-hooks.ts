@@ -2,9 +2,10 @@
  * Small additions to v1 screens without editing v1 (DOM hooks, re-applied when v1 re-renders):
  *  - More: a "Voices" row (Settings › Voices, voices-ui.ts) right after "Listen in the Car".
  *  - About: tap the version 5 times → the hidden Voice Lab (voice-lab.ts).
- *  - Open Source Licenses: v2's notices (Kokoro, FluidAudio, …) after v1's list.
+ *  - Open Source Licenses: THIRD_PARTY_NOTICES.md (Capacitor, Kokoro, FluidAudio, …) after v1's list,
+ *    without the ones v1 already shows.
  */
-import { V2_NOTICES } from './third-party.ts';
+import { v2Notices } from './third-party.ts';
 import { openVoiceLab } from './voice-lab.ts';
 import { openVoicesScreen } from './voices-ui.ts';
 
@@ -45,7 +46,9 @@ function addLicenses(): void {
   const screen = document.querySelector('[data-testid="screen-licenses"]');
   const grouped = screen?.querySelector('.grouped');
   if (!grouped || grouped.querySelector('[data-tn-notice]')) return;
-  for (const n of V2_NOTICES) {
+  const shown = new Set(Array.from(grouped.querySelectorAll('.row-title'), (el) => (el.textContent ?? '').trim().toLowerCase()));
+  const same = (name: string): boolean => shown.has(name.toLowerCase()) || (name === 'Preact Signals' && shown.has('@preact/signals'));
+  for (const n of v2Notices().filter((x) => !same(x.name))) {
     const section = document.createElement('section');
     section.className = 'group';
     section.dataset.tnNotice = n.name;

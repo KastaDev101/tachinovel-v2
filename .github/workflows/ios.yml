@@ -6,20 +6,20 @@
 #  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
 #               simulator smoke test: install, launch, screenshot the first screens (artifact
 #               "simulator-screenshots"); fails if the app crashes.
-#  ios-ipa      macOS 26 (pushes to main, pull requests, manual): unsigned DEVICE build packaged as an .ipa
-#               for sideloading with AltStore/SideStore and a free Apple ID (artifact
+#  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
+#               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
 #  voice-quality   macOS 26: HDVoice unit tests (swift test), then the BUNDLED Kokoro model loaded the way
 #               the app does (kokoro-check): every offered voice x fixture sentences -> audio checks, time
 #               to first audio, real-time factor, memory; ASR round trip with whisper.cpp (WER <= 15%).
 #  voice-simulator macOS 26: the Debug app from ios-compile in the simulator with -tachiVoiceSelfTest:
 #               Listen flow with Kokoro, sentence highlight, Apple fallback on a slow/failing Kokoro and back.
+#  testflight   macOS 26: signed archive + TestFlight upload. Only on tags v* or manual dispatch with
+#               upload=true, and skips cleanly until the App Store Connect secrets exist.
 #
 # The Kokoro model is bundled into the app but never committed: tools/fetch-voices.ts downloads the files
 # pinned in ios/kokoro-models.lock.json (revision + SHA-256, fails on mismatch) into
 # ios/App/App/KokoroModels/; the download cache is keyed by the lock file.
-#  testflight   macOS 26: signed archive + TestFlight upload. Only on tags v* or manual dispatch with
-#               upload=true, and skips cleanly until the App Store Connect secrets exist.
 #
 # Secrets (only for testflight): APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64 (Team key,
 # Admin role), optional IOS_DIST_P12_BASE64 / IOS_DIST_P12_PASSWORD / IOS_PROFILE_BASE64.
@@ -33,8 +33,9 @@ on:
     tags: ['v*']
     # Docs-only pushes don't rebuild (saves macOS minutes; tag pushes ignore path filters).
     paths-ignore: ['docs/**', '**/*.md']
+  # Pull requests always run every job: main is protected and requires web, shell, ios-compile and
+  # ios-ipa, so a path filter here would leave docs-only PRs waiting forever.
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
     inputs:
       flavor:
@@ -167,8 +168,8 @@ jobs:
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)
     needs: web
-    # Also on pull requests, so every PR has an installable IPA (public repo: macOS minutes are free).
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    # PRs too: it is a required check on main (a real device compile), and the PR's IPA can be tried first.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -197,7 +198,7 @@ jobs:
         with:
           path: ${{ steps.ipa.outputs.ipa }}
           archive: false
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
       - name: Size report
         run: bash ci/ipa-size.sh "${{ steps.ipa.outputs.ipa }}" build/DerivedData-device/Build/Products/Release-iphoneos/App.app
       - name: Keep the build log

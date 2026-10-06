@@ -97,7 +97,7 @@ export async function buildUi(info: BuildInfo, opts: BuildOptions): Promise<stri
     minify: !opts.dev,
     legalComments: 'eof',
     define: defines(info, opts.dev),
-    loader: { '.svg': 'text', '.txt': 'text', '.png': 'dataurl', '.woff2': 'dataurl' },
+    loader: { '.svg': 'text', '.md': 'text', '.png': 'dataurl', '.woff2': 'dataurl' },
     plugins: [v1AliasPlugin(), phoneClientPlugin()],
     jsx: 'automatic',
     jsxImportSource: 'preact',

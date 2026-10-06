@@ -167,3 +167,21 @@ describe('CI voice checks', () => {
     expect(pkg).toMatch(/FluidAudio\.git", exact: "0\.17\.5"/);
   });
 });
+
+describe('open-source notices shown in the app', () => {
+  it('parses THIRD_PARTY_NOTICES.md: every section has a license and text; Apache text appended', async () => {
+    const { parseNotices } = await import('../src/ui/native/notices.ts');
+    const md = readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+    const notices = parseNotices(md);
+    const names = notices.map((n) => n.name);
+    for (const n of ['Kokoro-82M', 'Kokoro Core ML conversion', 'FluidAudio', 'misaki', 'Capacitor']) expect(names).toContain(n);
+    expect(names).not.toContain('Apache License 2.0');
+    for (const n of notices) {
+      expect(n.license, n.name).not.toBe('');
+      expect(n.text.length, n.name).toBeGreaterThan(20);
+    }
+    const kokoro = notices.find((n) => n.name === 'Kokoro-82M');
+    expect(kokoro?.license).toBe('Apache-2.0');
+    expect(kokoro?.text).toMatch(/TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION/);
+  });
+});

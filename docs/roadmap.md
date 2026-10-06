@@ -15,7 +15,7 @@ Companion docs: architecture.md, app-store-risk.md, monetization.md, tts-v2.md.
 | Swift layer (CoreHost, HTTP, files/iCloud, native UI, Core/Narration/Store plugins, CarPlay, background refresh, audio library) | Compiles on Xcode 26.6 in CI (simulator + device); launches in the iOS Simulator (smoke screenshots per run) |
 | CI | `web`, `shell`, `ios-compile` + simulator smoke, `ios-ipa` (unsigned, free sideload); TestFlight job waits for an Apple account |
 | Backup | v1 backups restore in v2 via Settings › Backup & Restore › Restore from Files… (document picker) |
-| Narration | System voice (AVSpeech) **and** PC-narrated audio from the "TachiNovel Audio" folder: background/lock screen, Now Playing, remote commands, resume, auto-advance, sentence highlighting from the narrator's timestamps, full-screen Listen player; CarPlay list (needs the entitlement) |
+| Narration | Apple voices (AVSpeech) with background/lock screen, Now Playing, remote commands, resume, auto-advance, full-screen Listen player; CarPlay list (needs the entitlement). Bundled **Kokoro** voices are in progress on the `voice-spike` PR (Apple voices stay the fallback). The PC-narrated audio player ("TachiNovel Audio" folder, sentence highlighting from timestamps) works but is parked: the PC narrator is sidelined |
 | App icon / launch screen | v1's book icon; launch image follows light/dark |
 | Monetization | Ad pacing policy + AdMob wiring (off by default), StoreKit 2 plugin, feature matrix, revenue model |
 | Android | Not built (JDK 21 + Gradle downloads needed); design note in architecture.md |
