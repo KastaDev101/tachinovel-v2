@@ -1,14 +1,22 @@
 /**
- * CI job "changes" (.github/workflows/ios.yml): does this pull request touch anything the macOS jobs
- * (simulator build + smoke, device IPA, UI tests) can tell us about? Docs-only PRs skip them; a skipped
- * job counts as passing a required check. Pushes, tags and manual runs always run everything.
+ * CI job "changes" (.github/workflows/ios.yml): which macOS jobs can a pull request tell us anything
+ * with? Free public repos get only a few macOS runners at a time, so each PR runs only the jobs its files
+ * can affect. A skipped job counts as passing a required check. Pushes, tags and manual runs always run
+ * everything, and so does any PR that changes this filter or the workflow itself.
  *
- * Docs-only = every changed file is one of: docs/**, *.md (anywhere, except THIRD_PARTY_NOTICES.md,
- * which the app shows), changelog.d/**, the PR template or issue templates under .github/.
+ *   app    ios-compile + simulator smoke: anything but docs. Docs-only = every changed file is docs/**,
+ *          *.md (except THIRD_PARTY_NOTICES.md, which the app shows), changelog.d/** or a PR/issue template.
+ *   ui     ios-ui-tests: app code (src/, ios/, vendor/), what builds the bundle (package*.json,
+ *          capacitor config, tools/build.ts, tools/v1.ts) or the UI test's own fixtures and scripts.
+ *   ipa    ios-ipa: native code (ios/, not the UI test target), what goes into the device build
+ *          (package*.json, capacitor config, build/IPA scripts, the voice model fetch) or the IPA budget.
+ *   voice  voice-quality and voice-simulator: the voice engine (ios/App/HDVoice, Native/Voice,
+ *          Native/Narration, the model lock), its UI (src/ui/native/voice*, narration*, speech*), the
+ *          narration script (src/core/narration), the model fetch and fixture scripts and their tests.
  *
  *   node tools/ci-changes.ts <base-ref>    pull request: compare <base-ref>...HEAD
  *   node tools/ci-changes.ts --all         push/tag/manual: everything runs
- * Writes app=true|false to $GITHUB_OUTPUT. Fails safe: on any error it reports app=true.
+ * Writes app=, ui=, ipa=, voice= (true|false) to $GITHUB_OUTPUT. Fails safe: on any error, all true.
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -34,24 +42,73 @@ export function appChanged(files: string[]): boolean {
   return files.length === 0 || files.some((f) => !isDocsOnlyFile(f));
 }
 
-function output(app: boolean, why: string): void {
-  console.log(`app=${app} (${why})`);
+const BUNDLE = [/^package(-lock)?\.json$/, /^capacitor\.config\.[a-z]+$/, /^tools\/(build|v1)\.ts$/];
+/** Changing these runs every job: the gates themselves. */
+const EVERYTHING = [/^\.github\/workflows\/ios\.yml$/, /^tools\/ci-changes\.ts$/];
+
+export const RULES = {
+  ui: [/^src\//, /^ios\//, /^vendor\//, ...BUNDLE, /^ci\/ios-ui-tests\.sh$/, /^tools\/ui-(fixtures|attachments)\.ts$/, /^tests\/fixtures\/demo-site\//],
+  ipa: [/^ios\/(?!App\/AppUITests\/)/, ...BUNDLE, /^tools\/(ios-project|fetch-voices|budgets)\.ts$/, /^ci\/(ios-unsigned-ipa|ipa-size)\.sh$/, /^ci\/budgets\.json$/],
+  voice: [
+    /^ios\/App\/HDVoice/,
+    /^ios\/App\/App\/Native\/(Voice|Narration)\//,
+    /^ios\/kokoro-models\.lock\.json$/,
+    /^src\/ui\/native\/(voice|narration|speech)[^/]*\.ts$/,
+    /^src\/core\/narration\//,
+    /^tools\/(fetch-voices|voice-fixtures[^/]*)\.ts$/,
+    /^tests\/voice[^/]*$/,
+    /^ci\/(voice-[^/]*|ios-voice-selftest)\.sh$/,
+  ],
+} as const;
+
+export interface Changes {
+  app: boolean;
+  ui: boolean;
+  ipa: boolean;
+  voice: boolean;
+}
+
+const ALL: Changes = { app: true, ui: true, ipa: true, voice: true };
+
+/** Which job groups these changed files need (no files: everything, to be safe). */
+export function classify(files: string[]): Changes {
+  const norm = files.map((f) => f.replace(/\\/g, '/'));
+  if (norm.length === 0 || norm.some((f) => EVERYTHING.some((r) => r.test(f)))) return { ...ALL };
+  const any = (rules: readonly RegExp[]): boolean => norm.some((f) => rules.some((r) => r.test(f)));
+  const app = appChanged(norm);
+  return { app, ui: app && any(RULES.ui), ipa: app && any(RULES.ipa), voice: app && any(RULES.voice) };
+}
+
+function output(c: Changes, why: string): void {
+  const line = `app=${c.app} ui=${c.ui} ipa=${c.ipa} voice=${c.voice}`;
+  console.log(`${line} (${why})`);
   const out = process.env.GITHUB_OUTPUT;
-  if (out) appendFileSync(out, `app=${app}\n`);
+  if (out) appendFileSync(out, `${line.replace(/ /g, '\n')}\n`);
+  const summary = process.env.GITHUB_STEP_SUMMARY;
+  if (summary) {
+    const mark = (b: boolean): string => (b ? 'runs' : 'skipped');
+    const rows = [
+      ['ios-compile + simulator smoke', c.app],
+      ['ios-ui-tests', c.ui],
+      ['ios-ipa', c.ipa],
+      ['voice-quality, voice-simulator', c.voice],
+    ] as const;
+    appendFileSync(summary, `### macOS jobs for this run\n\n${why}\n\n| Job | |\n|---|---|\n${rows.map(([job, on]) => `| ${job} | ${mark(on)} |`).join('\n')}\n`);
+  }
 }
 
 if (import.meta.main) {
   const arg = process.argv[2];
   if (!arg || arg === '--all') {
-    output(true, 'push, tag or manual run: everything runs');
+    output(ALL, 'push, tag or manual run: everything runs');
   } else {
     try {
       const files = execFileSync('git', ['diff', '--name-only', `${arg}...HEAD`], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
-      const app = appChanged(files);
-      const why = files.length === 0 ? 'no changed files found: running everything' : app ? `${files.filter((f) => !isDocsOnlyFile(f)).length} app/build file(s) changed` : `docs-only: ${files.length} file(s)`;
-      output(app, why);
+      const c = classify(files);
+      const why = files.length === 0 ? 'no changed files found: running everything' : c.app ? `${files.length} changed file(s)` : `docs-only: ${files.length} file(s)`;
+      output(c, why);
     } catch (err) {
-      output(true, `could not diff against ${arg}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+      output(ALL, `could not diff against ${arg}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
     }
   }
 }

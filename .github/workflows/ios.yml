@@ -1,7 +1,8 @@
 # TachiNovel v2 CI. Free on a public repo; macOS jobs are the expensive ones, so they run only on pushes
 # to main, pull requests and manual dispatch (no schedule while there is no Apple Developer account).
 #
-#  changes      ubuntu: docs-only pull request? (tools/ci-changes.ts) Then the macOS jobs are skipped.
+#  changes      ubuntu: which macOS jobs a pull request needs (tools/ci-changes.ts: app, ui, ipa, voice;
+#               docs-only PRs skip them all). Pushes, tags and manual runs always run everything.
 #  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
 #  lint         ubuntu: ESLint (typescript-eslint, type-aware) on src/, tools/, tests/.
 #  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
@@ -12,7 +13,8 @@
 #               (pinned, ci/swiftlint.sh); both via tools/swift-quality.ts.
 #  ios-ui-tests macOS 26: XCUITest end to end on the simulator (ci/ios-ui-tests.sh): onboarding, restore a
 #               synthetic sample backup, open a novel, read, Settings, Listen. Artifact "ui-test-screenshots".
-#  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
+#  ios-ipa      macOS 26 (pushes to main, manual; PRs that change native code or the build): unsigned
+#               DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
 #  voice-quality   macOS 26: HDVoice unit tests (swift test), then the BUNDLED Kokoro model loaded the way
@@ -69,13 +71,18 @@ env:
   BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.kasta.tachinovel' }}
 
 jobs:
-  # Docs-only pull requests (tools/ci-changes.ts) skip the macOS jobs; skipped jobs count as passing
-  # required checks. Pushes, tags and manual runs always run everything. Fails safe (app=true).
+  # Per-job gates for pull requests (tools/ci-changes.ts): free public repos get only a few macOS runners
+  # at a time, so a PR runs only the macOS jobs its files can affect. Skipped jobs count as passing
+  # required checks. Pushes, tags and manual runs always run everything. Fails safe (all true; the jobs
+  # test `!= 'false'`, so a failed filter runs them too).
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       app: ${{ steps.filter.outputs.app }}
+      ui: ${{ steps.filter.outputs.ui }}
+      ipa: ${{ steps.filter.outputs.ipa }}
+      voice: ${{ steps.filter.outputs.voice }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -181,8 +188,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build | tee build/xcodebuild.log | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
           grep -q "\*\* BUILD SUCCEEDED \*\*" build/xcodebuild.log
       - name: Keep the simulator app (voice-simulator job)
+        if: needs.changes.outputs.voice != 'false'
         run: ditto -c -k --keepParent build/DerivedData/Build/Products/Debug-iphonesimulator/App.app build/App-simulator.zip
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: needs.changes.outputs.voice != 'false'
         with:
           name: simulator-app
           path: build/App-simulator.zip
@@ -221,8 +230,8 @@ jobs:
   ios-ui-tests:
     name: ios-ui-tests (simulator)
     needs: [web, changes]
-    # Docs-only PRs skip it (see the changes job).
-    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' }}
+    # Only when app code, the bundle or the UI test's own files change (see the changes job).
+    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.ui != 'false' }}
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -268,10 +277,10 @@ jobs:
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)
     needs: [web, changes]
-    # PRs too: it is a required check on main (a real device compile), and the PR's IPA can be tried first.
-    # Docs-only PRs skip it (see the changes job).
+    # PRs only when native code, the bundle or the IPA scripts change (see the changes job): a real device
+    # compile, and that PR's IPA can be tried first. Always on main and manual runs.
     if: >-
-      ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' &&
+      ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.ipa != 'false' &&
       (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
     runs-on: macos-26
     timeout-minutes: 40
@@ -316,7 +325,8 @@ jobs:
   voice-quality:
     name: voice-quality (Kokoro on macOS + ASR)
     needs: [web, changes]
-    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' }}
+    # Only when the voice engine, its UI, the model or their tests change (see the changes job).
+    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.voice != 'false' }}
     runs-on: macos-26
     timeout-minutes: 50
     steps:
@@ -363,7 +373,8 @@ jobs:
 
   voice-simulator:
     name: voice-simulator (Listen flow + fallback in the simulator)
-    needs: ios-compile
+    needs: [ios-compile, changes]
+    if: ${{ !cancelled() && needs.ios-compile.result == 'success' && needs.changes.outputs.voice != 'false' }}
     runs-on: macos-26
     timeout-minutes: 45
     steps:
