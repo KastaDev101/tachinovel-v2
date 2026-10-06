@@ -24,6 +24,7 @@ const CSS = `
 .tn-car .hd{display:flex;align-items:center;justify-content:space-between;height:52px}
 .tn-car .hd h1{font-size:20px;font-weight:600;margin:0}
 .tn-car .x{width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center}
+.tn-car .tn-car-now{flex:none}
 .tn-car .now{background:#1f1f25;border-radius:20px;padding:16px;margin:8px 0 12px}
 .tn-car .t1{font-size:20px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tn-car .t2{color:#a1a1aa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -101,6 +102,13 @@ export function installCarMode(): CarMode {
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-label', 'Car player');
   root.dataset.testid = 'car-player';
+  // A static frame with two parts rendered separately: the state poll (every second) must not replace the
+  // list under the user's finger or reset its scroll position, nor rebuild the transport buttons.
+  root.innerHTML = `<div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div><div class="tn-car-now"></div><div class="list"></div>`;
+  const nowEl = root.querySelector('.tn-car-now') as HTMLElement;
+  const listEl = root.querySelector('.list') as HTMLElement;
+  let nowShown = '';
+  let listShown = '';
   document.body.append(root);
 
   let state: NarrationState = { status: 'idle' };
@@ -117,17 +125,15 @@ export function installCarMode(): CarMode {
 
   const active = (): boolean => state.status === 'playing' || state.status === 'paused' || state.status === 'loading';
 
+  /** The now-playing panel without the clock (position/duration are filled in place by renderNow). */
   function nowHtml(): string {
     if (!active()) return `<div class="now"><div class="t1">Nothing playing</div><div class="t2">Pick a novel below to continue where you stopped.</div></div>`;
-    const pos = state.position;
-    const dur = state.duration;
-    const pct = pos !== undefined && dur ? Math.min(100, (pos / dur) * 100) : 0;
     const engine = voiceLabel(state);
     return `<div class="now">
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
       <span class="eng">${engine}${state.status === 'loading' ? ' · loading…' : ''}</span>
-      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span>${fmt(pos)}</span><span>${fmt(dur)}</span></div>` : ''}
+      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i style="width:0%"></i></div></div><div class="tm"><span></span><span></span></div>` : ''}
       <div class="ctl">
         <button type="button" data-act="back" aria-label="Back 15 seconds">${ICON.back15}</button>
         <button type="button" class="pp" data-act="toggle" aria-label="${state.status === 'playing' ? 'Pause' : 'Play'}">${state.status === 'playing' ? ICON.pause : ICON.play}</button>
@@ -144,7 +150,29 @@ export function installCarMode(): CarMode {
     return `<button type="button" class="row" data-act="novel" data-kind="${kind}" data-plugin="${esc(pluginId)}" data-path="${esc(path)}" data-name="${esc(name)}">${img}<div><b>${esc(name)}</b><span>${esc(sub)}</span></div></button>`;
   }
 
+  function renderNow(): void {
+    const html = nowHtml();
+    if (html !== nowShown) {
+      nowShown = html;
+      nowEl.innerHTML = html;
+    }
+    if (!active() || state.engine !== 'audio') return;
+    const pos = state.position;
+    const dur = state.duration;
+    const pct = `${(pos !== undefined && dur ? Math.min(100, (pos / dur) * 100) : 0).toFixed(1)}%`;
+    const bar = nowEl.querySelector<HTMLElement>('.bar i');
+    if (bar && bar.style.width !== pct) bar.style.width = pct;
+    const [a, b] = Array.from(nowEl.querySelectorAll<HTMLElement>('.tm span'));
+    if (a && a.textContent !== fmt(pos)) a.textContent = fmt(pos);
+    if (b && b.textContent !== fmt(dur)) b.textContent = fmt(dur);
+  }
+
   function render(): void {
+    renderNow();
+    renderList();
+  }
+
+  function renderList(): void {
     const audioKeys = new Set(novels.map((n) => n.key));
     const folder = !usePCAudio
       ? ''
@@ -163,14 +191,14 @@ export function installCarMode(): CarMode {
       .filter((r) => !audioKeys.has(`${r.pluginId}:${r.path}`))
       .map((r) => rowHtml('recent', r.pluginId, r.path, r.novelName, r.chapterName, r.cover))
       .join('');
-    root.innerHTML = `
-      <div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div>
-      ${nowHtml()}
-      <div class="list">
-        ${folder}
+    const html = `${folder}
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
-        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}
-      </div>`;
+        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}`;
+    if (html === listShown) return;
+    listShown = html;
+    const top = listEl.scrollTop;
+    listEl.innerHTML = html;
+    listEl.scrollTop = top;
   }
 
   async function load(refresh: boolean): Promise<void> {
