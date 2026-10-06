@@ -308,6 +308,8 @@ final class DrivePrep {
     private var retryItem: DispatchWorkItem?
     /// novelKey → uptime before which a failed request isn't retried.
     private var retryAfter: [String: Double] = [:]
+    /// Kokoro was loaded for preparing: release it once preparing goes idle (unless narration uses it).
+    private var usedKokoro = false
     private var lastNotify = 0.0
     private var observers: [NSObjectProtocol] = []
     private let log = Logger(subsystem: "app.tachinovel", category: "drive")
@@ -431,6 +433,7 @@ final class DrivePrep {
         retryItem = nil
         guard jobs.contains(where: { !$0.finished }) else {
             waiting = [:]
+            releaseKokoroIfIdle()
             return endBackgroundWork()
         }
         let c = conditions()
@@ -457,7 +460,14 @@ final class DrivePrep {
         }
         notify(force: true)
         if jobs.contains(where: { !$0.finished }) { scheduleBackground() }
+        releaseKokoroIfIdle()
         endBackgroundWork()
+    }
+
+    private func releaseKokoroIfIdle() {
+        guard usedKokoro, !NarrationController.shared.wantsKokoro else { return }
+        usedKokoro = false
+        KokoroService.shared.scheduleIdleRelease(after: 60)
     }
 
     private func run(_ job: DriveJob) {
@@ -497,6 +507,7 @@ final class DrivePrep {
             }
             KokoroService.shared.ensureLoaded { status in
                 guard status == .ready else { return self.failed(job, "Kokoro isn't available (\(KokoroService.shared.statusText))") }
+                self.usedKokoro = true
                 let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, folder: DriveCache.shared.folder)
                 r.shouldStop = { [weak self] in self?.stopReason(job) }
                 r.onProgress = { [weak self] i, n in
