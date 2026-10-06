@@ -102,16 +102,26 @@ describe('VoiceOver names on the main screens (PC shell)', () => {
       await audit(tab);
     }
 
-    await page.getByTestId('more-narration').click();
-    await waitStack(2);
-    await page.getByTestId('open-car-player').waitFor({ state: 'visible', timeout: 5000 });
-    await audit('Listen in the Car');
-    await page.getByTestId('open-car-player').click();
+    // The Listen player: More › Listen opens it directly where that row exists (on-device voices);
+    // otherwise through v1's Listen in the Car screen › Open the player.
+    const listenRow = page.getByTestId('more-listen');
+    const viaCarScreen = !(await listenRow.isVisible());
+    if (viaCarScreen) {
+      await page.getByTestId('more-narration').click();
+      await waitStack(2);
+      await page.getByTestId('open-car-player').waitFor({ state: 'visible', timeout: 5000 });
+      await audit('Listen in the Car');
+      await page.getByTestId('open-car-player').click();
+    } else {
+      await listenRow.click();
+    }
     await page.getByTestId('car-player').waitFor({ state: 'visible', timeout: 5000 });
-    await audit('car player');
+    await audit('Listen player');
     await page.getByTestId('car-player').locator('[data-act="close"]').click();
-    await top().getByTestId('nav-back').click();
-    await waitStack(1);
+    if (viaCarScreen) {
+      await top().getByTestId('nav-back').click();
+      await waitStack(1);
+    }
 
     await page.getByTestId('tab-browse').click();
     await audit('browse');
