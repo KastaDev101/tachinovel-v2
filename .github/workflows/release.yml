@@ -112,12 +112,17 @@ jobs:
       - name: Checksum
         working-directory: build/ipa
         run: shasum -a 256 -- *.ipa > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # The exact web build inside the IPA, for the signed web update (publish job): same build time, so the
+      # app that installs this IPA doesn't download its own web bundle again.
+      - name: Web build for the web update
+        run: tar -C www -cf build/ipa/web.tar .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-ipa
           path: |
             build/ipa/*.ipa
             build/ipa/SHA256SUMS.txt
+            build/ipa/web.tar
           if-no-files-found: error
           retention-days: 7
       - name: Keep the build log
@@ -235,3 +240,28 @@ jobs:
             --url="https://github.com/${repo}/releases/download/${TAG}/TachiNovel-${VERSION}-unsigned.ipa" \
             --notes=dist/release-notes.md --previous=previous.json --label="$VERSION" --out=apps.json
           gh release upload altstore-source apps.json --clobber --repo "$repo"
+      - name: Signed web update (rolling release "ota"; skipped without the OTA_SIGNING_KEY secret)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OTA_SIGNING_KEY" ] || [ "$FLAVOR" != personal ]; then
+            echo "No web update: OTA_SIGNING_KEY is not set or the flavor isn't personal (docs/release.md)."
+            exit 0
+          fi
+          repo="$GITHUB_REPOSITORY"
+          mkdir web && tar -C web -xf dist/web.tar
+          node src/tools/ota-pack.ts --www=web --version="$VERSION" --build="$GITHUB_RUN_NUMBER" \
+            --base-url="https://github.com/${repo}/releases/download/ota" --notes=dist/release-notes.md --out=ota
+          if ! gh release view ota --repo "$repo" > /dev/null 2>&1; then
+            gh release create ota --repo "$repo" --title "Web updates" --latest=false \
+              --notes "Signed web bundles for TachiNovel (manifest.json + web-<build>.json, rewritten by every release). The app checks them itself."
+          fi
+          # Pack first, manifest last: the manifest never points at a pack that isn't uploaded yet.
+          gh release upload ota "ota/web-${GITHUB_RUN_NUMBER}.json" --clobber --repo "$repo"
+          gh release upload ota ota/manifest.json --clobber --repo "$repo"
+          # Keep the current and the previous pack (an app mid-download still finds its file).
+          { gh release view ota --repo "$repo" --json assets --jq '.assets[].name' | grep -E '^web-[0-9]+\.json$' || true; } \
+            | sort -t- -k2 -n | head -n -2 | while read -r old; do gh release delete-asset ota "$old" --yes --repo "$repo"; done
