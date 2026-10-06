@@ -137,6 +137,14 @@ function describe(v: KokoroVoiceInfo): string {
   return `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender} · ${v.blurb}`;
 }
 
+/** Close functions of the open panels (Settings › Voices, a novel's voice picker, the pronunciation editor). */
+const openPanels = new Set<() => void>();
+
+/** Close every Voices panel: the Listen player opening or closing must never leave one on top of it. */
+export function closeVoicePanels(): void {
+  for (const close of [...openPanels]) close();
+}
+
 /** A full-screen panel (slides in from the right). */
 export function panel(title: string, testId: string): { root: HTMLElement; body: HTMLElement; close: () => void; setTitle: (t: string) => void } {
   ensureStyle();
@@ -148,12 +156,23 @@ export function panel(title: string, testId: string): { root: HTMLElement; body:
   root.innerHTML = `<div class="hd"><button type="button" class="x" data-act="close" aria-label="Back">${ICON.back}</button><h1></h1></div><div class="body"></div>`;
   (root.querySelector('h1') as HTMLElement).textContent = title;
   document.body.append(root);
-  requestAnimationFrame(() => root.classList.add('is-open'));
+  requestAnimationFrame(() => {
+    root.classList.add('is-open');
+    root.querySelector<HTMLElement>('[data-act="close"]')?.focus({ preventScroll: true });
+  });
+  let closed = false;
   const close = (): void => {
+    if (closed) return;
+    closed = true;
+    openPanels.delete(close);
     root.classList.remove('is-open');
+    // Out of the way at once: while it slides out it must not catch taps meant for what's underneath.
+    root.inert = true;
+    root.style.pointerEvents = 'none';
     void Narration.stopSample().catch(() => undefined);
     setTimeout(() => root.remove(), 340);
   };
+  openPanels.add(close);
   root.addEventListener('click', (ev) => {
     if ((ev.target as Element).closest('[data-act="close"]')) close();
   });

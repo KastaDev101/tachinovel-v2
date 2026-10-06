@@ -16,7 +16,7 @@
 import { sharedClient } from '../capacitor-client.ts';
 import { formatSpeed, presetFor, snapSpeed, SPEED_MAX, SPEED_MIN, SPEED_PRESETS, SPEED_STEP, VOLUME_MAX_PERCENT, volumePercent } from './listen-controls.ts';
 import { Narration, type AudioNovelInfo, type NarrationState } from './narration.ts';
-import { openVoicePicker, voiceLabel } from './voices-ui.ts';
+import { closeVoicePanels, openVoicePicker, voiceLabel } from './voices-ui.ts';
 
 const CSS = `
 .tn-car{position:fixed;inset:0;z-index:80;background:#121215;color:#f2f2f7;display:flex;flex-direction:column;
@@ -120,6 +120,8 @@ export function installCarMode(): CarMode {
   let renderPending = false;
   let volumeSentAt = 0;
   let volumeTimer = 0;
+  /** The last markup: the 1 s refresh rebuilds nothing when nothing changed (no churn under a finger). */
+  let lastHtml = '';
   let open = false;
   let poll = 0;
   let novels: AudioNovelInfo[] = [];
@@ -221,7 +223,7 @@ export function installCarMode(): CarMode {
       .filter((r) => !audioKeys.has(`${r.pluginId}:${r.path}`))
       .map((r) => rowHtml('recent', r.pluginId, r.path, r.novelName, r.chapterName, r.cover))
       .join('');
-    root.innerHTML = `
+    const html = `
       <div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div>
       ${nowHtml()}
       ${controlsHtml()}
@@ -230,6 +232,9 @@ export function installCarMode(): CarMode {
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
         ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}
       </div>`;
+    if (html === lastHtml) return;
+    lastHtml = html;
+    root.innerHTML = html;
   }
 
   async function load(refresh: boolean): Promise<void> {
@@ -363,9 +368,16 @@ export function installCarMode(): CarMode {
     open() {
       if (open) return;
       open = true;
+      // A Voices panel left open (Settings › Voices, a voice picker) must not sit on top of the player.
+      closeVoicePanels();
+      root.inert = false;
+      root.style.pointerEvents = '';
       root.hidden = false;
       render();
-      requestAnimationFrame(() => root.classList.add('is-open'));
+      requestAnimationFrame(() => {
+        root.classList.add('is-open');
+        root.querySelector<HTMLElement>('[data-act="close"]')?.focus({ preventScroll: true });
+      });
       void load(false);
       void refreshState();
       poll = window.setInterval(() => void refreshState(), 1000);
@@ -373,6 +385,10 @@ export function installCarMode(): CarMode {
     close() {
       if (!open) return;
       open = false;
+      // The voice picker opened from the player goes with it; the player stops catching taps at once.
+      closeVoicePanels();
+      root.inert = true;
+      root.style.pointerEvents = 'none';
       root.classList.remove('is-open');
       window.clearInterval(poll);
       setTimeout(() => {
