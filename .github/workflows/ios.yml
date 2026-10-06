@@ -266,7 +266,8 @@ jobs:
 
   voice-quality:
     name: voice-quality (Kokoro on macOS + ASR)
-    needs: web
+    needs: [web, changes]
+    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' }}
     runs-on: macos-26
     timeout-minutes: 50
     steps:

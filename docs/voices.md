@@ -195,8 +195,10 @@ model. Anything above ~2× keeps the queue full.
 4. **Lock the phone for 2 minutes**. Audio keeps going, the lock-screen player works (play/pause, next
    chapter), and there are no gaps between sentences. Unlock and check the mini player label: "Apple
    voice · … Kokoro catching up" means a fallback happened.
-5. **Voice Lab** (More › About › tap the version 5 times): note **time to first audio**, **speed (×
-   real time)** and slowest 5%, model load (cold/warm), **Kokoro / Apple sentences**, **Queue ran dry**,
-   memory, thermal, and crashes. Then tap **Copy report** and paste it to Claude.
+5. **Voice Lab** (More › About › tap the version 5 times): note **Safety fallback** (should say "not
+   tripped"), **Where each stage runs** (how many ops of each stage Core ML puts on the Neural Engine, the
+   CPU and the GPU), **time to first audio**, **speed (× real time)** and slowest 5%, model load
+   (cold/warm), **Kokoro / Apple sentences**, **Queue ran dry**, memory and thermal state. Then tap **Copy
+   report** and paste it to Claude.
 6. Optional: Voice Lab › "Neural Engine + GPU (foreground only)" › Speak test paragraph, to compare speed;
    switch back to the default afterwards.
