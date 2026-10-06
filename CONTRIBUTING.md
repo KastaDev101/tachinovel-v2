@@ -46,6 +46,17 @@ repos get them free, but they are slow and they queue:
 - **Third-party code or assets:** add them to `THIRD_PARTY_NOTICES.md` with their license before they
   ship. Check that the license allows use in a proprietary App Store app.
 
+## Toolchain
+
+- **TypeScript 7** (the native compiler) typechecks everything: `npm run typecheck` (tools/typecheck.ts).
+- TypeScript 7.0 has **no stable JavaScript API** (`require('typescript')` only exposes the version).
+  Nothing in this repo needs the API today: esbuild and Vitest strip types themselves, and Capacitor's CLI
+  (8.5.2+) loads `capacitor.config.ts` with Node's built-in type stripping when the API is missing. A tool
+  that does need the compiler API (a lint plugin with type-aware rules, a codegen script) must depend on
+  Microsoft's compatibility package `@typescript/typescript6` and import it
+  (`import ts from '@typescript/typescript6'`), never `typescript`.
+  TODO: revisit when TypeScript 7.1 ships its stable API, then drop this rule.
+
 ## Public repository hygiene
 
 The repository is public. Never commit:

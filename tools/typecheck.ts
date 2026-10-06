@@ -1,4 +1,9 @@
-/** Typecheck each TS context with its own tsconfig (different globals per context). */
+/**
+ * Typecheck each TS context with its own tsconfig (different globals per context).
+ * Uses TypeScript 7's native `tsc` (~6x faster than 6.x here). TS 7.0 has no stable JS API: a tool that
+ * needs the compiler API must import `@typescript/typescript6` instead of `typescript` (see
+ * CONTRIBUTING.md "Toolchain"). TODO: drop that rule once TypeScript 7.1 ships its stable API.
+ */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 

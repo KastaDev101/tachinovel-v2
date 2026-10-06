@@ -28,6 +28,8 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
 
 ### Changed
 
+- Typechecking uses TypeScript 7 (native compiler): `npm run typecheck` takes ~0.7 s instead of ~4.5 s
+  on the dev PC; same files checked, same (zero) errors. Nothing in the repo uses the TypeScript JS API.
 - The package license field is now `UNLICENSED` (proprietary, all rights reserved; previously `MIT`).
 
 [Unreleased]: https://github.com/KastaDev101/tachinovel-v2/commits/main
