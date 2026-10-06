@@ -100,8 +100,8 @@ full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot
 
 **Let Claude read the phone's diagnostics (once, recommended):** More › About › Diagnostics ›
 **Diagnostics Folder** › Choose Folder… → iCloud Drive › TachiNovel-Builds › make a folder
-`diagnostics` › Open. From then on the app copies its log, crash/hang reports and a short list of the
-last screens there every few minutes and when you leave the app; iCloud syncs it to the PC. When
+`diagnostics` › Open. From then on the app copies its log, crash/hang reports, the Voice Lab numbers and
+a short list of the last screens there every few minutes and when you leave the app; iCloud syncs it to the PC. When
 something goes wrong, **shake the phone** (or the same row › Report a Problem…), type one line and Save:
 a report with a screenshot lands in `diagnostics/reports/`. Nothing about your library or reading
 leaves the app except novel titles in the screen list.

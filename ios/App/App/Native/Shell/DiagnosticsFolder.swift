@@ -4,8 +4,8 @@
 //  security-scoped bookmark, so no iCloud entitlement is needed). Then:
 //   - every few minutes while the app is open, and when it goes to the background, the device log
 //     (logs/app.log, app.1.log), everything else under logs/ (MetricKit crash and hang reports, …), the
-//     UI's short event trail and a status file are mirrored into that folder, where iCloud syncs them to
-//     the PC;
+//     Voice Lab numbers, the UI's short event trail and a status file are mirrored into that folder,
+//     where iCloud syncs them to the PC;
 //   - "Report a Problem" (the row's menu, or shaking the phone) writes reports/<time>/ with what the user
 //     typed, a screenshot of the screen, the log tail, the versions and the current route.
 //  Everything is small and rate-limited; reading data beyond novel titles and routes never leaves the app.
@@ -259,13 +259,17 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
             status["route"] = page.route
             let statusData = (try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys])) ?? Data()
             let trailData = Data(page.trail.utf8)
+            // Voice Lab numbers (Kokoro load times, real-time factor, fallbacks: VoiceLab.swift).
+            let lab = VoiceLab.snapshot()
+            let labData = JSONSerialization.isValidJSONObject(lab)
+                ? ((try? JSONSerialization.data(withJSONObject: lab, options: [.prettyPrinted, .sortedKeys])) ?? Data()) : Data()
             let local = CoreHost.shared.localAppDir
             let log = CoreHost.shared.log
             // The core's buffered log lines go to logs/app.log first (like backgrounding).
             CoreHost.shared.request("app.background") { @Sendable _, _ in
                 DiagnosticsFiles.queue.async {
                     do {
-                        try DiagnosticsFiles.mirror(root: root, local: local, extras: ["trail.json": trailData, "status.json": statusData])
+                        try DiagnosticsFiles.mirror(root: root, local: local, extras: ["trail.json": trailData, "status.json": statusData, "voice-lab.json": labData])
                     } catch {
                         log.error("Diagnostics folder: \(error.localizedDescription, privacy: .public)")
                     }
