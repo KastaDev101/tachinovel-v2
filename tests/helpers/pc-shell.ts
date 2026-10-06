@@ -3,7 +3,7 @@
  *
  *   WebKit (Playwright) page            Node
  *   ───────────────────────────         ─────────────────────────────────────────────
- *   www/index.html (built UI)    ◄────  tiny HTTP server (also serves /covers/* like TachiRouter)
+ *   www/index.html (built UI)    ◄────  tiny HTTP server (also serves /covers/*, /cache/img-* like TachiRouter)
  *   Capacitor's REAL native-bridge.js   ← injected exactly like CAPBridgeViewController does
  *   window.webkit.messageHandlers ───►  fake CAPBridge: routes plugin calls
  *        .bridge.postMessage                Core.call → the BUILT core.js in a vm (native-mock)
@@ -101,6 +101,16 @@ export async function startPcShell(opts: {
     if (url.pathname.startsWith('/covers/') && !url.pathname.slice(8).includes('/')) {
       try {
         res.writeHead(200).end(readFileSync(path.join(core.localAppDir, 'covers', url.pathname.slice(8))));
+      } catch {
+        res.writeHead(404).end();
+      }
+      return;
+    }
+    // Chapter illustrations the core fetched (v1 images.fetch → "cache/img-<hash>.<ext>"), like TachiRouter.
+    const img = /^\/cache\/(img-[A-Za-z0-9_-]+\.[A-Za-z0-9]+)$/.exec(url.pathname);
+    if (img?.[1]) {
+      try {
+        res.writeHead(200).end(readFileSync(path.join(core.localAppDir, 'cache', img[1])));
       } catch {
         res.writeHead(404).end();
       }
