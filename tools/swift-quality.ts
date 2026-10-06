@@ -21,7 +21,7 @@ export const DEFAULT_BASELINE = 'ci/swift-warnings-baseline.txt';
  * Code owned by another workstream, linted and compiled but not gated here yet: the on-device voice work
  * (branch voice-spike: narration plugin and player, Kokoro engine and models). Remove an entry to enforce.
  */
-export const REPORT_ONLY = ['ios/App/App/Native/Narration/', 'ios/App/App/Native/Voice/', 'ios/App/App/KokoroModels/', 'ios/App/HDVoiceCore/'];
+export const REPORT_ONLY = ['ios/App/App/Native/Narration/', 'ios/App/App/Native/Voice/', 'ios/App/App/KokoroModels/', 'ios/App/HDVoice/'];
 
 export function isReportOnly(file: string): boolean {
   return REPORT_ONLY.some((p) => file.startsWith(p));

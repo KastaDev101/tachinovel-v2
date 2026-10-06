@@ -40,10 +40,10 @@ describe('compiler warnings', () => {
 
   it('fails on a new warning in gated files, only reports one in report-only paths, and notices fixes', () => {
     const baseline = parseBaseline(formatBaseline(countWarnings(parseWarnings(LOG))));
-    const extra = `${LOG}\n${ROOT}/ios/App/App/AppDelegate.swift:3:1: warning: new one\n${ROOT}/ios/App/App/Native/Narration/NarrationController.swift:9:9: warning: voice one\n${ROOT}/ios/App/App/Native/Core/CoreHost.swift:91:5: warning: capture of 'self' with non-sendable type 'CoreHost' in a '@Sendable' closure [#SendableClosureCaptures]`;
+    const extra = `${LOG}\n${ROOT}/ios/App/App/AppDelegate.swift:3:1: warning: new one\n${ROOT}/ios/App/App/Native/Narration/NarrationController.swift:9:9: warning: voice one\n${ROOT}/ios/App/HDVoice/Sources/HDVoiceCore/PCM.swift:4:2: warning: voice package\n${ROOT}/ios/App/App/Native/Core/CoreHost.swift:91:5: warning: capture of 'self' with non-sendable type 'CoreHost' in a '@Sendable' closure [#SendableClosureCaptures]`;
     const r = compareWarnings(parseWarnings(extra), baseline);
     expect(r.failing.map((w) => `${w.file}:${w.line}`)).toEqual(['ios/App/App/AppDelegate.swift:3', 'ios/App/App/Native/Core/CoreHost.swift:91']);
-    expect(r.reported.map((w) => w.file)).toEqual(['ios/App/App/Native/Narration/NarrationController.swift']);
+    expect(r.reported.map((w) => w.file)).toEqual(['ios/App/App/Native/Narration/NarrationController.swift', 'ios/App/HDVoice/Sources/HDVoiceCore/PCM.swift']);
 
     const fewer = compareWarnings(parseWarnings(LOG.split('\n').filter((l) => !l.includes(':90:5:')).join('\n')), baseline);
     expect(fewer.failing).toEqual([]);
