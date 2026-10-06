@@ -55,3 +55,26 @@ describe('v2 wording in the v1 UI', () => {
     expect(shell.pageErrors).toEqual([]);
   });
 });
+
+describe('v2 wording in the free sideload (no iCloud)', () => {
+  let sideload: PcShell;
+
+  beforeAll(async () => {
+    const www = path.join(root, '.cache', 'shell-www-wording');
+    sideload = await startPcShell({ wwwDir: www, core: { syncedAvailable: false } });
+    await sideload.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
+    await sideload.page.getByTestId('onboarding-skip').click();
+    await sideload.page.getByTestId('tab-more').click();
+  });
+
+  afterAll(async () => {
+    await sideload?.close();
+  });
+
+  it('Backup & Restore points to Files › On My iPhone › TachiNovel', async () => {
+    await sideload.page.getByTestId('more-backup').click();
+    await expect
+      .poll(() => sideload.page.locator('.nav-root > .layer').last().textContent(), { timeout: 5000 })
+      .toContain('Backups are saved in Files › On My iPhone › TachiNovel › backups.');
+  });
+});
