@@ -193,10 +193,11 @@ public struct ChapterTimeline: Equatable, Sendable {
     private var starts: [Double]
 
     public init(_ sentences: [Sentence], prior: Double = ChapterTimeline.priorCharactersPerSecond) {
+        let p = prior > 0 && prior.isFinite ? prior : ChapterTimeline.priorCharactersPerSecond
         self.sentences = sentences
         self.measured = Array(repeating: nil, count: sentences.count)
-        self.prior = prior > 0 && prior.isFinite ? prior : Self.priorCharactersPerSecond
-        self.charactersPerSecond = self.prior
+        self.prior = p
+        self.charactersPerSecond = p
         self.starts = []
         rebuild()
     }

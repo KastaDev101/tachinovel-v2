@@ -290,7 +290,15 @@ final class DrivePrep {
     private(set) var jobs: [DriveJob] = []
     private var renderer: ChapterRenderer?
     private var runningKey: String?
-    private var current: (chapterPath: String, title: String, sentence: Int, sentences: Int)?
+    /// The chapter being rendered: sentences done of all.
+    private struct Current {
+        let chapterPath: String
+        let title: String
+        let sentence: Int
+        let sentences: Int
+    }
+
+    private var current: Current?
     private var waiting: [String: String] = [:]
     private var wifi = false
     private let monitor = NWPathMonitor()
@@ -492,11 +500,11 @@ final class DrivePrep {
                 let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, folder: DriveCache.shared.folder)
                 r.shouldStop = { [weak self] in self?.stopReason(job) }
                 r.onProgress = { [weak self] i, n in
-                    self?.current = (chapterPath, ch.chapterName, i, n)
+                    self?.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: i, sentences: n)
                     self?.notify(force: false)
                 }
                 self.renderer = r
-                self.current = (chapterPath, ch.chapterName, 0, script.count)
+                self.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: 0, sentences: script.count)
                 self.log.info("drive: preparing \(chapterPath, privacy: .public) (\(script.count) sentences)")
                 r.start { result in
                     self.renderer = nil
