@@ -4,6 +4,9 @@
  *    with the bars; while listening, the mini player follows the bars in the reader too;
  *  - the mini player says which voice speaks ("Kokoro · Heart", or "System voice (fallback) · why");
  *  - the Listen player's speed slider + chips and "Voice volume" slider, saved natively (survive a reload);
+ *    dragged for real (mouse through WebKit's range control) across the player's 1 s state polls, they
+ *    apply while dragging and on release (the phone build ignored the speed slider: the poll rebuilt it);
+ *  - no floating Listen button anywhere, and v1's toasts never overlap the Listen tool or the mini player;
  *  - the mini player must not cover v1's bottom UI: the tab bar (it covered all five tabs while
  *    listening), the reader's bottom bar, the novel page's Resume button;
  *  - scrolling content gets room at its end, so nothing stays under the player;
@@ -170,6 +173,36 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await shell.page.locator('.tn-player').waitFor({ state: 'visible', timeout: 3000 });
   });
 
+  it("no floating Listen button anywhere, and toasts stay clear of the Listen tool and the mini player", async () => {
+    // Only the bar tool carries "Listen from here"; nothing floats over the page.
+    expect(await shell.page.evaluate(() => [...document.querySelectorAll('[aria-label="Listen from here"], .tn-listen')].every((e) => !!e.closest('.rd-tools')))).toBe(true);
+    // A reader toast (bookmark), while listening with the bars up: v1's toast band vs our UI.
+    await top().locator('.rd-top button[aria-label="Bookmark chapter"]').click();
+    const toast = shell.page.locator('.toast').first();
+    await toast.waitFor({ state: 'visible', timeout: 3000 });
+    // Measured where it settles (it slides up 24 px as it appears).
+    await toast.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
+    const overlap = await shell.page.evaluate(() => {
+      const t = document.querySelector('.toast')?.getBoundingClientRect();
+      const boxes = { listen: document.querySelector('[data-testid="screen-reader"] [data-testid="reader-listen"]'), player: document.querySelector('.tn-player:not([hidden])') };
+      const out: Record<string, string> = {};
+      for (const [k, el] of Object.entries(boxes)) {
+        if (!el || !t) {
+          out[k] = 'missing';
+          continue;
+        }
+        const r = el.getBoundingClientRect();
+        const overlaps = r.left < t.right && r.right > t.left && r.top < t.bottom && r.bottom > t.top;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        out[k] = overlaps ? 'overlaps the toast' : hit && el.contains(hit) ? 'clear' : `covered by ${hit?.className.toString() ?? '?'}`;
+      }
+      return out;
+    });
+    expect(overlap).toEqual({ listen: 'clear', player: 'clear' });
+    await toast.waitFor({ state: 'hidden', timeout: 8000 });
+    await top().locator('.rd-top button[aria-label="Remove bookmark"]').click();
+  });
+
   it('says which voice speaks, and why the system voice stands in', async () => {
     const sub = shell.page.locator('.tn-player .tn-title small');
     await expect.poll(() => sub.textContent()).toBe('Kokoro · Heart');
@@ -207,11 +240,95 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await setRange(volume, 130);
     expect(await player.locator('[data-volume-val]').textContent()).toBe('130%');
     await expect.poll(() => saved.volume).toBe(1.3);
+    await player.locator('[data-act="close"]').click();
+  });
+
+  it('Listen player: dragging the sliders for real applies speed and volume while dragging and on release, across the 1 s polls', async () => {
+    // The player polls Narration.state every second; report a playing chapter so it re-renders meanwhile.
+    shell.pluginReplies.set('Narration.state', () => ({ status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', chapterName: 'Chapter 1', position: Date.now() / 1000 % 600, duration: 600 }));
+    await shell.page.locator('.tn-player .tn-title').click();
+    const player = shell.page.getByTestId('car-player');
+    await player.locator('[data-testid="listen-controls"]').waitFor({ timeout: 5000 });
+    // Let the player finish sliding up before pressing on its sliders.
+    await expect.poll(() => player.evaluate((el) => el.getBoundingClientRect().top), { timeout: 3000 }).toBe(0);
+    const speedSends = () => shell.pluginCalls.filter((c) => c.methodName === 'setVoiceSettings' && typeof c.options.speed === 'number').map((c) => c.options.speed as number);
+    const volumeSends = () => shell.pluginCalls.filter((c) => c.methodName === 'setVoiceSettings' && typeof c.options.volume === 'number').map((c) => c.options.volume as number);
+    /** Press on the slider's thumb, move in steps (holding through state polls), release at `to` (0…1). */
+    async function drag(selector: string, from: number, to: number): Promise<void> {
+      const input = shell.page.locator(selector);
+      await input.evaluate((el) => ((el as HTMLElement).dataset.tnMark = '1'));
+      const box = await input.boundingBox();
+      if (!box) throw new Error('no slider');
+      const x = (f: number) => box.x + 8 + (box.width - 16) * f;
+      const y = box.y + box.height / 2;
+      await shell.page.mouse.move(x(from), y);
+      await shell.page.mouse.down();
+      for (let i = 1; i <= 6; i++) {
+        await shell.page.mouse.move(x(from + ((to - from) * i) / 6), y, { steps: 3 });
+        await shell.page.waitForTimeout(300); // ≥ 1.8 s held in total: two state polls re-render the player
+      }
+      await shell.page.mouse.up();
+      // The element under the finger was never replaced (a rebuilt slider loses its change event on iOS).
+      expect(await input.evaluate((el) => (el as HTMLElement).dataset.tnMark === '1')).toBe(true);
+    }
+    const speedBefore = speedSends().length;
+    await drag('[data-testid="car-player"] [data-act="speed-slider"]', 0.25, 0.75); // ≈1.0× → ≈2.0×
+    const speeds = speedSends().slice(speedBefore);
+    expect(speeds.length, 'sent while dragging, not only on release').toBeGreaterThanOrEqual(3);
+    const finalSpeed = Number(await shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]').inputValue());
+    expect(finalSpeed).toBeGreaterThan(1.8);
+    expect(speeds.at(-1)).toBe(finalSpeed);
+    await expect.poll(() => saved.speed).toBe(finalSpeed);
+    expect(await player.locator('[data-speed-val]').textContent()).toBe(`${String(finalSpeed)}×`);
+    expect(await player.locator('[data-act="speed"].on').allTextContents()).toEqual(finalSpeed === 2 ? ['2×'] : []);
+    // Voice volume the same way.
+    const volumeBefore = volumeSends().length;
+    await drag('[data-testid="car-player"] [data-act="volume"]', 0.6, 0.95);
+    expect(volumeSends().length - volumeBefore).toBeGreaterThanOrEqual(3);
+    const finalVolume = Number(await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').inputValue());
+    expect(finalVolume).toBeGreaterThan(130);
+    await expect.poll(() => saved.volume).toBe(finalVolume / 100);
+    // Back to the values the next tests expect (chips/slider set them).
+    await player.locator('[data-act="speed"][data-v="1.5"]').click();
+    await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').evaluate((el) => {
+      const input = el as HTMLInputElement;
+      input.value = '130';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await expect.poll(() => saved.volume).toBe(1.3);
+    await expect.poll(() => saved.speed).toBe(1.5);
+    shell.pluginReplies.delete('Narration.state');
+    await player.locator('[data-act="close"]').click();
+  });
+
+  it("Listen player: with touch, iOS may never fire change on a range control: lifting the finger applies the value", async () => {
+    await shell.page.locator('.tn-player .tn-title').click();
+    const player = shell.page.getByTestId('car-player');
+    await expect.poll(() => player.evaluate((el) => el.getBoundingClientRect().top), { timeout: 3000 }).toBe(0);
+    const input = shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]');
+    const box = await input.boundingBox();
+    if (!box) throw new Error('no slider');
+    const touch = { identifier: 1, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+    await input.dispatchEvent('touchstart', { touches: [touch], targetTouches: [touch], changedTouches: [touch] });
+    for (const v of [1.6, 1.7, 1.85]) {
+      await input.evaluate((el, value) => {
+        (el as HTMLInputElement).value = String(value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, v);
+      await shell.page.waitForTimeout(450); // across a state poll
+    }
+    await input.dispatchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [touch] });
+    await expect.poll(() => saved.speed).toBe(1.85);
+    expect(await player.locator('[data-speed-val]').textContent()).toBe('1.85×');
+    // Back to 1.5 for the next tests.
+    await player.locator('[data-act="speed"][data-v="1.5"]').click();
+    await expect.poll(() => saved.speed).toBe(1.5);
+    await player.locator('[data-act="close"]').click();
   });
 
   it('Listen player: speed and volume are kept (reopen, and after a reload)', async () => {
     const player = shell.page.getByTestId('car-player');
-    await player.locator('[data-act="close"]').click();
     await shell.page.locator('.tn-player .tn-title').click();
     await expect.poll(() => shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]').inputValue()).toBe('1.5');
     expect(await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').inputValue()).toBe('130');
@@ -227,7 +344,8 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await shell.page.locator('.tn-player .tn-title').click();
     const player = shell.page.getByTestId('car-player');
     await player.locator('[data-act="voice"]').click();
-    const picker = shell.page.getByTestId('voice-picker');
+    // The open picker (a closing one stays in the DOM, inert, for its 340 ms slide-out).
+    const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
     await picker.waitFor({ state: 'visible' });
     /** Which dialog a tap in the middle of the player's Close button reaches. */
     const hitAtPlayerClose = () =>
@@ -242,7 +360,7 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     // Back: the picker slides out, and the player gets taps at once (not 340 ms later).
     await picker.locator('[data-act="close"]').click();
     expect(await hitAtPlayerClose()).toBe('car-player');
-    expect(await picker.evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+    expect(await shell.page.locator('[data-testid="voice-picker"]').first().evaluate((el) => (el as HTMLElement).inert)).toBe(true);
     // Open it again and close the player underneath: no picker outlives the player or covers it next time.
     await player.locator('[data-act="voice"]').click();
     await picker.waitFor({ state: 'visible' });

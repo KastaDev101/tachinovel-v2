@@ -39,6 +39,9 @@ const STYLE = `
 .rd-tools:has(.tn-rd-listen) .rd-tool{width:auto;flex:1 1 0;min-width:0}
 .rd-tools .tn-rd-listen span{white-space:nowrap}
 .tn-player[hidden],.tn-open-car[hidden]{display:none}
+/* While the mini player shows, v1's toasts sit above it instead of overlapping it (reader, tabs, novel page):
+   at their usual place, or just above the player's top, whichever is higher. */
+html.tn-player-on .toast-host{bottom:max(var(--toast-bottom, calc(var(--safe-bottom) + 12px)), calc(var(--tn-player-top, 0px) + 8px))}
 .tn-player{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);z-index:61;display:flex;align-items:center;gap:10px;
   padding:8px 10px;border-radius:16px;background:rgba(40,40,48,.86);-webkit-backdrop-filter:blur(20px) saturate(1.6);color:#f2f2f7;
   font:500 14px -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
@@ -82,8 +85,13 @@ export function playerBottom(top: Element | null, viewportHeight = window.innerH
   let edge: number | null = null;
   for (const el of top?.querySelectorAll(BOTTOM_UI) ?? []) {
     const r = el.getBoundingClientRect();
-    if (r.height === 0 || r.top >= viewportHeight || r.bottom < viewportHeight - 160) continue;
-    edge = edge === null ? r.top : Math.min(edge, r.top);
+    // The reader's bar slides in with a transform: place the player above where it ends up, not where
+    // it is mid-slide (it is pinned to the bottom, so its layout height says where).
+    const bar = el.matches('.rd-bottom') && el instanceof HTMLElement;
+    const rTop = bar ? viewportHeight - el.offsetHeight : r.top;
+    const rBottom = bar ? viewportHeight : r.bottom;
+    if (r.height === 0 || rTop >= viewportHeight || rBottom < viewportHeight - 160) continue;
+    edge = edge === null ? rTop : Math.min(edge, rTop);
   }
   return edge === null ? '' : `${Math.round(viewportHeight - edge + 8)}px`;
 }
@@ -178,7 +186,11 @@ export function installNarrationOverlay(): void {
     set.hidden(openCar, !onNarrationScreen || active() || car.isOpen);
     document.documentElement.classList.toggle('tn-player-on', !player.hidden);
     document.documentElement.classList.toggle('tn-open-car-on', !openCar.hidden);
-    if (!player.hidden) set.bottom(player, playerBottom(top));
+    if (!player.hidden) {
+      set.bottom(player, playerBottom(top));
+      const edge = `${Math.round(window.innerHeight - player.getBoundingClientRect().top)}px`;
+      if (document.documentElement.style.getPropertyValue('--tn-player-top') !== edge) document.documentElement.style.setProperty('--tn-player-top', edge);
+    }
     set.html(toggle, state.status === 'paused' ? ICON_PLAY : ICON_PAUSE);
     set.attr(toggle, 'aria-label', state.status === 'paused' ? 'Play' : 'Pause');
     set.text(titleBtn.querySelector('b') as HTMLElement, state.chapterName ?? '');
@@ -214,7 +226,10 @@ export function installNarrationOverlay(): void {
       // Follow the bars right away (render() also runs on a timer): v1 toggles `bars-visible` on the root.
       if (!reader.dataset.tnBars) {
         reader.dataset.tnBars = '1';
-        new MutationObserver(() => render()).observe(reader, { attributes: true, attributeFilter: ['class'] });
+        new MutationObserver(() => {
+          render();
+          window.setTimeout(render, 320); // again once the bars' 280 ms slide is over
+        }).observe(reader, { attributes: true, attributeFilter: ['class'] });
       }
     }
     const on = active();

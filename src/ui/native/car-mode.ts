@@ -115,13 +115,17 @@ export function installCarMode(): CarMode {
   /** Listen speed and "Voice volume" (saved natively, see listen-controls.ts). */
   let rate = 1;
   let volume = 1;
-  /** A slider is being dragged: the 1 s refresh must not rebuild it under the finger. */
+  /** A slider is being dragged: nothing may touch it under the finger (its value or its element). */
   let dragging = false;
-  let renderPending = false;
-  let volumeSentAt = 0;
-  let volumeTimer = 0;
-  /** The last markup: the 1 s refresh rebuilds nothing when nothing changed (no churn under a finger). */
-  let lastHtml = '';
+  /** Speed and volume go to native while dragging (~10/s) and on release. */
+  const sent = { speed: { at: 0, timer: 0, value: Number.NaN }, volume: { at: 0, timer: 0, value: Number.NaN } };
+  /**
+   * The player is built once per opening as three parts, each rebuilt only when its own markup changes;
+   * the 1 s state poll moves the progress bar and the clock in place. So the novel list keeps its scroll
+   * position and rows, and a tap never straddles a rebuild.
+   */
+  let parts: { now: HTMLElement; controls: HTMLElement; list: HTMLElement } | null = null;
+  const last = { now: '', controls: '', list: '' };
   let open = false;
   let poll = 0;
   let novels: AudioNovelInfo[] = [];
@@ -144,7 +148,7 @@ export function installCarMode(): CarMode {
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
       <span class="eng">${engine}${state.status === 'loading' ? ' · loading…' : ''}</span>
-      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span>${fmt(pos)}</span><span>${fmt(dur)}</span></div>` : ''}
+      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i data-fill style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span data-pos>${fmt(pos)}</span><span data-dur>${fmt(dur)}</span></div>` : ''}
       <div class="ctl">
         <button type="button" data-act="back" aria-label="Back 15 seconds">${ICON.back15}</button>
         <button type="button" class="pp" data-act="toggle" aria-label="${state.status === 'playing' ? 'Pause' : 'Play'}">${state.status === 'playing' ? ICON.pause : ICON.play}</button>
@@ -172,8 +176,14 @@ export function installCarMode(): CarMode {
     </div>`;
   }
 
-  /** Slider moved: labels and the matching chip, without rebuilding anything. */
+  /** Labels, the matching chip and (unless a finger is on them) the sliders, in place: never rebuilt. */
   function reflectControls(): void {
+    if (!dragging) {
+      const sp = root.querySelector<HTMLInputElement>('[data-act="speed-slider"]');
+      if (sp && Math.abs(Number(sp.value) - rate) > 0.001) sp.value = String(rate);
+      const vo = root.querySelector<HTMLInputElement>('[data-act="volume"]');
+      if (vo && Number(vo.value) !== volumePercent(volume)) vo.value = String(volumePercent(volume));
+    }
     const chip = presetFor(rate);
     const sv = root.querySelector('[data-speed-val]');
     if (sv) sv.textContent = formatSpeed(rate);
@@ -189,22 +199,23 @@ export function installCarMode(): CarMode {
     root.querySelector('[data-act="volume"]')?.setAttribute('aria-valuetext', `${volumePercent(volume)}%`);
   }
 
-  function sendVolume(final: boolean): void {
-    window.clearTimeout(volumeTimer);
+  /** Throttled to ~10/s while dragging; `final` (release) always sends the last value. */
+  function send(what: 'speed' | 'volume', final: boolean): void {
+    const s = sent[what];
+    window.clearTimeout(s.timer);
+    const value = what === 'speed' ? rate : volume;
+    if (Math.abs(value - s.value) < 1e-6) return;
     const now = Date.now();
-    if (final || now - volumeSentAt > 150) {
-      volumeSentAt = now;
-      void Narration.setVoiceSettings({ volume }).catch(() => undefined);
+    if (final || now - s.at >= 100) {
+      s.at = now;
+      s.value = value;
+      void Narration.setVoiceSettings(what === 'speed' ? { speed: value } : { volume: value }).catch(() => undefined);
     } else {
-      volumeTimer = window.setTimeout(() => sendVolume(true), 160);
+      s.timer = window.setTimeout(() => send(what, true), 110);
     }
   }
 
   function render(): void {
-    if (dragging) {
-      renderPending = true;
-      return;
-    }
     const audioKeys = new Set(novels.map((n) => n.key));
     const folder = !usePCAudio
       ? ''
@@ -223,18 +234,53 @@ export function installCarMode(): CarMode {
       .filter((r) => !audioKeys.has(`${r.pluginId}:${r.path}`))
       .map((r) => rowHtml('recent', r.pluginId, r.path, r.novelName, r.chapterName, r.cover))
       .join('');
-    const html = `
-      <div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div>
-      ${nowHtml()}
-      ${controlsHtml()}
-      <div class="list">
+    const list = `
         ${folder}
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
-        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}
-      </div>`;
-    if (html === lastHtml) return;
-    lastHtml = html;
-    root.innerHTML = html;
+        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}`;
+    const p = ensureParts();
+    const now = nowHtml();
+    // The bar and the clock change every second: compare without them and update them in place.
+    const nowKey = now.replace(/data-fill style="width:[^"]*"/, 'data-fill').replace(/<span data-pos>[^<]*/, '<span data-pos>').replace(/<span data-dur>[^<]*/, '<span data-dur>');
+    if (nowKey !== last.now) {
+      last.now = nowKey;
+      p.now.innerHTML = now;
+    } else {
+      const pos = state.position;
+      const dur = state.duration;
+      const fill = p.now.querySelector<HTMLElement>('[data-fill]');
+      if (fill) fill.style.width = `${(pos !== undefined && dur ? Math.min(100, (pos / dur) * 100) : 0).toFixed(1)}%`;
+      const posEl = p.now.querySelector('[data-pos]');
+      if (posEl && posEl.textContent !== fmt(pos)) posEl.textContent = fmt(pos);
+      const durEl = p.now.querySelector('[data-dur]');
+      if (durEl && durEl.textContent !== fmt(dur)) durEl.textContent = fmt(dur);
+    }
+    // Built once per opening; afterwards only updated in place (a rebuild would detach a slider mid-drag,
+    // and iOS then never delivers its change: the speed slider "did nothing" on the phone).
+    if (!last.controls) {
+      last.controls = 'built';
+      p.controls.innerHTML = controlsHtml();
+    } else {
+      reflectControls();
+    }
+    if (list !== last.list) {
+      last.list = list;
+      p.list.innerHTML = list;
+    }
+  }
+
+  function ensureParts(): { now: HTMLElement; controls: HTMLElement; list: HTMLElement } {
+    if (parts && root.contains(parts.list)) return parts;
+    root.innerHTML = `<div class="hd"><h1>Listen</h1><button type="button" class="x" data-act="close" aria-label="Close">${ICON.close}</button></div><div data-part="now"></div><div data-part="controls"></div><div class="list" data-part="list"></div>`;
+    last.now = '';
+    last.controls = '';
+    last.list = '';
+    parts = {
+      now: root.querySelector('[data-part="now"]') as HTMLElement,
+      controls: root.querySelector('[data-part="controls"]') as HTMLElement,
+      list: root.querySelector('[data-part="list"]') as HTMLElement,
+    };
+    return parts;
   }
 
   async function load(refresh: boolean): Promise<void> {
@@ -321,39 +367,36 @@ export function installCarMode(): CarMode {
 
   // Sliders: live labels while dragging; speed is applied when released (a new speed restarts the sentence),
   // the volume follows the finger (throttled).
-  root.addEventListener('pointerdown', (ev) => {
-    if ((ev.target as Element).matches('input[type="range"]')) dragging = true;
-  });
-  const endDrag = (): void => {
-    if (!dragging) return;
-    dragging = false;
-    if (renderPending) {
-      renderPending = false;
-      render();
-    }
-  };
-  root.addEventListener('pointerup', endDrag);
-  root.addEventListener('pointercancel', endDrag);
-  root.addEventListener('input', (ev) => {
-    const el = ev.target as HTMLInputElement;
-    if (el.dataset.act === 'speed-slider') rate = snapSpeed(Number(el.value));
-    else if (el.dataset.act === 'volume') {
-      volume = Math.min(1.5, Math.max(0, Number(el.value) / 100));
-      sendVolume(false);
-    } else return;
-    reflectControls();
-  });
-  root.addEventListener('change', (ev) => {
-    const el = ev.target as HTMLInputElement;
+  // Sliders: the value is applied while dragging (throttled) and on release, whichever events iOS
+  // delivers (input; change; touchend/pointerup, which a native range control may swallow or cancel).
+  const sliderOf = (t: EventTarget | null): HTMLInputElement | null =>
+    t instanceof HTMLInputElement && (t.dataset.act === 'speed-slider' || t.dataset.act === 'volume') ? t : null;
+  const readSlider = (el: HTMLInputElement): 'speed' | 'volume' => {
     if (el.dataset.act === 'speed-slider') {
       rate = snapSpeed(Number(el.value));
-      void Narration.setVoiceSettings({ speed: rate }).catch(() => undefined);
-    } else if (el.dataset.act === 'volume') {
-      volume = Math.min(1.5, Math.max(0, Number(el.value) / 100));
-      sendVolume(true);
-    } else return;
+      return 'speed';
+    }
+    volume = Math.min(1.5, Math.max(0, Number(el.value) / 100));
+    return 'volume';
+  };
+  const release = (ev: Event): void => {
+    const el = sliderOf(ev.target);
+    dragging = false;
+    if (!el) return;
+    send(readSlider(el), true);
     reflectControls();
-    endDrag();
+  };
+  for (const start of ['pointerdown', 'touchstart'] as const) {
+    root.addEventListener(start, (ev) => {
+      if (sliderOf(ev.target)) dragging = true;
+    }, { passive: true });
+  }
+  for (const end of ['pointerup', 'pointercancel', 'touchend', 'touchcancel', 'change'] as const) root.addEventListener(end, release);
+  root.addEventListener('input', (ev) => {
+    const el = sliderOf(ev.target);
+    if (!el) return;
+    send(readSlider(el), false);
+    reflectControls();
   });
 
   void Narration.addListener('state', (s) => {
