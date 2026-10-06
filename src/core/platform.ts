@@ -100,7 +100,7 @@ function fileOps(host: NativeHost, icloud: boolean): FileOps {
 
 /**
  * The two stores. Synced: iCloud when the app has the container (entitled builds); otherwise the app's
- * Documents folder (free sideload: visible in Files as On My iPhone › TachiNovel, see
+ * Documents folder itself (free sideload: visible in Files as On My iPhone › TachiNovel, see
  * storage/documents-layout.ts, which also moves data written by older builds); the local store as a
  * last resort. `log` receives the layout's messages (the platform log isn't up yet).
  */
@@ -123,7 +123,8 @@ export function createStores(
   }
   const documentsRoot = host.info.documentsRoot;
   if (documentsRoot) {
-    const docsDir = joinPath(documentsRoot, APP_DIR);
+    // Documents itself (no TachiNovel/ subfolder): Files shows On My iPhone › TachiNovel › backups, logs, …
+    const docsDir = documentsRoot;
     const layout = prepareDocumentsLayout(host.fs, { localDir, docsDir, now: () => Date.now(), log });
     if (layout.useDocuments) {
       const synced = createFileStore(fileOps(host, false), docsDir, false);

@@ -99,7 +99,7 @@ export interface NativeHostInfo {
   syncedRoot: string | null;
   /**
    * Absolute path of the app's Documents folder (shown in Files as On My iPhone › TachiNovel). Holds the
-   * synced store when there is no iCloud (free sideload); the core appends TachiNovel/. Optional: older
+   * synced store when there is no iCloud (free sideload), directly (no TachiNovel/ subfolder). Optional: older
    * hosts don't send it (the synced store then falls back to the local one).
    */
   documentsRoot?: string | null;

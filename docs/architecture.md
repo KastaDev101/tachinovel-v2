@@ -246,7 +246,7 @@ entitlement shows up). What happens without them:
 
 | Capability | Without the entitlement |
 |---|---|
-| iCloud Documents (synced store) | `url(forUbiquityContainerIdentifier:)` returns nil → the synced store (library, progress, settings, sources, backups, log mirror) lives in the app's **Documents** folder, which Files shows as On My iPhone › TachiNovel (`UIFileSharingEnabled`, `LSSupportsOpeningDocumentsInPlace`). Builds before this kept it in Application Support; `src/core/storage/documents-layout.ts` moves it once (copy, verify, switch, confirm on the first `app.boot`, remove the old copies at the next launch). Caches stay device-only in Application Support |
+| iCloud Documents (synced store) | `url(forUbiquityContainerIdentifier:)` returns nil → the synced store (library, progress, settings, sources, backups, log mirror) lives in the app's **Documents** folder itself, which Files shows as On My iPhone › TachiNovel (› backups, logs, …) (`UIFileSharingEnabled`, `LSSupportsOpeningDocumentsInPlace`). Builds before this kept it in Application Support; `src/core/storage/documents-layout.ts` moves it once (copy, verify, switch, confirm on the first `app.boot`, remove the old copies at the next launch). Caches stay device-only in Application Support |
 | CarPlay audio templates | the CarPlay scene never connects; narration still plays through the car with Now Playing + steering-wheel controls |
 | Background audio, background fetch | work (Info.plist background modes, not entitlements) |
 | StoreKit (Pro) | products don't load outside the App Store; the app stays in the free tier |

@@ -6,7 +6,7 @@
  *
  * The one-time move is crash-safe and never deletes the only copy of anything:
  *  1. copy: every synced entry of the local folder (everything except the local-only caches below) is
- *     copied file by file into Documents/TachiNovel, merging with what is there, and verified (same
+ *     copied file by file into Documents, merging with what is there, and verified (same
  *     files, same sizes, same text for files up to 1 MB). Interrupted or failed → this launch keeps the
  *     old layout and the next launch resumes the copy (finished files are verified, not copied again);
  *  2. switch: only then is the marker `.layout.json` written (state "switched"), and the app uses
@@ -45,7 +45,7 @@ export interface LayoutMarker {
 }
 
 export interface LayoutResult {
-  /** Use Documents/TachiNovel as the synced store (false: keep the old layout this launch). */
+  /** Use Documents as the synced store (false: keep the old layout this launch). */
   useDocuments: boolean;
   /** What happened this launch. */
   action: 'fresh' | 'migrated' | 'in-use' | 'cleaned' | 'failed';

@@ -1,6 +1,6 @@
 /**
  * Free-sideload storage layout (src/core/storage/documents-layout.ts): without iCloud, the synced store
- * lives in Documents/TachiNovel (visible in Files). Data written by older builds into the local folder is
+ * lives in the app's Documents folder itself (visible in Files). Data written by older builds into the local folder is
  * moved once: copy → verify → switch (marker) → confirm on the first app.boot → old copies removed at
  * the next launch. Crashes and failures at any step keep a complete copy and resume next launch.
  */
@@ -65,7 +65,7 @@ let n = 0;
 function setup(): { localDir: string; docsDir: string; logs: string[] } {
   const base = path.join(tmp, `case-${++n}`);
   const localDir = path.join(base, 'local', 'TachiNovel');
-  const docsDir = path.join(base, 'documents', 'TachiNovel');
+  const docsDir = path.join(base, 'documents');
   mkdirSync(localDir, { recursive: true });
   return { localDir, docsDir, logs: [] };
 }
@@ -191,7 +191,7 @@ const routes: Record<string, Route> = { [`${SITE}novel/alpha`]: { body: fx('nove
 describe('documents layout (core, three launches of one free-sideload install)', () => {
   let www: string;
   const dataDir = path.join(tmp, 'install');
-  const docsApp = path.join(dataDir, 'documents', 'TachiNovel');
+  const docsApp = path.join(dataDir, 'documents');
   const localApp = path.join(dataDir, 'local', 'TachiNovel');
 
   beforeAll(async () => {
@@ -222,7 +222,7 @@ describe('documents layout (core, three launches of one free-sideload install)',
       expect(existsSync(path.join(docsApp, 'sources'))).toBe(true);
       expect(marker(docsApp)).toMatchObject({ state: 'confirmed' });
       expect(existsSync(path.join(localApp, 'library.json'))).toBe(true); // kept until the next launch
-      // New backups land in Documents (Files: On My iPhone › TachiNovel › TachiNovel › backups).
+      // New backups land in Documents (Files: On My iPhone › TachiNovel › backups).
       const b = await core.call<{ fileName: string }>('backup.create');
       expect(existsSync(path.join(docsApp, 'backups', b.fileName))).toBe(true);
       expect(core.logs.some((l) => l.line.includes('Storage layout: moved'))).toBe(true);
@@ -249,7 +249,7 @@ describe('documents layout (core, three launches of one free-sideload install)',
     const core = startCoreInVm({ wwwDir: www, routes });
     try {
       await core.call('app.boot');
-      expect(existsSync(path.join(core.dir, 'documents', 'TachiNovel'))).toBe(false);
+      expect(readdirSync(path.join(core.dir, 'documents'))).toEqual([]);
     } finally {
       core.dispose();
     }
