@@ -4,8 +4,8 @@ All notable changes to TachiNovel v2 are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for the app version (`package.json`).
 
-Add a line under **Unreleased** in every pull request that changes what the app does, how it is built or
-how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed or Security.
+Pull requests don't edit this file: each adds a fragment in [changelog.d/](changelog.d/README.md), and
+`node tools/release.ts prepare <version>` merges the fragments in here at release time.
 
 ## [Unreleased]
 

@@ -25,13 +25,15 @@ redesign), **minor** for new features, **patch** for fixes only.
 
 ## Cutting a release
 
-1. Make sure `CHANGELOG.md` "Unreleased" lists everything since the last release (every PR adds its line).
+1. Check the notes: `node tools/release.ts changelog` prints "Unreleased" with every fragment in
+   `changelog.d/` merged (each PR adds one; see changelog.d/README.md).
 2. On a branch from `origin/main`:
    ```sh
    node tools/release.ts prepare 2.0.0-alpha.2
    ```
    This sets `package.json` and the lockfile to the new version, updates `MARKETING_VERSION` in the Xcode
-   project and moves "Unreleased" into `## [2.0.0-alpha.2] - <today>` with compare links. Review the diff,
+   project, merges the `changelog.d/` fragments into "Unreleased" (and deletes them), and moves it into
+   `## [2.0.0-alpha.2] - <today>` with compare links. Review the diff,
    run `npm run check`, and open a PR titled `Release 2.0.0-alpha.2`.
 3. After the coordinator merges it, tag the merge commit on `main` and push the tag:
    ```sh
