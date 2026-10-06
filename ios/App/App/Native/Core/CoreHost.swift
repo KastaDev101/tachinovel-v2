@@ -75,9 +75,28 @@ final class CoreHost {
                 syncedRoot = container.appendingPathComponent("Documents", isDirectory: true)
                 try? FileManager.default.createDirectory(at: syncedRoot!, withIntermediateDirectories: true)
             }
+            #if DEBUG
+            installUITestBackup()
+            #endif
             boot(launchReason: launchReason)
         }
     }
+
+    #if DEBUG
+    /// UI tests (ios/App/AppUITests, ci/ios-ui-tests.sh) hand over a synthetic sample backup in the
+    /// launch environment; it is placed where Settings › Backup & Restore lists backups (the synced store:
+    /// iCloud's TachiNovel/backups, or Documents/backups without iCloud, see src/core/platform.ts
+    /// createStores), so the test restores it through the UI like a user would. Debug builds only;
+    /// ignored without the variable.
+    private func installUITestBackup() {
+        guard let json = ProcessInfo.processInfo.environment["TACHI_UITEST_BACKUP"], !json.isEmpty else { return }
+        let dir = syncedRoot.map { $0.appendingPathComponent("TachiNovel/backups", isDirectory: true) }
+            ?? documentsRoot.appendingPathComponent("backups", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? Data(json.utf8).write(to: dir.appendingPathComponent("tachinovel-backup-2026-10-01-0900.json"))
+        log.info("UI test: sample backup placed in \(dir.path, privacy: .public)")
+    }
+    #endif
 
     private func prepareDirectories() {
         let fm = FileManager.default

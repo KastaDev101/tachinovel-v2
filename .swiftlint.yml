@@ -6,6 +6,7 @@
 
 included:
   - ios/App/App
+  - ios/App/AppUITests
 excluded:
   - ios/App/App/public
 
