@@ -46,6 +46,7 @@
 		97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D19C36D763DD38A51A524D7 /* CarAudio.swift */; };
 		047E190744D786077B79A114 /* DrivePrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */; };
 		EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F88FB48C4F7B70FABE254E /* WebBundle.swift */; };
+		492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -100,6 +101,7 @@
 		3D19C36D763DD38A51A524D7 /* CarAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/CarAudio.swift"; sourceTree = "<group>"; };
 		6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/DrivePrep.swift"; sourceTree = "<group>"; };
 		82F88FB48C4F7B70FABE254E /* WebBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/WebBundle.swift"; sourceTree = "<group>"; };
+		08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFolder.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -190,6 +192,7 @@
 				3D19C36D763DD38A51A524D7 /* CarAudio.swift */,
 				6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */,
 				82F88FB48C4F7B70FABE254E /* WebBundle.swift */,
+				08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -345,6 +348,7 @@
 				97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */,
 				047E190744D786077B79A114 /* DrivePrep.swift in Sources */,
 				EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */,
+				492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
