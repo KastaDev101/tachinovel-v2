@@ -77,9 +77,9 @@ export const V2_WHATS_NEW: WhatsNewRelease[] = [
 ];
 
 declare global {
-  // eslint-disable-next-line no-var -- read by v1 code patched at build time (tools/v1-wording.ts)
+  /** Read by v1 code patched at build time (tools/v1-wording.ts). */
   var __TN_TEXT__: V2Text | undefined;
-  // eslint-disable-next-line no-var -- read by v1's whats-new-data.ts, patched at build time
+  /** Read by v1's whats-new-data.ts, patched at build time. */
   var __TN_WHATS_NEW__: WhatsNewRelease[] | undefined;
 }
 
