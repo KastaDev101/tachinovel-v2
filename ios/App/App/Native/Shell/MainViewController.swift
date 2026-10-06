@@ -41,6 +41,13 @@ class MainViewController: CAPBridgeViewController {
     }
     #endif
 
+    /// A staged web update (WebBundle.swift) replaces the app's own web assets for this launch.
+    override open func instanceDescriptor() -> InstanceDescriptor {
+        let descriptor = super.instanceDescriptor()
+        if WebBundle.current.id != nil { descriptor.appLocation = WebBundle.current.root }
+        return descriptor
+    }
+
     override open func router() -> Router {
         TachiRouter()
     }

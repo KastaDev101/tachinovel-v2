@@ -12,6 +12,7 @@
 //  No `import Capacitor` here (JSValue name clash). JSVal = JavaScriptCore.JSValue.
 //
 
+import CryptoKit
 import Foundation
 import ImageIO
 @preconcurrency import JavaScriptCore
@@ -75,6 +76,7 @@ final class NativeHostAPI {
         set(obj, "ui", ui(in: ctx))
         set(obj, "timers", timerObject(in: ctx))
         set(obj, "bundle", bundle(in: ctx))
+        set(obj, "crypto", crypto(in: ctx))
 
         let httpBlock: @convention(block) (String, JSVal) -> Void = { [self] json, cb in
             http.perform(json: json) { result in
@@ -144,6 +146,7 @@ final class NativeHostAPI {
         set(o, "localRoot", host.localRoot.path)
         set(o, "syncedRoot", host.syncedRoot.map { $0.path as Any } ?? NSNull())
         set(o, "documentsRoot", host.documentsRoot.path)
+        set(o, "webBundle", WebBundle.current.id.map { $0 as Any } ?? NSNull())
         set(o, "launchReason", launchReason)
         return o
     }
@@ -277,9 +280,27 @@ final class NativeHostAPI {
 
     // MARK: - App bundle (read-only core files under public/core/)
 
+    /// core/ of the web bundle this launch runs (the app's, or a web update: WebBundle.swift).
     private static func bundled(_ rel: String) -> URL? {
-        guard !rel.contains(".."), !rel.hasPrefix("/"), let base = Bundle.main.resourceURL else { return nil }
-        return base.appendingPathComponent("public/core", isDirectory: true).appendingPathComponent(rel)
+        guard !rel.contains(".."), !rel.hasPrefix("/") else { return nil }
+        return WebBundle.current.root.appendingPathComponent("core", isDirectory: true).appendingPathComponent(rel)
+    }
+
+    // MARK: - Crypto (web update signatures, src/core/ota/ota.ts)
+
+    private func crypto(in ctx: JSContext) -> JSVal {
+        let o = JSVal(newObjectIn: ctx)!
+        let sha256Hex: @convention(block) (String) -> String = { text in
+            SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        let verifyEd25519: @convention(block) (String, String, String) -> Bool = { publicKey, message, signature in
+            guard let keyData = Data(base64Encoded: publicKey), let signatureData = Data(base64Encoded: signature),
+                  let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData) else { return false }
+            return key.isValidSignature(signatureData, for: Data(message.utf8))
+        }
+        set(o, "sha256Hex", fn(sha256Hex))
+        set(o, "verifyEd25519", fn(verifyEd25519))
+        return o
     }
 
     private func bundle(in ctx: JSContext) -> JSVal {

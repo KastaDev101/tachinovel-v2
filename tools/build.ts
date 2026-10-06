@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import path from 'node:path';
 import { packagesFromInputs, readNotices, reflow } from './third-party.ts';
 import { corePatches, licensesPatch, phoneClientPlugin, root, v1AliasPlugin, v1PatchPlugin, v1Root, v1Src } from './v1.ts';
+import { otaPatches } from './v1-ota.ts';
 
 export type Flavor = 'personal' | 'store';
 
@@ -107,7 +108,7 @@ export async function buildUi(info: BuildInfo, opts: BuildOptions, packages?: Se
     legalComments: 'eof',
     define: defines(info, opts.dev),
     loader: { '.svg': 'text', '.png': 'dataurl', '.woff2': 'dataurl' },
-    plugins: [v1AliasPlugin(), phoneClientPlugin(), v1PatchPlugin([licensesPatch(licenses)])],
+    plugins: [v1AliasPlugin(), phoneClientPlugin(), v1PatchPlugin([licensesPatch(licenses), ...(opts.flavor === 'personal' ? otaPatches() : [])])],
     jsx: 'automatic',
     jsxImportSource: 'preact',
     logLevel: 'silent',
