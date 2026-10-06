@@ -56,14 +56,15 @@ final class NativeUI: NSObject, UIDocumentPickerDelegate {
                     finished()
                 })
             }
-            if let cancel = opts.cancel ?? (style == .actionSheet ? "Cancel" : nil) {
+            let defaultCancel = String(localized: "Cancel", comment: "Cancel button of an action sheet")
+            if let cancel = opts.cancel ?? (style == .actionSheet ? defaultCancel : nil) {
                 ac.addAction(UIAlertAction(title: cancel, style: .cancel) { _ in
                     answer.call(-1)
                     finished()
                 })
             }
             if ac.actions.isEmpty { // an alert without buttons could never be dismissed
-                ac.addAction(UIAlertAction(title: "OK", style: .cancel) { _ in
+                ac.addAction(UIAlertAction(title: String(localized: "OK", comment: "Dismisses an alert that has no other buttons"), style: .cancel) { _ in
                     answer.call(-1)
                     finished()
                 })

@@ -26,7 +26,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.interfaceController = interfaceController
         interfaceController.delegate = self
         CoreHost.shared.start(launchReason: "narration")
-        let list = CPListTemplate(title: "TachiNovel", sections: [CPListSection(items: [CPListItem(text: "Loading…", detailText: nil)])])
+        let loading = CPListItem(text: String(localized: "Loading…", comment: "CarPlay: placeholder row while the list loads"), detailText: nil)
+        let list = CPListTemplate(title: "TachiNovel", sections: [CPListSection(items: [loading])]) // l10n-ignore: app name
         rootList = list
         interfaceController.setRootTemplate(list, animated: false, completion: nil)
         reload()
@@ -61,7 +62,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 let narration = NarrationController.shared
                 let state = narration.stateDict()
                 if narration.status == .playing || narration.status == .paused {
-                    let now = CPListItem(text: "Now Playing", detailText: state["chapterName"] as? String)
+                    let nowPlaying = String(localized: "Now Playing", comment: "CarPlay: row that opens the Now Playing screen")
+                    let now = CPListItem(text: nowPlaying, detailText: state["chapterName"] as? String)
                     now.handler = { [weak self] _, done in
                         self?.showNowPlaying()
                         done()
@@ -71,7 +73,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 for e in entries {
                     guard let pluginId = e["pluginId"] as? String, let novelPath = e["path"] as? String,
                           let chapterPath = e["chapterPath"] as? String else { continue }
-                    let novelName = e["novelName"] as? String ?? "Novel"
+                    let novelName = e["novelName"] as? String ?? String(localized: "Novel", comment: "CarPlay: name for a novel without a title")
                     let item = CPListItem(text: novelName, detailText: e["chapterName"] as? String)
                     item.handler = { [weak self] _, done in
                         self?.listen(pluginId: pluginId, novelPath: novelPath, fallbackChapter: chapterPath, novelName: novelName)
@@ -79,8 +81,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                     }
                     items.append(item)
                 }
-                if items.isEmpty { items = [CPListItem(text: "Read something on your iPhone first", detailText: nil)] }
-                list.updateSections([CPListSection(items: items, header: "Continue listening", sectionIndexTitle: nil)])
+                if items.isEmpty {
+                    let hint = String(localized: "Read something on your iPhone first", comment: "CarPlay: the list is empty (nothing read yet)")
+                    items = [CPListItem(text: hint, detailText: nil)]
+                }
+                let header = String(localized: "Continue listening", comment: "CarPlay: header of the recently read novels")
+                list.updateSections([CPListSection(items: items, header: header, sectionIndexTitle: nil)])
             }
         }
     }

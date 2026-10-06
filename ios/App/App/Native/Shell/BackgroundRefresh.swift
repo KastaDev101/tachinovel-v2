@@ -49,8 +49,10 @@ enum BackgroundRefresh {
         center.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return completion() }
             let content = UNMutableNotificationContent()
-            content.title = "New chapters"
-            content.body = newChapters == 1 ? "1 new chapter in your library" : "\(newChapters) new chapters in your library"
+            content.title = String(localized: "New chapters", comment: "Title of the notification after a background library update")
+            // One key; the String Catalog has the singular/plural variations.
+            content.body = String(localized: "\(newChapters) new chapters in your library",
+                                  comment: "Body of the notification after a background library update; the number of new chapters")
             content.threadIdentifier = "updates"
             let req = UNNotificationRequest(identifier: "updates-\(Int(Date().timeIntervalSince1970))", content: content, trigger: nil)
             center.add(req) { _ in completion() }

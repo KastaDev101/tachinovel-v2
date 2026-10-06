@@ -6,6 +6,8 @@
  *   - group "Native" (all .swift under App/Native, in the Sources phase)
  *   - PrivacyInfo.xcprivacy (Resources phase), App.entitlements (CODE_SIGN_ENTITLEMENTS)
  *   - IPHONEOS_DEPLOYMENT_TARGET 17.0 (Personal Voice, StoreKit 2 APIs used, safari17 JS target)
+ *   - Localizable.xcstrings (String Catalog, Resources phase) with the app target's
+ *     LOCALIZATION_PREFERS_STRING_CATALOGS / SWIFT_EMIT_LOC_STRINGS (tools/swift-strings.ts)
  *
  * Usage: node tools/ios-project.ts [--check]   (--check: exit 1 if the project is out of date)
  */
@@ -66,6 +68,23 @@ function findId(text: string, pattern: RegExp, what: string): string {
   return m[1];
 }
 
+/** The String Catalog in the Resources phase, and the app target's settings that make Xcode use it. */
+function addStringCatalog(text: string): string {
+  let t = text;
+  const appGroup = findId(t, /\t\t([0-9A-F]{24}) \/\* App \*\/ = \{\n\t\t\tisa = PBXGroup;/, 'App group');
+  const resources = findId(t, /\t\t([0-9A-F]{24}) \/\* Resources \*\/ = \{\n\t\t\tisa = PBXResourcesBuildPhase;/, 'Resources phase');
+  const ref = oid('file:Localizable.xcstrings');
+  const build = oid('build:Localizable.xcstrings');
+  t = insertIntoSection(t, 'PBXFileReference', [`\t\t${ref} /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };\n`]);
+  t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${build} /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = ${ref} /* Localizable.xcstrings */; };\n`]);
+  t = addToList(t, appGroup, 'children', [`\t\t\t\t${ref} /* Localizable.xcstrings */,\n`]);
+  t = addToList(t, resources, 'files', [`\t\t\t\t${build} /* Localizable.xcstrings in Resources */,\n`]);
+  // App target configs only (the ones with MARKETING_VERSION), in Xcode's alphabetical setting order.
+  t = t.replace(/(?<!LOCALIZATION_PREFERS_STRING_CATALOGS = YES;\n)(\t\t\t\tMARKETING_VERSION = [^;\n]+;\n)/g, `\t\t\t\tLOCALIZATION_PREFERS_STRING_CATALOGS = YES;\n$1`);
+  t = t.replace(/(?<!SWIFT_EMIT_LOC_STRINGS = YES;\n)(\t\t\t\tSWIFT_STRICT_CONCURRENCY = complete;\n)/g, `\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;\n$1`);
+  return t;
+}
+
 export function updateProject(text: string, files: string[]): string {
   let t = text;
   const appGroup = findId(t, /\t\t([0-9A-F]{24}) \/\* App \*\/ = \{\n\t\t\tisa = PBXGroup;/, 'App group');
@@ -108,6 +127,7 @@ export function updateProject(text: string, files: string[]): string {
   // Build settings: deployment target everywhere; entitlements on the app target's configs.
   t = t.replace(/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/g, `IPHONEOS_DEPLOYMENT_TARGET = ${DEPLOYMENT_TARGET};`);
   t = t.replace(/(\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n)(?!\t\t\t\tCODE_SIGN_ENTITLEMENTS)/g, `$1\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n`);
+  t = addStringCatalog(t);
   return t;
 }
 
