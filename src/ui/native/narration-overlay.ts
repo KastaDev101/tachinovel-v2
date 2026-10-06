@@ -38,14 +38,17 @@ const STYLE = `
 .tn-listen[hidden],.tn-player[hidden],.tn-open-car[hidden]{display:none}
 .tn-player{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);z-index:61;display:flex;align-items:center;gap:10px;
   padding:8px 10px;border-radius:16px;background:rgba(40,40,48,.86);-webkit-backdrop-filter:blur(20px) saturate(1.6);color:#f2f2f7;
-  font:500 14px -apple-system,system-ui;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+  font:500 14px -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
 .tn-player .tn-title{flex:1;min-width:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;padding:4px 2px}
 .tn-player .tn-title b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tn-player .tn-title small{display:block;color:#a1a1aa;font-size:12px}
 .tn-player button.tn-ic{border:0;background:transparent;color:inherit;width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center;flex:none}
 .tn-player button.tn-ic:active{background:rgba(255,255,255,.12)}
 .tn-open-car{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:59;height:54px;border:0;border-radius:16px;
-  background:#a8b4ff;color:#15151a;font:600 17px -apple-system,system-ui;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+  background:#a8b4ff;color:#15151a;font:600 17px -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+/* Room at the end of the scrolling content for the floating player / button, so nothing stays under them. */
+html.tn-player-on .screen-scroll>.scroll-content::after,html.tn-player-on .reader-content::after,
+html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:72px}
 .rd-body > .tn-speaking,.rd-body .tn-speaking{background:rgba(168,180,255,.16);border-radius:6px;box-shadow:0 0 0 4px rgba(168,180,255,.16)}
 ${HIGHLIGHT_CSS}
 `;
@@ -59,6 +62,29 @@ const ICON_CLOSE =
 
 function tapFeedback(): void {
   void Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined);
+}
+
+/** The screen the user sees: the last layer of v1's navigation stack. */
+function topLayer(): Element | null {
+  const layers = document.querySelectorAll('.nav-root > .layer');
+  return layers[layers.length - 1] ?? null;
+}
+
+/** v1's bottom-anchored UI on a screen: tab bar, reader bottom bar, Start/Resume button, selection toolbar. */
+const BOTTOM_UI = '.tabbar:not(.is-hidden), .reader.bars-visible .rd-bottom, .fab, .toolbar';
+
+/**
+ * Where the mini player sits: 8 px above the screen's own bottom UI (it used to cover the tab bar, the
+ * reader's bottom bar and the Resume button), else just above the home indicator (the CSS default).
+ */
+export function playerBottom(top: Element | null, viewportHeight = window.innerHeight): string {
+  let edge: number | null = null;
+  for (const el of top?.querySelectorAll(BOTTOM_UI) ?? []) {
+    const r = el.getBoundingClientRect();
+    if (r.height === 0 || r.top >= viewportHeight || r.bottom < viewportHeight - 160) continue;
+    edge = edge === null ? r.top : Math.min(edge, r.top);
+  }
+  return edge === null ? '' : `${Math.round(viewportHeight - edge + 8)}px`;
 }
 
 let openPlayer: (() => void) | null = null;
@@ -124,21 +150,51 @@ export function installNarrationOverlay(): void {
 
   const active = (): boolean => state.status === 'playing' || state.status === 'paused' || state.status === 'loading';
 
+  /** Writes only on change: render() runs every 600 ms and must not churn the DOM under a finger. */
+  const set = {
+    hidden(el: HTMLElement, v: boolean): void {
+      if (el.hidden !== v) el.hidden = v;
+    },
+    html(el: HTMLElement, v: string): void {
+      if (el.dataset.tnHtml !== v) {
+        el.dataset.tnHtml = v;
+        el.innerHTML = v;
+      }
+    },
+    text(el: HTMLElement, v: string): void {
+      if (el.textContent !== v) el.textContent = v;
+    },
+    attr(el: Element, name: string, v: string): void {
+      if (el.getAttribute(name) !== v) el.setAttribute(name, v);
+    },
+    bottom(el: HTMLElement, v: string): void {
+      if (el.style.bottom !== v) el.style.bottom = v;
+    },
+  };
+
   function render(): void {
-    const inReader = readerRoot() !== null;
-    const onNarrationScreen = document.querySelector('[data-testid="screen-narration"]') !== null && !readerRoot();
-    listen.hidden = !inReader || active() || car.isOpen;
-    player.hidden = !active() || car.isOpen;
-    openCar.hidden = !onNarrationScreen || active() || car.isOpen;
-    toggle.innerHTML = state.status === 'paused' ? ICON_PLAY : ICON_PAUSE;
-    toggle.setAttribute('aria-label', state.status === 'paused' ? 'Play' : 'Pause');
-    (titleBtn.querySelector('b') as HTMLElement).textContent = state.chapterName ?? '';
-    (titleBtn.querySelector('small') as HTMLElement).textContent =
-      state.status === 'loading' ? 'Loading…' : state.status === 'error' ? (state.error ?? 'Error') : voiceLabel(state);
+    // Only the screen on top counts: a reader or the Listen in the Car screen further down the stack
+    // (covered by a pushed screen) must not put its buttons over the visible one.
+    const top = topLayer();
+    const inReader = !!top?.querySelector('[data-testid="screen-reader"]');
+    const onNarrationScreen = !!top?.querySelector('[data-testid="screen-narration"]');
+    set.hidden(listen, !inReader || active() || car.isOpen);
+    set.hidden(player, !active() || car.isOpen);
+    set.hidden(openCar, !onNarrationScreen || active() || car.isOpen);
+    document.documentElement.classList.toggle('tn-player-on', !player.hidden);
+    document.documentElement.classList.toggle('tn-open-car-on', !openCar.hidden);
+    if (!player.hidden) set.bottom(player, playerBottom(top));
+    set.html(toggle, state.status === 'paused' ? ICON_PLAY : ICON_PAUSE);
+    set.attr(toggle, 'aria-label', state.status === 'paused' ? 'Play' : 'Pause');
+    set.text(titleBtn.querySelector('b') as HTMLElement, state.chapterName ?? '');
+    set.text(
+      titleBtn.querySelector('small') as HTMLElement,
+      state.status === 'loading' ? 'Loading…' : state.status === 'error' ? (state.error ?? 'Error') : voiceLabel(state),
+    );
   }
 
   listen.addEventListener('click', () => {
-    const root = readerRoot();
+    const root = topLayer()?.querySelector<HTMLElement>('[data-testid="screen-reader"]') ?? null;
     if (!root) return;
     // From the first visible paragraph (the reader hides its bars while reading).
     const point = locateReadingPoint(root, 8, window.innerHeight);

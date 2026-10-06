@@ -39,4 +39,12 @@ how it is released. Group lines under Added, Changed, Deprecated, Removed, Fixed
   on the dev PC; same files checked, same (zero) errors. Nothing in the repo uses the TypeScript JS API.
 - The package license field is now `UNLICENSED` (proprietary, all rights reserved; previously `MIT`).
 
+### Fixed
+
+- While listening, the mini player covered the tab bar (no tab could be tapped), the reader's bottom
+  bar and the novel page's Resume button; it now sits above them, and scrolling content gets room at its
+  end so nothing stays under it. "Open the player" (Listen in the Car) no longer hides the screen's last
+  rows and its label is centered. The Listen button and "Open the player" only show for the screen on
+  top. Found by the UI crawler.
+
 [Unreleased]: https://github.com/KastaDev101/tachinovel-v2/commits/main
