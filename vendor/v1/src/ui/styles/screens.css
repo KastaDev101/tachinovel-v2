@@ -747,6 +747,12 @@
   gap: 12px;
 }
 
+.jump-hint {
+  margin: -4px 4px 0;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
 /* ===== More & settings ===== */
 
 .about-logo {

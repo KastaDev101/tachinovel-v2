@@ -4,7 +4,7 @@ import type { Filters } from '../../shared/lnreader/filters.ts';
 import { BarButton, CheckRow, Section, SelectRow, SwitchRow } from '../components/controls.tsx';
 import { Icon } from '../components/icon.tsx';
 import { Sheet } from '../components/sheet.tsx';
-import { cycleXCheckbox, defaultFilterValues, toggleCheckbox, xState, type FilterValues } from '../lib/filters.ts';
+import { cycleXCheckbox, defaultFilterValues, isDefaultFilters, toggleCheckbox, xState, type FilterValues } from '../lib/filters.ts';
 
 export function FilterSheet(props: { open: boolean; filters: Filters; values: FilterValues; onApply: (values: FilterValues) => void; onClose: () => void }) {
   const [draft, setDraft] = useState<FilterValues>(props.values);
@@ -25,7 +25,14 @@ export function FilterSheet(props: { open: boolean; filters: Filters; values: Fi
       title="Filters"
       detents={['medium', 'large']}
       testId="filter-sheet"
-      left={<BarButton text="Reset" onClick={() => setDraft(defaultFilterValues(props.filters))} testId="filters-reset" />}
+      left={
+        <BarButton
+          text="Reset"
+          onClick={() => setDraft(defaultFilterValues(props.filters))}
+          disabled={isDefaultFilters(props.filters, draft)}
+          testId="filters-reset"
+        />
+      }
       right={
         <BarButton
           text="Apply"

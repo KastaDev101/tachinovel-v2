@@ -585,7 +585,7 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
           <CheckRow title="Newest first" checked={desc} onClick={() => setDesc(true)} />
         </Section>
       </Sheet>
-      <JumpSheet open={jumpOpen} onClose={() => setJumpOpen(false)} onJump={jumpTo} max={chapters.length} />
+      <JumpSheet open={jumpOpen} onClose={() => setJumpOpen(false)} onJump={jumpTo} max={chapters.length} isValid={(q) => findChapter(chapters, q) >= 0} />
     </Screen>
   );
 }
@@ -622,8 +622,10 @@ function useReadingMs(pluginId: string, path: string, version: number): number {
   return fromRecent ?? fetched ?? 0;
 }
 
-function JumpSheet(props: { open: boolean; onClose: () => void; onJump: (q: string) => void; max: number }) {
+function JumpSheet(props: { open: boolean; onClose: () => void; onJump: (q: string) => void; max: number; isValid: (q: string) => boolean }) {
   const [value, setValue] = useState('');
+  const q = value.trim();
+  const valid = q !== '' && props.isValid(q);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     // Takes over from primeKeyboard() as soon as the sheet's input exists (it mounts with the sheet).
@@ -638,7 +640,7 @@ function JumpSheet(props: { open: boolean; onClose: () => void; onJump: (q: stri
         class="sheet-pad jump-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (value.trim()) props.onJump(value.trim());
+          if (valid) props.onJump(q);
         }}
       >
         <input
@@ -652,7 +654,12 @@ function JumpSheet(props: { open: boolean; onClose: () => void; onJump: (q: stri
           onInput={(e) => setValue(e.currentTarget.value)}
           data-testid="jump-input"
         />
-        <Button variant="filled" size="large" onClick={() => value.trim() && props.onJump(value.trim())} class="jump-go">
+        {q !== '' && !valid && (
+          <p class="jump-hint" role="status" data-testid="jump-hint">
+            No chapter matches “{q}”
+          </p>
+        )}
+        <Button variant="filled" size="large" onClick={() => valid && props.onJump(q)} disabled={!valid} class="jump-go">
           Go
         </Button>
       </form>
