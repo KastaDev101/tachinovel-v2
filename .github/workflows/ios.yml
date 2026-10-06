@@ -6,7 +6,7 @@
 #  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
 #               simulator smoke test: install, launch, screenshot the first screens (artifact
 #               "simulator-screenshots"); fails if the app crashes.
-#  ios-ipa      macOS 26 (push to main / manual only): unsigned DEVICE build packaged as an .ipa for
+#  ios-ipa      macOS 26 (PRs, pushes to main, manual): unsigned DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
 #  testflight   macOS 26: signed archive + TestFlight upload. Only on tags v* or manual dispatch with
@@ -24,8 +24,9 @@ on:
     tags: ['v*']
     # Docs-only pushes don't rebuild (saves macOS minutes; tag pushes ignore path filters).
     paths-ignore: ['docs/**', '**/*.md']
+  # Pull requests always run every job: main is protected and requires web, shell, ios-compile and
+  # ios-ipa, so a path filter here would leave docs-only PRs waiting forever.
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
     inputs:
       flavor:
@@ -144,7 +145,8 @@ jobs:
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)
     needs: web
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # PRs too: it is a required check on main (a real device compile), and the PR's IPA can be tried first.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -166,7 +168,7 @@ jobs:
         with:
           path: ${{ steps.ipa.outputs.ipa }}
           archive: false
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
       - name: Keep the build log
         if: always()
         uses: actions/upload-artifact@v7
