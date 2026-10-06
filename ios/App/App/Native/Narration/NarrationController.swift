@@ -92,7 +92,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         engine.delegate = self
         audio.onTime = { [weak self] t in self?.audioTick(fileTime: t) }
         audio.onEnd = { [weak self] in self?.finishChapter() }
-        audio.onFail = { [weak self] message in self?.fail(message) }
+        audio.onFail = { [weak self] message in self?.audioFailed(message) }
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(interrupted(_:)), name: AVAudioSession.interruptionNotification, object: nil)
         nc.addObserver(self, selector: #selector(routeChanged(_:)), name: AVAudioSession.routeChangeNotification, object: nil)
@@ -286,7 +286,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             let parsed = AudioLibrary.shared.timingJSON(ac).flatMap { NarrationTiming(json: $0) }
             DispatchQueue.main.async {
                 guard gen == self.generation else { return } // superseded
-                if let loadError { return self.fail(loadError) }
+                if let loadError { return self.audioFailed(loadError, startParagraph: startParagraph) }
                 self.timing = parsed
                 self.chapter?.nextPath = parsed?.nextChapterPath ?? self.nextAudioChapter()?.chapterPath
                 self.chapter?.nextName = parsed?.nextTitle
@@ -299,6 +299,17 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
                 self.set(.playing)
             }
         }
+    }
+
+    /// The narrated file can't play (offline and evicted by iCloud, unreadable, corrupt): read the same
+    /// chapter with the system voice instead of stopping, from the spoken paragraph if there is one.
+    private func audioFailed(_ message: String, startParagraph: Int? = nil) {
+        guard mode == .audio, let ac = audioChapter else { return fail(message) }
+        CoreHost.shared.log.error("narration: audio failed (\(message, privacy: .public)); falling back to the system voice")
+        let paragraph = startParagraph ?? lastSegment.flatMap { timing?.segments[safe: $0]?.block } ?? 0
+        stopAudio()
+        mode = .speech
+        playFromCore(pluginId: ac.pluginId, novelPath: ac.novelPath, chapterPath: ac.chapterPath, novelName: ac.novelName, startParagraph: paragraph)
     }
 
     private func stopAudio() {
