@@ -14,6 +14,8 @@ export interface Viewport {
   listTop: number;
   rowHeight: number;
   count: number;
+  /** Rows of different heights: top of each row plus the total at the end (count + 1 entries). */
+  offsets?: ArrayLike<number> | undefined;
 }
 
 export const EMPTY_RANGE: Range = { start: 0, end: 0 };
@@ -22,10 +24,38 @@ function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n;
 }
 
+/** Index of the row containing `y` (list coordinates); with offsets, by binary search. */
+export function rowAt(v: Pick<Viewport, 'rowHeight' | 'count' | 'offsets'>, y: number): number {
+  const o = v.offsets;
+  if (!o) return Math.floor(y / v.rowHeight);
+  let lo = 0;
+  let hi = v.count; // offsets[count] = total height
+  if (y < (o[0] ?? 0)) return -1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if ((o[mid] ?? Infinity) <= y) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** Top of row `i` in list coordinates. */
+export function rowTop(v: Pick<Viewport, 'rowHeight' | 'offsets'>, i: number): number {
+  return v.offsets ? (v.offsets[i] ?? 0) : i * v.rowHeight;
+}
+
 /** Rows that intersect the viewport. */
 export function visibleRange(v: Viewport): Range {
   if (v.count <= 0 || v.rowHeight <= 0 || v.viewportHeight <= 0) return EMPTY_RANGE;
   const top = v.scrollTop - v.listTop;
+  if (v.offsets) {
+    const start = clamp(rowAt(v, top), 0, v.count);
+    const bottom = top + v.viewportHeight;
+    const last = rowAt(v, bottom);
+    // The row starting exactly at the bottom edge isn't visible.
+    const end = clamp(rowTop(v, last) >= bottom ? last : last + 1, 0, v.count);
+    return { start, end: Math.max(start, end) };
+  }
   const start = clamp(Math.floor(top / v.rowHeight), 0, v.count);
   const end = clamp(Math.ceil((top + v.viewportHeight) / v.rowHeight), 0, v.count);
   return { start, end: Math.max(start, end) };
@@ -78,17 +108,20 @@ export function sameRange(a: Range, b: Range): boolean {
   return a.start === b.start && a.end === b.end;
 }
 
-export function totalHeight(count: number, rowHeight: number): number {
+export function totalHeight(count: number, rowHeight: number, offsets?: ArrayLike<number>): number {
+  if (offsets) return offsets[Math.max(0, count)] ?? 0;
   return Math.max(0, count) * rowHeight;
 }
 
 /** scrollTop that brings row `index` to the top (or centre) of the viewport, clamped to the content. */
 export function scrollTopForIndex(
   index: number,
-  opts: { rowHeight: number; listTop: number; viewportHeight: number; contentHeight: number; align?: 'start' | 'center'; inset?: number },
+  opts: { rowHeight: number; listTop: number; viewportHeight: number; contentHeight: number; align?: 'start' | 'center'; inset?: number; offsets?: ArrayLike<number> | undefined },
 ): number {
-  const rowTop = opts.listTop + index * opts.rowHeight;
+  const o = opts.offsets;
+  const top = opts.listTop + (o ? (o[index] ?? 0) : index * opts.rowHeight);
+  const h = o ? (o[index + 1] ?? 0) - (o[index] ?? 0) : opts.rowHeight;
   const inset = opts.inset ?? 0;
-  const raw = opts.align === 'center' ? rowTop - (opts.viewportHeight - opts.rowHeight) / 2 : rowTop - inset;
+  const raw = opts.align === 'center' ? top - (opts.viewportHeight - h) / 2 : top - inset;
   return clamp(Math.round(raw), 0, Math.max(0, opts.contentHeight - opts.viewportHeight));
 }

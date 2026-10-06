@@ -4,6 +4,7 @@
  */
 import type { ReadingStats } from '../../shared/contracts/domain.ts';
 import { plural } from './format.ts';
+import { PACE_KEY } from './pace.ts';
 
 export type StatsRange = 7 | 30 | 365;
 export type StatsDay = ReadingStats['days'][number];
@@ -317,4 +318,143 @@ export function durationSpoken(ms: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return h >= 100 || m === 0 ? unit(h, 'hour') : `${unit(h, 'hour')} ${unit(m, 'minute')}`;
+}
+
+// ---------- year heatmap ----------
+
+/** Weeks in the year heatmap (a full year plus the week in progress), and the days it asks for. */
+export const HEAT_WEEKS = 53;
+export const HEAT_DAYS = HEAT_WEEKS * 7;
+
+export type HeatLevel = 0 | 1 | 2 | 3 | 4;
+
+export interface HeatCell {
+  date: string;
+  ms: number;
+  chapters: number;
+  level: HeatLevel;
+  /** After today (the rest of this week): drawn empty. */
+  future: boolean;
+}
+
+export interface YearGrid {
+  /** Columns oldest → newest, each the 7 days of one week from `weekStartsOn`. */
+  weeks: HeatCell[][];
+  /** Month labels: the column where each month's first full-week row starts. */
+  months: { col: number; label: string }[];
+  activeDays: number;
+  totalMs: number;
+}
+
+/**
+ * Shade of one day. With a goal: under half of it, under it, met, twice it. Without: under 15 m,
+ * under 30 m, under an hour, an hour or more.
+ */
+export function heatLevel(ms: number, goalMs: number | null = null): HeatLevel {
+  if (ms <= 0) return 0;
+  const [a, b, c] = goalMs !== null && goalMs > 0 ? [goalMs / 2, goalMs, goalMs * 2] : [15 * MIN, 30 * MIN, HOUR];
+  return ms < a ? 1 : ms < b ? 2 : ms < c ? 3 : 4;
+}
+
+const fmtMonth = new Intl.DateTimeFormat('en-US', { month: 'short' });
+
+/** The last 53 weeks as a calendar grid (GitHub-style), ending with the current week. */
+export function yearGrid(days: readonly StatsDay[], now: number, goalMs: number | null = null, weekStartsOn = 0): YearGrid {
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const today = dayKey(now);
+  const first = parseDayKey(today);
+  first.setDate(first.getDate() - ((first.getDay() - weekStartsOn + 7) % 7) - (HEAT_WEEKS - 1) * 7);
+  const weeks: HeatCell[][] = [];
+  const months: { col: number; label: string }[] = [];
+  let activeDays = 0;
+  let totalMs = 0;
+  let lastMonth = -1;
+  for (let w = 0; w < HEAT_WEEKS; w++) {
+    const col: HeatCell[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(first);
+      d.setDate(first.getDate() + w * 7 + i);
+      const key = dayKey(d.getTime());
+      const future = key > today;
+      const day = future ? undefined : byDate.get(key);
+      const ms = day?.ms ?? 0;
+      if (ms > 0) {
+        activeDays++;
+        totalMs += ms;
+      }
+      col.push({ date: key, ms, chapters: day?.chapters ?? 0, level: heatLevel(ms, goalMs), future });
+      if (i === 0) {
+        const m = d.getMonth();
+        // A label where the month changes; none for a first column that's about to change anyway.
+        if (m !== lastMonth && !(w === 0 && d.getDate() > 24)) months.push({ col: w, label: fmtMonth.format(d) });
+        lastMonth = m;
+      }
+    }
+    weeks.push(col);
+  }
+  return { weeks, months, activeDays, totalMs };
+}
+
+/** "Tue, Oct 3 · 42 m · 4 chapters", or "Tue, Oct 3 · no reading". */
+export function heatCellLabel(c: HeatCell): string {
+  const day = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(parseDayKey(c.date));
+  return c.ms > 0 ? `${day} · ${formatDuration(c.ms)} · ${plural(c.chapters, 'chapter')}` : `${day} · no reading`;
+}
+
+// ---------- longest session ----------
+
+/** "Shadow Slave · Sep 28" (the year too when it isn't this year); the duration is shown on its own. */
+export function longestSessionDetail(s: NonNullable<ReadingStats['longestSession']>, now: number): string {
+  const d = new Date(s.at);
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  const date = new Intl.DateTimeFormat('en-US', sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }).format(d);
+  return [s.name?.trim() || '', date].filter(Boolean).join(' · ');
+}
+
+// ---------- reading speed ----------
+
+/** The learned pace in words per minute, or null when the reader hasn't learned one on this device. */
+export function learnedPace(stored: string | null): number | null {
+  const n = stored === null ? NaN : Number(stored);
+  return Number.isFinite(n) && n >= 100 && n <= 700 ? Math.round(n) : null;
+}
+
+/** The pace the reader saved (under its own PACE_KEY), or null. Never throws: storage can be blocked. */
+export function readLearnedPace(storage: () => Pick<Storage, 'getItem'>): number | null {
+  try {
+    return learnedPace(storage().getItem(PACE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+/** "about 2.8 million words", "about 180,000 words", "about 4,200 words" (two significant digits). */
+export function wordsEstimate(totalMs: number, wpm: number): string {
+  const words = (totalMs / MIN) * wpm;
+  if (words < 1) return 'no words yet';
+  const mag = 10 ** Math.max(0, Math.floor(Math.log10(words)) - 1);
+  const rounded = Math.round(words / mag) * mag;
+  if (rounded >= 1e6) return `about ${(rounded / 1e6).toFixed(rounded >= 1e7 ? 0 : 1).replace(/\.0$/, '')} million words`;
+  return `about ${rounded.toLocaleString('en-US')} words`;
+}
+
+/** The calendar month by month (oldest first), for screen readers: "October 2026: 4 days read, 3 h 10 m". */
+export function heatMonths(grid: YearGrid): { key: string; label: string; days: number; ms: number }[] {
+  const byMonth = new Map<string, { key: string; label: string; days: number; ms: number }>();
+  const fmt = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
+  for (const col of grid.weeks)
+    for (const c of col) {
+      if (c.future) continue;
+      const key = c.date.slice(0, 7);
+      let m = byMonth.get(key);
+      if (!m) {
+        m = { key, label: fmt.format(parseDayKey(c.date)), days: 0, ms: 0 };
+        byMonth.set(key, m);
+      }
+      if (c.ms > 0) {
+        m.days++;
+        m.ms += c.ms;
+      }
+    }
+  return [...byMonth.values()];
 }

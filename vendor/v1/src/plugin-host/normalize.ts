@@ -301,6 +301,19 @@ export interface RawChapter {
   releaseTime?: unknown;
   chapterNumber?: unknown;
   locked?: unknown;
+  /** LNReader's chapter group: a volume title ("Volume 2", Royal Road's enableVol) or a page number. */
+  page?: unknown;
+}
+
+/**
+ * The volume a chapter belongs to, from LNReader's `page` field. Plain numbers are list pages
+ * (page plugins, LNReader shows them as "Page N"), not volumes, so they are left out.
+ */
+export function volumeOf(page: unknown): string | undefined {
+  if (typeof page !== 'string') return undefined;
+  const v = cleanText(page);
+  if (!v || /^[0-9]+$/.test(v) || v.length > 200) return undefined;
+  return v;
 }
 
 /**
@@ -345,6 +358,8 @@ export function toChapterMetas(items: unknown, novelName = ''): ChapterMeta[] {
     const rt = normalizeReleaseTime(raw.releaseTime);
     if (rt) meta.releaseTime = rt;
     if (raw.locked === true || lock.locked) meta.locked = true;
+    const volume = volumeOf(raw.page);
+    if (volume) meta.volume = volume;
     out.push(meta);
   }
   // Plugins should list oldest first; flip lists that are clearly newest-first.

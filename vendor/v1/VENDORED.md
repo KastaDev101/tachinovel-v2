@@ -3,7 +3,7 @@
 Read-only copy of TachiNovel v1 sources, used by the v2 build (`@v1/*` alias, tools/v1.ts).
 
 - From: the v1 `tachinovel` repo (local repo, no remote)
-- commit: 3a2588318625440a850aadb7f13ef8aeb821c99f
+- commit: f788523514c876f79562f7cfb67d87cbf5bbe674
 - Taken: 2026-10-06 with `git archive HEAD` (committed state only)
 - Paths: `src/shared`, `src/script`, `src/plugin-host`, `src/ui`, `src/types`, `plugins/stonescape.ts`, `plugins/verified.json`
 - License: MIT (v1 package.json). `src/shared/lnreader/` holds LNReader plugin types, MIT, © LNReader contributors

@@ -56,6 +56,30 @@ export function stamp(ts: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** How many recent problems the short report carries, and how long each line may be. */
+export const REPORT_PROBLEMS = 5;
+const REPORT_LINE_MAX = 220;
+
+/**
+ * The short "Send a Problem Report" text: a line for the user to say what happened, the build and
+ * device, and the latest warnings/errors. Fits a message; the full diagnostics are separate.
+ */
+export function problemReport(d: Pick<DiagnosticsInput, 'now' | 'build' | 'ui' | 'device' | 'logs'>): string {
+  const device = d.device ? `${d.device.model} · iOS ${d.device.systemVersion}` : 'device unknown';
+  const lines = [`TachiNovel problem report · ${stamp(d.now)}`, 'What happened: ', '', `App ${d.build || d.ui.version} (UI ${d.ui.hash}) · ${device}`];
+  if (d.logs === null) lines.push('Recent problems: couldn’t read the log');
+  else if (d.logs.length === 0) lines.push('Recent problems: none logged');
+  else {
+    const shown = d.logs.slice(0, REPORT_PROBLEMS);
+    lines.push(d.logs.length > shown.length ? `Latest ${shown.length} of ${d.logs.length} recent problems:` : 'Recent problems:');
+    for (const l of shown) {
+      const msg = l.message.replace(/\s+/g, ' ').trim();
+      lines.push(`- ${stamp(l.at)} ${l.level}: ${msg.length > REPORT_LINE_MAX ? `${msg.slice(0, REPORT_LINE_MAX - 1)}…` : msg}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 export function diagnosticsText(d: DiagnosticsInput): string {
   const s = d.settings;
   const lines = [

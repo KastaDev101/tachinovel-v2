@@ -21,9 +21,11 @@ import { novelKeyString, parseNovelKey } from '../../shared/contracts/domain.ts'
 import type { NovelPage } from '../../shared/contracts/protocol.ts';
 import { Inflight, type Lane, mapLimit } from '../lib/async.ts';
 import { AppError, errorCode, errorMessage, invalidArgs } from '../lib/errors.ts';
+import { JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
 import type { CoverCache } from './covers.ts';
 import type { DownloadService } from './downloads.ts';
+import type { HistoryService } from './history.ts';
 import type { LibraryService } from './library.ts';
 import { type NovelData, type NovelStore, trimChapters } from './novel-store.ts';
 import type { NovelProgress, ProgressService } from './progress.ts';
@@ -31,6 +33,26 @@ import type { SourceService } from './sources.ts';
 import type { UpdatesService } from './updates.ts';
 
 export const UPDATE_CONCURRENCY = 3;
+/** Launch checks (settings.library.updateOnOpen) skip finished novels checked within this long. */
+export const FINISHED_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+/** Launch checks start no new novel after this long; the rest wait for the next launch or a manual check. */
+export const LAUNCH_CHECK_BUDGET_MS = 90_000;
+/** Local record of when each library novel was last checked (device-specific, so not synced). */
+export const UPDATE_CHECKS_PATH = 'update-checks.json';
+
+interface CheckLogDoc {
+  schemaVersion: number;
+  /** novel key → last successful check (epoch ms) */
+  checked: Record<string, number>;
+}
+
+export interface CheckOptions {
+  /**
+   * The automatic check on launch: completed/cancelled novels checked in the last 7 days are skipped,
+   * and no new novel is started after LAUNCH_CHECK_BUDGET_MS. Manual checks (pull to refresh) check all.
+   */
+  launch?: boolean;
+}
 const SOURCE_FAILURE_CODES = new Set(['NETWORK', 'TIMEOUT', 'CLOUDFLARE', 'PLUGIN']);
 
 /** Unread = not read and not locked (locked chapters can't be read, so they never count). */
@@ -92,6 +114,7 @@ export class NovelService {
   private readonly updates: UpdatesService;
   private readonly covers: CoverCache;
   private readonly downloads: DownloadService;
+  private readonly history: HistoryService | null;
   private readonly fetches = new Inflight<NovelData>();
   private readonly refreshes = new Inflight<RefreshResult>();
   private updateRun: Promise<UpdateCheckResult> | null = null;
@@ -106,6 +129,8 @@ export class NovelService {
       updates: UpdatesService;
       covers: CoverCache;
       downloads: DownloadService;
+      /** Optional: history rows follow a changed cover. */
+      history?: HistoryService;
     },
   ) {
     this.ctx = ctx;
@@ -116,6 +141,7 @@ export class NovelService {
     this.updates = deps.updates;
     this.covers = deps.covers;
     this.downloads = deps.downloads;
+    this.history = deps.history ?? null;
   }
 
   /**
@@ -127,7 +153,7 @@ export class NovelService {
     return this.fetches.run(`${lane}|${ks}`, async () => {
       const adapter = await this.sources.adapter(key.pluginId, lane);
       const res = await adapter.novel(key.path);
-      if (!res || typeof res !== 'object' || !res.details) throw new AppError('PLUGIN', 'Source returned no novel details');
+      if (!res || typeof res !== 'object' || !res.details) throw new AppError('PLUGIN', 'The source returned no details for this novel.');
       const details: NovelDetails = { ...res.details, pluginId: key.pluginId, path: key.path };
       if (!Array.isArray(details.genres)) details.genres = [];
       if (!details.status) details.status = 'unknown';
@@ -197,6 +223,7 @@ export class NovelService {
       const prog = await this.progress.get(ks);
       const now = this.ctx.platform.now();
       const d = data.details;
+      const oldCover = this.library.get(ks)?.cover;
       const entry = this.library.update(ks, (e) => {
         if (d.name) e.name = d.name;
         if (d.cover) e.cover = d.cover;
@@ -216,7 +243,17 @@ export class NovelService {
         }
         await this.updates.add(records);
       }
-      if (d.cover) void this.covers.ensure(d.cover, this.sources.imageRequestHeaders(key.pluginId));
+      if (d.cover && oldCover && d.cover !== oldCover) {
+        // The source changed the cover: fetch the new one, drop the old file, and repaint once it's here.
+        this.covers.remove(oldCover);
+        this.history?.setCover(ks, d.cover);
+        void this.covers.ensure(d.cover, this.sources.imageRequestHeaders(key.pluginId)).then((ref) => {
+          if (ref) this.library.notifyChanged();
+        });
+        this.ctx.platform.log('info', `Cover of ${ks} changed on the source`);
+      } else if (d.cover) {
+        void this.covers.ensure(d.cover, this.sources.imageRequestHeaders(key.pluginId));
+      }
       return { data, newChapters };
     });
   }
@@ -286,15 +323,75 @@ export class NovelService {
    * The result also lists the novels that got chapters (most first) and how many couldn't be checked,
    * so the UI can say "3 new · Shadow Slave" or "2 couldn't be checked".
    */
-  checkUpdates(keys?: string[]): Promise<UpdateCheckResult> {
-    this.updateRun ??= this.runCheck(keys).finally(() => {
+  checkUpdates(keys?: string[], opts: CheckOptions = {}): Promise<UpdateCheckResult> {
+    this.updateRun ??= this.runCheck(keys, opts).finally(() => {
       this.updateRun = null;
     });
     return this.updateRun;
   }
 
-  private async runCheck(keys?: string[]): Promise<UpdateCheckResult> {
-    const targets = (keys ?? this.library.all().map((e) => e.key)).filter((k) => this.library.has(k));
+  private checkLog: Promise<JsonDoc<CheckLogDoc> | null> | null = null;
+
+  /** Persist the update-check log (close / app.flush). */
+  async flush(): Promise<void> {
+    const log = this.checkLog ? await this.checkLog : null;
+    await log?.flush();
+  }
+
+  private loadCheckLog(): Promise<JsonDoc<CheckLogDoc> | null> {
+    this.checkLog ??= JsonDoc.load<CheckLogDoc>(
+      this.ctx.platform.local,
+      {
+        path: UPDATE_CHECKS_PATH,
+        version: 1,
+        create: () => ({ schemaVersion: 1, checked: {} }),
+        normalize: (d) => {
+          const checked: Record<string, number> = {};
+          if (d.checked && typeof d.checked === 'object') {
+            for (const [k, v] of Object.entries(d.checked)) if (typeof v === 'number' && Number.isFinite(v)) checked[k] = v;
+          }
+          return { schemaVersion: 1, checked };
+        },
+      },
+      this.ctx.timing.indexWriteMs,
+      this.ctx.env,
+    ).catch((err: unknown) => {
+      this.ctx.platform.log('warn', `Update-check log unavailable: ${errorMessage(err)}`);
+      this.checkLog = null;
+      return null;
+    });
+    return this.checkLog;
+  }
+
+  /** Library keys in check order: most recently read first (then recently updated, then by name). */
+  private checkOrder(keys: string[]): string[] {
+    const rank = (k: string): [number, number, string] => {
+      const e = this.library.get(k);
+      return [e?.lastReadAt ?? 0, e?.lastUpdatedAt ?? 0, e?.name ?? k];
+    };
+    return [...keys].sort((a, b) => {
+      const [ra, ua, na] = rank(a);
+      const [rb, ub, nb] = rank(b);
+      return rb - ra || ub - ua || na.localeCompare(nb);
+    });
+  }
+
+  private async runCheck(keys: string[] | undefined, opts: CheckOptions): Promise<UpdateCheckResult> {
+    const log = await this.loadCheckLog();
+    const started = this.ctx.platform.now();
+    let targets = this.checkOrder((keys ?? this.library.all().map((e) => e.key)).filter((k) => this.library.has(k)));
+    let finishedSkipped = 0;
+    if (opts.launch) {
+      targets = targets.filter((k) => {
+        const e = this.library.get(k);
+        const last = log?.value.checked[k];
+        const finished = e?.status === 'completed' || e?.status === 'cancelled';
+        const recent = last !== undefined && started - last < FINISHED_RECHECK_MS;
+        if (finished && recent) finishedSkipped++;
+        return !(finished && recent);
+      });
+    }
+    let deferred = 0;
     const total = targets.length;
     let done = 0;
     let newChapters = 0;
@@ -306,7 +403,9 @@ export class NovelService {
     await mapLimit(targets, UPDATE_CONCURRENCY, async (ks) => {
       const name = this.library.get(ks)?.name;
       const { pluginId } = parseNovelKey(ks);
-      if (this.sources.updateCheckPaused(pluginId)) {
+      if (opts.launch && this.ctx.platform.now() - started > LAUNCH_CHECK_BUDGET_MS) {
+        deferred++; // out of time: left for the next launch (most recently read ones went first)
+      } else if (this.sources.updateCheckPaused(pluginId)) {
         // A source that kept failing (down, blocked) is left alone for a while instead of timing out per novel.
         if (!skipped.has(pluginId)) {
           skipped.add(pluginId);
@@ -316,6 +415,10 @@ export class NovelService {
       } else {
         try {
           const r = await this.refreshLibraryNovel(ks, { recordUpdates: true, lane: 'background' });
+          if (log) {
+            log.value.checked[ks] = this.ctx.platform.now();
+            log.changedQuietly();
+          }
           newChapters += r.newChapters.length;
           if (r.newChapters.length > 0) novels.push({ key: ks, name: this.library.get(ks)?.name ?? name ?? ks, newChapters: r.newChapters.length });
           this.sources.recordUpdateCheck(pluginId, true);
@@ -334,7 +437,15 @@ export class NovelService {
     events.emit('updates.progress', { done, total, newChapters, finished: true });
     this.library.notifyChanged();
     novels.sort((a, b) => b.newChapters - a.newChapters || a.name.localeCompare(b.name));
-    this.ctx.platform.log('info', `Update check: ${newChapters} new in ${novels.length}/${total} novels${failed ? `, ${failed} not checked` : ''}`);
+    if (log) {
+      // Forget novels that left the library.
+      for (const k of Object.keys(log.value.checked)) if (!this.library.has(k)) delete log.value.checked[k];
+      log.changed();
+    }
+    const extra = [failed ? `${failed} not checked` : '', finishedSkipped ? `${finishedSkipped} finished skipped` : '', deferred ? `${deferred} left for later` : '']
+      .filter(Boolean)
+      .join(', ');
+    this.ctx.platform.log('info', `Update check${opts.launch ? ' (launch)' : ''}: ${newChapters} new in ${novels.length}/${total} novels${extra ? `, ${extra}` : ''}`);
     return { newChapters, novels, failed };
   }
 }

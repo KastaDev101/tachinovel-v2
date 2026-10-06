@@ -31,7 +31,16 @@ export class SymbolService {
         path: 'symbols.json',
         version: 1,
         create: () => ({ schemaVersion: 1, build, symbols: {} }),
-        normalize: (d) => (d.build === build && d.symbols && typeof d.symbols === 'object' ? d : { schemaVersion: 1, build, symbols: {} }),
+        normalize: (d) => {
+          if (d.build !== build || !d.symbols || typeof d.symbols !== 'object') return { schemaVersion: 1, build, symbols: {} };
+          // Only well-formed cache rows (they go to the UI as image data URLs).
+          const symbols: SymbolsDoc['symbols'] = {};
+          for (const [name, v] of Object.entries(d.symbols as Record<string, unknown>)) {
+            const row = v as { size?: unknown; data?: unknown } | null;
+            if (row && typeof row.size === 'number' && typeof row.data === 'string' && row.data.startsWith('data:image/png;base64,')) symbols[name] = { size: row.size, data: row.data };
+          }
+          return { schemaVersion: d.schemaVersion, build, symbols };
+        },
       },
       ctx.timing.indexWriteMs,
       ctx.env,

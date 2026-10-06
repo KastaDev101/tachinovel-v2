@@ -85,11 +85,11 @@ export interface SegOption<T extends string> {
   aria?: string;
 }
 
-export function Segmented<T extends string>(props: { options: SegOption<T>[]; value: T; onChange: (v: T) => void; class?: string }) {
+export function Segmented<T extends string>(props: { options: SegOption<T>[]; value: T; onChange: (v: T) => void; class?: string; label?: string }) {
   const idx = Math.max(0, props.options.findIndex((o) => o.value === props.value));
   const n = props.options.length;
   return (
-    <div class={`segmented ${props.class ?? ''}`} role="tablist" style={{ '--n': String(n), '--i': String(idx) }}>
+    <div class={`segmented ${props.class ?? ''}`} role="tablist" aria-label={props.label} style={{ '--n': String(n), '--i': String(idx) }}>
       <div class="segmented-thumb" />
       {props.options.map((o) => (
         <button
@@ -124,7 +124,10 @@ export function Stepper(props: {
       <button type="button" class="stepper-btn tap tap-dim" aria-label={`Decrease ${props.label}`} disabled={props.value <= props.min} onClick={() => set(props.value - props.step)}>
         <Icon name="minus" size={16} />
       </button>
-      <span class="stepper-value tabular">{props.format ? props.format(props.value) : String(props.value)}</span>
+      {/* Announced when it changes (VoiceOver reads the new value after +/−). */}
+      <span class="stepper-value tabular" aria-live="polite" aria-atomic="true">
+        {props.format ? props.format(props.value) : String(props.value)}
+      </span>
       <button type="button" class="stepper-btn tap tap-dim" aria-label={`Increase ${props.label}`} disabled={props.value >= props.max} onClick={() => set(props.value + props.step)}>
         <Icon name="plus" size={16} />
       </button>
@@ -141,6 +144,8 @@ export function Slider(props: {
   onCommit?: (v: number) => void;
   label: string;
   class?: string;
+  /** What VoiceOver says for the value ("60 percent", "Chapter 12"); the raw number otherwise. */
+  valueText?: string;
 }) {
   const pct = ((props.value - props.min) / (props.max - props.min || 1)) * 100;
   return (
@@ -152,6 +157,7 @@ export function Slider(props: {
       step={props.step ?? 'any'}
       value={props.value}
       aria-label={props.label}
+      aria-valuetext={props.valueText}
       style={{ '--pct': `${pct}%` }}
       onInput={(e) => props.onInput(Number(e.currentTarget.value))}
       onChange={(e) => props.onCommit?.(Number(e.currentTarget.value))}
@@ -161,10 +167,21 @@ export function Slider(props: {
 
 // ---------- grouped lists (iOS Settings style) ----------
 
-export function Section(props: { header?: ComponentChildren; footer?: ComponentChildren; children: ComponentChildren; class?: string }) {
+/**
+ * Grouped list section. `headerAction` (e.g. "Update All") sits beside the heading, outside the
+ * heading element, so VoiceOver reads the title alone and the button as its own control.
+ */
+export function Section(props: { header?: ComponentChildren; headerAction?: ComponentChildren; footer?: ComponentChildren; children: ComponentChildren; class?: string }) {
   return (
     <section class={`group ${props.class ?? ''}`}>
-      {props.header !== undefined && <h3 class="group-header">{props.header}</h3>}
+      {props.header !== undefined && props.headerAction !== undefined ? (
+        <div class="group-header-row">
+          <h3 class="group-header">{props.header}</h3>
+          {props.headerAction}
+        </div>
+      ) : (
+        props.header !== undefined && <h3 class="group-header">{props.header}</h3>
+      )}
       <div class="group-body">{props.children}</div>
       {props.footer !== undefined && <p class="group-footer">{props.footer}</p>}
     </section>
@@ -270,16 +287,23 @@ export function SelectRow<T extends string>(props: {
   );
 }
 
-export function CheckRow(props: { title: ComponentChildren; checked: boolean; onClick: () => void; trailing?: ComponentChildren; testId?: string }) {
+/**
+ * A row with a check. `checkbox`: multi-select toggles (filters) show a box that is visibly empty
+ * when off; the default checkmark suits pick-one lists (sort order).
+ */
+export function CheckRow(props: { title: ComponentChildren; checked: boolean; onClick: () => void; trailing?: ComponentChildren; testId?: string; variant?: 'check' | 'checkbox' }) {
   return (
     <button type="button" class="row tap tap-row" onClick={props.onClick} role="menuitemcheckbox" aria-checked={props.checked} data-testid={props.testId}>
+      {props.variant === 'checkbox' && <span class={`xcheck ${props.checked ? 'is-include' : 'is-none'}`}>{props.checked && <Icon name="checkmark" size={15} />}</span>}
       <span class="row-main">
         <span class="row-title">{props.title}</span>
       </span>
       {props.trailing}
-      <span class={`row-check${props.checked ? ' is-on' : ''}`}>
-        <Icon name="checkmark" size={17} />
-      </span>
+      {props.variant !== 'checkbox' && (
+        <span class={`row-check${props.checked ? ' is-on' : ''}`}>
+          <Icon name="checkmark" size={17} />
+        </span>
+      )}
     </button>
   );
 }

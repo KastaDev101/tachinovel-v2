@@ -73,7 +73,7 @@ export function FilterSheet(props: { open: boolean; filters: Filters; values: Fi
               return (
                 <Section key={key} header={f.label}>
                   {f.options.map((o) => (
-                    <CheckRow key={o.value} title={o.label} checked={v.includes(o.value)} onClick={() => set(key, toggleCheckbox(v, o.value))} testId={`filter-${key}-${o.value}`} />
+                    <CheckRow key={o.value} title={o.label} checked={v.includes(o.value)} onClick={() => set(key, toggleCheckbox(v, o.value))} testId={`filter-${key}-${o.value}`} variant="checkbox" />
                   ))}
                 </Section>
               );

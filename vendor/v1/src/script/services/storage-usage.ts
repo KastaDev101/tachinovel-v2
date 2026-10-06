@@ -29,5 +29,6 @@ export async function storageUsage(s: Services): Promise<StorageUsage> {
       logs: local.size('logs') + (synced.root === local.root ? 0 : synced.size('logs')),
     },
     caps: { cacheBytes: settings.cacheCapMB * MB, coverBytes: settings.coverCapMB * MB },
+    orphanDownloads: await s.downloads.orphanUsage(),
   };
 }

@@ -2,7 +2,8 @@
 import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { bridge, errorText, toUiError, type UiError } from '../bridge/client.ts';
-import { stack } from '../state/nav.ts';
+import { failureInfo, type FailureAction } from '../lib/source-failure.ts';
+import { push, stack } from '../state/nav.ts';
 import { errorToast, toasts, undoToast, expire } from '../state/toast.ts';
 import { Button } from './controls.tsx';
 import { Icon } from './icon.tsx';
@@ -93,8 +94,41 @@ export function solveChallengeThen(pluginId: string, retry: () => void): () => P
   };
 }
 
+/**
+ * A source failure with a known reason (BridgeError.reason): plain wording and the one action that
+ * helps. Verify for bot checks, Retry for a site that's down / unreachable / limiting / offline,
+ * "Check for Updates" when the site changed, nothing for a site that's gone.
+ */
+export interface FailureView {
+  title: string;
+  text: string;
+  action: FailureAction | null;
+}
+
+function titleCase(s: string): string {
+  const small = new Set(['a', 'an', 'of', 'the']);
+  return s
+    .split(' ')
+    .map((w, i) => (i > 0 && small.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+export function failureView(e: UiError): FailureView | null {
+  if (!e.reason) return null;
+  const info = failureInfo(e.reason);
+  const title = e.reason === 'offline' ? 'You’re Offline' : e.reason === 'bot-check' || e.reason === 'blocked' ? 'Verification Needed' : titleCase(info.short);
+  return { title, text: /[.!?]$/.test(info.text) ? info.text : `${info.text}.`, action: info.action };
+}
+
+/** The "Check for Updates" action: the Extensions page, where plugin updates are. */
+export function openExtensions(): void {
+  push({ name: 'settings', page: 'sources' });
+}
+
 export function ErrorState(props: { error: UiError; onRetry?: () => void; /** CLOUDFLARE errors get an "Open site to verify" button. */ onSolve?: () => Promise<void>; compact?: boolean }) {
   const [solving, setSolving] = useState(false);
+  const view = failureView(props.error);
+  if (view) return <FailureState view={view} onRetry={props.onRetry} onSolve={props.onSolve} compact={props.compact} offline={props.error.reason === 'offline'} />;
   const challenge = props.error.code === 'CLOUDFLARE' && props.onSolve !== undefined;
   const offline = props.error.offline || props.error.code === 'NETWORK';
   const title = props.error.offline ? 'You’re Offline' : offline ? 'Can’t Connect' : props.error.code === 'LOCKED' ? 'Chapter Locked' : challenge ? 'Verification Needed' : 'Something Went Wrong';
@@ -129,6 +163,52 @@ export function ErrorState(props: { error: UiError; onRetry?: () => void; /** CL
       {props.onRetry && props.error.code !== 'LOCKED' && (
         <Button variant={challenge ? 'plain' : 'tinted'} onClick={props.onRetry} class={challenge ? 'state-action-2' : 'state-action'} {...(challenge ? {} : { icon: 'arrow.clockwise' })}>
           Try Again
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function FailureState(props: { view: FailureView; onRetry: (() => void) | undefined; onSolve: (() => Promise<void>) | undefined; compact: boolean | undefined; offline: boolean }) {
+  const [solving, setSolving] = useState(false);
+  const { view } = props;
+  // Without a way to open the site, a bot check falls back to Try Again.
+  const action = view.action === 'open-site' && !props.onSolve ? 'retry' : view.action;
+  return (
+    <div class={`state${props.compact ? ' is-compact' : ''}`} data-testid={props.offline ? 'offline-state' : 'error-state'} data-reason-action={action ?? 'none'}>
+      <span class="state-icon">
+        <Icon name={props.offline ? 'wifi.slash' : 'exclamationmark.triangle'} size={props.compact ? 30 : 42} />
+      </span>
+      <h2 class="state-title">{view.title}</h2>
+      <p class="state-message">{view.text}</p>
+      {action === 'open-site' && (
+        <Button
+          variant="filled"
+          icon="safari"
+          class="state-action"
+          disabled={solving}
+          onClick={() => {
+            setSolving(true);
+            void props.onSolve?.().finally(() => setSolving(false));
+          }}
+        >
+          {solving ? 'Waiting for the site…' : 'Open site to verify'}
+        </Button>
+      )}
+      {action === 'retry' && props.onRetry && (
+        <Button variant="tinted" icon="arrow.clockwise" onClick={props.onRetry} class="state-action">
+          Try Again
+        </Button>
+      )}
+      {/* Passed the check in Safari already: a quiet second way back in. */}
+      {action === 'open-site' && props.onRetry && (
+        <Button variant="plain" onClick={props.onRetry} class="state-action-2">
+          Try Again
+        </Button>
+      )}
+      {action === 'update' && (
+        <Button variant="tinted" icon="arrow.down.circle" onClick={openExtensions} class="state-action">
+          Check for Updates
         </Button>
       )}
     </div>

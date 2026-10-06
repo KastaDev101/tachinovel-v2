@@ -86,7 +86,7 @@ export function NovelGrid<T extends GridNovel>(props: NovelGridProps<T>) {
               type="button"
               class={`grid-hit tap ${list ? 'tap-row' : 'tap-scale'}`}
               data-key={item.key}
-              aria-label={item.name}
+              aria-label={b.inLibrary ? `${item.name}, in library` : item.name}
               aria-pressed={props.selecting ? sel : undefined}
               onClick={() => props.onOpen(item)}
             >
@@ -119,7 +119,7 @@ export function NovelGrid<T extends GridNovel>(props: NovelGridProps<T>) {
                   {item.subtitle && <span class="grid-subtitle ellipsis">{item.subtitle}</span>}
                 </span>
               )}
-              {list && b.unread !== undefined && b.unread > 0 && <span class="list-unread tabular">{b.unread}</span>}
+              {list && b.unread !== undefined && b.unread > 0 && <span class="list-unread tabular">{b.unread > 999 ? '999+' : b.unread}</span>}
             </button>
             {showContinue && (
               <span class="grid-overlay">

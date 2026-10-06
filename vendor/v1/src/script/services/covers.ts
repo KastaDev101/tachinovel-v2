@@ -24,7 +24,8 @@ export const COVER_MAX_WIDTH = 480;
 export const FAILED_COVER_TTL_MS = 10 * 60 * 1000;
 /** Bound on remembered missing covers (long sessions of browsing). */
 export const MAX_FAILED_COVERS = 500;
-const TYPE_EXT: Readonly<Record<string, string>> = {
+/** File extension per image content type (covers and in-chapter images). */
+export const IMAGE_TYPE_EXT: Readonly<Record<string, string>> = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
   'image/png': 'png',
@@ -32,9 +33,34 @@ const TYPE_EXT: Readonly<Record<string, string>> = {
   'image/gif': 'gif',
   'image/avif': 'avif',
 };
-const URL_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif']);
+/** Image extensions trusted from the URL when a response has no content type. */
+export const IMAGE_URL_EXT: ReadonlySet<string> = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif']);
 
 export const COVERS_DIR = 'covers';
+
+/**
+ * Download an image for covers.fetch / images.fetch: HTTP 200, an image content type (or an image
+ * extension when there is none), at most MAX_COVER_DOWNLOAD_BYTES. NOT_FOUND otherwise, worded with
+ * `what` ("Cover" / "Image"). Returns the bytes and the file extension to store them under.
+ */
+export async function downloadImage(
+  net: HttpClient,
+  url: string,
+  extraHeaders: Record<string, string>,
+  opts: { timeoutMs: number; what: string; notImageMessage?: string },
+): Promise<{ base64: string; ext: string }> {
+  const headers: Record<string, string> = { Accept: 'image/webp,image/avif,image/*;q=0.8', ...extraHeaders };
+  const res = await net.requestBytes({ url, headers, timeoutMs: opts.timeoutMs });
+  if (res.status !== 200 || !res.base64) throw notFound(`${opts.what} unavailable (HTTP ${res.status})`);
+  const type = (res.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  const urlExt = extensionOf(url);
+  if (type ? !type.startsWith('image/') : !IMAGE_URL_EXT.has(urlExt)) {
+    throw notFound(`${opts.notImageMessage ?? `${opts.what} is not an image`} (${type || 'no content-type'})`);
+  }
+  if (res.base64.length * 0.75 > MAX_COVER_DOWNLOAD_BYTES) throw notFound(`${opts.what} is larger than 16 MB`);
+  const ext = IMAGE_TYPE_EXT[type] ?? (IMAGE_URL_EXT.has(urlExt) ? (urlExt === 'jpeg' ? 'jpg' : urlExt) : 'jpg');
+  return { base64: res.base64, ext };
+}
 
 export class CoverCache {
   private readonly ctx: Ctx;
@@ -154,15 +180,7 @@ export class CoverCache {
 
   private async download(url: string, extraHeaders: Record<string, string>): Promise<string> {
     await this.lru.init();
-    const headers: Record<string, string> = { Accept: 'image/webp,image/avif,image/*;q=0.8', ...extraHeaders };
-    const res = await this.net.requestBytes({ url, headers, timeoutMs: 20_000 });
-    if (res.status !== 200 || !res.base64) throw notFound(`Cover unavailable (HTTP ${res.status})`);
-    const type = (res.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-    const urlExt = extensionOf(url);
-    if (type ? !type.startsWith('image/') : !URL_EXT.has(urlExt)) throw notFound(`Cover is not an image (${type || 'no content-type'})`);
-    if (res.base64.length * 0.75 > MAX_COVER_DOWNLOAD_BYTES) throw notFound('Cover is larger than 16 MB');
-    let base64 = res.base64;
-    let ext = TYPE_EXT[type] ?? (URL_EXT.has(urlExt) ? (urlExt === 'jpeg' ? 'jpg' : urlExt) : 'jpg');
+    let { base64, ext } = await downloadImage(this.net, url, extraHeaders, { timeoutMs: 20_000, what: 'Cover' });
     const resized = this.ctx.platform.native.resizeImage(base64, COVER_MAX_WIDTH);
     if (resized !== null && resized !== base64) {
       base64 = resized;
@@ -175,7 +193,7 @@ export class CoverCache {
     const old = this.byHash.get(h);
     if (old && old !== file) this.lru.remove(old);
     await this.lru.writeBase64(file, base64);
-    if (!this.lru.has(file)) throw new AppError('STORAGE', 'Cover cache is disabled (coverCapMB = 0)', false);
+    if (!this.lru.has(file)) throw new AppError('STORAGE', "Covers can't be saved: the cover cache size is 0 MB (Settings → Storage)", false);
     this.byHash.set(h, file);
     return `${COVERS_DIR}/${file}`;
   }

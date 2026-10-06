@@ -13,9 +13,11 @@ import type { Filters } from '../shared/lnreader/filters.ts';
 import type { Plugin } from '../shared/lnreader/plugin.ts';
 import type { CallRecord, PluginContext } from './context.ts';
 import { BROWSE_ENRICHERS } from './enrich.ts';
+import { failureReason, looksLikeBotCheck, looksLikeLayoutChange, statusReason, withReason } from './failure.ts';
 import { isUrlAbsolute } from './libs/isAbsoluteUrl.ts';
 import type { LoadedPlugin } from './loader.ts';
 import { cleanPerson, cleanSummary, cleanText, coverUrl, fixChapterHtml, joinSitePath, mapStatus, splitGenres, staticAssetUrl, toChapterMetas } from './normalize.ts';
+import { normalizeSettings, type PluginSettings } from './settings.ts';
 
 /** Extra facts about a loaded plugin that are not part of the SourceAdapter contract. */
 export interface PluginInfo {
@@ -25,12 +27,24 @@ export interface PluginInfo {
   imageRequestInit?: Plugin.ImageRequestInit;
   webStorageUtilized: boolean;
   hasPluginSettings: boolean;
+  /** The plugin's settings schema (LNReader `pluginSettings`, normalized), if it declares any. */
+  settings?: PluginSettings;
+  /** Declared settings left out because they sign in to the site (see settings.ts). */
+  loginSettings?: string[];
 }
 
 const infos = new WeakMap<SourceAdapter, PluginInfo>();
+/** Adapters that stand for another one (the reloadable source from host.load → its current adapter). */
+const aliases = new WeakMap<SourceAdapter, () => SourceAdapter>();
 
 export function pluginInfo(adapter: SourceAdapter): PluginInfo | undefined {
-  return infos.get(adapter);
+  const target = aliases.get(adapter);
+  return infos.get(target ? target() : adapter);
+}
+
+/** Makes pluginInfo(outer) report the facts of whatever adapter `current()` returns. */
+export function aliasPluginInfo(outer: SourceAdapter, current: () => SourceAdapter): void {
+  aliases.set(outer, current);
 }
 
 /**
@@ -139,24 +153,67 @@ export function createAdapter(plugin: LoadedPlugin, ctx: PluginContext): SourceA
   if (plugin.filters && typeof plugin.filters === 'object' && Object.keys(plugin.filters).length) meta.filters = clone(plugin.filters);
   const customCSS = staticAssetUrl(plugin.customCSS);
   if (customCSS) meta.customCSS = customCSS;
+  const loginSettings: string[] = [];
+  const settings = normalizeSettings(plugin.pluginSettings, loginSettings);
+  if (settings) meta.settings = settings;
 
   /** Maps any error from a plugin call to a SourceError, using what the network did for that call. */
   function mapError(err: unknown, rec: CallRecord, what: string): SourceError {
     if (err instanceof SourceError) return err;
     const code = (err as { code?: unknown })?.code;
     if (code === 'LOCKED') return new SourceError('LOCKED', errorMessage(err));
-    if (rec.failure) return new SourceError(rec.failure.code, rec.failure.message);
+    const parked = parkedError(rec);
+    if (parked) return parked;
+    if (rec.failure) return copyFailure(rec.failure);
     const status = rec.lastStatus;
-    if (status === 404 || status === 410) return new SourceError('NOT_FOUND', `${plugin.name}: ${what}: not found (HTTP ${status})`);
-    return new SourceError('PLUGIN', `${plugin.name}: ${what} failed: ${errorMessage(err)}`);
+    if (status === 404 || status === 410) return withReason(new SourceError('NOT_FOUND', `${plugin.name}: ${what}: not found (HTTP ${status})`), 'not-found');
+    // No page loaded: the status explains it. Pages loaded: the plugin could not read them.
+    const reason = !rec.ok ? statusReason(status) : undefined;
+    if (!reason && rec.movedTo) {
+      // Templates report a cross-site redirect as "Captcha error"; the site moved or was replaced.
+      return withReason(new SourceError('PLUGIN', `${plugin.name}: the site now redirects to ${rec.movedTo}; the plugin needs an update (${errorMessage(err)})`), 'layout-changed');
+    }
+    const fallback = looksLikeBotCheck(err) ? 'bot-check' : rec.ok && looksLikeLayoutChange(err) ? 'layout-changed' : undefined;
+    return withReason(new SourceError('PLUGIN', `${plugin.name}: ${what} failed: ${errorMessage(err)}`), reason ?? fallback);
+  }
+
+  function copyFailure(f: SourceError): SourceError {
+    return withReason(new SourceError(f.code, f.message), failureReason(f));
+  }
+
+  function parkedError(rec: CallRecord): SourceError | undefined {
+    if (!rec.parked) return undefined;
+    return withReason(new SourceError('PLUGIN', `${plugin.name}: ${rec.parked} shows a parked or for-sale domain page; the site is gone`), 'parked');
   }
 
   /**
    * For results that came back empty: if this call's requests failed and none of them succeeded,
-   * the failure is the real answer (plugins often swallow errors and return []).
+   * the failure is the real answer (plugins often swallow errors and return []). The same for a
+   * parking page, or when every response was an error status that explains itself (5xx, 429, 403, 401).
    */
   function failIfNetworkFailed(rec: CallRecord): void {
-    if (rec.failure && !rec.ok) throw new SourceError(rec.failure.code, rec.failure.message);
+    const parked = parkedError(rec);
+    if (parked) throw parked;
+    if (rec.ok) return;
+    if (rec.failure) throw copyFailure(rec.failure);
+    const status = rec.lastStatus;
+    const reason = statusReason(status);
+    if (status === undefined || !reason || reason === 'not-found') return;
+    const host = hostOfSite();
+    const text =
+      reason === 'site-down'
+        ? `${host} is down (HTTP ${status})`
+        : reason === 'rate-limited'
+          ? `${host} is limiting requests (HTTP 429); try again later`
+          : reason === 'needs-account'
+            ? `${host} requires signing in (HTTP 401)`
+            : `${host} refused the request (HTTP ${status})`;
+    throw withReason(new SourceError(reason === 'needs-account' ? 'PLUGIN' : 'NETWORK', `${plugin.name}: ${text}`), reason);
+  }
+
+  function hostOfSite(): string {
+    const m = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(site);
+    return m?.[1] ?? site;
   }
 
   /** Runs one plugin method as a tracked call (see context.ts CallRecord). */
@@ -275,7 +332,7 @@ export function createAdapter(plugin: LoadedPlugin, ctx: PluginContext): SourceA
     if (!name && chapters.length === 0) {
       failIfNetworkFailed(rec);
       const status = rec.lastStatus;
-      throw new SourceError('NOT_FOUND', `${plugin.name}: novel not found: ${path}${status ? ` (HTTP ${status})` : ''}`);
+      throw withReason(new SourceError('NOT_FOUND', `${plugin.name}: novel not found: ${path}${status ? ` (HTTP ${status})` : ''}`), status === 404 || status === 410 ? 'not-found' : undefined);
     }
     const details: NovelDetails = { pluginId: plugin.id, path, name: name || path, status: mapStatus(src.status), genres: splitGenres(src.genres) };
     const cover = coverUrl(src.cover, site);
@@ -304,7 +361,7 @@ export function createAdapter(plugin: LoadedPlugin, ctx: PluginContext): SourceA
     if (value.trim() === '') {
       failIfNetworkFailed(rec);
       const status = rec.lastStatus;
-      if (status === 404 || status === 410) throw new SourceError('NOT_FOUND', `${plugin.name}: chapter not found: ${path}`);
+      if (status === 404 || status === 410) throw withReason(new SourceError('NOT_FOUND', `${plugin.name}: chapter not found: ${path}`), 'not-found');
       throw new SourceError('PLUGIN', `${plugin.name}: chapter is empty: ${path}`);
     }
     let base = site;
@@ -336,8 +393,10 @@ export function createAdapter(plugin: LoadedPlugin, ctx: PluginContext): SourceA
     hasResolveUrl: typeof plugin.resolveUrl === 'function',
     hasImageRequestInit: Boolean(init && typeof init === 'object'),
     webStorageUtilized: plugin.webStorageUtilized === true,
-    hasPluginSettings: Boolean(plugin.pluginSettings && typeof plugin.pluginSettings === 'object'),
+    hasPluginSettings: settings !== undefined,
   };
+  if (settings) info.settings = clone(settings);
+  if (loginSettings.length) info.loginSettings = loginSettings;
   if (init && typeof init === 'object') info.imageRequestInit = clone(init);
   infos.set(adapter, info);
   return adapter;

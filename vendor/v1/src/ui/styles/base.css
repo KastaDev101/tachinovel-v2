@@ -17,6 +17,10 @@ body {
 }
 
 html {
+  /* iOS Dynamic Type: the root size follows Settings › Display & Brightness › Text Size (17 px where
+     the keyword isn't known, e.g. desktop browsers). */
+  font-size: 17px;
+  font: -apple-system-body;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }

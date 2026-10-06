@@ -170,6 +170,7 @@ export function startCoreInVm(opts: MockOptions): CoreHarness {
       alert: (_json, cb) => answer(cb),
       share: (_json, cb) => setImmediate(() => cb(null, true)),
       shareFile: (_p, cb) => setImmediate(() => cb(null, true)),
+      shareImage: (b64, cb) => setImmediate(() => (b64 ? cb(null, true) : cb('not an image', null))),
       pickFile: (_t, _d, cb) => setImmediate(() => cb('cancelled', null)),
       openUrl: () => undefined,
       symbol: (name) => (name.startsWith('missing') ? null : Buffer.from(`png:${name}`).toString('base64')),

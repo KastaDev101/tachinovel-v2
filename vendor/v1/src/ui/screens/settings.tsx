@@ -1,20 +1,23 @@
 /** Settings pages pushed from More: appearance, reader, library, categories, storage, sources, about. */
 import { useEffect, useState } from 'preact/hooks';
 import type { AppSettings, Category, StorageCategory, StorageUsage } from '../../shared/contracts/domain.ts';
+import type { BackupPreview } from '../../shared/contracts/protocol.ts';
 import { bridge, errorText, toUiError } from '../bridge/client.ts';
 import { BarButton, Button, CheckRow, Row, Section, Segmented, SelectRow, Stepper, SwitchRow } from '../components/controls.tsx';
 import { EmptyState, ErrorState, SkeletonRows } from '../components/feedback.tsx';
 import { useAsync } from '../components/hooks.ts';
 import { Icon } from '../components/icon.tsx';
 import { Screen } from '../components/screen.tsx';
+import { ReorderList } from '../components/reorder-list.tsx';
 import { Sheet } from '../components/sheet.tsx';
 import { formatBytes, plural } from '../lib/format.ts';
 import { actionSheet, confirmAlert, openInSafari } from '../state/actions.ts';
 import { push, type SettingsPage } from '../state/nav.ts';
-import { buildVersion, categories, patchSettings, progressVersion, reloadLibrary, reloadSources, settings, sortedCategories } from '../state/store.ts';
+import { buildVersion, categories, patchSettings, reloadLibrary, settings, sortedCategories } from '../state/store.ts';
 import { errorToast, showToast } from '../state/toast.ts';
 import { ExtensionsPanel } from './browse.tsx';
 import { ReaderSettingsPanel } from './reader/reader-settings.tsx';
+import { exportLibraryList, RestoreSheet } from './backup-restore.tsx';
 import { AutoBackupSection, AutoDownloadSection } from './settings-auto.tsx';
 import { CleanupPage } from './settings-cleanup.tsx';
 import { whatsNewOpen } from './whats-new.tsx';
@@ -60,22 +63,6 @@ function GeneralPage() {
         <Section footer="Pauses reading history while on. Your progress in each novel is still saved.">
           <SwitchRow title="Incognito mode" checked={s.incognito} onChange={(incognito) => patchSettings({ incognito })} testId="incognito" />
         </Section>
-        <Section header="Reading" footer="Upcoming chapters are fetched in the background while you read, so the next one opens instantly.">
-          <SelectRow
-            title="Read ahead"
-            value={String(s.readAhead)}
-            options={[
-              { value: '0', label: 'Off' },
-              { value: '1', label: '1 chapter' },
-              { value: '2', label: '2 chapters' },
-              { value: '3', label: '3 chapters' },
-            ]}
-            onChange={(v) => patchSettings({ readAhead: Number(v) })}
-          />
-        </Section>
-        <Section header="Library">
-          <SwitchRow title="Check for updates on launch" checked={s.library.updateOnOpen} onChange={(updateOnOpen) => patchSettings({ library: { updateOnOpen } })} />
-        </Section>
       </div>
     </Screen>
   );
@@ -98,7 +85,7 @@ function DownloadsPage() {
   return (
     <Screen class="is-grouped" title="Downloads" back="More" testId="screen-downloads">
       <div class="grouped">
-        <Section footer="Chapters stream while you read. Downloads are only for reading offline: pick chapters on a novel's page.">
+        <Section footer="Chapters stream while you read. To read offline, download chapters from a novel’s page, or turn on Auto-download below.">
           <Row title="Downloaded chapters" value={usage.data ? formatBytes(bytes) : '…'} />
           <SwitchRow title="Delete after reading" checked={s.deleteDownloadsAfterRead} onChange={(deleteDownloadsAfterRead) => patchSettings({ deleteDownloadsAfterRead })} />
         </Section>
@@ -113,25 +100,12 @@ function DownloadsPage() {
   );
 }
 
-/**
- * Categories and settings only arrive with app.boot, so refetch them after a restore. Otherwise the
- * next categories.save / settings.set would send the stale pre-restore copies back and undo it.
- */
-async function reloadRestoredState(): Promise<void> {
-  try {
-    const [cats, fresh] = await Promise.all([bridge().call('categories.list'), bridge().call('settings.set', { patch: {} })]);
-    categories.value = cats;
-    settings.value = fresh;
-  } catch {
-    // Keep what we have; the library and sources were still reloaded.
-  }
-}
-
 const fmtBackupDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 function BackupPage() {
   const list = useAsync(() => bridge().call('backup.list'), []);
   const [busy, setBusy] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<{ n: number; open: boolean; preview: BackupPreview | null }>({ n: 0, open: false, preview: null });
 
   function share(fileName: string): void {
     void bridge()
@@ -152,23 +126,17 @@ function BackupPage() {
     }
   }
 
+  /** Restore, step 1: read the backup (a listed one, or one picked in Files) and show what it holds. */
   async function restore(fileName?: string): Promise<void> {
-    const i = await actionSheet({
-      title: 'Restore Backup',
-      message: 'Merge keeps your current library and adds what’s in the backup. Replace makes the app match the backup exactly.',
-      actions: [{ title: 'Merge with Current Library' }, { title: 'Replace Everything', destructive: true }],
-    });
-    if (i < 0) return;
-    const mode = i === 0 ? 'merge' : 'replace';
-    if (mode === 'replace' && !(await confirmAlert('Replace everything?', 'Your current library, progress, history and settings will be replaced by the backup.', 'Replace'))) return;
     setBusy(fileName ?? 'files');
     try {
-      const r = await bridge().call('backup.restore', { mode, ...(fileName ? { fileName } : {}) }, { timeoutMs: 300_000 });
-      await Promise.all([reloadLibrary(), reloadSources(), reloadRestoredState()]);
-      progressVersion.value++;
-      showToast(`Restored ${plural(r.novels, 'novel')} and ${plural(r.sources, 'source')}`, { durationMs: 4000 });
+      const preview = await bridge().call('backup.preview', fileName ? { fileName } : {}, { timeoutMs: 300_000 });
+      setRestoring((r) => ({ n: r.n + 1, open: true, preview }));
     } catch (err) {
-      errorToast(errorText(toUiError(err)));
+      const ui = toUiError(err);
+      // Cancelling the file picker isn't an error.
+      if (fileName === undefined && ui.code === 'NOT_FOUND') return;
+      errorToast(ui.code === 'INVALID_ARGS' ? `That file can’t be restored: ${errorText(ui)}` : errorText(ui));
     } finally {
       setBusy(null);
     }
@@ -186,9 +154,21 @@ function BackupPage() {
       <div class="grouped">
         <Section footer="A backup holds your library, categories, reading progress, history, settings and installed sources. Backups are saved in iCloud Drive › Scriptable › TachiNovel › backups.">
           <Row title={busy === 'create' ? 'Creating Backup…' : 'Create Backup'} tint disabled={busy !== null} onClick={() => void create()} testId="backup-create" />
-          <Row title={busy === 'files' ? 'Restoring…' : 'Restore from Files…'} tint disabled={busy !== null} onClick={() => void restore()} testId="backup-restore-files" />
+          <Row title={busy === 'files' ? 'Reading Backup…' : 'Restore from Files…'} tint disabled={busy !== null} onClick={() => void restore()} testId="backup-restore-files" />
         </Section>
         <AutoBackupSection />
+        <Section footer="A list of your novels to keep or share: a spreadsheet (CSV) or plain text. It isn’t a backup and can’t be restored.">
+          <Row
+            title={busy === 'export' ? 'Exporting…' : 'Export Library List…'}
+            tint
+            disabled={busy !== null}
+            onClick={() => {
+              setBusy('export');
+              void exportLibraryList().finally(() => setBusy(null));
+            }}
+            testId="library-export"
+          />
+        </Section>
         <Section header="Backups">
           {list.status === 'loading' && !list.data ? (
             <SkeletonRows count={2} height={56} />
@@ -203,7 +183,7 @@ function BackupPage() {
                 title={fmtBackupDate.format(b.createdAt)}
                 subtitle={`${formatBytes(b.bytes)} · ${b.fileName}`}
                 leading={<Icon name="doc.text" size={22} class="row-leading-icon" />}
-                value={busy === b.fileName ? 'Restoring…' : undefined}
+                value={busy === b.fileName ? 'Reading…' : undefined}
                 chevron
                 onClick={() => void rowMenu(b.fileName)}
                 testId="backup-row"
@@ -212,6 +192,18 @@ function BackupPage() {
           )}
         </Section>
       </div>
+      {restoring.preview && (
+        <RestoreSheet
+          key={restoring.n}
+          open={restoring.open}
+          preview={restoring.preview}
+          onClose={() => setRestoring((r) => ({ ...r, open: false }))}
+          onPickAgain={() => {
+            setRestoring((r) => ({ ...r, open: false }));
+            void restore();
+          }}
+        />
+      )}
     </Screen>
   );
 }
@@ -425,10 +417,15 @@ function CategoriesPage() {
         {list.length === 0 ? (
           <EmptyState icon="folder" title="No Categories" message="Group your library into tabs like “Reading” or “Plan to Read”." action={{ label: 'Add Category', onClick: () => startEdit('new') }} />
         ) : (
-          <Section footer="Tap a category to rename, reorder or delete it.">
-            {list.map((c, i) => (
-              <Row key={c.id} title={c.name} leading={<Icon name="folder" size={20} class="row-leading-icon" />} chevron onClick={() => void menu(c, i)} />
-            ))}
+          <Section footer="Drag ≡ to reorder; the library's tabs follow. Tap a category to rename or delete it.">
+            <ReorderList
+              items={list}
+              keyOf={(c) => c.id}
+              gripLabel={(c) => `Reorder ${c.name}`}
+              onReorder={(next) => void save(next)}
+              testId="category-list"
+              render={(c, i) => <Row title={c.name} leading={<Icon name="folder" size={20} class="row-leading-icon" />} onClick={() => void menu(c, i)} />}
+            />
           </Section>
         )}
       </div>
@@ -470,6 +467,20 @@ function StoragePage() {
   }, [data.data]);
 
   const total = usage ? Object.values(usage.bytes).reduce((a, b) => a + b, 0) : 0;
+
+  /** Downloads of novels not in the library (removed ones, kept so Undo works, or never added): deleted only when confirmed. */
+  async function deleteOrphans(n: number): Promise<void> {
+    const novels = n === 1 ? '1 novel that isn’t' : `${n} novels that aren’t`;
+    const i = await actionSheet({ title: `Delete downloads of ${novels} in your library?`, message: 'This can’t be undone.', actions: [{ title: 'Delete', destructive: true }], cancel: 'Cancel' });
+    if (i !== 0) return;
+    try {
+      const r = await bridge().call('downloads.deleteOrphans');
+      setUsage(await bridge().call('storage.usage'));
+      showToast(r.novels > 0 ? `Deleted downloads of ${plural(r.novels, 'novel')} (${formatBytes(r.bytes)})` : 'Nothing to delete');
+    } catch (err) {
+      errorToast(errorText(toUiError(err)));
+    }
+  }
 
   async function clear(key: Exclude<StorageCategory, 'state' | 'meta'>, label: string): Promise<void> {
     if (!(await confirmAlert(`Clear ${label}?`, key === 'downloads' ? 'Downloaded chapters will be deleted from this iPhone.' : 'This frees space; it will refill as you read.', 'Clear'))) return;
@@ -527,6 +538,20 @@ function StoragePage() {
                 />
               ))}
             </Section>
+            {usage.orphanDownloads && usage.orphanDownloads.bytes > 0 && (
+              <Section footer="Downloads stay when a novel leaves your library, so Undo can bring it back. Novels you downloaded from without adding them count here too.">
+                <Row
+                  title="Downloads of novels not in your library"
+                  subtitle={`${plural(usage.orphanDownloads.novels, 'novel')} · ${formatBytes(usage.orphanDownloads.bytes)}`}
+                  trailing={
+                    <Button variant="gray" size="small" destructive onClick={() => void deleteOrphans(usage.orphanDownloads?.novels ?? 0)} label="Delete downloads of novels not in your library">
+                      Delete
+                    </Button>
+                  }
+                  testId="storage-orphans"
+                />
+              </Section>
+            )}
             <Section header="Limits" footer="Caches never grow past these limits; the oldest items are removed first.">
               <SelectRow
                 title="Read-ahead cache"
@@ -540,7 +565,6 @@ function StoragePage() {
                 options={[5, 10, 25, 50].map((n) => ({ value: String(n), label: `${n} MB` }))}
                 onChange={(v) => patchSettings({ coverCapMB: Number(v) })}
               />
-              <SwitchRow title="Delete downloads after reading" checked={s.deleteDownloadsAfterRead} onChange={(deleteDownloadsAfterRead) => patchSettings({ deleteDownloadsAfterRead })} />
             </Section>
           </>
         )}
@@ -657,6 +681,13 @@ function DeveloperPage() {
               setFlaky(v);
               mock?.setFailRate(v ? 0.3 : 0);
             }}
+          />
+        </Section>
+        <Section footer="Sends an app.error event like the script does (e.g. iCloud not ready).">
+          <Row
+            title="Emit app.error"
+            chevron
+            onClick={() => mock?.emitError('iCloud isn’t ready yet — using the copy saved on this iPhone. Your changes sync when it is.')}
           />
         </Section>
         <Section>

@@ -1,4 +1,5 @@
-/** One source: Popular / Latest tabs, search, infinite scroll, "In library" markers. */
+/** One source: Popular / Latest tabs, search, infinite scroll, "In library" markers (or hidden). */
+import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { BrowseItem } from '../../shared/contracts/protocol.ts';
 import type { Filters } from '../../shared/lnreader/filters.ts';
@@ -9,8 +10,9 @@ import { NovelGrid } from '../components/novel-grid.tsx';
 import { Screen } from '../components/screen.tsx';
 import { changedFilterKeys, defaultFilterValues, type FilterValues } from '../lib/filters.ts';
 import { actionSheet, openInSafari, quickAddToLibrary, removeFromLibrary } from '../state/actions.ts';
-import { openNovel } from '../state/nav.ts';
+import { openNovel, push } from '../state/nav.ts';
 import { libraryKeys, settings, sourceById } from '../state/store.ts';
+import { recordSourceHealth } from './browse.tsx';
 import { FilterSheet } from './source-filters.tsx';
 
 type Mode = 'popular' | 'latest';
@@ -51,6 +53,29 @@ function fresh(list: RememberedList | undefined): RememberedList | undefined {
 }
 const sourceMemory = new Map<string, { mode: Mode; lists: Partial<Record<Mode, RememberedList>> }>();
 
+const HIDE_KEY = 'tachinovel.browse.hideInLibrary';
+
+/** Browse lists leave out novels already in the library (every source; ⋮ menu). Kept on this device. */
+export const hideInLibrary = signal<boolean>(
+  (() => {
+    try {
+      return localStorage.getItem(HIDE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  })(),
+);
+
+function setHideInLibrary(on: boolean): void {
+  hideInLibrary.value = on;
+  try {
+    if (on) localStorage.setItem(HIDE_KEY, '1');
+    else localStorage.removeItem(HIDE_KEY);
+  } catch {
+    // This session only.
+  }
+}
+
 function remembered(pluginId: string): { mode: Mode; lists: Partial<Record<Mode, RememberedList>> } {
   let m = sourceMemory.get(pluginId);
   if (!m) {
@@ -83,6 +108,7 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
   const sentinel = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const keys = libraryKeys.value;
+  const hide = hideInLibrary.value;
   /** Scroll position to restore once the remembered list has rendered. */
   const pendingScroll = useRef<number | null>(null);
   const plainRef = useRef(plain);
@@ -138,6 +164,7 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
             { timeoutMs: 60_000 },
           );
       if (id !== req.current) return; // stale (tab/search changed meanwhile)
+      recordSourceHealth(props.pluginId); // e.g. a passed bot check: global search tries it again
       setState((s) => {
         const seen = new Set(s.items.map((i) => `${i.pluginId}:${i.path}`));
         const fresh = res.items.filter((i) => !seen.has(`${i.pluginId}:${i.path}`));
@@ -146,6 +173,7 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
     } catch (err) {
       if (id !== req.current) return;
       const e = toUiError(err);
+      recordSourceHealth(props.pluginId, e);
       setState((s) => (page === 1 ? { ...s, status: 'error', error: e } : { ...s, status: 'more-error', error: e }));
     }
   }
@@ -197,6 +225,17 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
     return () => io.disconnect();
   }, [state.status === 'ready', mode, query]);
 
+  /** ⋮: hide/show novels in the library, Source Settings (if it has any), Open in Safari. */
+  async function moreMenu(): Promise<void> {
+    const toggle = hide ? 'Show Novels in Library' : 'Hide Novels in Library';
+    const actions = [{ title: toggle }, ...(src?.hasSettings ? [{ title: 'Source Settings' }] : []), ...(src?.site ? [{ title: 'Open in Safari' }] : [])];
+    const i = await actionSheet({ title: src?.name ?? props.pluginId, actions });
+    const t = actions[i]?.title;
+    if (t === toggle) setHideInLibrary(!hide);
+    else if (t === 'Source Settings') push({ name: 'sourceSettings', pluginId: props.pluginId });
+    else if (t === 'Open in Safari') openInSafari(src?.site);
+  }
+
   async function itemMenu(item: BrowseItem): Promise<void> {
     const inLib = keys.has(`${item.pluginId}:${item.path}`);
     const i = await actionSheet({ title: item.name, actions: [{ title: inLib ? 'Remove from Library' : 'Add to Library', destructive: inLib }, { title: 'Open' }] });
@@ -206,17 +245,30 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
     } else if (i === 1) openNovel(item);
   }
 
-  const items = state.items.map((i) => ({ ...i, key: `${i.pluginId}:${i.path}` }));
+  const all = state.items.map((i) => ({ ...i, key: `${i.pluginId}:${i.path}` }));
+  const items = hide ? all.filter((i) => !keys.has(i.key)) : all;
+  const hiddenCount = all.length - items.length;
   let body;
   if (state.status === 'loading') body = <SkeletonGrid count={12} columns={settings.value.library.columns} />;
   else if (state.status === 'error' && state.error) body = <ErrorState error={state.error} onRetry={() => void load(1)} onSolve={solveChallengeThen(props.pluginId, () => void load(1))} />;
+  else if (items.length === 0 && hiddenCount > 0 && !state.hasMore)
+    body = (
+      <EmptyState
+        icon="books.vertical.fill"
+        title="All in Your Library"
+        message={`Every novel here is already in your library (${hiddenCount}).`}
+        action={{ label: 'Show Them', onClick: () => setHideInLibrary(false) }}
+        testId="source-all-hidden"
+      />
+    );
+  else if (items.length === 0 && hiddenCount > 0) body = null; // the next page is on its way
   else if (items.length === 0)
     body = <EmptyState icon="magnifyingglass" title="No Results" message={query ? `${src?.name ?? 'This source'} has nothing for “${query}”.` : 'This source returned nothing.'} />;
   else
     body = (
       <NovelGrid
         items={items}
-        display="comfortable"
+        display={settings.value.library.display}
         columns={settings.value.library.columns}
         testId="browse-grid"
         badges={(i) => ({ inLibrary: keys.has(i.key), ...(i.chapterCount ? { chapters: i.chapterCount } : {}) })}
@@ -236,7 +288,7 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
           {filterDefs && (
             <BarButton icon="line.3.horizontal.decrease" label="Filters" active={activeFilters > 0} onClick={() => setFiltersOpen(true)} testId="source-filters" />
           )}
-          {src?.site && <BarButton icon="safari" label="Open in Safari" onClick={() => openInSafari(src.site)} />}
+          <BarButton icon="ellipsis.circle" label="More" onClick={() => void moreMenu()} testId="source-more" />
         </>
       }
       accessory={
@@ -265,6 +317,14 @@ export function SourceScreen(props: { pluginId: string; query?: string; openFilt
         </div>
       }
     >
+      {hide && hiddenCount > 0 && items.length > 0 && (
+        <p class="src-hidden-note" data-testid="source-hidden-note">
+          <span>{hiddenCount === 1 ? '1 novel in your library is hidden' : `${hiddenCount} novels in your library are hidden`}</span>
+          <button type="button" class="link-btn tap tap-dim" onClick={() => setHideInLibrary(false)} data-testid="source-show-hidden">
+            Show
+          </button>
+        </p>
+      )}
       {body}
       <div ref={sentinel} class="sentinel" />
       {filterDefs && (

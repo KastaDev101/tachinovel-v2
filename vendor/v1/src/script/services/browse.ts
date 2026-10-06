@@ -33,7 +33,7 @@ export class BrowseService {
   }
 
   private mark(pluginId: string, raw: unknown): BrowseItem[] {
-    if (!Array.isArray(raw)) throw new AppError('PLUGIN', 'Source returned an invalid novel list');
+    if (!Array.isArray(raw)) throw new AppError('PLUGIN', "The source's novel list couldn't be read.");
     const items = raw as readonly (NovelSummary | null | undefined)[];
     const out: BrowseItem[] = [];
     for (const n of items) {

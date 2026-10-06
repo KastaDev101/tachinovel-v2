@@ -45,6 +45,15 @@ interface CacheFile {
 
 export const CACHE_DIR = 'cache';
 
+/** Read-ahead never goes beyond this many chapters (the settings maximum). */
+export const MAX_READ_AHEAD = 3;
+/** Chapters read faster than this (median of the last ones) count as fast reading. */
+export const FAST_CHAPTER_MS = 3 * 60_000;
+/** Chapters smaller than this (cached HTML) are short: one ahead may not cover a minute of reading. */
+export const SHORT_CHAPTER_BYTES = 6 * 1024;
+/** Time on a chapter longer than this isn't reading pace (the app sat open, or a break). */
+const MAX_PACE_SAMPLE_MS = 60 * 60_000;
+
 export function cacheFileName(key: string, chapterPath: string): string {
   return `${hashKey(`${key}\n${chapterPath}`)}.json`;
 }
@@ -62,6 +71,8 @@ export class ChapterService {
   private readonly prefetching = new Set<string>();
   /** novelKey → read-ahead generation: skipping through chapters cancels the older loops. */
   private readonly aheadGen = new Map<string, number>();
+  /** Reading pace per novel: chapter being read, when it was started, recent time per chapter (ms). */
+  private readonly pace = new Map<string, { path: string; at: number; recent: number[] }>();
   private listLoader: ChapterListLoader | null = null;
 
   constructor(ctx: Ctx, sources: SourceService, novels: NovelStore, progress: ProgressService, downloads: DownloadService) {
@@ -202,6 +213,7 @@ export class ChapterService {
 
   /** Read ahead after the chapter the user is reading (called from progress.save). Background lane. */
   async readAheadFrom(key: string, novel: NovelKey, chapterPath: string): Promise<void> {
+    this.notePace(key, chapterPath);
     if (this.ctx.settings().readAhead <= 0) return;
     const known = await this.novels.known(key);
     if (!known) return; // no list in hand: never fetch one just to read ahead
@@ -209,7 +221,45 @@ export class ChapterService {
     if (idx < 0) return;
     const gen = (this.aheadGen.get(key) ?? 0) + 1;
     this.aheadGen.set(key, gen);
-    await this.readAhead(key, novel, known.chapters, idx, () => this.aheadGen.get(key) !== gen);
+    await this.readAhead(key, novel, known.chapters, idx, this.readAheadCount(key, chapterPath), () => this.aheadGen.get(key) !== gen);
+  }
+
+  /** A chapter was started (first progress.save): the previous one took `now - at`. */
+  private notePace(key: string, chapterPath: string): void {
+    const now = this.ctx.platform.now();
+    const p = this.pace.get(key);
+    if (!p) {
+      this.pace.set(key, { path: chapterPath, at: now, recent: [] });
+      if (this.pace.size > 20) {
+        const oldest = this.pace.keys().next().value;
+        if (oldest !== undefined) this.pace.delete(oldest);
+      }
+      return;
+    }
+    if (p.path === chapterPath) return;
+    const took = now - p.at;
+    if (took > 0 && took < MAX_PACE_SAMPLE_MS) {
+      p.recent.push(took);
+      if (p.recent.length > 3) p.recent.shift();
+    } else {
+      p.recent = []; // a long break: the old pace says nothing about now
+    }
+    p.path = chapterPath;
+    p.at = now;
+  }
+
+  /**
+   * How many chapters to read ahead: the setting, raised to 2 (never above 3, never from 0) while the
+   * user reads fast (median of the last 2–3 chapters under 3 min) or the current chapter is short.
+   */
+  readAheadCount(key: string, chapterPath: string): number {
+    const n = this.ctx.settings().readAhead;
+    if (n <= 0) return 0;
+    const recent = [...(this.pace.get(key)?.recent ?? [])].sort((a, b) => a - b);
+    const fast = recent.length >= 2 && (recent[Math.floor(recent.length / 2)] as number) < FAST_CHAPTER_MS;
+    const size = this.cache.loaded ? this.cache.sizeOf(cacheFileName(key, chapterPath)) : undefined;
+    const short = size !== undefined && size < SHORT_CHAPTER_BYTES;
+    return fast || short ? Math.min(MAX_READ_AHEAD, Math.max(n, 2)) : n;
   }
 
   /** Downloaded or cached copy (no network). */
@@ -249,7 +299,7 @@ export class ChapterService {
     return this.fetches.run(`${lane}|${file}`, async () => {
       const adapter = await this.sources.adapter(pluginId, lane);
       const html = await adapter.chapter(chapterPath);
-      if (typeof html !== 'string') throw new AppError('PLUGIN', 'Source returned no chapter text');
+      if (typeof html !== 'string') throw new AppError('PLUGIN', 'The source returned an empty chapter.');
       if (cacheIt) {
         const body: CacheFile = { k: key, p: chapterPath, t: title ?? '', h: html };
         void this.cache.writeText(file, JSON.stringify(body)).catch((err: unknown) => {
@@ -260,8 +310,7 @@ export class ChapterService {
     });
   }
 
-  private async readAhead(key: string, novel: NovelKey, chapters: readonly ChapterMeta[], idx: number, superseded: () => boolean): Promise<void> {
-    const n = this.ctx.settings().readAhead;
+  private async readAhead(key: string, novel: NovelKey, chapters: readonly ChapterMeta[], idx: number, n: number, superseded: () => boolean): Promise<void> {
     if (n <= 0) return;
     try {
       await this.cache.init();

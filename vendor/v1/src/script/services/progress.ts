@@ -11,6 +11,7 @@ import { hashKey } from '../lib/hash.ts';
 import { isRecord } from '../lib/validate.ts';
 import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
+import { copyOptional, isNum, isStr, strings } from './records.ts';
 
 export interface MarksDoc {
   schemaVersion: number;
@@ -59,7 +60,7 @@ export function positionsPath(key: string): string {
   return `progress/${hashKey(key)}.pos.json`;
 }
 
-function marksSpec(key: string): DocSpec<MarksDoc> {
+export function marksSpec(key: string): DocSpec<MarksDoc> {
   const create = (): MarksDoc => ({ schemaVersion: PROGRESS_VERSION, key, read: [], bookmarks: [] });
   return {
     path: progressPath(key),
@@ -67,14 +68,12 @@ function marksSpec(key: string): DocSpec<MarksDoc> {
     create,
     normalize(doc) {
       if (doc.key !== key) return create(); // hash collision or foreign file
-      if (!Array.isArray(doc.read)) doc.read = [];
-      if (!Array.isArray(doc.bookmarks)) doc.bookmarks = [];
-      return doc;
+      return { schemaVersion: doc.schemaVersion, key, read: strings(doc.read), bookmarks: strings(doc.bookmarks) };
     },
   };
 }
 
-function positionsSpec(key: string): DocSpec<PositionsDoc> {
+export function positionsSpec(key: string): DocSpec<PositionsDoc> {
   const create = (): PositionsDoc => ({ schemaVersion: PROGRESS_VERSION, key, positions: {} });
   return {
     path: positionsPath(key),
@@ -82,8 +81,17 @@ function positionsSpec(key: string): DocSpec<PositionsDoc> {
     create,
     normalize(doc) {
       if (doc.key !== key) return create();
-      if (!isRecord(doc.positions)) doc.positions = {};
-      return doc;
+      // Only well-formed positions (the reader restores them as-is), newest kept within the cap.
+      const positions: Record<string, ChapterPosition> = {};
+      if (isRecord(doc.positions)) {
+        const valid = Object.entries(doc.positions).filter(([path, p]) => path.length > 0 && isRecord(p) && isNum(p.percent) && isNum(p.paragraph));
+        for (const [path, p] of valid.slice(-MAX_POSITIONS)) positions[path] = validPosition(p);
+      }
+      const out: PositionsDoc = { schemaVersion: doc.schemaVersion, key, positions };
+      const raw = doc as unknown as Record<string, unknown>;
+      copyOptional(out, raw, ['lastChapterPath', 'lastChapterName', 'novelName', 'cover'], isStr);
+      copyOptional(out, raw, ['lastReadAt'], isNum);
+      return out;
     },
   };
 }

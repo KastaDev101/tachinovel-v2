@@ -8,8 +8,8 @@ import { createPortal } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button } from '../components/controls.tsx';
 import { Icon } from '../components/icon.tsx';
-import { decideIntro, INTRO_KEYS, openFlagStore, type FlagStore } from '../lib/intro.ts';
-import { WHATS_NEW } from '../lib/whats-new-data.ts';
+import { decideIntro, INTRO_KEYS, openFlagStore, unseenReleases, type FlagStore } from '../lib/intro.ts';
+import { WHATS_NEW, type WhatsNewRelease } from '../lib/whats-new-data.ts';
 import { popToRoot, selectTab } from '../state/nav.ts';
 import { buildVersion, library } from '../state/store.ts';
 import { WhatsNewSheet, whatsNewOpen } from './whats-new.tsx';
@@ -129,7 +129,7 @@ export function introAllowed(): boolean {
  * Decided once when the app has booted. Under the dev/test flags it stays off unless `intro: true`.
  */
 export function LaunchIntro() {
-  const [boot] = useState<{ store: FlagStore; show: 'onboarding' | 'whatsNew' | null } | null>(() => {
+  const [boot] = useState<{ store: FlagStore; show: 'onboarding' | 'whatsNew' | null; unseen: readonly WhatsNewRelease[] } | null>(() => {
     if (!introAllowed()) return null;
     const store = openFlagStore();
     const d = decideIntro({
@@ -141,8 +141,9 @@ export function LaunchIntro() {
       build: buildVersion.value,
       latestRelease: WHATS_NEW[0]?.id ?? null,
     });
+    const unseen = unseenReleases(WHATS_NEW, store.get(INTRO_KEYS.seen));
     for (const [k, v] of Object.entries(d.write)) store.set(INTRO_KEYS[k as keyof typeof INTRO_KEYS], v);
-    return { store, show: d.show };
+    return { store, show: d.show, unseen };
   });
   // First run shows the tour from the very first frame; later it opens through onboardingOpen.
   const [firstRun, setFirstRun] = useState(boot?.show === 'onboarding');
@@ -152,6 +153,8 @@ export function LaunchIntro() {
   }, []);
 
   const release = WHATS_NEW[0];
+  // At launch: what's new since the last release seen. Opened later (About): every release.
+  const [releases, setReleases] = useState<readonly WhatsNewRelease[]>(boot?.show === 'whatsNew' && boot.unseen.length > 0 ? boot.unseen : WHATS_NEW);
   return (
     <>
       {(firstRun || onboardingOpen.value) && (
@@ -170,12 +173,13 @@ export function LaunchIntro() {
       {release && (
         <WhatsNewSheet
           open={whatsNewOpen.value}
-          release={release}
+          releases={releases}
           onClose={() => {
             whatsNewOpen.value = false;
             const store = boot?.store ?? openFlagStore();
             store.set(INTRO_KEYS.build, buildVersion.value);
             store.set(INTRO_KEYS.seen, release.id);
+            setReleases(WHATS_NEW);
           }}
         />
       )}

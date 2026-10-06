@@ -223,7 +223,8 @@ export function createBridgeServer(opts: BridgeServerOptions): BridgeServer {
     const error = safeBridgeError(value);
     quietly(() => {
       recorder.record(req.method, ms, req.args, error, at);
-      log('warn', `bridge: ${req.method} failed after ${ms} ms: ${error.code} ${error.message} (${summarizeArgs(req.args)})`);
+      // The original text (the user gets the plain-English one, see plainMessage).
+      log('warn', `bridge: ${req.method} failed after ${ms} ms: ${error.code} ${safeMessage(value)} (${summarizeArgs(req.args)})`);
     });
     respond({ kind: 'res', id: req.id, ok: false, error });
   }

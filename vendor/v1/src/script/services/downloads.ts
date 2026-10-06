@@ -6,13 +6,14 @@
  */
 import type { NovelKey } from '../../shared/contracts/domain.ts';
 import { novelKeyString } from '../../shared/contracts/domain.ts';
-import { AppError, errorCode, errorMessage } from '../lib/errors.ts';
+import { AppError, errorCode, errorMessage, storageError } from '../lib/errors.ts';
 import { hashKey } from '../lib/hash.ts';
 import { utf8Length } from '../lib/text.ts';
 import { isRecord } from '../lib/validate.ts';
-import { JsonDoc } from '../storage/json-doc.ts';
+import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
 import type { LibraryService } from './library.ts';
+import type { StorageAlarm } from './storage-alarm.ts';
 import { type NovelStore, chapterIndex } from './novel-store.ts';
 
 interface ManifestEntry {
@@ -46,6 +47,33 @@ interface QueueDoc {
 }
 
 export const QUEUE_PATH = 'downloads-queue.json';
+
+export const QUEUE_SPEC: DocSpec<QueueDoc> = {
+  path: QUEUE_PATH,
+  version: 1,
+  create: () => ({ schemaVersion: 1, jobs: [] }),
+  normalize: (d) => ({
+    schemaVersion: 1,
+    jobs: (Array.isArray(d.jobs) ? (d.jobs as unknown[]) : []).filter(
+      (j): j is QueueDoc['jobs'][number] => isRecord(j) && typeof j.pluginId === 'string' && typeof j.novelPath === 'string' && typeof j.chapterPath === 'string',
+    ),
+  }),
+};
+
+/** Download files are `<hash>.json` inside the novel's folder (never a path elsewhere). */
+const DOWNLOAD_FILE_RE = /^[A-Za-z0-9_-]{1,64}\.json$/;
+
+/** Manifest entries made safe to use: a bad entry is dropped (its file is then re-downloadable). */
+function manifestChapters(raw: Record<string, unknown>): Record<string, ManifestEntry> {
+  const out: Record<string, ManifestEntry> = {};
+  for (const [path, e] of Object.entries(raw)) {
+    if (!path || !isRecord(e) || typeof e.file !== 'string' || !DOWNLOAD_FILE_RE.test(e.file)) continue;
+    const bytes = typeof e.bytes === 'number' && Number.isFinite(e.bytes) && e.bytes > 0 ? e.bytes : 0;
+    const at = typeof e.at === 'number' && Number.isFinite(e.at) ? e.at : 0;
+    out[path] = { file: e.file, title: typeof e.title === 'string' ? e.title : '', bytes, at };
+  }
+  return out;
+}
 /** Consecutive network failures after which the queue pauses (kept; resumes on the next enqueue or launch). */
 export const PAUSE_AFTER_NETWORK_FAILURES = 3;
 const NETWORK_CODES = new Set(['NETWORK', 'TIMEOUT', 'CLOUDFLARE']);
@@ -80,8 +108,10 @@ export class DownloadService {
   private queueLoad: Promise<void> | null = null;
   /** Jobs loaded from the previous session that resume() hasn't queued yet (still persisted). */
   private pendingResume: Job[] = [];
-  /** Paused after repeated network failures (offline, source down): jobs stay queued. */
+  /** Paused after repeated network failures (offline, source down) or a failed save: jobs stay queued. */
   private paused = false;
+  /** Tells the user once when downloads can't be saved (set by services). */
+  storageAlarm: StorageAlarm | null = null;
 
   constructor(ctx: Ctx, library: LibraryService, novels: NovelStore) {
     this.ctx = ctx;
@@ -97,12 +127,7 @@ export class DownloadService {
   init(): Promise<void> {
     this.queueLoad ??= JsonDoc.load<QueueDoc>(
       this.ctx.platform.synced,
-      {
-        path: QUEUE_PATH,
-        version: 1,
-        create: () => ({ schemaVersion: 1, jobs: [] }),
-        normalize: (d) => ({ schemaVersion: 1, jobs: Array.isArray(d.jobs) ? d.jobs : [] }),
-      },
+      QUEUE_SPEC,
       this.ctx.timing.indexWriteMs,
       this.ctx.env,
     ).then(
@@ -155,7 +180,9 @@ export class DownloadService {
   }
 
   private queueChanged(): void {
-    this.queueDoc?.changed();
+    // Not loaded yet (the app loads it after the first paint): loading it saves the queue right away.
+    if (this.queueDoc) this.queueDoc.changed();
+    else void this.init();
   }
 
   /** Queued + running jobs (tests/diagnostics). */
@@ -186,7 +213,7 @@ export class DownloadService {
         path,
         version: 1,
         create: () => ({ schemaVersion: 1, key, chapters: {} }),
-        normalize: (doc) => (doc.key === key && isRecord(doc.chapters) ? doc : { schemaVersion: 1, key, chapters: {} }),
+        normalize: (doc) => (doc.key === key && isRecord(doc.chapters) ? { schemaVersion: doc.schemaVersion, key, chapters: manifestChapters(doc.chapters) } : { schemaVersion: 1, key, chapters: {} }),
       },
       this.ctx.timing.indexWriteMs,
       this.ctx.env,
@@ -224,8 +251,9 @@ export class DownloadService {
       return null;
     }
     try {
-      const f = JSON.parse(text) as DownloadFile;
-      return { title: f.title, html: f.html };
+      const f = JSON.parse(text) as Partial<DownloadFile> | null;
+      if (!f || typeof f.html !== 'string') return null; // damaged copy: served from the source instead
+      return { title: typeof f.title === 'string' ? f.title : '', html: f.html };
     } catch {
       return null;
     }
@@ -278,6 +306,15 @@ export class DownloadService {
         networkFailures = 0;
       } catch (err) {
         this.ctx.platform.log('warn', `Download failed for ${job.key} ${job.chapterPath}: ${errorMessage(err)}`);
+        if (errorCode(err) === 'STORAGE') {
+          // Can't save (usually a full iPhone): every next chapter would fail the same way. Keep the job,
+          // pause, tell the user once.
+          this.queue.unshift(job);
+          this.queued.add(`${job.key}\n${job.chapterPath}`);
+          this.paused = true;
+          this.storageAlarm?.downloadWriteFailed(err);
+          return; // (finally: current cleared, queue saved)
+        }
         if (NETWORK_CODES.has(errorCode(err) ?? '')) {
           // Not this chapter's fault: keep it queued, and stop hammering after a few in a row.
           networkFailures++;
@@ -331,12 +368,58 @@ export class DownloadService {
     const title = meta?.name ?? got.title ?? '';
     const file = `${hashKey(job.chapterPath)}.json`;
     const text = JSON.stringify({ path: job.chapterPath, title, html: got.html } satisfies DownloadFile);
-    await this.ctx.platform.local.writeText(`${downloadDir(job.key)}/${file}`, text);
+    try {
+      await this.ctx.platform.local.writeText(`${downloadDir(job.key)}/${file}`, text);
+    } catch (err) {
+      throw storageError('write', `${downloadDir(job.key)}/${file}`, err);
+    }
     const doc = await this.manifest(job.key, true);
     if (!doc) return;
     // Exact size of what was written (FileManager only reports whole KB).
     doc.value.chapters[job.chapterPath] = { file, title, bytes: utf8Length(text), at: this.ctx.platform.now() };
     doc.changed();
+  }
+
+  /**
+   * Re-index downloads that finished just before the app was closed or killed: the chapter file was
+   * written but the manifest entry (saved a moment later) never was. Only files that are complete,
+   * well-formed downloads of a chapter the manifest doesn't list are adopted; nothing is deleted.
+   * `keys`: the novels to look at (their folders are named by a hash of the key).
+   */
+  async adoptOrphans(keys: readonly string[]): Promise<number> {
+    const { local } = this.ctx.platform;
+    let total = 0;
+    for (const key of keys) {
+      const dir = downloadDir(key);
+      const files = local.list(dir).filter((f) => f !== 'index.json' && DOWNLOAD_FILE_RE.test(f));
+      if (files.length === 0) continue;
+      const doc = await this.manifest(key, true);
+      if (!doc) continue;
+      const listed = new Set(Object.values(doc.value.chapters).map((e) => e.file));
+      let adopted = 0;
+      for (const file of files) {
+        if (listed.has(file)) continue;
+        let text: string | null = null;
+        let f: Partial<DownloadFile> | null = null;
+        try {
+          text = await local.readText(`${dir}/${file}`);
+          if (text) f = JSON.parse(text) as Partial<DownloadFile> | null;
+        } catch {
+          // unreadable or not JSON: left alone
+        }
+        if (!text || !f || typeof f.path !== 'string' || typeof f.html !== 'string') continue;
+        if (`${hashKey(f.path)}.json` !== file || Object.hasOwn(doc.value.chapters, f.path)) continue;
+        doc.value.chapters[f.path] = { file, title: typeof f.title === 'string' ? f.title : '', bytes: utf8Length(text), at: local.modifiedAt(`${dir}/${file}`) ?? this.ctx.platform.now() };
+        adopted++;
+      }
+      if (adopted > 0) {
+        doc.changed();
+        await this.syncLibraryCount(key);
+        total += adopted;
+      }
+    }
+    if (total > 0) this.ctx.platform.log('info', `Recovered ${total} download(s) finished just before the app closed`);
+    return total;
   }
 
   private async syncLibraryCount(key: string): Promise<void> {
@@ -380,6 +463,90 @@ export class DownloadService {
       }
     }
     await this.syncLibraryCount(key);
+  }
+
+  // ---------- downloads of novels no longer in the library ----------
+
+  /** Folder names (hash of the novel key) the queue still works on: never treated as orphans. */
+  private busyDirs(): Set<string> {
+    const keys = new Set<string>([...this.runs.keys(), ...this.queue.map((j) => j.key), ...this.pendingResume.map((j) => j.key)]);
+    if (this.current) keys.add(this.current.key);
+    return new Set([...keys].map((k) => hashKey(k)));
+  }
+
+  /** Folders whose novel is in the library right now (library entries are the source of truth). */
+  private libraryDirs(): Set<string> {
+    return new Set(this.library.all().map((e) => hashKey(e.key)));
+  }
+
+  /** Download folders of novels not in the library (and not being downloaded), with their key and size. */
+  private async orphans(): Promise<{ dir: string; key: string | null; bytes: number }[]> {
+    await this.flushAll();
+    const { local } = this.ctx.platform;
+    const keep = this.libraryDirs();
+    const busy = this.busyDirs();
+    const out: { dir: string; key: string | null; bytes: number }[] = [];
+    for (const dir of local.list(DOWNLOADS_DIR)) {
+      if (keep.has(dir) || busy.has(dir)) continue;
+      const path = `${DOWNLOADS_DIR}/${dir}`;
+      let key: string | null = null;
+      let bytes = 0;
+      try {
+        const text = await local.readText(`${path}/index.json`);
+        const doc: unknown = text ? JSON.parse(text) : null;
+        if (isRecord(doc) && typeof doc.key === 'string' && hashKey(doc.key) === dir && isRecord(doc.chapters)) {
+          key = doc.key;
+          for (const e of Object.values(doc.chapters)) if (isRecord(e) && typeof e.bytes === 'number' && Number.isFinite(e.bytes)) bytes += e.bytes;
+          bytes += text ? utf8Length(text) : 0;
+        } else {
+          bytes = local.size(path);
+        }
+      } catch {
+        bytes = local.size(path);
+      }
+      out.push({ dir, key, bytes });
+    }
+    return out;
+  }
+
+  /** storage.usage: downloads kept for novels no longer in the library (counted in bytes.downloads too). */
+  async orphanUsage(): Promise<{ novels: number; bytes: number }> {
+    const list = await this.orphans();
+    return { novels: list.length, bytes: list.reduce((n, o) => n + o.bytes, 0) };
+  }
+
+  /**
+   * downloads.deleteOrphans: delete the downloads of novels that are not in the library at this moment.
+   * Membership is checked again right before each novel is deleted (an Undo of a removal that lands
+   * meanwhile keeps its downloads), and each novel goes in one step: its manifest's pending writes are
+   * cancelled and its folder is removed with nothing awaited in between. Progress, history and every
+   * other state file are untouched.
+   */
+  async deleteOrphans(): Promise<{ novels: number; bytes: number }> {
+    const { local } = this.ctx.platform;
+    let novels = 0;
+    let bytes = 0;
+    for (const o of await this.orphans()) {
+      o.key ??= [...this.docs.keys()].find((k) => hashKey(k) === o.dir) ?? null;
+      const pending = o.key ? this.docs.get(o.key) : undefined;
+      const doc = pending ? await pending.catch(() => null) : null;
+      // Re-check now (synchronously from here on): the library or the queue may have changed meanwhile.
+      if (this.libraryDirs().has(o.dir) || this.busyDirs().has(o.dir)) continue;
+      if (o.key) {
+        doc?.delete();
+        this.docs.delete(o.key);
+      }
+      try {
+        local.remove(`${DOWNLOADS_DIR}/${o.dir}`);
+      } catch (err) {
+        this.ctx.platform.log('warn', `Couldn't delete downloads in ${o.dir}: ${errorMessage(err)}`);
+        continue;
+      }
+      novels++;
+      bytes += o.bytes;
+    }
+    if (novels > 0) this.ctx.platform.log('info', `Deleted downloads of ${novels} novel(s) no longer in the library (${Math.round(bytes / 1024)} KB)`);
+    return { novels, bytes };
   }
 
   /** storage.clear('downloads'). */

@@ -17,13 +17,13 @@ import type {
   ChapterPosition,
   HistoryEntry,
   LibraryEntry,
-  NovelStatus,
   RepoInfo,
   UpdateEntry,
 } from '../../shared/contracts/domain.ts';
 import { parseNovelKey } from '../../shared/contracts/domain.ts';
-import type { BackupInfo } from '../../shared/contracts/protocol.ts';
+import type { BackupInfo, BackupPreview } from '../../shared/contracts/protocol.ts';
 import { mapLimit } from '../lib/async.ts';
+import { pad2 as p2 } from '../lib/dates.ts';
 import { errorMessage, invalidArgs, notFound, storageError } from '../lib/errors.ts';
 import { isHttpUrl, isRecord } from '../lib/validate.ts';
 import type { JsonDoc } from '../storage/json-doc.ts';
@@ -37,13 +37,17 @@ import type { ProgressService, ProgressSnapshot } from './progress.ts';
 import { sanitizeSettings } from './settings.ts';
 import type { SourceBackup, SourceService } from './sources.ts';
 import type { UpdatesService } from './updates.ts';
+import { type Rec, category, copyOptional, historyEntry, isNum, isStr, isNonEmpty, keyIsValid, libraryEntry, repoInfo, strArray, updateEntry } from './records.ts';
 
 export const BACKUP_DIR = 'backups';
 export const BACKUP_VERSION = 1;
 export const KEEP_BACKUPS = 10;
+/** A picked backup stays restorable by importId this long after its preview. */
+export const IMPORT_TTL_MS = 10 * 60 * 1000;
+/** Picked backups kept in memory at once (each can be a few MB of JSON). */
+const MAX_IMPORTS = 3;
 const NAME_RE = /^tachinovel-backup-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(?:-(\d+))?\.json$/;
 const SAFE_FILE_RE = /^[A-Za-z0-9._-]{1,200}\.json$/;
-const STATUSES: readonly NovelStatus[] = ['ongoing', 'completed', 'hiatus', 'cancelled', 'unknown'];
 
 export interface BackupFile {
   schemaVersion: number;
@@ -59,64 +63,19 @@ export interface BackupFile {
   updates: UpdateEntry[];
   sources: SourceBackup[];
   repos: RepoInfo[];
+  /**
+   * Plugin setting values (raw plugin-storage items, setting keys only; no other plugin storage),
+   * per source id, built-ins included. Optional: older backups have none.
+   */
+  pluginSettings?: Record<string, Record<string, unknown>>;
 }
 
 export type RestoreMode = 'merge' | 'replace';
 
 // ---------- validation ----------
 
-type Rec = Record<string, unknown>;
-
 function fail(message: string): never {
   throw invalidArgs(`Invalid backup: ${message}`);
-}
-
-const isStr = (v: unknown): v is string => typeof v === 'string';
-const isNonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
-const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const strArray = (v: unknown): string[] | null => (Array.isArray(v) && v.every(isNonEmpty) ? [...v] : null);
-
-function copyOptional<T extends object>(target: T, src: Rec, keys: readonly string[], check: (v: unknown) => boolean): void {
-  for (const k of keys) if (check(src[k])) (target as Rec)[k] = src[k];
-}
-
-function validKey(pluginId: unknown, path: unknown): boolean {
-  return isNonEmpty(pluginId) && !pluginId.includes(':') && isNonEmpty(path);
-}
-
-function keyIsValid(key: string): boolean {
-  try {
-    const k = parseNovelKey(key);
-    return validKey(k.pluginId, k.path);
-  } catch {
-    return false;
-  }
-}
-
-function libraryEntry(v: unknown): LibraryEntry | null {
-  if (!isRecord(v) || !validKey(v.pluginId, v.path) || !isStr(v.name)) return null;
-  const pluginId = v.pluginId as string;
-  const path = v.path as string;
-  const e: LibraryEntry = {
-    key: `${pluginId}:${path}`,
-    pluginId,
-    path,
-    name: v.name,
-    addedAt: isNum(v.addedAt) ? v.addedAt : 0,
-    chapterCount: isNum(v.chapterCount) ? v.chapterCount : 0,
-    unreadCount: isNum(v.unreadCount) ? v.unreadCount : 0,
-    downloadedCount: 0, // downloads are device-local, never in backups
-    categoryIds: strArray(v.categoryIds) ?? [],
-  };
-  copyOptional(e, v, ['cover', 'author', 'lastChapterPath', 'lastChapterName'], isStr);
-  copyOptional(e, v, ['lastReadAt', 'lastUpdatedAt'], isNum);
-  if (STATUSES.includes(v.status as NovelStatus)) e.status = v.status as NovelStatus;
-  return e;
-}
-
-function category(v: unknown): Category | null {
-  if (!isRecord(v) || !isNonEmpty(v.id) || !isStr(v.name) || !isNum(v.order)) return null;
-  return { id: v.id, name: v.name, order: v.order };
 }
 
 function progressSnapshot(v: unknown): ProgressSnapshot | null {
@@ -138,39 +97,6 @@ function progressSnapshot(v: unknown): ProgressSnapshot | null {
   return out;
 }
 
-function historyEntry(v: unknown): HistoryEntry | null {
-  if (!isRecord(v) || !validKey(v.pluginId, v.path) || !isStr(v.novelName) || !isNonEmpty(v.chapterPath) || !isStr(v.chapterName)) return null;
-  if (!isNum(v.readAt) || !isNum(v.percent)) return null;
-  const h: HistoryEntry = {
-    pluginId: v.pluginId as string,
-    path: v.path as string,
-    novelName: v.novelName,
-    chapterPath: v.chapterPath,
-    chapterName: v.chapterName,
-    readAt: v.readAt,
-    percent: v.percent,
-  };
-  copyOptional(h, v, ['cover'], isStr);
-  if (isNum(v.readingMs) && v.readingMs > 0) h.readingMs = v.readingMs;
-  return h;
-}
-
-function updateEntry(v: unknown): UpdateEntry | null {
-  if (!isRecord(v) || !validKey(v.pluginId, v.path) || !isStr(v.novelName) || !isNonEmpty(v.chapterPath) || !isStr(v.chapterName)) return null;
-  if (!isNum(v.foundAt) || typeof v.read !== 'boolean') return null;
-  const u: UpdateEntry = {
-    pluginId: v.pluginId as string,
-    path: v.path as string,
-    novelName: v.novelName,
-    chapterPath: v.chapterPath,
-    chapterName: v.chapterName,
-    foundAt: v.foundAt,
-    read: v.read,
-  };
-  copyOptional(u, v, ['cover'], isStr);
-  return u;
-}
-
 function sourceBackup(v: unknown): SourceBackup | null {
   if (!isRecord(v) || !isNonEmpty(v.id) || !isStr(v.name)) return null;
   const b: SourceBackup = {
@@ -187,13 +113,6 @@ function sourceBackup(v: unknown): SourceBackup | null {
   return b;
 }
 
-function repoInfo(v: unknown): RepoInfo | null {
-  if (!isRecord(v) || !isStr(v.url) || !isHttpUrl(v.url)) return null;
-  const r: RepoInfo = { url: v.url, name: isStr(v.name) ? v.name : v.url, pluginCount: isNum(v.pluginCount) ? v.pluginCount : 0 };
-  if (isNum(v.fetchedAt)) r.fetchedAt = v.fetchedAt;
-  return r;
-}
-
 function list<T>(raw: Rec, key: string, item: (v: unknown) => T | null, dropped: string[]): T[] {
   const v = raw[key] ?? [];
   if (!Array.isArray(v)) fail(`"${key}" must be an array`);
@@ -207,6 +126,35 @@ function list<T>(raw: Rec, key: string, item: (v: unknown) => T | null, dropped:
 }
 
 /** Parse and validate a backup. Throws INVALID_ARGS for files that can't be restored; drops malformed items. */
+const MAX_SETTINGS_KEYS = 200;
+const MAX_SETTINGS_JSON = 64 * 1024;
+
+/** Backed-up plugin settings: valid source ids, string keys, JSON values of bounded size per source. */
+function parsePluginSettings(v: unknown, dropped: string[]): Record<string, Record<string, unknown>> | undefined {
+  if (v === undefined) return undefined;
+  if (!isRecord(v)) {
+    dropped.push('pluginSettings');
+    return undefined;
+  }
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [id, values] of Object.entries(v)) {
+    let size = Infinity;
+    try {
+      size = JSON.stringify(values).length;
+    } catch {
+      // not serializable: dropped below
+    }
+    if (!isNonEmpty(id) || id.includes(':') || id.length > 200 || !isRecord(values) || Object.keys(values).length > MAX_SETTINGS_KEYS || size > MAX_SETTINGS_JSON) {
+      dropped.push('pluginSettings');
+      continue;
+    }
+    const clean: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(values)) if (key.length > 0 && key.length <= 200 && item !== undefined && item !== null) clean[key] = item;
+    out[id] = clean;
+  }
+  return out;
+}
+
 export function parseBackup(text: string): { backup: BackupFile; dropped: string[] } {
   let raw: unknown;
   try {
@@ -242,12 +190,12 @@ export function parseBackup(text: string): { backup: BackupFile; dropped: string
     sources: list(raw, 'sources', sourceBackup, dropped),
     repos: list(raw, 'repos', repoInfo, dropped),
   };
+  const pluginSettings = parsePluginSettings(raw.pluginSettings, dropped);
+  if (pluginSettings) backup.pluginSettings = pluginSettings;
   return { backup, dropped };
 }
 
 // ---------- names ----------
-
-const p2 = (n: number): string => String(n).padStart(2, '0');
 
 export function backupFileName(ms: number, n = 1): string {
   const d = new Date(ms);
@@ -286,9 +234,67 @@ export class BackupService {
   private readonly d: BackupDeps;
   private reconciling: Promise<void> | null = null;
 
+  /** Backups picked for a preview (backup.preview without fileName), restorable by importId. */
+  private readonly imports = new Map<string, { text: string; at: number }>();
+
   constructor(ctx: Ctx, deps: BackupDeps) {
     this.ctx = ctx;
     this.d = deps;
+  }
+
+  /**
+   * backup.preview: what a backup holds and what a restore would bring in, without changing anything.
+   * A listed backup is named by fileName; otherwise the user picks a file, which is kept in memory for
+   * this session under an importId (single use, expires after IMPORT_TTL_MS) so restore needn't ask again.
+   * A cancelled pick → NOT_FOUND "No backup was picked".
+   */
+  async preview(a: { fileName?: string }): Promise<BackupPreview> {
+    const { platform } = this.ctx;
+    this.dropExpiredImports();
+    let text: string | null;
+    let importId: string | undefined;
+    if (a.fileName !== undefined) {
+      text = await platform.synced.readText(this.backupPath(a.fileName));
+    } else {
+      const picked = await platform.native.pickFile(['public.json']);
+      if (!picked) throw notFound('No backup was picked');
+      text = await this.readPicked(picked);
+    }
+    if (text === null) throw notFound('Backup file is missing');
+    const { backup, dropped } = parseBackup(text); // INVALID_ARGS for files that aren't usable backups
+    if (a.fileName === undefined) {
+      importId = `imp-${platform.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      this.imports.set(importId, { text, at: platform.now() });
+      while (this.imports.size > MAX_IMPORTS) {
+        const oldest = this.imports.keys().next().value;
+        if (oldest === undefined) break;
+        this.imports.delete(oldest);
+      }
+    }
+    const preview: BackupPreview = {
+      createdAt: backup.createdAt,
+      counts: {
+        novels: backup.library.length,
+        categories: backup.categories.length,
+        progress: Object.keys(backup.progress).length,
+        history: backup.history.length,
+        updates: backup.updates.length,
+        sources: backup.sources.length,
+        repos: backup.repos.length,
+        pluginSettings: Object.keys(backup.pluginSettings ?? {}).length,
+      },
+      newNovels: backup.library.filter((e) => !this.d.library.has(e.key)).length,
+      skipped: dropped.length,
+    };
+    if (a.fileName !== undefined) preview.fileName = a.fileName;
+    if (importId) preview.importId = importId;
+    if (backup.buildVersion) preview.buildVersion = backup.buildVersion;
+    return preview;
+  }
+
+  private dropExpiredImports(): void {
+    const now = this.ctx.platform.now();
+    for (const [id, imp] of this.imports) if (now - imp.at > IMPORT_TTL_MS) this.imports.delete(id);
   }
 
   /** Resolves when the post-restore background recount/refresh is done (tests). */
@@ -316,6 +322,8 @@ export class BackupService {
       sources: this.d.sources.backupSources(),
       repos: this.d.sources.repos(),
     };
+    const pluginSettings = await this.d.sources.backupSettings();
+    if (Object.keys(pluginSettings).length > 0) backup.pluginSettings = pluginSettings;
     let n = 1;
     while (synced.exists(`${BACKUP_DIR}/${backupFileName(createdAt, n)}`)) n++;
     const fileName = backupFileName(createdAt, n);
@@ -376,10 +384,16 @@ export class BackupService {
     throw invalidArgs('The picked file is outside the app storage');
   }
 
-  async restore(a: { fileName?: string; mode: RestoreMode }): Promise<{ novels: number; sources: number }> {
+  async restore(a: { fileName?: string; importId?: string; mode: RestoreMode }): Promise<{ novels: number; sources: number }> {
     const { platform } = this.ctx;
     let text: string | null;
-    if (a.fileName !== undefined) {
+    if (a.importId !== undefined) {
+      this.dropExpiredImports();
+      const imp = this.imports.get(a.importId);
+      if (!imp) throw notFound('That picked backup has expired; pick it again');
+      text = imp.text;
+      this.imports.delete(a.importId); // single use
+    } else if (a.fileName !== undefined) {
       text = await platform.synced.readText(this.backupPath(a.fileName));
     } else {
       const picked = await platform.native.pickFile(['public.json']);
@@ -392,6 +406,7 @@ export class BackupService {
     if (dropped.length > 0) platform.log('warn', `Restore: skipped ${dropped.length} malformed item(s)`, [...new Set(dropped)]);
     await this.apply(backup, a.mode);
     const sources = await this.d.sources.restore(backup.sources, backup.repos, a.mode);
+    if (backup.pluginSettings) await this.d.sources.restoreSettings(backup.pluginSettings, a.mode);
     await this.d.flush();
     this.reconciling = this.reconcileLibrary().finally(() => {
       this.reconciling = null;

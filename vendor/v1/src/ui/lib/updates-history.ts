@@ -101,3 +101,46 @@ export function historySections(entries: readonly HistoryEntry[], now: number): 
   }
   return out;
 }
+
+// ---------- library update check: per-novel progress ----------
+
+/** What an update check found so far, novel by novel (from `updates.progress` events). */
+export interface CheckTrace {
+  /** Cumulative new chapters at the last event (to work out each novel's share). */
+  seen: number;
+  done: number;
+  total: number;
+  /** The novel checked last. */
+  last?: string;
+  /** Novels with new chapters, in the order they were found. */
+  found: { name: string; newChapters: number }[];
+}
+
+export const EMPTY_TRACE: CheckTrace = { seen: 0, done: 0, total: 0, found: [] };
+
+/**
+ * Fold one `updates.progress` event into the trace. The script emits one event per novel as it
+ * finishes (`current` = that novel, `newChapters` = the running total), so the growth since the last
+ * event is that novel's. A count that goes down means a new check started.
+ */
+export function traceCheck(t: CheckTrace, p: { done: number; total: number; current?: string; newChapters: number }): CheckTrace {
+  const base = p.newChapters < t.seen || p.done < t.done ? EMPTY_TRACE : t;
+  const delta = p.newChapters - base.seen;
+  const found = delta > 0 && p.current ? [...base.found, { name: p.current, newChapters: delta }] : base.found;
+  return { seen: p.newChapters, done: p.done, total: p.total, ...(p.current ? { last: p.current } : base.last ? { last: base.last } : {}), found };
+}
+
+/** "Library last checked …": "just now", "12 min ago", "3 h ago", "yesterday at 9:41 PM", or the date. */
+export function checkedLabel(ts: number, now: number, fmt: { time: (t: number) => string; date: (t: number) => string }): string {
+  const diff = Math.max(0, now - ts);
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;
+  const a = new Date(ts);
+  const b = new Date(now);
+  const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay) return `${Math.floor(diff / 3_600_000)} h ago`;
+  const y = new Date(now);
+  y.setDate(y.getDate() - 1);
+  if (a.getFullYear() === y.getFullYear() && a.getMonth() === y.getMonth() && a.getDate() === y.getDate()) return `yesterday at ${fmt.time(ts)}`;
+  return fmt.date(ts);
+}

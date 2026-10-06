@@ -79,6 +79,11 @@ export interface NativeUi {
   share(opts: { text?: string; url?: string }): Promise<void>;
   /** Share a file (absolute path) through the native share sheet. */
   shareFile(absPath: string): Promise<void>;
+  /**
+   * Share an image (PNG/JPEG bytes, base64) as an image, so the sheet offers "Save Image". Rejects if
+   * the bytes aren't a decodable image; a dismissed sheet is not an error. Added for native.shareImage.
+   */
+  shareImage(base64: string): Promise<void>;
   /** Native document picker; resolves to the picked file's absolute path, or null if cancelled. */
   pickFile(types: string[]): Promise<string | null>;
   openUrl(url: string): void;

@@ -3,6 +3,10 @@
  * sub-pixel accumulation (whole pixels only, so slow speeds stay smooth and exact). It flows across
  * chapter boundaries (the reader keeps appending chapters as the scroll position moves), pauses when
  * the reader drags or wheels, and ends by itself at the end of what can be read.
+ *
+ * On a touchscreen every tap starts with a touchstart, which already pauses. The click that follows the
+ * same tap must not undo that (it used to resume, so taps never stopped auto-scroll on the phone):
+ * `consumeTakeOver()` tells the tap handler that this tap's own touch just paused it.
  */
 import type { RefObject } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -14,21 +18,36 @@ export const AUTO_SCROLL_LIMITS = { min: 10, max: 200, step: 5 } as const;
 /** How long the scroller may sit at its very end before auto-scroll gives up (next chapter loading…). */
 const END_GRACE_MS = 2500;
 
+/** A click this long after the touch that paused auto-scroll belongs to that same tap. */
+const TAKEOVER_TAP_MS = 1500;
+
 export interface AutoScroll {
   mode: AutoScrollMode;
+  /** The mode right now (`mode` is the last rendered one; a touch may have changed it since). */
+  current: () => AutoScrollMode;
   start: () => void;
   stop: () => void;
   pause: () => void;
   resume: () => void;
+  /** True once if a finger/wheel paused auto-scroll within the last moment (that tap's own touch). */
+  consumeTakeOver: () => boolean;
 }
 
-export function useAutoScroll(scroller: RefObject<HTMLDivElement | null>, speed: () => number, onEnd: () => void): AutoScroll {
+export function useAutoScroll(
+  scroller: RefObject<HTMLDivElement | null>,
+  speed: () => number,
+  onEnd: () => void,
+  onTakeOver?: () => void,
+): AutoScroll {
   const [mode, setMode] = useState<AutoScrollMode>('off');
   const modeRef = useRef<AutoScrollMode>('off');
   const speedRef = useRef(speed);
   speedRef.current = speed;
   const endRef = useRef(onEnd);
   endRef.current = onEnd;
+  const takeOverRef = useRef(onTakeOver);
+  takeOverRef.current = onTakeOver;
+  const takeOverAt = useRef(0);
 
   const set = (m: AutoScrollMode): void => {
     modeRef.current = m;
@@ -69,7 +88,10 @@ export function useAutoScroll(scroller: RefObject<HTMLDivElement | null>, speed:
     raf = requestAnimationFrame(frame);
     // The reader taking over (finger or wheel) pauses it.
     const takeOver = (): void => {
-      if (modeRef.current === 'running') set('paused');
+      if (modeRef.current !== 'running') return;
+      takeOverAt.current = Date.now();
+      set('paused');
+      takeOverRef.current?.();
     };
     sc.addEventListener('touchstart', takeOver, { passive: true });
     sc.addEventListener('wheel', takeOver, { passive: true });
@@ -82,13 +104,23 @@ export function useAutoScroll(scroller: RefObject<HTMLDivElement | null>, speed:
 
   return {
     mode,
+    current: () => modeRef.current,
     start: () => set('running'),
-    stop: () => set('off'),
+    stop: () => {
+      takeOverAt.current = 0;
+      set('off');
+    },
     pause: () => {
       if (modeRef.current === 'running') set('paused');
     },
     resume: () => {
+      takeOverAt.current = 0;
       if (modeRef.current === 'paused') set('running');
+    },
+    consumeTakeOver: () => {
+      const recent = takeOverAt.current > 0 && Date.now() - takeOverAt.current < TAKEOVER_TAP_MS;
+      takeOverAt.current = 0;
+      return recent;
     },
   };
 }

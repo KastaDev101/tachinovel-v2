@@ -29,9 +29,13 @@ export type Route =
   | { name: 'source'; pluginId: string; query?: string; openFilters?: boolean; filters?: FilterValues; mode?: 'popular' | 'latest' }
   | { name: 'globalSearch'; query?: string }
   /** Cross-source genre search; `pluginId` (the novel's own source) is listed first. */
-  | { name: 'genre'; genre: string; pluginId?: string }
+  | { name: 'genre'; genre: string; pluginId?: string; also?: string[] }
   /** Latest novels from every browsable source. */
   | { name: 'latest' }
+  /** "Because you read X": recommendations from the genres of recently read library novels. */
+  | { name: 'forYou' }
+  /** A source's plugin settings (LNReader pluginSettings). */
+  | { name: 'sourceSettings'; pluginId: string }
   | { name: 'settings'; page: SettingsPage }
   /** More › Reading Insights. */
   | { name: 'stats' }
@@ -41,7 +45,9 @@ export type Route =
   /** More › About › Diagnostics. */
   | { name: 'diagnostics' }
   /** More › Help & Tips. */
-  | { name: 'help' };
+  | { name: 'help' }
+  /** More › Listen in the Car (PC narration). */
+  | { name: 'narration' };
 
 export interface StackEntry {
   id: number;

@@ -313,6 +313,12 @@ final class NativeHostAPI {
         let shareFile: @convention(block) (String, JSVal) -> Void = { [self] path, cb in
             DispatchQueue.main.async { NativeUI.shared.share([URL(fileURLWithPath: path)]) { self.reply(cb, error: nil, result: true) } }
         }
+        let shareImage: @convention(block) (String, JSVal) -> Void = { [self] b64, cb in
+            guard let data = Data(base64Encoded: b64), let image = UIImage(data: data) else {
+                return reply(cb, error: "Not a decodable image")
+            }
+            DispatchQueue.main.async { NativeUI.shared.share([image]) { self.reply(cb, error: nil, result: true) } }
+        }
         let pickFile: @convention(block) (String, String, JSVal) -> Void = { [self] typesJson, destDir, cb in
             let types = ((try? JSONSerialization.jsonObject(with: Data(typesJson.utf8))) as? [String]) ?? []
             DispatchQueue.main.async {
@@ -350,6 +356,7 @@ final class NativeHostAPI {
         set(o, "alert", fn(alert))
         set(o, "share", fn(share))
         set(o, "shareFile", fn(shareFile))
+        set(o, "shareImage", fn(shareImage))
         set(o, "pickFile", fn(pickFile))
         set(o, "openUrl", fn(openUrl))
         set(o, "symbol", fn(symbol))

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T07:30:08.268Z",
+  "generatedAt": "2026-10-06T09:43:14.649Z",
   "method": "node tools/plugin-survey.ts --verify: popular → search (title of the first popular novel) → novel → first free chapter, live from a PC through the real plugin host (Node fetch, curl on Cloudflare challenges, no WebView fallback)",
   "index": "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
   "plugins": {
@@ -12,7 +12,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: FirstKissNovel: popularNovels failed: Captcha error, please open in webview; search PLUGIN: FirstKissNovel: searchNovels failed: Captcha error, please open in webview"
+      "notes": "popular PLUGIN: FirstKissNovel: 1stkissnovel.org shows a parked or for-sale domain page; the site is gone; search PLUGIN: FirstKissNovel: 1stkissnovel.org shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "allnovel": {
       "version": "2.2.2",
@@ -45,7 +46,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Vercel challenge at animeanyway.com (open the site in the browser to pass it); search CLOUDFLARE: Vercel challenge at animeanyway.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Vercel challenge at animeanyway.com (open the site in the browser to pass it); search CLOUDFLARE: Vercel challenge at animeanyway.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "arcane": {
       "version": "1.1.11",
@@ -56,18 +58,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: Arcane Translations: popularNovels failed: Captcha error, please open in webview (or the website has changed url); search PLUGIN: Arcane Translations: searchNovels failed: Captcha error, please open in webview (or the website has changed url)"
+      "notes": "popular PLUGIN: Arcane Translations: popularNovels failed: Captcha error, please open in webview (or the website has changed url); search PLUGIN: Arcane Translations: searchNovels failed: Captcha error, please open in webview (or the website has changed url)",
+      "reason": "bot-check"
     },
     "archiveofourown": {
       "version": "1.0.5",
-      "status": "broken",
+      "status": "partial",
       "stages": {
-        "popular": "fail",
+        "popular": "ok",
         "search": "fail",
-        "novel": "skipped",
-        "chapter": "skipped"
+        "novel": "ok",
+        "chapter": "ok"
       },
-      "notes": "popular PLUGIN: Archive Of Our Own: popularNovels failed: AO3 request timed out / blocked: HTTP 525; search PLUGIN: Archive Of Our Own: searchNovels failed: AO3 request timed out / blocked: HTTP 525"
+      "notes": "search TIMEOUT: Timed out fetching https://archiveofourown.org/works/search?commit=Search&page=1&work_search%5Blanguage_id%5D=en&work_search%5Bquery%5D=All+the+Young+Dudes: The",
+      "reason": "unreachable"
     },
     "asianfanfics": {
       "version": "1.0.0",
@@ -144,7 +148,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "cherrymistcafe": {
       "version": "1.2.1",
@@ -155,7 +160,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "chikari": {
       "version": "1.0.1",
@@ -177,7 +183,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search NOT_FOUND: Chrysanthemum Garden: searchNovels: not found (HTTP 404)"
+      "notes": "search NOT_FOUND: Chrysanthemum Garden: searchNovels: not found (HTTP 404)",
+      "reason": "not-found"
     },
     "citrusaurora": {
       "version": "2.2.0",
@@ -199,7 +206,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://coralboutique.xyz//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: Network error fetching https://coralboutique.xyz//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular NETWORK: coralboutique.xyz has a broken secure connection fetching https://coralboutique.xyz//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: coralboutique.xyz has a broken secure connection fetching https://coralboutique.xyz//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "tls"
     },
     "cpunovel": {
       "version": "1.1.11",
@@ -210,7 +218,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://cpunovel.com/series/?page=1: fetch failed; search TIMEOUT: Timed out fetching https://cpunovel.com/page/1/?s=love: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://cpunovel.com/series/?page=1: fetch failed; search TIMEOUT: Timed out fetching https://cpunovel.com/page/1/?s=love: fetch failed",
+      "reason": "unreachable"
     },
     "crimsonscrolls": {
       "version": "1.1.0",
@@ -232,7 +241,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "daonovel": {
       "version": "2.2.0",
@@ -243,7 +253,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://daonovel.co//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: Network error fetching https://daonovel.co//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular NETWORK: daonovel.co can't be found (its domain no longer resolves) fetching https://daonovel.co//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: daonovel.co can't be found (its domain no longer resolves) fetching https://daonovel.co//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "site-gone"
     },
     "daotekno": {
       "version": "1.0.1",
@@ -254,7 +265,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at daotekno.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at daotekno.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at daotekno.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at daotekno.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "daotranslate": {
       "version": "1.1.11",
@@ -265,7 +277,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at daotranslate.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at daotranslate.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at daotranslate.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at daotranslate.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "DDL.com": {
       "version": "1.1.1",
@@ -276,7 +289,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "dearestrosalie": {
       "version": "1.2.0",
@@ -287,7 +301,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://dearestrosalie.com/stories/: fetch failed; search NETWORK: Network error fetching https://dearestrosalie.com/?s=love&post_type=fcn_story: fetch failed"
+      "notes": "popular NETWORK: dearestrosalie.com can't be found (its domain no longer resolves) fetching https://dearestrosalie.com/stories/: fetch failed; search NETWORK: dearestrosalie.com can't be found (its domain no longer resolves) fetching https://dearestrosalie.com/?s=love&post_type=fcn_story: fetch failed",
+      "reason": "site-gone"
     },
     "dobynovels": {
       "version": "1.1.11",
@@ -320,18 +335,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at dragontea.ink (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at dragontea.ink (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at dragontea.ink (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at dragontea.ink (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "dreambigtl": {
       "version": "1.0.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular NETWORK: Dream Big Translations: www.dreambigtl.com is down (HTTP 530); search NETWORK: Dream Big Translations: www.dreambigtl.com is down (HTTP 530)",
+      "reason": "site-down"
     },
     "dreamyTranslations": {
       "version": "1.1.1",
@@ -364,7 +381,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "empirenovel": {
       "version": "1.0.0",
@@ -375,7 +393,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.empirenovel.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.empirenovel.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.empirenovel.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.empirenovel.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "eternalune": {
       "version": "2.2.0",
@@ -419,7 +438,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://fanstranslations.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: Network error fetching https://fanstranslations.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular NETWORK: fanstranslations.com has a broken secure connection fetching https://fanstranslations.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: fanstranslations.com has a broken secure connection fetching https://fanstranslations.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "tls"
     },
     "fenrir": {
       "version": "1.1.3",
@@ -463,7 +483,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.foxaholic.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.foxaholic.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.foxaholic.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.foxaholic.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "foxteller": {
       "version": "1.0.3",
@@ -474,7 +495,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.foxteller.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.foxteller.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.foxteller.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.foxteller.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "FuckNovelpia": {
       "version": "1.1.1",
@@ -513,12 +535,13 @@
       "version": "2.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: Galaxy Translations: darkstartranslations.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Galaxy Translations: darkstartranslations.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "genesistudio": {
       "version": "2.0.1",
@@ -529,7 +552,8 @@
         "novel": "ok",
         "chapter": "fail"
       },
-      "notes": "chapter PLUGIN: Genesis: parseChapter failed: Cannot read properties of undefined (reading 'chapter_content')"
+      "notes": "chapter PLUGIN: Genesis: parseChapter failed: Cannot read properties of undefined (reading 'chapter_content')",
+      "reason": "layout-changed"
     },
     "guavaread": {
       "version": "2.2.0",
@@ -540,7 +564,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://guavaread.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://guavaread.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://guavaread.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://guavaread.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "unreachable"
     },
     "hangulplanet": {
       "version": "2.3.0",
@@ -573,7 +598,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://api.hotnovelpub.com/books/hot/?page=0&limit=20: fetch failed; search TIMEOUT: Timed out fetching https://api.hotnovelpub.com/search: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://api.hotnovelpub.com/books/hot/?page=0&limit=20: fetch failed; search TIMEOUT: Timed out fetching https://api.hotnovelpub.com/search: fetch failed",
+      "reason": "unreachable"
     },
     "hyacinthbloom": {
       "version": "1.1.11",
@@ -606,7 +632,8 @@
         "novel": "ok",
         "chapter": "fail"
       },
-      "notes": "popular NOT_FOUND: Inkitt: popularNovels: not found (HTTP 404); chapter NOT_FOUND: Inkitt: chapter not found: romance/427413/chapters/2"
+      "notes": "popular NOT_FOUND: Inkitt: popularNovels: not found (HTTP 404); chapter NOT_FOUND: Inkitt: chapter not found: romance/427413/chapters/2",
+      "reason": "not-found"
     },
     "inoveltranslation": {
       "version": "1.0.2",
@@ -628,7 +655,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "kdtnovels": {
       "version": "1.1.11",
@@ -639,7 +667,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "keopi": {
       "version": "1.1.11",
@@ -650,7 +679,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://keopitranslations.com/series/?page=1: fetch failed; search NETWORK: Network error fetching https://keopitranslations.com/page/1/?s=love: fetch failed"
+      "notes": "popular NETWORK: keopitranslations.com can't be found (its domain no longer resolves) fetching https://keopitranslations.com/series/?page=1: fetch failed; search NETWORK: keopitranslations.com can't be found (its domain no longer resolves) fetching https://keopitranslations.com/page/1/?s=love: fetch failed",
+      "reason": "site-gone"
     },
     "knoxt": {
       "version": "1.1.11",
@@ -694,7 +724,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://leafstudio.site/novels: fetch failed; search TIMEOUT: Timed out fetching https://leafstudio.site/novels?search=love&type=&language=&status=&sort=: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://leafstudio.site/novels: fetch failed; search TIMEOUT: Timed out fetching https://leafstudio.site/novels?search=love&type=&language=&status=&sort=: fetch failed",
+      "reason": "unreachable"
     },
     "libread": {
       "version": "2.2.4",
@@ -711,12 +742,13 @@
       "version": "1.0.2",
       "status": "broken",
       "stages": {
-        "popular": "empty",
+        "popular": "fail",
         "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search PLUGIN: LightNovelCave: searchNovels failed: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON"
+      "notes": "popular NETWORK: LightNovelCave: www.lightnovelcave.com is down (HTTP 521); search PLUGIN: LightNovelCave: searchNovels failed: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "reason": "site-down"
     },
     "lightnovelplus": {
       "version": "2.2.1",
@@ -727,18 +759,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: LightNovelPlus: popularNovels failed: Could not reach site (503: Service Unavailable) try to open in webview.; search \"love\" found nothing"
+      "notes": "popular PLUGIN: LightNovelPlus: popularNovels failed: Could not reach site (503: Service Unavailable) try to open in webview.; search \"love\" found nothing",
+      "reason": "site-down"
     },
     "lightnovelpubvip": {
       "version": "1.0.2",
       "status": "broken",
       "stages": {
-        "popular": "empty",
+        "popular": "fail",
         "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search PLUGIN: LightNovelPub Vip: searchNovels failed: Unexpected token '<', \"<div align\"... is not valid JSON"
+      "notes": "popular NETWORK: LightNovelPub Vip: lightnovelpub.vip is limiting requests (HTTP 429); try again later; search PLUGIN: LightNovelPub Vip: searchNovels failed: Unexpected token 'T', \"Too many requests\" is not valid JSON",
+      "reason": "rate-limited"
     },
     "lightnoveltranslations": {
       "version": "1.0.0",
@@ -760,7 +794,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NOT_FOUND: Light Novel Updates: popularNovels: not found (HTTP 404); search NOT_FOUND: Light Novel Updates: searchNovels: not found (HTTP 404)"
+      "notes": "popular NOT_FOUND: Light Novel Updates: popularNovels: not found (HTTP 404); search NOT_FOUND: Light Novel Updates: searchNovels: not found (HTTP 404)",
+      "reason": "not-found"
     },
     "lightnovelworld": {
       "version": "1.0.2",
@@ -771,7 +806,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "lilyonthevalley": {
       "version": "1.2.1",
@@ -782,7 +818,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://lilyonthevalley.com/stories/: fetch failed; search NETWORK: Network error fetching https://lilyonthevalley.com/?s=love&post_type=fcn_story: fetch failed"
+      "notes": "popular NETWORK: lilyonthevalley.com has a broken secure connection fetching https://lilyonthevalley.com/stories/: fetch failed; search NETWORK: lilyonthevalley.com has a broken secure connection fetching https://lilyonthevalley.com/?s=love&post_type=fcn_story: fetch failed",
+      "reason": "tls"
     },
     "lnheaven": {
       "version": "2.2.0",
@@ -832,12 +869,13 @@
       "version": "1.0.4",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: Ltnovel: www.ltnovels.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Ltnovel: www.ltnovels.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "lullobox": {
       "version": "2.2.0",
@@ -859,7 +897,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://lunarletters.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://lunarletters.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://lunarletters.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://lunarletters.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "unreachable"
     },
     "meownovel": {
       "version": "2.2.0",
@@ -870,7 +909,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://meownovel.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://meownovel.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular TIMEOUT: Timed out fetching https://meownovel.com//page/1/?s=&post_type=wp-manga: fetch failed; search TIMEOUT: Timed out fetching https://meownovel.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "unreachable"
     },
     "moonlightnovel": {
       "version": "1.1.12",
@@ -881,7 +921,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://moonlightnovel.com/series/?page=1: fetch failed; search NETWORK: Network error fetching https://moonlightnovel.com/page/1/?s=love: fetch failed"
+      "notes": "popular NETWORK: moonlightnovel.com can't be found (its domain no longer resolves) fetching https://moonlightnovel.com/series/?page=1: fetch failed; search NETWORK: moonlightnovel.com can't be found (its domain no longer resolves) fetching https://moonlightnovel.com/page/1/?s=love: fetch failed",
+      "reason": "site-gone"
     },
     "mostnovel": {
       "version": "2.2.0",
@@ -892,7 +933,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: MostNovel: popularNovels failed: Captcha error, please open in webview; search PLUGIN: MostNovel: searchNovels failed: Captcha error, please open in webview"
+      "notes": "popular PLUGIN: MostNovel: the site now redirects to www.bulletproofed-inc.org; the plugin needs an update (Captcha error, please open in webview); search PLUGIN: MostNovel: the site now redirects to www.bulletproofed-inc.org; the plugin needs an update (Captcha error, please open in webview)",
+      "reason": "layout-changed"
     },
     "mtl-novel": {
       "version": "2.2.0",
@@ -903,18 +945,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "mtlnovel": {
       "version": "1.1.3",
       "status": "broken",
       "stages": {
-        "popular": "empty",
+        "popular": "fail",
         "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search PLUGIN: MTL Novel: searchNovels failed: Unexpected token '<', \"<html><hea\"... is not valid JSON"
+      "notes": "popular PLUGIN: MTL Novel: popularNovels failed: Could not reach site (429) try to open in webview.; search PLUGIN: MTL Novel: searchNovels failed: Could not reach site (429) try to open in webview.",
+      "reason": "rate-limited"
     },
     "mvlempyr.com": {
       "version": "1.0.15",
@@ -931,23 +975,25 @@
       "version": "1.0.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular NETWORK: Mynovels: mynovels.su refused the request (HTTP 403); search NETWORK: Mynovels: mynovels.su refused the request (HTTP 403)",
+      "reason": "blocked"
     },
     "mysticalmerries": {
       "version": "2.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: MysticalSeries: popularNovels failed: Could not reach site (429) try to open in webview.; search NETWORK: MysticalSeries: mysticalmerries.com is limiting requests (HTTP 429); try again later",
+      "reason": "rate-limited"
     },
     "neosekaiTLS": {
       "version": "2.2.0",
@@ -958,7 +1004,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://www.neosekaitranslations.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: Network error fetching https://www.neosekaitranslations.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular NETWORK: www.neosekaitranslations.com has a broken secure connection fetching https://www.neosekaitranslations.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: www.neosekaitranslations.com has a broken secure connection fetching https://www.neosekaitranslations.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "tls"
     },
     "nitromanga": {
       "version": "2.2.0",
@@ -969,7 +1016,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: Nitro Manga: popularNovels failed: Captcha error, please open in webview; search PLUGIN: Nitro Manga: searchNovels failed: Captcha error, please open in webview"
+      "notes": "popular PLUGIN: Nitro Manga: nitromanga.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Nitro Manga: nitromanga.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "NO.net": {
       "version": "1.0.2",
@@ -980,7 +1028,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://novelsonline.org/detailed-search: The operation was aborted due to timeout; search TIMEOUT: Timed out fetching https://novelsonline.org/detailed-search: The operation was aborted due to timeout"
+      "notes": "popular TIMEOUT: Timed out fetching https://novelsonline.org/detailed-search: The operation was aborted due to timeout; search TIMEOUT: Timed out fetching https://novelsonline.org/detailed-search: The operation was aborted due to timeout",
+      "reason": "unreachable"
     },
     "noblemtl": {
       "version": "1.1.11",
@@ -991,7 +1040,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NOT_FOUND: NobleMTL: popularNovels: not found (HTTP 404); search \"love\" found nothing"
+      "notes": "popular NOT_FOUND: NobleMTL: popularNovels: not found (HTTP 404); search \"love\" found nothing",
+      "reason": "not-found"
     },
     "noicetranslations": {
       "version": "2.2.0",
@@ -1024,7 +1074,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "novelbin": {
       "version": "2.2.2",
@@ -1035,7 +1086,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://novelbin.com/sort/top-view-novel?page=1: fetch failed; search NETWORK: Network error fetching https://novelbin.com/search?keyword=love&page=1: fetch failed"
+      "notes": "popular NETWORK: Network error fetching https://novelbin.com/sort/top-view-novel?page=1: fetch failed; search NETWORK: Network error fetching https://novelbin.com/search?keyword=love&page=1: fetch failed",
+      "reason": "unreachable"
     },
     "novelbuddy": {
       "version": "2.1.3",
@@ -1140,12 +1192,13 @@
       "version": "2.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: NovelMultiverse: popularNovels failed: Could not reach site (429) try to open in webview.; search NETWORK: NovelMultiverse: www.novelmultiverse.com is limiting requests (HTTP 429); try again later",
+      "reason": "rate-limited"
     },
     "novelnice": {
       "version": "2.2.0",
@@ -1156,7 +1209,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at novelnice.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "novelninja": {
       "version": "2.2.0",
@@ -1207,22 +1261,24 @@
       "status": "broken",
       "stages": {
         "popular": "fail",
-        "search": "empty",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: NovelsKnight: popularNovels failed: Could not reach site (521) try to open in webview.; search \"love\" found nothing"
+      "notes": "popular PLUGIN: NovelsKnight: popularNovels failed: Could not reach site (521) try to open in webview.; search NETWORK: NovelsKnight: novelsknight.punchmanga.online is down (HTTP 521)",
+      "reason": "site-down"
     },
     "novelTL": {
       "version": "2.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: NovelTranslate: noveltranslate.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: NovelTranslate: noveltranslate.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "novelupdates": {
       "version": "0.9.9",
@@ -1233,18 +1289,20 @@
         "novel": "fail",
         "chapter": "skipped"
       },
-      "notes": "novel CLOUDFLARE: Cloudflare challenge at www.novelupdates.com (open the site in the browser to pass it)"
+      "notes": "novel CLOUDFLARE: Cloudflare challenge at www.novelupdates.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "pandamtl": {
       "version": "1.1.11",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: Panda Machine Translations: pandamtl.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Panda Machine Translations: pandamtl.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "pasteltales": {
       "version": "2.2.0",
@@ -1288,18 +1346,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "prizmatranslation": {
       "version": "1.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular TIMEOUT: Timed out fetching https://prizmatranslation.com/home/all-novels/: fetch failed; search TIMEOUT: Timed out fetching https://prizmatranslation.com/?s=love&post_type=fcn_story: fetch failed",
+      "reason": "unreachable"
     },
     "puffinfolio": {
       "version": "1.0.0",
@@ -1321,7 +1381,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://rainofsnow.com/novels/page/1: fetch failed; search NETWORK: Network error fetching https://rainofsnow.com/?s=love: fetch failed"
+      "notes": "popular NETWORK: rainofsnow.com has a broken secure connection fetching https://rainofsnow.com/novels/page/1: fetch failed; search NETWORK: rainofsnow.com has a broken secure connection fetching https://rainofsnow.com/?s=love: fetch failed",
+      "reason": "tls"
     },
     "ranobes": {
       "version": "2.0.2",
@@ -1332,7 +1393,8 @@
         "novel": "fail",
         "chapter": "skipped"
       },
-      "notes": "novel CLOUDFLARE: Cloudflare challenge at ranobes.top (open the site in the browser to pass it)"
+      "notes": "novel CLOUDFLARE: Cloudflare challenge at ranobes.top (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "ranovel": {
       "version": "2.2.0",
@@ -1343,7 +1405,8 @@
         "novel": "ok",
         "chapter": "fail"
       },
-      "notes": "chapter CLOUDFLARE: Cloudflare challenge at ranovel.com (open the site in the browser to pass it)"
+      "notes": "chapter CLOUDFLARE: Cloudflare challenge at ranovel.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "readfanfic": {
       "version": "2.2.0",
@@ -1354,7 +1417,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: Read Fanfic: popularNovels failed: Captcha error, please open in webview; search PLUGIN: Read Fanfic: searchNovels failed: Captcha error, please open in webview"
+      "notes": "popular PLUGIN: Read Fanfic: readfanfic.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Read Fanfic: readfanfic.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "readfrom": {
       "version": "1.1.0",
@@ -1398,7 +1462,8 @@
         "novel": "ok",
         "chapter": "ok"
       },
-      "notes": ""
+      "notes": "",
+      "reason": "layout-changed"
     },
     "requiemtls": {
       "version": "1.1.15",
@@ -1409,7 +1474,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Anubis challenge at requiemtls.com (open the site in the browser to pass it); search CLOUDFLARE: Anubis challenge at requiemtls.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Anubis challenge at requiemtls.com (open the site in the browser to pass it); search CLOUDFLARE: Anubis challenge at requiemtls.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "royalroad": {
       "version": "2.3.1",
@@ -1427,11 +1493,12 @@
       "status": "broken",
       "stages": {
         "popular": "fail",
-        "search": "empty",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: Salmon Latte: popularNovels failed: Could not reach site (525) try to open in webview.; search \"love\" found nothing"
+      "notes": "popular PLUGIN: Salmon Latte: popularNovels failed: Could not reach site (525) try to open in webview.; search NETWORK: Salmon Latte: salmonlatte.com is down (HTTP 525)",
+      "reason": "site-down"
     },
     "scribblehub": {
       "version": "1.0.2",
@@ -1442,7 +1509,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.scribblehub.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.scribblehub.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.scribblehub.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.scribblehub.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "skythewoodtranslations": {
       "version": "1.0.0",
@@ -1478,7 +1546,7 @@
       "notes": ""
     },
     "stonescape": {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "status": "works",
       "stages": {
         "popular": "ok",
@@ -1508,7 +1576,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "systemtranslation": {
       "version": "1.1.11",
@@ -1519,7 +1588,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://systemtranslation.com/series/?page=1: fetch failed; search NETWORK: Network error fetching https://systemtranslation.com/page/1/?s=love: fetch failed"
+      "notes": "popular NETWORK: systemtranslation.com has a broken secure connection fetching https://systemtranslation.com/series/?page=1: fetch failed; search NETWORK: systemtranslation.com has a broken secure connection fetching https://systemtranslation.com/page/1/?s=love: fetch failed",
+      "reason": "tls"
     },
     "tangerinearchive": {
       "version": "2.2.0",
@@ -1574,7 +1644,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "violetlily": {
       "version": "2.2.0",
@@ -1585,7 +1656,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular PLUGIN: Violet Lily: popularNovels failed: Captcha error, please open in webview; search PLUGIN: Violet Lily: searchNovels failed: Captcha error, please open in webview"
+      "notes": "popular PLUGIN: Violet Lily: violetlilytranslation.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: Violet Lily: violetlilytranslation.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "vynovel": {
       "version": "1.0.1",
@@ -1596,18 +1668,20 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular TIMEOUT: Timed out fetching https://vynovel.com/search?sort=viewed&page=1: The operation was aborted due to timeout; search TIMEOUT: Timed out fetching https://vynovel.com/search?sort=viewed&page=1&q=love: The operation was aborted due to timeout"
+      "notes": "popular TIMEOUT: Timed out fetching https://vynovel.com/search?sort=viewed&page=1: The operation was aborted due to timeout; search TIMEOUT: Timed out fetching https://vynovel.com/search?sort=viewed&page=1&q=love: The operation was aborted due to timeout",
+      "reason": "unreachable"
     },
     "webnovel": {
       "version": "1.0.3",
-      "status": "partial",
+      "status": "broken",
       "stages": {
         "popular": "fail",
-        "search": "ok",
-        "novel": "ok",
-        "chapter": "ok"
+        "search": "fail",
+        "novel": "skipped",
+        "chapter": "skipped"
       },
-      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.webnovel.com (open the site in the browser to pass it); novel CLOUDFLARE: Cloudflare challenge at www.webnovel.com (open the site in the browser to pass it)"
+      "notes": "popular CLOUDFLARE: Cloudflare challenge at www.webnovel.com (open the site in the browser to pass it); search CLOUDFLARE: Cloudflare challenge at www.webnovel.com (open the site in the browser to pass it)",
+      "reason": "bot-check"
     },
     "webnovelover": {
       "version": "2.2.0",
@@ -1618,7 +1692,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "popular NETWORK: Network error fetching https://www.webnovelover.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: Network error fetching https://www.webnovelover.com//page/1/?s=love&post_type=wp-manga: fetch failed"
+      "notes": "popular NETWORK: www.webnovelover.com has a broken secure connection fetching https://www.webnovelover.com//page/1/?s=&post_type=wp-manga: fetch failed; search NETWORK: www.webnovelover.com has a broken secure connection fetching https://www.webnovelover.com//page/1/?s=love&post_type=wp-manga: fetch failed",
+      "reason": "tls"
     },
     "WebNovelTraslation": {
       "version": "2.3.0",
@@ -1635,12 +1710,13 @@
       "version": "1.0.2",
       "status": "broken",
       "stages": {
-        "popular": "empty",
+        "popular": "fail",
         "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search PLUGIN: Web Novel Pub: searchNovels failed: Unexpected token '<', \"<!doctype \"... is not valid JSON"
+      "notes": "popular PLUGIN: Web Novel Pub: www.webnovelworld.org shows a parked or for-sale domain page; the site is gone; search PLUGIN: Web Novel Pub: www.webnovelworld.org shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "wetriedtls": {
       "version": "1.0.6",
@@ -1657,12 +1733,13 @@
       "version": "1.1.11",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: White Moonlight Novels: popularNovels failed: Could not reach site (429) try to open in webview.; search NETWORK: White Moonlight Novels: whitemoonlightnovels.com is limiting requests (HTTP 429); try again later",
+      "reason": "rate-limited"
     },
     "witchculttranslations": {
       "version": "1.0.0",
@@ -1679,12 +1756,13 @@
       "version": "2.2.0",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: Wook's Teahouse: popularNovels failed: Could not reach site (429) try to open in webview.; search NETWORK: Wook's Teahouse: wooksteahouse.com is limiting requests (HTTP 429); try again later",
+      "reason": "rate-limited"
     },
     "wordexcerpt": {
       "version": "2.2.0",
@@ -1695,7 +1773,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     },
     "WTRLAB": {
       "version": "1.2.3",
@@ -1712,12 +1791,13 @@
       "version": "1.0.3",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular NETWORK: Wuxiafox: www.wuxiafox.com refused the request (HTTP 403); search NETWORK: Wuxiafox: www.wuxiafox.com refused the request (HTTP 403)",
+      "reason": "blocked"
     },
     "wuxiamtl": {
       "version": "1.0.5",
@@ -1756,23 +1836,24 @@
       "version": "1.0.3",
       "status": "broken",
       "stages": {
-        "popular": "empty",
-        "search": "empty",
+        "popular": "fail",
+        "search": "fail",
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "popular PLUGIN: WuxiaV: www.wuxiav.com shows a parked or for-sale domain page; the site is gone; search PLUGIN: WuxiaV: www.wuxiav.com shows a parked or for-sale domain page; the site is gone",
+      "reason": "parked"
     },
     "wuxiaworld": {
       "version": "0.5.1",
-      "status": "broken",
+      "status": "works",
       "stages": {
         "popular": "ok",
         "search": "ok",
-        "novel": "fail",
-        "chapter": "skipped"
+        "novel": "ok",
+        "chapter": "ok"
       },
-      "notes": "novel PLUGIN: fetchProto (protobuf) is not supported by TachiNovel"
+      "notes": ""
     },
     "wuxiaworld.site": {
       "version": "2.2.0",
@@ -1794,7 +1875,8 @@
         "novel": "skipped",
         "chapter": "skipped"
       },
-      "notes": "search \"love\" found nothing"
+      "notes": "search \"love\" found nothing",
+      "reason": "layout-changed"
     }
   }
 }

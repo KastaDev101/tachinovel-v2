@@ -19,13 +19,14 @@ import type { ChapterMeta, ChapterPosition, ChapterView, DeviceInfo } from '../.
 import type { ChapterContent, NovelPage } from '../../../shared/contracts/protocol.ts';
 import { bridge, errorText, toUiError, type UiError } from '../../bridge/client.ts';
 import { Spinner } from '../../components/controls.tsx';
+import { solveChallengeThen } from '../../components/feedback.tsx';
 import { Icon } from '../../components/icon.tsx';
 import { useOnLeave } from '../../components/navigator.tsx';
 import { useNow } from '../../components/hooks.ts';
 import { Sheet } from '../../components/sheet.tsx';
 import { VirtualList, type VirtualListHandle } from '../../components/virtual-list.tsx';
 import { firstNumber } from '../../lib/chapters.ts';
-import { timeOfDay } from '../../lib/format.ts';
+import { percentLabel, plural, timeOfDay } from '../../lib/format.ts';
 import { haptic } from '../../lib/gestures.ts';
 import {
   createProgressSaver,
@@ -37,18 +38,51 @@ import {
   scrollTopForPercent,
   sectionAt,
 } from '../../lib/position.ts';
-import { openInSafari } from '../../state/actions.ts';
+import { openInSafari, quickAddToLibrary } from '../../state/actions.ts';
 import { onBackground } from '../../state/lifecycle.ts';
 import { getNovelPage, noteBookmark, noteProgress, novelKey, putNovelPage } from '../../state/novel-cache.ts';
 import { pop } from '../../state/nav.ts';
-import { progressVersion, settings, sourceById } from '../../state/store.ts';
-import { showToast } from '../../state/toast.ts';
+import { libraryKeys, progressVersion, settings, sourceById } from '../../state/store.ts';
+import { errorToast, showToast } from '../../state/toast.ts';
 import { primeKeyboard } from '../../lib/keyboard.ts';
+import { langCode } from '../../lib/lang.ts';
+import { languageName } from '../browse.tsx';
+import { volumeLayout } from '../../lib/volumes.ts';
+import { countWords, newPace, notePace, PACE_KEY, timeLeftLabel, type PaceState } from '../../lib/pace.ts';
 import { AUTO_SCROLL_LIMITS, clampSpeed, useAutoScroll } from './auto-scroll.ts';
 import { ChapterSection, measureBlocks, splitChapterTitle, type ChapterEntry } from './chapter-section.tsx';
 import { FindBar } from './find-bar.tsx';
 import { PagedReader, type PagedHandle, type PageInfo } from './paged.tsx';
-import { fontFamily, infoPillMode, ReaderSettingsPanel, setReader } from './reader-settings.tsx';
+import { fontFamily, hyphenates, infoPillMode, justifyFits, ReaderSettingsPanel, setReader } from './reader-settings.tsx';
+
+/** The reader's pace (words per minute), learned while reading and remembered on this device. */
+const readingPace = {
+  state: null as PaceState | null,
+  get value(): PaceState {
+    if (!this.state) {
+      let wpm: number | undefined;
+      try {
+        const v = Number(localStorage.getItem(PACE_KEY));
+        if (v > 0) wpm = v;
+      } catch {
+        /* private mode */
+      }
+      this.state = newPace(wpm);
+    }
+    return this.state;
+  },
+  set value(next: PaceState) {
+    const changed = next.wpm !== this.state?.wpm;
+    this.state = next;
+    if (changed) {
+      try {
+        localStorage.setItem(PACE_KEY, String(next.wpm));
+      } catch {
+        /* private mode */
+      }
+    }
+  },
+};
 
 /** Save the position this long after scrolling stops. */
 const SETTLE_SAVE_MS = 300;
@@ -115,12 +149,26 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   const [listOpen, setListOpen] = useState(false);
   const [novelChapters, setNovelChapters] = useState<ChapterView[] | null>(null);
   const [novelName, setNovelName] = useState(props.novelName ?? '');
+  const novelNameRef = useRef(novelName);
+  novelNameRef.current = novelName;
+  const finishedHere = useRef(new Set<string>());
+  const nudged = useRef(false);
   const [novelUrl, setNovelUrl] = useState<string | undefined>(undefined);
   const [device, setDevice] = useState<DeviceInfo | null>(null);
   /** Double-tap info pill (time, battery, chapter %): hidden while reading unless asked for. */
   const [pillShown, setPillShown] = useState(false);
   const pillMode = infoPillMode(rs.showFooter);
+  const [viewportW, setViewportW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = (): void => setViewportW(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const [findOpen, setFindOpen] = useState(false);
+  /** Text selected in the chapter (long-press → drag): offer "Copy quote" / "Share quote". */
+  const currentTitleRef = useRef('');
+  const [quote, setQuote] = useState<{ text: string; chapter: string } | null>(null);
+  const [findKey, setFindKey] = useState(0);
   const pagedHandle = useRef<PagedHandle | null>(null);
   /** Paged mode: the chapter on screen. */
   const [pagedAt, setPagedAt] = useState<{ path: string; content: ChapterContent } | null>(null);
@@ -149,6 +197,8 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
       showBars(true);
       showToast('Auto-scroll stopped at the end');
     },
+    // A finger (drag or tap) paused it: show the controls (play / speed / Stop) so it can be ended.
+    () => showBars(true),
   );
   const content = useRef<HTMLDivElement>(null);
   const insetProbe = useRef<HTMLDivElement>(null);
@@ -170,6 +220,17 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   const userScrollUntil = useRef(0);
   const tapTimer = useRef(0);
   const pillTimer = useRef(0);
+  const [checkingNew, setCheckingNew] = useState(false);
+  /** The next restore is an explicit spot (Back to…), not a saved "where I stopped". */
+  const exactRestore = useRef(false);
+  /** "Auto-scroll · tap to pause", shown briefly when it starts or resumes (the bars are hidden then). */
+  const [autoHint, setAutoHint] = useState(false);
+  const autoHintTimer = useRef(0);
+  const [jumpBack, setJumpBack] = useState<{ path: string; position: ChapterPosition; label: string } | null>(null);
+  const turnsSinceJump = useRef(0);
+  const wordCounts = useRef(new Map<string, number>());
+  const pillLeft = useRef<HTMLSpanElement>(null);
+  const barCaption = useRef<HTMLDivElement>(null);
   const settleTimer = useRef(0);
   /** Where the running page-turn animation is heading (so quick taps accumulate). */
   const pageTarget = useRef<{ top: number; until: number } | null>(null);
@@ -202,9 +263,104 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   function persist(path: string, position: ChapterPosition, finished: boolean): void {
     positions.current.set(path, position);
     noteProgress(pageKey, path, position, finished);
+    if (finished) nudgeLibrary(path);
     bridge()
       .call('progress.save', { pluginId: props.pluginId, novelPath: props.novelPath, chapterPath: path, position, ...(finished ? { finished } : {}) })
       .catch(() => undefined);
+  }
+
+  /**
+   * Reading a novel that isn't in the library: after two finished chapters, offer to add it (once per
+   * reading session; never in incognito mode).
+   */
+  function nudgeLibrary(path: string): void {
+    if (nudged.current || settings.peek().incognito || libraryKeys.peek().has(pageKey)) return;
+    finishedHere.current.add(path);
+    if (finishedHere.current.size < 2) return;
+    nudged.current = true;
+    const name = novelNameRef.current || 'this novel';
+    showToast(`Enjoying ${name}? Keep it in your library.`, {
+      actionLabel: 'Add',
+      undo: () => void quickAddToLibrary({ pluginId: props.pluginId, path: props.novelPath, name: novelNameRef.current || props.novelPath }),
+      durationMs: 6000,
+    });
+  }
+
+  /** Chapter list with this session's reading applied (read marks, how far into each chapter). */
+  function openList(): void {
+    setNovelChapters((cs) =>
+      cs?.map((c) => {
+        if (marked.current.has(c.path)) return c.read ? c : { ...c, read: true };
+        const p = positions.current.get(c.path);
+        return p && !c.read && p.percent > 0 && p.percent !== c.progress ? { ...c, progress: p.percent } : c;
+      }) ?? cs,
+    );
+    setListOpen(true);
+  }
+
+  // Selected text in a chapter → the quote bar. iOS keeps its own selection menu (Copy, Look Up…).
+  useEffect(() => {
+    let t = 0;
+    const onSelection = (): void => {
+      window.clearTimeout(t);
+      t = window.setTimeout(() => {
+        const sel = window.getSelection();
+        const text = sel && !sel.isCollapsed ? sel.toString().replace(/\s+/g, ' ').trim() : '';
+        const node = sel?.anchorNode ?? null;
+        const el = node instanceof Element ? node : node?.parentElement;
+        const section = el?.closest<HTMLElement>('.rd-chapter, .rd-psec');
+        if (!text || text.length < 2 || !section || !el?.closest('[data-testid="reader-body"]')) {
+          setQuote(null);
+          return;
+        }
+        const key = Number(section.dataset['key']);
+        const entry = entriesRef.current.find((e) => e.key === key);
+        const chapter = entry?.content?.title ?? entry?.name ?? currentTitleRef.current;
+        setQuote({ text: text.length > 1200 ? `${text.slice(0, 1200)}…` : text, chapter });
+      }, 250);
+    };
+    document.addEventListener('selectionchange', onSelection);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('selectionchange', onSelection);
+    };
+  }, []);
+
+  function quoteText(q: { text: string; chapter: string }): string {
+    const source = [novelNameRef.current, q.chapter].filter(Boolean).join(', ');
+    return `“${q.text}”${source ? ` — ${source}` : ''}`;
+  }
+
+  function shareQuote(): void {
+    if (!quote) return;
+    void bridge()
+      .call('native.share', { text: quoteText(quote) })
+      .catch(() => undefined);
+    window.getSelection()?.removeAllRanges();
+    setQuote(null);
+  }
+
+  async function copyQuote(): Promise<void> {
+    if (!quote) return;
+    const text = quoteText(quote);
+    let ok: boolean;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // Older WebKit / no permission: copy through a hidden text field.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px;';
+      document.body.append(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      ta.remove();
+    }
+    window.getSelection()?.removeAllRanges();
+    setQuote(null);
+    showToast(ok ? 'Quote copied' : 'Couldn’t copy');
   }
 
   // ---------- fetching ----------
@@ -304,6 +460,37 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     });
   }
 
+  /** Caught up: ask the source for chapters after the last one, and read straight on if there are. */
+  async function checkForNew(): Promise<void> {
+    const last = entriesRef.current[entriesRef.current.length - 1];
+    if (!last || last.status !== 'ready' || !last.content) return;
+    setCheckingNew(true);
+    try {
+      const page = await bridge().call('novel.get', { pluginId: props.pluginId, path: props.novelPath, refresh: true }, { timeoutMs: 60_000 });
+      putNovelPage(pageKey, page);
+      setNovelChapters(page.chapters);
+      const i = page.chapters.findIndex((c) => c.path === last.path);
+      const next = i >= 0 ? page.chapters[i + 1] : undefined;
+      if (!next) {
+        showToast('No new chapters yet');
+        return;
+      }
+      showToast(`${plural(page.chapters.length - 1 - i, 'new chapter')}`);
+      // The last chapter's text now knows what comes next (same objects: its text isn't re-rendered).
+      const meta: ChapterMeta = { path: next.path, name: next.name, ...(next.number !== undefined ? { number: next.number } : {}), ...(next.locked ? { locked: true } : {}) };
+      last.content.next = meta;
+      const cached = cache.current.get(last.path);
+      if (cached) cached.next = meta;
+      setEntries((es) => [...es]);
+      window.setTimeout(ensureNext, 0);
+      progressVersion.value++;
+    } catch (err) {
+      errorToast(errorText(toUiError(err)));
+    } finally {
+      setCheckingNew(false);
+    }
+  }
+
   /** Prefetch the chapter before the first one; it's inserted above when scrolling is idle. */
   function ensurePrev(): void {
     if (!rsRef.current.continuous) return;
@@ -337,6 +524,26 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     if (isFirst && e.content === undefined) restoreFor.current = key;
     void loadEntry(key, e.path, isFirst);
   }
+
+  // Back online (or back from the background): chapters that failed to load try again by themselves.
+  useEffect(() => {
+    const again = (): void => {
+      for (const e of entriesRef.current) if (e.status === 'error' && e.error?.code !== 'CLOUDFLARE') retry(e.key);
+      if (prevEdgeRef.current.status === 'error') {
+        setPrevEdge({ status: 'idle' });
+        window.setTimeout(ensurePrev, 0);
+      }
+    };
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') again();
+    };
+    window.addEventListener('online', again);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', again);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // ---------- geometry ----------
 
@@ -383,6 +590,13 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     measures.current.delete(key);
   }
 
+  /** A fading bar in the margin next to the paragraph a restore landed on (outside the text). */
+  function markResume(el: Element | undefined): void {
+    if (!(el instanceof HTMLElement)) return;
+    el.classList.add('rd-resume-mark');
+    window.setTimeout(() => el.classList.remove('rd-resume-mark'), 3200);
+  }
+
   function onBodyReady(key: number, body: HTMLElement): void {
     bodies.current.set(key, body);
     measures.current.delete(key);
@@ -394,10 +608,15 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
       const sc = scroller.current;
       const sec = sections().find((s) => s.key === key);
       if (sc && sec) {
-        if (pos && pos.percent < 0.995) {
+        // A chapter finished earlier opens at its start (re-reading); an explicit spot (Back to…) is exact.
+        const finished = pos !== undefined && pos.percent >= rsRef.current.markReadAt && !exactRestore.current;
+        exactRestore.current = false;
+        if (pos && pos.percent < 0.995 && !finished) {
           const m = measure(key);
           const line = lineForPosition(pos, m?.tops ?? [], m?.heights ?? [], body.offsetHeight);
           sc.scrollTop = Math.max(0, sec.top + body.offsetTop + line - insetTop());
+          // Where you left off: a short-lived mark in the margin beside that paragraph.
+          if (pos.paragraph > 0 || (pos.offset ?? 0) > 0) markResume(body.children[pos.paragraph]);
         } else {
           sc.scrollTop = sec.top;
         }
@@ -480,10 +699,25 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
 
   // ---------- scroll tracking ----------
 
+  /** Pace + "N min left" in the info pill. */
+  function noteReading(path: string, content: ChapterContent, pct: number): void {
+    let w = wordCounts.current.get(path);
+    if (w === undefined) {
+      w = countWords(content.html);
+      wordCounts.current.set(path, w);
+    }
+    readingPace.value = notePace(readingPace.value, path, pct, w, Date.now());
+    const left = timeLeftLabel(w, pct, readingPace.value.wpm);
+    if (pillLeft.current) pillLeft.current.textContent = left;
+    // The pill hides with the bars up: the bottom bar says it too ("45% · 8 min left").
+    if (barCaption.current) barCaption.current.textContent = [pillPct.current?.textContent ?? '', left].filter(Boolean).join(' · ');
+  }
+
   function updateProgressUi(pct: number): void {
     if (slider.current && !draggingSlider.current) {
       slider.current.value = String(Math.round(pct * 1000));
       slider.current.style.setProperty('--pct', `${pct * 100}%`);
+      slider.current.setAttribute('aria-valuetext', `${Math.round(Math.max(0, Math.min(1, pct)) * 100)} percent of the chapter`);
     }
     if (pillPct.current) pillPct.current.textContent = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
   }
@@ -551,6 +785,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
 
     const pct = percentRead(st, sec.top, sec.height, vh);
     updateProgressUi(pct);
+    if (entry.status === 'ready' && entry.content) noteReading(entry.path, entry.content, pct);
 
     if (entry.status === 'ready' && entry.spacer === undefined) {
       const body = bodies.current.get(entry.key);
@@ -623,7 +858,11 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
       // Only the reader's own scrolling hides the bars (not restore, anchoring or the slider).
       const userScroll = touching.current || t < userScrollUntil.current;
       if (userScroll) userScrollUntil.current = Math.max(userScrollUntil.current, t + 600); // momentum
-      if (userScroll && barsRef.current && !findOpenRef.current && Math.abs(sc.scrollTop - barsShownAt.current) > 48 && !draggingSlider.current) setBarsVisible(false);
+      // While auto-scroll is on (paused by the finger), keep its controls up so it can be resumed or stopped.
+      if (userScroll && barsRef.current && !findOpenRef.current && auto.current() === 'off' && Math.abs(sc.scrollTop - barsShownAt.current) > 48 && !draggingSlider.current) {
+        setBarsVisible(false);
+        setJumpBack(null); // reading on from the new place
+      }
       scheduleIdle();
       // Save as soon as scrolling settles: closing the app right after must not lose the position.
       window.clearTimeout(settleTimer.current);
@@ -678,12 +917,17 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   // Leaving (back, edge swipe, pushing another screen): save now, before the screen underneath reloads.
   // The position goes out even if a settle save just sent it: leaving is the moment that must reach the script.
   useOnLeave(() => {
+    saveFinal();
+    progressVersion.value++;
+  });
+
+  /** The position goes out now, even if a settle save already sent it (leaving / backgrounding). */
+  function saveFinal(): void {
     tick();
     const pending = saver.pending;
     saver.flush();
     if (!pending && lastPos.current) persist(lastPos.current.path, lastPos.current.position, false);
-    progressVersion.value++;
-  });
+  }
 
   // Save on backgrounding and when leaving.
   useEffect(() => {
@@ -693,8 +937,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     document.addEventListener('visibilitychange', onVis);
     // Backgrounded: save the exact position before the script flushes (app.flush).
     const offBackground = onBackground(() => {
-      tick();
-      saver.flush();
+      saveFinal(); // before the script's app.flush
     });
     return () => {
       offBackground();
@@ -749,7 +992,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   }, []);
 
   // Typography changed: keep only the current chapter (others' heights are stale) on the same paragraph.
-  const typo = `${rs.font}|${rs.fontSize}|${rs.lineHeight}|${rs.paragraphSpacing}|${rs.margin}|${rs.justify}|${rs.indent}`;
+  const typo = `${rs.font}|${rs.fontSize}|${rs.lineHeight}|${rs.paragraphSpacing}|${rs.margin}|${rs.justify}|${rs.indent}|${hyphenates(rs.justify)}`;
   const firstTypo = useRef(true);
   const reanchorTypo = useRef(false);
   useLayoutEffect(() => {
@@ -789,20 +1032,48 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
 
   // ---------- navigation ----------
 
-  function goTo(meta: Pick<ChapterMeta, 'path' | 'name' | 'locked' | 'number'>): void {
+  /** Where a jump (chapter list, slider, prev/next) came from: "Back to Ch. 12 · 45%". */
+  function rememberJump(): void {
+    tick();
+    const lp = lastPos.current;
+    if (!lp) return;
+    const n = current?.path === lp.path ? currentNumber : undefined;
+    turnsSinceJump.current = 0;
+    setJumpBack({ path: lp.path, position: lp.position, label: `Back to ${n !== undefined ? `Ch. ${n}` : 'where you were'} · ${percentLabel(lp.position.percent)}` });
+  }
+
+  function jumpBackNow(): void {
+    const target = jumpBack;
+    if (!target) return;
+    // Swap: the place we leave becomes the new "back" (flip between two spots).
+    rememberJump();
+    goTo({ path: target.path, name: '' }, { position: target.position, remember: false });
+  }
+
+  function goTo(meta: Pick<ChapterMeta, 'path' | 'name' | 'locked' | 'number'>, opts: { position?: ChapterPosition; remember?: boolean } = {}): void {
     if (meta.locked) {
       showToast('This chapter is locked on the source site');
       return;
     }
+    if (opts.remember !== false) rememberJump();
+    if (opts.position) positions.current.set(meta.path, opts.position);
+    exactRestore.current = opts.position !== undefined;
     if (props.paged) {
       saveNow();
-      pagedHandle.current?.goTo(meta);
+      pagedHandle.current?.goTo(meta, opts.position);
       return;
     }
     const sc = scroller.current;
     const mounted = entriesRef.current.find((e) => e.path === meta.path && e.status === 'ready' && e.spacer === undefined);
     if (mounted && sc) {
       const sec = sections().find((s) => s.key === mounted.key);
+      const body = bodies.current.get(mounted.key);
+      const m = measure(mounted.key);
+      if (sec && opts.position && body && m) {
+        const line = lineForPosition(opts.position, m.tops, m.heights, body.offsetHeight);
+        sc.scrollTop = Math.max(0, sec.top + body.offsetTop + line - insetTop());
+        return;
+      }
       if (sec) {
         sc.scrollTop = sec.top;
         return;
@@ -841,6 +1112,12 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     });
   }
 
+  function flashAutoHint(): void {
+    window.clearTimeout(autoHintTimer.current);
+    setAutoHint(true);
+    autoHintTimer.current = window.setTimeout(() => setAutoHint(false), 2000);
+  }
+
   /** Smooth page turn; quick repeated turns add up (each continues from the previous target). */
   function turnPage(dir: 1 | -1): void {
     const sc = scroller.current;
@@ -873,16 +1150,19 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     if (findOpenRef.current) return; // finding: taps don't toggle anything
-    // Auto-scroll: a tap anywhere pauses (bars with speed controls show) or resumes.
-    if (auto.mode !== 'off') {
+    // Auto-scroll: a tap anywhere pauses (bars with speed controls show) or resumes. On the phone the
+    // tap's own touchstart has already paused it, so that click must keep it paused, not resume.
+    const autoMode = auto.current();
+    if (autoMode !== 'off') {
       window.clearTimeout(tapTimer.current);
       tapTimer.current = 0;
-      if (auto.mode === 'running') {
+      if (autoMode === 'running' || auto.consumeTakeOver()) {
         auto.pause();
         showBars(true);
       } else {
         showBars(false);
         auto.resume();
+        flashAutoHint();
       }
       return;
     }
@@ -935,6 +1215,10 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     lastPos.current = { path: info.path, position: info.position };
     saver.update(lastPos.current);
     updateProgressUi(info.position.percent);
+    if (++turnsSinceJump.current > 4) setJumpBack(null);
+    // Pages read like a book: "12 / 34" in the info pill (and the bottom bar's caption).
+    if (pillPct.current) pillPct.current.textContent = `${info.page + 1} / ${info.pages}`;
+    noteReading(info.path, info.content, info.position.percent);
     if (info.position.percent >= rsRef.current.markReadAt && !marked.current.has(info.path)) {
       marked.current.add(info.path);
       persist(info.path, info.position, true);
@@ -956,6 +1240,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   const nextMeta = current?.content?.next;
   const bookmarkedNow = novelChapters?.find((c) => c.path === current?.path)?.bookmarked ?? false;
   const currentTitle = current?.content?.title ?? current?.name ?? '';
+  currentTitleRef.current = currentTitle;
   const currentNumber = current?.number ?? firstNumber(currentTitle);
   const first = entries[0];
   const firstPrev = first?.status === 'ready' ? first.content?.prev : undefined;
@@ -974,13 +1259,15 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
     progressVersion.value++;
   }
 
+  // Justify only where lines are long enough not to open gaps (large text on a phone stays ragged).
+  const justified = rs.justify && justifyFits(rs, viewportW);
   const style = {
     '--rd-font': fontFamily(rs.font),
     '--rd-size': `${rs.fontSize}px`,
     '--rd-lh': String(rs.lineHeight),
     '--rd-ps': `${rs.paragraphSpacing}em`,
     '--rd-margin': `${rs.margin}px`,
-    '--rd-align': rs.justify ? 'justify' : 'start',
+    '--rd-align': justified ? 'justify' : 'start',
     '--rd-indent': rs.indent ? '1.6em' : '0',
   };
 
@@ -989,9 +1276,10 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
 
   return (
     <div
-      class={`reader theme-${rs.theme}${barsVisible || findOpen ? ' bars-visible' : ''}${findOpen ? ' is-finding' : ''}${rs.justify ? ' is-justify' : ''}`}
+      class={`reader theme-${rs.theme}${barsVisible || findOpen ? ' bars-visible' : ''}${findOpen ? ' is-finding' : ''}${justified ? ' is-justify' : ''}${hyphenates(rs.justify) ? ' is-hyphenated' : ''}`}
       style={style}
       ref={root}
+      lang={langCode(source ? languageName(source.lang) : undefined)}
       data-testid="screen-reader"
     >
       <div class="rd-inset-probe" ref={insetProbe} />
@@ -1006,6 +1294,9 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
           layoutKey={typo}
           sourceName={source?.name ?? 'the source site'}
           onOpenSafari={openSourceSite}
+          onSolve={(again) => void solveChallengeThen(props.pluginId, again)()}
+          pluginId={props.pluginId}
+          finishedAt={rs.markReadAt}
         />
       ) : (
       <div
@@ -1052,10 +1343,12 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
               key={e.key}
               entry={e}
               boundary={i > 0}
+              pluginId={props.pluginId}
               sourceName={source?.name ?? 'the source site'}
               onBodyReady={onBodyReady}
               onBodyGone={onBodyGone}
               onRetry={retry}
+              onSolve={(key) => void solveChallengeThen(props.pluginId, () => retry(key))()}
               onOpenSafari={openSourceSite}
             />
           ))}
@@ -1067,9 +1360,12 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
             </div>
           )}
           {caughtUp && (
-            <p class="rd-end-note" data-testid="reader-caught-up">
-              You’re all caught up
-            </p>
+            <div class="rd-end-note" data-testid="reader-caught-up">
+              <p>You’re all caught up</p>
+              <button type="button" class="rd-link tap tap-dim" disabled={checkingNew} onClick={() => void checkForNew()} data-testid="reader-check-new">
+                {checkingNew ? 'Checking…' : 'Check for new chapters'}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1077,18 +1373,19 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
 
       <header class="rd-top" aria-hidden={!barsVisible && !findOpen}>
         {findOpen ? (
-          <FindBar scroller={scroller} chapterKey={currentKey} onClose={() => setFindOpen(false)} />
+          <FindBar scroller={scroller} chapterKey={findKey} onClose={() => setFindOpen(false)} />
         ) : (
           <>
             <button type="button" class="rd-icon-btn tap tap-dim" onClick={pop} aria-label="Back" data-testid="reader-back">
               <Icon name="chevron.left" size={22} />
             </button>
-            <div class="rd-top-titles">
+            {/* Tapping the titles opens the chapter list (like a book's table of contents). */}
+            <button type="button" class="rd-top-titles tap tap-dim" onClick={openList} aria-label="Chapters" data-testid="reader-titles">
               <span class="rd-top-novel ellipsis">{novelName}</span>
               <span class="rd-top-chapter ellipsis" key={currentKey} data-testid="reader-chapter-title">
                 {currentTitle}
               </span>
-            </div>
+            </button>
             {!props.paged && (
             <button
               type="button"
@@ -1096,6 +1393,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
               onClick={() => {
                 primeKeyboard(); // iOS: the keyboard only opens from inside the tap
                 auto.stop();
+                setFindKey(currentKeyRef.current); // the chapter on screen now is the one searched
                 setFindOpen(true);
               }}
               aria-label="Find in chapter"
@@ -1151,6 +1449,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
                 else {
                   showBars(false);
                   auto.resume();
+                  flashAutoHint();
                 }
               }}
               aria-label={auto.mode === 'running' ? 'Pause auto-scroll' : 'Resume auto-scroll'}
@@ -1160,6 +1459,15 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
             </button>
           </div>
         )}
+        {jumpBack && (
+          <div class="rd-jump-row">
+            <button type="button" class="rd-jump-back tap tap-dim" onClick={jumpBackNow} data-testid="reader-jump-back">
+              <Icon name="arrow.uturn.backward" size={14} />
+              {jumpBack.label}
+            </button>
+          </div>
+        )}
+        <div class="rd-progress-caption tabular" ref={barCaption} data-testid="reader-progress-caption" />
         <div class="rd-progress-row">
           <button type="button" class="rd-icon-btn tap tap-dim" disabled={!prevMeta} onClick={() => prevMeta && goTo(prevMeta)} aria-label="Previous chapter" data-testid="reader-prev">
             <Icon name="backward.end.fill" size={20} />
@@ -1176,6 +1484,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
             data-testid="reader-slider"
             onPointerDown={() => {
               draggingSlider.current = true;
+              rememberJump();
             }}
             onPointerUp={() => {
               draggingSlider.current = false;
@@ -1200,7 +1509,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
           </button>
         </div>
         <div class="rd-tools">
-          <button type="button" class="rd-tool tap tap-dim" onClick={() => setListOpen(true)} data-testid="reader-chapters">
+          <button type="button" class="rd-tool tap tap-dim" onClick={openList} data-testid="reader-chapters">
             <Icon name="list.bullet" size={22} />
             <span>Chapters</span>
           </button>
@@ -1212,6 +1521,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
               if (auto.mode === 'off') {
                 showBars(false);
                 auto.start();
+                flashAutoHint();
               } else {
                 auto.stop();
               }
@@ -1238,6 +1548,26 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
         </div>
       </footer>
 
+      <div class={`rd-hint${autoHint && auto.mode === 'running' ? ' is-shown' : ''}`} aria-live="polite" data-testid="reader-autoscroll-hint">
+        {autoHint && auto.mode === 'running' ? 'Auto-scroll · tap to pause' : ''}
+      </div>
+      {quote && (
+        <div
+          class={`rd-quote-bar${barsVisible || findOpen ? ' is-raised' : ''}`}
+          // Pressing a button must not clear the selection before it's used.
+          onMouseDown={(e) => e.preventDefault()}
+          data-testid="reader-quote-bar"
+        >
+          <button type="button" class="rd-quote-btn tap tap-dim" onClick={() => void copyQuote()} data-testid="reader-quote-copy">
+            <Icon name="doc.on.clipboard" size={16} />
+            Copy quote
+          </button>
+          <button type="button" class="rd-quote-btn tap tap-dim" onClick={shareQuote} data-testid="reader-quote-share">
+            <Icon name="square.and.arrow.up" size={16} />
+            Share quote
+          </button>
+        </div>
+      )}
       <div
         class={`rd-pill tabular${pillMode === 'always' || (pillMode === 'doubletap' && pillShown) ? ' is-shown' : ''}`}
         aria-hidden="true"
@@ -1246,6 +1576,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
       >
         {currentNumber !== undefined && <span>Ch. {currentNumber}</span>}
         <span ref={pillPct}>0%</span>
+        <span ref={pillLeft} class="rd-pill-left" data-testid="reader-time-left" />
         <span>{timeOfDay(now)}</span>
         {battery && <span>{battery}</span>}
       </div>
@@ -1275,30 +1606,47 @@ function ChapterListSheetBody(props: { chapters: ChapterView[] | null; currentPa
   const handle = useRef<VirtualListHandle>(null);
   const list = props.chapters;
   const idx = list ? list.findIndex((c) => c.path === props.currentPath) : -1;
+  // Volume headers ("Book One") where the volume changes, like the novel page.
+  const layout = useMemo(() => volumeLayout((list ?? []).map((c) => c.volume), 52, 30), [list]);
   useEffect(() => {
     // The sheet opens at its medium detent (top half visible): put the current chapter near the top.
-    if (idx >= 0) window.setTimeout(() => handle.current?.scrollToIndex(idx, { align: 'start', inset: 52 * 2 }), 0);
+    if (idx >= 0) window.setTimeout(() => handle.current?.scrollToIndex(layout.rowOfPos[idx] ?? idx, { align: 'start', inset: 52 * 2 }), 0);
   }, [list !== null]);
   if (!list) {
     return <div class="sheet-loading">Loading chapters…</div>;
   }
   return (
     <VirtualList
-      count={list.length}
+      count={layout.rows.length}
       rowHeight={52}
+      offsets={layout.offsets}
       handle={handle}
       testId="reader-chapter-list"
       renderRow={(i) => {
-        const c = list[i];
+        const row = layout.rows[i];
+        if (row?.kind === 'volume') {
+          return (
+            <div class="vol-header" role="heading" aria-level={3} data-testid="volume-header">
+              {row.name}
+            </div>
+          );
+        }
+        const pos = row?.pos ?? i;
+        const c = list[pos];
         if (!c) return null;
         return (
-          <button type="button" class={`chapter-row is-compact tap tap-row${c.read ? ' is-read' : ''}${i === idx ? ' is-current' : ''}`} onClick={() => props.onPick(c)}>
+          <button type="button" class={`chapter-row is-compact tap tap-row${c.read ? ' is-read' : ''}${pos === idx ? ' is-current' : ''}`} onClick={() => props.onPick(c)}>
             <span class="chapter-main">
               <span class="chapter-title ellipsis">
                 {c.bookmarked && <Icon name="bookmark.fill" size={12} class="chapter-bookmark" />}
                 {c.name}
               </span>
             </span>
+            {!c.read && c.progress !== undefined && c.progress > 0 && pos !== idx && (
+              <span class="chapter-pct tabular" data-testid="chapter-pct">
+                {percentLabel(c.progress)}
+              </span>
+            )}
             {c.locked && <Icon name="lock.fill" size={14} class="chapter-lock" />}
           </button>
         );

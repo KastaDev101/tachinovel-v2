@@ -2,6 +2,7 @@
  * Bridge selection: the phone transport (Scriptable long-poll) on the device, the mock bridge when
  * `window.__TACHI_DEV__` is set (dev server, e2e tests).
  */
+import type { SourceFailureReason } from '../../shared/contracts/domain.ts';
 import { BridgeCallError, type BridgeClient, type ErrorCode } from '../../shared/contracts/protocol.ts';
 import { createMockBridge } from '../dev/mock-bridge.ts';
 import { createPhoneBridge } from './phone-client.ts';
@@ -23,12 +24,16 @@ export interface UiError {
   message: string;
   retryable: boolean;
   offline: boolean;
+  /** Source failures: why the site failed (plain wording + the right action). */
+  reason?: SourceFailureReason;
 }
 
 export function toUiError(err: unknown): UiError {
   if (err instanceof BridgeCallError) {
-    const offline = err.code === 'NETWORK' && (navigator.onLine === false || /offline|internet/i.test(err.message));
-    return { code: err.code, message: err.message, retryable: err.retryable, offline };
+    // `reason` rides along on source failures (BridgeError.reason).
+    const reason = err.reason;
+    const offline = reason === 'offline' || (err.code === 'NETWORK' && (navigator.onLine === false || /offline|internet/i.test(err.message)));
+    return { code: err.code, message: err.message, retryable: err.retryable, offline, ...(reason ? { reason } : {}) };
   }
   const message = err instanceof Error ? err.message : String(err);
   return { code: 'UNKNOWN', message, retryable: true, offline: false };

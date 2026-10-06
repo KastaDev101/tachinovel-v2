@@ -57,6 +57,8 @@ export interface ChapterMeta {
   releaseTime?: string;
   /** Paywalled/coin-locked: shown, never fetched. */
   locked?: boolean;
+  /** Volume label when the source provides one (e.g. Royal Road with enableVol). */
+  volume?: string;
 }
 
 /** Chapter as shown in the novel page: metadata + per-user state. */
@@ -170,6 +172,8 @@ export interface ReadingStats {
   streakDays: number;
   totalMs: number;
   topNovels: { key: NovelKeyString; name: string; cover?: string; ms: number }[];
+  /** All-time longest continuous reading session (progress saves < 60 s apart); absent when unknown. */
+  longestSession?: { ms: number; at: number; key?: NovelKeyString; name?: string };
 }
 
 export type LibrarySortBy = 'lastRead' | 'lastUpdated' | 'alpha' | 'unread' | 'dateAdded';
@@ -232,6 +236,8 @@ export interface SourceInfo {
   repoUrl?: string;
   /** Newer version available in its repo. */
   updateAvailable?: string;
+  /** The plugin declares user-changeable settings (sources.settings.get/set). */
+  hasSettings?: boolean;
   lastUsedAt?: number;
 }
 
@@ -241,6 +247,22 @@ export interface RepoInfo {
   pluginCount: number;
   fetchedAt?: number;
 }
+
+/** Why a source failed, for plain-language UI messages (set by the plugin host's failure classifier). */
+export type SourceFailureReason =
+  | 'offline'
+  | 'site-gone'
+  | 'parked'
+  | 'tls'
+  | 'unreachable'
+  | 'site-down'
+  | 'rate-limited'
+  | 'bot-check'
+  | 'blocked'
+  | 'not-found'
+  | 'layout-changed'
+  | 'needs-account'
+  | 'unsupported';
 
 export interface AvailablePlugin {
   id: string;
@@ -255,6 +277,8 @@ export interface AvailablePlugin {
   installedVersion?: string;
   /** From the shipped plugins/verified.json sweep (PC-side; phone results may differ for Cloudflare sites). */
   verified?: 'works' | 'partial' | 'broken';
+  /** Why it doesn't fully work (from verified.json), e.g. 'site-gone', 'bot-check', 'layout-changed'. */
+  verifiedReason?: SourceFailureReason;
 }
 
 export type StorageCategory = 'state' | 'meta' | 'cache' | 'covers' | 'downloads' | 'logs';
@@ -263,6 +287,8 @@ export interface StorageUsage {
   /** Bytes per category. */
   bytes: Record<StorageCategory, number>;
   caps: { cacheBytes: number; coverBytes: number };
+  /** Downloads kept for novels no longer in the library (kept so Undo works); counted inside bytes.downloads. */
+  orphanDownloads?: { novels: number; bytes: number };
 }
 
 export interface DeviceInfo {
@@ -272,4 +298,41 @@ export interface DeviceInfo {
   charging: boolean;
   brightness: number;
   dark: boolean;
+}
+
+/** PC narrator settings, stored as synced `audio.json` (read by tachinovel-narrator on the PC). */
+export interface NarrationConfig {
+  /** Novels to narrate ahead; empty = narrator default (novels read in the last 7 days). */
+  novels: { key: NovelKeyString; ahead: number }[];
+  /** Kokoro voice id, e.g. "af_heart". */
+  voice: string;
+  /** 0.7–1.3 */
+  speed: number;
+  /** Chapters per .m4b bundle; 0 = one .m4a per chapter. */
+  bundle: number;
+}
+
+/** Written by the PC narrator into synced `narration-status.json` (read-only for the app). */
+export interface NarrationStatus {
+  generatedAt: number;
+  novels: { key: NovelKeyString; name: string; ready: { from: number; to: number }[]; queued: number; failed: number; /** Chapters in the window that are paid or not free yet (never narrated, retried later). */ locked?: number; lastRunAt?: number; error?: string }[];
+}
+
+// ---------- plugin settings (LNReader `pluginSettings`) ----------
+export interface PluginSettingOption {
+  label: string;
+  value: string;
+}
+export type PluginSetting =
+  | { type: 'Text'; label: string; value: string }
+  | { type: 'Switch'; label: string; value: boolean }
+  | { type: 'Select'; label: string; value: string; options: PluginSettingOption[] }
+  | { type: 'CheckboxGroup'; label: string; value: string[]; options: PluginSettingOption[] };
+/** key → setting; `value` is the plugin's default; key order is the plugin's. Sign-in settings are never included. */
+export type PluginSettings = Record<string, PluginSetting>;
+export type PluginSettingValue = string | boolean | string[];
+export type PluginSettingValues = Record<string, PluginSettingValue>;
+export interface SourceSettings {
+  schema: PluginSettings;
+  values: PluginSettingValues;
 }

@@ -12,6 +12,7 @@ import type { PluginHostDeps } from '../shared/contracts/plugin-host.ts';
 import type { BrowserFetchOptions, HttpBytesResponse, HttpRequest, HttpResponse } from '../shared/contracts/platform.ts';
 import { challengeProvider, isCloudflareChallenge } from './cloudflare.ts';
 import { CookieJar } from './cookies.ts';
+import { networkReason, withReason } from './failure.ts';
 import { base64ToBytes } from './polyfills/base64.ts';
 import { URL } from './polyfills/url.ts';
 import { codeUnitsToString } from './polyfills/utf8.ts';
@@ -136,7 +137,19 @@ export function toNetworkError(err: unknown, url: string): SourceError {
   const rawCode = e?.code ?? e?.cause?.code;
   const code = typeof rawCode === 'string' || typeof rawCode === 'number' ? String(rawCode) : '';
   const timeout = name === 'TimeoutError' || /timed? ?out|timeout/i.test(message) || /TIMEOUT|ETIMEDOUT/.test(code);
-  return new SourceError(timeout ? 'TIMEOUT' : 'NETWORK', `${timeout ? 'Timed out' : 'Network error'} fetching ${url}: ${message}`);
+  const reason = networkReason(message, code);
+  const host = hostOf(url) || url;
+  const what =
+    reason === 'offline'
+      ? 'No internet connection'
+      : reason === 'site-gone'
+        ? `${host} can't be found (its domain no longer resolves)`
+        : reason === 'tls'
+          ? `${host} has a broken secure connection`
+          : timeout
+            ? 'Timed out'
+            : 'Network error';
+  return withReason(new SourceError(timeout ? 'TIMEOUT' : 'NETWORK', `${what} fetching ${url}: ${message}`), reason);
 }
 
 export function createNet(deps: NetDeps, limits: NetLimits = {}): Net {
@@ -167,7 +180,7 @@ export function createNet(deps: NetDeps, limits: NetLimits = {}): Net {
   }
 
   function cloudflareError(url: string, provider = 'Cloudflare'): SourceError {
-    return new SourceError('CLOUDFLARE', `${provider} challenge at ${hostOf(url)} (open the site in the browser to pass it)`);
+    return withReason(new SourceError('CLOUDFLARE', `${provider} challenge at ${hostOf(url)} (open the site in the browser to pass it)`), 'bot-check');
   }
 
   /**

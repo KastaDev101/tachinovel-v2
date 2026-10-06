@@ -46,7 +46,8 @@ export function trimChapters(chapters: readonly ChapterMeta[]): ChapterMeta[] {
   const first = chapters[0];
   if (!first) return [];
   const allowed = new Set(['path', 'name', 'number', 'releaseTime', 'locked']);
-  if (Object.keys(first).every((k) => allowed.has(k))) return chapters as ChapterMeta[];
+  // Any chapter may carry extras (some sources add fields to a few chapters only).
+  if (chapters.every((c) => Object.keys(c).every((k) => allowed.has(k)))) return chapters as ChapterMeta[];
   return chapters.map((c) => {
     const out: ChapterMeta = { path: c.path, name: c.name };
     if (c.number !== undefined) out.number = c.number;
@@ -82,6 +83,19 @@ export class NovelStore {
     this.memory.delete(key);
     this.memory.set(key, d);
     return d;
+  }
+
+  /** Forget in-memory copies of a source's novels (e.g. its settings changed what pages contain). */
+  forgetSource(pluginId: string): number {
+    const prefix = `${pluginId}:`;
+    let n = 0;
+    for (const key of [...this.memory.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.memory.delete(key);
+        n++;
+      }
+    }
+    return n;
   }
 
   hasStored(key: string): boolean {

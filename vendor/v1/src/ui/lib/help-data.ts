@@ -47,7 +47,7 @@ export const HELP: readonly HelpTopic[] = [
       {
         id: 'controls',
         q: 'Where are the reader controls?',
-        a: 'Tap the middle of the page for the chapter list, auto-scroll, night mode and Appearance (fonts, size, spacing and themes). Tap near the left or right edge to turn the page, and double-tap to see the time, battery and how far you are.',
+        a: 'Tap the middle of the page for the chapter list, auto-scroll, night mode and Appearance (fonts, size, spacing and themes). Tap near the left or right edge to move a screen at a time (or a page, in page mode), and double-tap to see the time, battery and how far you are.',
       },
       {
         id: 'offline',
@@ -58,14 +58,30 @@ export const HELP: readonly HelpTopic[] = [
       {
         id: 'junk',
         q: 'How do I hide “Read at …” lines and other junk?',
-        a: 'Add a rule in More › Reader › Text cleanup. Start from a suggestion and try it on a chapter you’ve read before you save it.',
+        a: 'Open More › Reader › Text Cleanup. There are suggestions for your own sources (like “Read at stonescape.xyz”) and for common junk. Tap Try to see what one would hide in chapters you’ve read, then turn it on. You can also write your own rule.',
         action: { label: 'Open Text Cleanup', route: { name: 'settings', page: 'cleanup' } },
       },
       {
         id: 'insights',
         q: 'How do I keep track of my reading?',
-        a: 'More › Reading Insights shows your reading time, streak and most-read novels. Set a daily goal there to fill a ring each day.',
+        a: 'More › Reading Insights shows your reading time, streak, most-read novels, a calendar of your year and your longest session. Set a daily goal there to fill a ring each day.',
         action: { label: 'Open Reading Insights', route: { name: 'stats' } },
+      },
+    ],
+  },
+  {
+    title: 'Listening',
+    items: [
+      {
+        id: 'car',
+        q: 'Can I listen to a novel in the car?',
+        a: 'Yes, with your PC’s help. Turn on “Listen in the car” on a novel’s page and your PC narrates the next chapters (overnight, or whenever it runs). The audio appears in Files › iCloud Drive › TachiNovel Audio. Import it into BookPlayer (free), which plays in CarPlay and remembers your place.',
+        action: { label: 'Open Listen in the Car', route: { name: 'narration' } },
+      },
+      {
+        id: 'car-next',
+        q: 'How do I get the next chapters narrated?',
+        a: 'Delete files from TachiNovel Audio once they’re in BookPlayer, and your PC makes the next ones. Paid chapters, or ones that aren’t free yet, are skipped and tried again later.',
       },
     ],
   },
@@ -86,7 +102,7 @@ export const HELP: readonly HelpTopic[] = [
       {
         id: 'report',
         q: 'How do I report a problem?',
-        a: 'Open More › About › Diagnostics and tap Copy Diagnostics, then paste it into your message. It lists versions, storage, sources and recent errors, not your library.',
+        a: 'Open More › About › Diagnostics and tap Send a Problem Report. Say what happened on the first line and send it. It holds your app and iOS versions and the latest errors, not your library. If you’re asked for more, Copy Full Diagnostics adds storage, sources and settings.',
         action: { label: 'Open Diagnostics', route: { name: 'diagnostics' } },
       },
     ],
@@ -97,14 +113,20 @@ export const HELP: readonly HelpTopic[] = [
       {
         id: 'backup',
         q: 'Is my library backed up?',
-        a: 'Your library, progress and settings live in iCloud Drive › Scriptable › TachiNovel. Backups, including the optional daily one, are in its backups folder; restore one from More › Backup & Restore.',
+        a: 'Your library, progress and settings live in iCloud Drive › Scriptable › TachiNovel. Backups, including the optional daily one, are in its backups folder. To restore one, open More › Backup & Restore: you see what the backup holds first, then choose Merge (keeps your library) or Replace.',
         action: { label: 'Open Backup & Restore', route: { name: 'settings', page: 'backup' } },
       },
       {
         id: 'space',
         q: 'How much space does TachiNovel use?',
-        a: 'Without downloads it stays small, and its caches clean themselves up. See and clear each part in More › Storage.',
+        a: 'Without downloads it stays small, and its caches clean themselves up. See and clear each part in More › Storage, including downloads of novels that are no longer in your library.',
         action: { label: 'Open Storage', route: { name: 'settings', page: 'storage' } },
+      },
+      {
+        id: 'export',
+        q: 'Can I get a list of my novels?',
+        a: 'More › Backup & Restore › Export Library List makes a spreadsheet (CSV) or plain-text list: names, sources, links, chapters read and categories. It’s for keeping or sharing, not for restoring.',
+        action: { label: 'Open Backup & Restore', route: { name: 'settings', page: 'backup' } },
       },
     ],
   },

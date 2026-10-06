@@ -21,7 +21,7 @@ import { Screen } from '../components/screen.tsx';
 import { Sheet } from '../components/sheet.tsx';
 import { plural } from '../lib/format.ts';
 import { matchesSearch } from '../lib/library-query.ts';
-import { batchStatus, bestMatch, groupBySource, previewSentence, rankMatches, runLimited, STRONG_MATCH } from '../lib/migrate-match.ts';
+import { batchStatus, bestMatch, groupBySource, matchConfidence, previewSentence, rankMatches, readMarksLine, runLimited, STRONG_MATCH, type MatchConfidence } from '../lib/migrate-match.ts';
 import { actionSheet } from '../state/actions.ts';
 import { openNovel, pop, push } from '../state/nav.ts';
 import { library, libraryKeys, progressVersion, reloadLibrary, removeLibraryEntries, settings, sources, upsertLibraryEntry } from '../state/store.ts';
@@ -76,14 +76,27 @@ export function MigrateScreen() {
                 <span class="mig-group-header">
                   {src && <SourceIcon source={src} size={18} />}
                   {g.name}
-                  <span class="mig-group-count">{g.entries.length}</span>
-                  {all.filter((e) => e.pluginId === g.pluginId).length > 1 && (
-                    <button type="button" class="mig-all tap tap-dim" onClick={() => void startBatch(g.pluginId)} data-testid={`migrate-all-${g.pluginId}`}>
-                      Migrate All
-                    </button>
-                  )}
+                  <span class="mig-group-count" aria-hidden="true">
+                    {g.entries.length}
+                  </span>
+                  <span class="sr-only">, {plural(g.entries.length, 'novel')}</span>
                 </span>
               }
+              {...(all.filter((e) => e.pluginId === g.pluginId).length > 1
+                ? {
+                    headerAction: (
+                      <button
+                        type="button"
+                        class="mig-all tap tap-dim"
+                        onClick={() => void startBatch(g.pluginId)}
+                        aria-label={`Migrate all ${g.name} novels`}
+                        data-testid={`migrate-all-${g.pluginId}`}
+                      >
+                        Migrate All
+                      </button>
+                    ),
+                  }
+                : {})}
             >
               {g.entries.map((e) => (
                 <Row
@@ -375,7 +388,7 @@ export function MigrateSearchScreen(props: { pluginId: string; path: string }) {
   const [input, setInput] = useState(title);
   const [query, setQuery] = useState(title);
   const [results, setResults] = useState<Map<string, SourceResult>>(new Map());
-  const [target, setTarget] = useState<BrowseItem | null>(null);
+  const [target, setTarget] = useState<(BrowseItem & { score: number }) | null>(null);
   const generation = useRef(0);
   // Like Browse and Global Search: enabled sources in the chosen languages (minus the novel's own).
   const targets = browsableSources(sources.value, settings.value.languages).filter((s) => s.id !== props.pluginId);
@@ -416,6 +429,9 @@ export function MigrateSearchScreen(props: { pluginId: string; path: string }) {
 
   const ordered = orderTargets(targets, results);
   const done = [...results.values()].filter((r) => r.status === 'ok' || r.status === 'error').length;
+  // Every source failed for want of a connection: one offline state, not one error per source.
+  const all = [...results.values()];
+  const offlineError = all.length > 0 && all.every((r) => r.status === 'error' && r.error?.offline) ? (all[0]?.error ?? null) : null;
 
   return (
     <Screen
@@ -446,7 +462,9 @@ export function MigrateSearchScreen(props: { pluginId: string; path: string }) {
         </span>
       </div>
 
-      {targets.length === 0 ? (
+      {offlineError ? (
+        <ErrorState error={offlineError} onRetry={() => void run(query)} />
+      ) : targets.length === 0 ? (
         <EmptyState icon="puzzlepiece.extension" title="No Other Sources" message="Enable or install another source to migrate this novel to it." />
       ) : (
         ordered.map((s) => {
@@ -519,6 +537,7 @@ export function MigrateSearchScreen(props: { pluginId: string; path: string }) {
         {target && (
           <MigrateSheetBody
             from={from ?? { pluginId: props.pluginId, path: props.path, name: title }}
+            {...(from ? { entry: from } : {})}
             to={target}
             onClose={() => setTarget(null)}
             onDone={(e) => {
@@ -536,8 +555,47 @@ export function MigrateSearchScreen(props: { pluginId: string; path: string }) {
 
 // ---------- 3. preview + apply ----------
 
-function MigrateSheetBody(props: { from: NovelSummary; to: BrowseItem; onClose: () => void; onDone: (e: LibraryEntry) => void }) {
-  const { from, to } = props;
+const CONFIDENCE_TITLE: Record<MatchConfidence['level'], string> = {
+  high: 'Looks like the same novel',
+  medium: 'Check before migrating',
+  low: 'Probably a different novel',
+};
+
+/**
+ * Title, author and length compared, so a wrong pick is caught before anything moves. `unchecked`: the
+ * target's page couldn't be loaded, so only the title was compared (with why, and Retry).
+ */
+function ConfidenceBlock({ c, unchecked }: { c: MatchConfidence; unchecked?: { error: UiError; toName: string; onRetry: () => void } }) {
+  return (
+    <div class={`mig-confidence is-${c.level}`} data-testid="migrate-confidence" data-level={c.level}>
+      <p class="mig-confidence-title">
+        <Icon name={c.level === 'high' ? 'checkmark.circle.fill' : 'exclamationmark.triangle'} size={17} />
+        {CONFIDENCE_TITLE[c.level]}
+      </p>
+      <ul class="mig-signals">
+        {c.signals.map((s) => (
+          <li key={s.text} class={s.ok ? 'is-ok' : 'is-off'}>
+            <Icon name={s.ok ? 'checkmark' : 'xmark'} size={12} />
+            <span>{s.text}</span>
+          </li>
+        ))}
+      </ul>
+      {unchecked && (
+        <div class="mig-unchecked" data-testid="migrate-unchecked">
+          <span>
+            {unchecked.error.offline ? 'You’re offline, so' : `${unchecked.toName}’s page didn’t load, so`} author and length weren’t compared.
+          </span>
+          <Button variant="tinted" size="small" onClick={unchecked.onRetry} label="Retry comparing author and length">
+            Retry
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MigrateSheetBody(props: { from: NovelSummary; entry?: LibraryEntry; to: BrowseItem & { score?: number }; onClose: () => void; onDone: (e: LibraryEntry) => void }) {
+  const { from, to, entry } = props;
   const fromKey = { pluginId: from.pluginId, path: from.path };
   const toKey = { pluginId: to.pluginId, path: to.path };
   const preview = useAsync(() => bridge().call('migrate.preview', { from: fromKey, to: toKey }, { timeoutMs: 90_000 }), [to.pluginId, to.path]);
@@ -548,6 +606,32 @@ function MigrateSheetBody(props: { from: NovelSummary; to: BrowseItem; onClose: 
   const toSource = sources.value.find((s) => s.id === to.pluginId);
   const toName = toSource?.name ?? to.pluginId;
   const p = preview.data;
+  // The target's own page, for its author and length (a failure just leaves those out).
+  const target = useAsync(() => bridge().call('novel.get', toKey, { timeoutMs: 45_000 }), [to.pluginId, to.path]);
+  const td = target.data;
+  const targetFailed = !td && target.status === 'error' && target.error ? target.error : null;
+  const compared =
+    target.status === 'loading' && !td
+      ? null
+      : matchConfidence({
+          titleScore: to.score ?? 0,
+          ...(entry?.author ? { fromAuthor: entry.author } : {}),
+          ...(td?.details.author ? { toAuthor: td.details.author } : {}),
+          ...(entry ? { fromChapters: entry.chapterCount } : from.chapterCount !== undefined ? { fromChapters: from.chapterCount } : {}),
+          ...(td ? { toChapters: td.chapters.length } : {}),
+        });
+  /** One retry for everything that failed to load (back online: the preview and the comparison). */
+  const retryAll = (): void => {
+    void preview.reload();
+    if (targetFailed) void target.reload();
+  };
+  // Title alone isn't enough to call it the same novel.
+  const confidence: MatchConfidence | null = compared && targetFailed && compared.level === 'high' ? { ...compared, level: 'medium' } : compared;
+  // Read marks on the old entry, counted from its stored chapter list (locked chapters are neither
+  // read nor unread, so chapterCount − unreadCount would overcount).
+  const source = useAsync(() => (entry ? bridge().call('novel.get', fromKey, { timeoutMs: 45_000 }) : Promise.resolve(null)), [from.pluginId, from.path]);
+  const readTotal = source.data ? source.data.chapters.reduce((n, c) => n + (c.read ? 1 : 0), 0) : null;
+  const marks = p && readTotal !== null ? readMarksLine(p.readCarried, readTotal) : null;
 
   async function apply(): Promise<void> {
     setBusy(true);
@@ -586,8 +670,22 @@ function MigrateSheetBody(props: { from: NovelSummary; to: BrowseItem; onClose: 
       <p class="mig-target-title clamp-2">{to.name}</p>
 
       <Section>
+        {/* One live region for both states, so VoiceOver reads the verdict when it arrives. */}
+        <div aria-live="polite">
+          {confidence ? (
+            <ConfidenceBlock c={confidence} {...(targetFailed ? { unchecked: { error: targetFailed, toName, onRetry: () => void target.reload() } } : {})} />
+          ) : (
+            <div class="mig-confidence is-loading" aria-busy="true" aria-label="Comparing the novels">
+              <SkeletonLine width="60%" height={14} />
+              <SkeletonLine width="80%" height={12} />
+            </div>
+          )}
+        </div>
+      </Section>
+
+      <Section>
         {preview.status === 'error' && preview.error && !p ? (
-          <ErrorState error={preview.error} onRetry={() => void preview.reload()} onSolve={solveChallengeThen(to.pluginId, () => void preview.reload())} compact />
+          <ErrorState error={preview.error} onRetry={retryAll} onSolve={solveChallengeThen(to.pluginId, retryAll)} compact />
         ) : !p ? (
           <div class="mig-preview is-loading" aria-busy="true" aria-label="Matching chapters">
             <SkeletonLine width="88%" height={14} />
@@ -598,14 +696,20 @@ function MigrateSheetBody(props: { from: NovelSummary; to: BrowseItem; onClose: 
             <p class="mig-preview-text" data-testid="migrate-preview">
               {previewSentence(p)}
             </p>
+            {marks && (
+              <p class="mig-note" data-testid="migrate-read-marks">
+                {marks}
+                {readTotal !== null && p.readCarried < readTotal ? '. The rest have no matching chapter number.' : '.'}
+              </p>
+            )}
             {p.matched === 0 ? (
               <p class="mig-warning">
                 <Icon name="exclamationmark.triangle" size={15} />
                 No chapters matched. This may be a different novel.
               </p>
             ) : p.unmatched > 0 ? (
-              <p class="mig-note">
-                {plural(p.unmatched, 'chapter')} without a match on {toName} {p.unmatched === 1 ? 'keeps its' : 'keep their'} marks only on the old entry.
+              <p class="mig-note" data-testid="migrate-unmatched">
+                {plural(p.unmatched, 'chapter')} {p.unmatched === 1 ? 'has' : 'have'} no match on {toName}.
               </p>
             ) : null}
           </div>
@@ -620,7 +724,7 @@ function MigrateSheetBody(props: { from: NovelSummary; to: BrowseItem; onClose: 
 
       <div class="mig-actions">
         <Button variant="filled" size="large" onClick={() => void apply()} disabled={busy || !p}>
-          {busy ? 'Migrating…' : 'Migrate'}
+          {busy ? 'Migrating…' : confidence?.level === 'low' ? 'Migrate Anyway' : 'Migrate'}
         </Button>
         <Button
           variant="plain"

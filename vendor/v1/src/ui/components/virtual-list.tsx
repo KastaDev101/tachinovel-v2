@@ -5,7 +5,7 @@
  */
 import type { ComponentChildren, Ref } from 'preact';
 import { useImperativeHandle, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { leadFor, nextRange, renderRange, sameRange, scrollTopForIndex, totalHeight, type Range, type Viewport } from '../lib/virtual.ts';
+import { leadFor, nextRange, renderRange, rowAt, rowTop, sameRange, scrollTopForIndex, totalHeight, type Range, type Viewport } from '../lib/virtual.ts';
 import { useScroller } from './screen.tsx';
 
 export interface VirtualListHandle {
@@ -37,7 +37,17 @@ export function VirtualList(props: {
   class?: string;
   handle?: Ref<VirtualListHandle>;
   testId?: string;
+  /** Rows of different heights (e.g. section headers): top of each row + total (count + 1 entries). */
+  offsets?: readonly number[] | null;
+  /** The row at the top of the viewport changed (for sticky section headers). */
+  onTopRow?: (index: number) => void;
+  /** Height covered at the top of the viewport (the bar the sticky header sits under). */
+  topInset?: number;
 }) {
+  const offsets = props.offsets ?? undefined;
+  const topRow = useRef(-1);
+  const onTopRow = useRef(props.onTopRow);
+  onTopRow.current = props.onTopRow;
   const scroller = useScroller();
   const container = useRef<HTMLDivElement>(null);
   const overscan = props.overscan ?? 10;
@@ -48,12 +58,13 @@ export function VirtualList(props: {
     const sc = scroller.current;
     const c = container.current;
     if (!sc || !c) return null;
-    return { scrollTop: sc.scrollTop, viewportHeight: sc.clientHeight, listTop: offsetWithin(c, sc), rowHeight: props.rowHeight, count: props.count };
+    return { scrollTop: sc.scrollTop, viewportHeight: sc.clientHeight, listTop: offsetWithin(c, sc), rowHeight: props.rowHeight, count: props.count, offsets };
   };
 
   useLayoutEffect(() => {
     const sc = scroller.current;
     if (!sc) return;
+    topRow.current = -1; // rows changed: report the top row again
     let listTop = -1;
     let lastTop = sc.scrollTop;
     const update = (force: boolean): void => {
@@ -71,6 +82,13 @@ export function VirtualList(props: {
       if (!sameRange(next, rangeRef.current)) {
         rangeRef.current = next;
         setRange(next);
+      }
+      if (onTopRow.current) {
+        const t = Math.max(0, Math.min(props.count - 1, rowAt(v, v.scrollTop - v.listTop + (props.topInset ?? 0))));
+        if (t !== topRow.current) {
+          topRow.current = t;
+          onTopRow.current(t);
+        }
       }
     };
     // While the list moves, also follow it every animation frame: engines may coalesce scroll events
@@ -114,7 +132,7 @@ export function VirtualList(props: {
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [props.count, props.rowHeight]);
+  }, [props.count, props.rowHeight, offsets]);
 
   useImperativeHandle(props.handle ?? null, () => ({
     scrollToIndex(index, opts = {}) {
@@ -128,6 +146,7 @@ export function VirtualList(props: {
         contentHeight: sc.scrollHeight,
         align: opts.align ?? 'center',
         inset: opts.inset ?? 0,
+        offsets,
       });
       sc.scrollTo({ top, behavior: opts.smooth ? 'smooth' : 'auto' });
     },
@@ -137,13 +156,17 @@ export function VirtualList(props: {
   const end = Math.min(range.end, props.count);
   for (let i = range.start; i < end; i++) {
     rows.push(
-      <div class="vrow" key={props.rowKey ? props.rowKey(i) : i} style={{ transform: `translate3d(0,${i * props.rowHeight}px,0)`, height: `${props.rowHeight}px` }}>
+      <div
+        class="vrow"
+        key={props.rowKey ? props.rowKey(i) : i}
+        style={{ transform: `translate3d(0,${rowTop({ rowHeight: props.rowHeight, offsets }, i)}px,0)`, height: `${offsets ? (offsets[i + 1] ?? 0) - (offsets[i] ?? 0) : props.rowHeight}px` }}
+      >
         {props.renderRow(i)}
       </div>,
     );
   }
   return (
-    <div class={`vlist ${props.class ?? ''}`} ref={container} style={{ height: `${totalHeight(props.count, props.rowHeight)}px` }} data-testid={props.testId} data-count={props.count}>
+    <div class={`vlist ${props.class ?? ''}`} ref={container} style={{ height: `${totalHeight(props.count, props.rowHeight, offsets)}px` }} data-testid={props.testId} data-count={props.count}>
       {rows}
     </div>
   );

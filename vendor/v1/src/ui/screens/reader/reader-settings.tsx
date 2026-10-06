@@ -4,6 +4,7 @@ import { useState } from 'preact/hooks';
 import type { ReaderFont, ReaderSettings, ReaderTheme } from '../../../shared/contracts/domain.ts';
 import { Section, Segmented, SelectRow, Slider, Stepper, SwitchRow } from '../../components/controls.tsx';
 import { Icon } from '../../components/icon.tsx';
+import { justifyFits as fitsJustify } from '../../lib/justify.ts';
 import { READER_LIMITS } from '../../state/defaults.ts';
 import { patchSettings, settings } from '../../state/store.ts';
 
@@ -48,6 +49,44 @@ export function infoPillMode(showFooter: boolean): InfoPillMode {
   return showFooter ? pillPref.value : 'never';
 }
 
+/**
+ * Hyphenation: 'auto' hyphenates only justified text (it evens out the gaps justify makes); 'on' /
+ * 'off' always / never. A per-device preference (the settings contract has no field for it).
+ */
+export type HyphenMode = 'auto' | 'on' | 'off';
+const HYPHEN_KEY = 'tachinovel.hyphens';
+
+function readHyphenPref(): HyphenMode {
+  try {
+    const v = localStorage.getItem(HYPHEN_KEY);
+    return v === 'on' || v === 'off' ? v : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export const hyphenPref = signal<HyphenMode>(readHyphenPref());
+
+export function setHyphenMode(mode: HyphenMode): void {
+  hyphenPref.value = mode;
+  try {
+    localStorage.setItem(HYPHEN_KEY, mode);
+  } catch {
+    // private mode / blocked storage: the choice lasts for this session
+  }
+}
+
+/** Justify only where the lines are long enough (see lib/justify.ts). */
+export function justifyFits(r: Pick<ReaderSettings, 'fontSize' | 'margin' | 'justify'>, viewportWidth: number): boolean {
+  return fitsJustify(r, viewportWidth, hyphenates(r.justify));
+}
+
+/** Whether chapter text is hyphenated with these settings. */
+export function hyphenates(justify: boolean): boolean {
+  const m = hyphenPref.value;
+  return m === 'on' || (m === 'auto' && justify);
+}
+
 export function setInfoPillMode(mode: InfoPillMode): void {
   if (mode !== 'never') {
     pillPref.value = mode;
@@ -80,6 +119,7 @@ export function ReaderSettingsPanel(props: { onBrightness?: (v: number | null) =
             max={1}
             step={0.01}
             class={r.brightness === null && dragBrightness === null ? 'is-auto' : ''}
+            valueText={r.brightness === null && dragBrightness === null ? 'System' : `${Math.round((dragBrightness ?? r.brightness ?? 0.6) * 100)} percent`}
             onInput={(v) => {
               setDragBrightness(v);
               props.onBrightness?.(v);
@@ -162,8 +202,25 @@ export function ReaderSettingsPanel(props: { onBrightness?: (v: number | null) =
         </div>
       </Section>
       <Section>
-        <SwitchRow title="Justify text" checked={r.justify} onChange={(justify) => setReader({ justify }, 0)} testId="rs-justify" />
+        <SwitchRow
+          title="Justify text"
+          {...(r.justify && !justifyFits(r, window.innerWidth) ? { subtitle: 'Paused at this text size: the lines are too short to justify without gaps' } : {})}
+          checked={r.justify}
+          onChange={(justify) => setReader({ justify }, 0)}
+          testId="rs-justify"
+        />
         <SwitchRow title="Indent paragraphs" checked={r.indent} onChange={(indent) => setReader({ indent }, 0)} testId="rs-indent" />
+        <SelectRow
+          title="Hyphenation"
+          value={hyphenPref.value}
+          options={[
+            { value: 'auto', label: 'With justified text' },
+            { value: 'on', label: 'Always' },
+            { value: 'off', label: 'Never' },
+          ]}
+          onChange={setHyphenMode}
+          testId="rs-hyphens"
+        />
       </Section>
       <Section footer={r.paged ? 'Swipe or tap the left and right edges to turn pages; the last page of a chapter turns into the next one.' : undefined}>
         <div class="row" data-testid="rs-page-mode">
@@ -175,6 +232,7 @@ export function ReaderSettingsPanel(props: { onBrightness?: (v: number | null) =
             ]}
             value={r.paged ? 'pages' : 'scroll'}
             onChange={(v) => setReader({ paged: v === 'pages' }, 0)}
+            label="Page turning"
           />
         </div>
       </Section>

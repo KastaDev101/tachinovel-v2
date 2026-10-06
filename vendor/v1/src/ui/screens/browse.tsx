@@ -5,19 +5,20 @@
  */
 import { signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { AvailablePlugin, RepoInfo, SourceInfo } from '../../shared/contracts/domain.ts';
+import type { AvailablePlugin, RepoInfo, SourceFailureReason, SourceInfo } from '../../shared/contracts/domain.ts';
 import { bridge, errorText, toUiError, type UiError } from '../bridge/client.ts';
 import { BarButton, Button, Row, SearchField, Section, Segmented, Switch } from '../components/controls.tsx';
 import { EmptyState, ErrorState, SkeletonRows } from '../components/feedback.tsx';
-import { useAsync } from '../components/hooks.ts';
+import { useAsync, useNow } from '../components/hooks.ts';
 import { Icon } from '../components/icon.tsx';
 import { Screen } from '../components/screen.tsx';
 import { Sheet } from '../components/sheet.tsx';
 import { plural, relativeTime } from '../lib/format.ts';
 import { attachLongPress, haptic } from '../lib/gestures.ts';
+import { failureInfo } from '../lib/source-failure.ts';
 import { actionSheet, confirmAlert, openInSafari } from '../state/actions.ts';
 import { push } from '../state/nav.ts';
-import { reloadSources, settings, sources } from '../state/store.ts';
+import { library, reloadSources, settings, sources } from '../state/store.ts';
 import { errorToast, showToast } from '../state/toast.ts';
 import { GenresSheet } from './genre.tsx';
 import { UnderlineTab } from './library.tsx';
@@ -80,6 +81,12 @@ export function languageName(lang: string): string {
   return l || 'Unknown';
 }
 
+/** "Used 2h ago", "Used yesterday", "Used Sep 26". */
+function usedLabel(ts: number, now: number): string {
+  const rel = relativeTime(ts, now);
+  return `Used ${rel === 'Just now' || rel === 'Yesterday' ? rel.toLowerCase() : rel}`;
+}
+
 /** Whether a source in `lang` is shown for the selected languages (unknown languages always are). */
 export function inLanguages(lang: string, languages: readonly string[]): boolean {
   const l = cleanLang(lang);
@@ -116,6 +123,8 @@ export interface SourceHealth {
   ok: boolean;
   /** When this was last seen. */
   at: number;
+  /** Order of this record among all records (see healthMark). */
+  seq: number;
   /** What went wrong (short text), when !ok. */
   error?: string;
 }
@@ -123,19 +132,28 @@ export interface SourceHealth {
 /** How each source's latest request went this session (Latest and genre search report here). */
 export const sourceHealth = signal<ReadonlyMap<string, SourceHealth>>(new Map());
 
+let healthSeq = 0;
+
+/** Where the health records are now: a record with a higher `seq` came after this moment. */
+export function healthMark(): number {
+  return healthSeq;
+}
+
 /** Record a source request outcome. Being offline says nothing about the source, so it's ignored. */
 export function recordSourceHealth(id: string, error?: UiError): void {
   if (error?.offline) return;
   const prev = sourceHealth.peek().get(id);
   if (!error && prev?.ok) return;
   const next = new Map(sourceHealth.peek());
-  next.set(id, error ? { ok: false, at: Date.now(), error: errorText(error) } : { ok: true, at: Date.now() });
+  const seq = ++healthSeq;
+  next.set(id, error ? { ok: false, at: Date.now(), seq, error: errorText(error) } : { ok: true, at: Date.now(), seq });
   sourceHealth.value = next;
 }
 
 export function SourceIcon({ source, size = 32 }: { source: Pick<SourceInfo, 'iconUrl' | 'name'>; size?: number }) {
   return (
-    <span class="source-icon" style={{ width: `${size}px`, height: `${size}px` }}>
+    // Decorative: the source's name is always next to it.
+    <span class="source-icon" style={{ width: `${size}px`, height: `${size}px` }} aria-hidden="true">
       {source.iconUrl ? <img src={source.iconUrl} alt="" loading="lazy" decoding="async" /> : <span class="source-letter">{source.name.charAt(0)}</span>}
     </span>
   );
@@ -156,8 +174,11 @@ export function BrowseScreen() {
   const [genresOpen, setGenresOpen] = useState(false);
   const [welcomeDismissed, setWelcomeDismissed] = useState(() => readFlag(GET_STARTED_KEY));
   const enabled = browsableSources(all, languages);
-  /** First run: nothing but the built-in source(s) installed. */
-  const showWelcome = !welcomeDismissed && all.every((s) => s.builtIn);
+  /** First run: nothing but the built-in source(s) installed. Once shown it stays for the session, so
+   *  installing the first suggestion doesn't pull the card (and the next suggestions) away. */
+  const firstRun = all.every((s) => s.builtIn);
+  if (firstRun) welcomeShownThisSession = true;
+  const showWelcome = !welcomeDismissed && (firstRun || welcomeShownThisSession);
   const disabledCount = all.filter((s) => !s.enabled).length;
   const otherLangCount = all.filter((s) => s.enabled && !inLanguages(s.lang, languages)).length;
 
@@ -169,6 +190,14 @@ export function BrowseScreen() {
   }, [all, languages, lastUsed]);
 
   const health = sourceHealth.value;
+  const now = useNow();
+  // Discovery tiles: Latest (2+ sources), Genres (a source with filters), For You (something read, and genres to search).
+  const canGenre = enabled.some((s) => s.hasFilters);
+  const tiles = [
+    ...(enabled.length > 1 ? [{ id: 'latest', icon: 'clock.arrow.circlepath', title: 'Latest', sub: 'From all sources', onClick: () => push({ name: 'latest' }) }] : []),
+    ...(canGenre ? [{ id: 'genres', icon: 'square.grid.2x2.fill', title: 'Genres', sub: 'Browse by genre', onClick: () => setGenresOpen(true) }] : []),
+    ...(canGenre && library.value.some((e) => e.lastReadAt !== undefined) ? [{ id: 'for-you', icon: 'star.fill', title: 'For You', sub: 'From what you read', onClick: () => push({ name: 'forYou' }) }] : []),
+  ];
   const listRef = useRef<HTMLDivElement>(null);
 
   // Long-press a source row: Latest, Filters, Pin, Open in Safari (and why it last failed, if it did).
@@ -188,6 +217,7 @@ export function BrowseScreen() {
     const actions = [
       { title: 'Latest' },
       ...(s.hasFilters ? [{ title: 'Filters' }] : []),
+      ...(s.hasSettings ? [{ title: 'Settings' }] : []),
       { title: s.pinned ? 'Unpin' : 'Pin' },
       { title: 'Open in Safari' },
     ];
@@ -199,6 +229,7 @@ export function BrowseScreen() {
     const t = actions[i]?.title;
     if (t === 'Latest') push({ name: 'source', pluginId: s.id, mode: 'latest' });
     else if (t === 'Filters') push({ name: 'source', pluginId: s.id, openFilters: true });
+    else if (t === 'Settings') push({ name: 'sourceSettings', pluginId: s.id });
     else if (t === 'Pin' || t === 'Unpin') void togglePin(s);
     else if (t === 'Open in Safari') openInSafari(s.site);
   }
@@ -227,12 +258,23 @@ export function BrowseScreen() {
         </span>
         <span class="src-text">
           <span class="src-name ellipsis">{s.name}</span>
-          {/* One language selected: every row would say the same thing. */}
-          {multi && <span class="src-lang ellipsis">{languageName(s.lang)}</span>}
+          {/* One language selected: every row would say the same thing. When it was last used says more. */}
+          {(multi || s.lastUsedAt !== undefined) && (
+            <span class="src-sub ellipsis">
+              {multi && <span class="src-lang">{languageName(s.lang)}</span>}
+              {multi && s.lastUsedAt !== undefined && ' · '}
+              {s.lastUsedAt !== undefined && <span class="src-used">{usedLabel(s.lastUsedAt, now)}</span>}
+            </span>
+          )}
         </span>
       </button>
       {s.hasFilters && (
         <button type="button" class="src-action tap tap-dim" aria-label={`${s.name} filters`} onClick={() => push({ name: 'source', pluginId: s.id, openFilters: true })} data-testid={`filters-${s.id}`}>
+          <Icon name="line.3.horizontal.decrease" size={21} />
+        </button>
+      )}
+      {s.hasSettings && (
+        <button type="button" class="src-action tap tap-dim" aria-label={`${s.name} settings`} onClick={() => push({ name: 'sourceSettings', pluginId: s.id })} data-testid={`settings-${s.id}`}>
           <Icon name="gearshape.fill" size={21} />
         </button>
       )}
@@ -263,30 +305,19 @@ export function BrowseScreen() {
       />
     ) : (
       <div class="src-list" data-testid="source-list">
-        {(enabled.length > 1 || enabled.some((s) => s.hasFilters)) && (
-          <div class="discover-grid">
-            {enabled.length > 1 && (
-              <button type="button" class="discover-tile tap tap-scale" onClick={() => push({ name: 'latest' })} data-testid="browse-latest">
+        {tiles.length > 0 && (
+          <div class={`discover-grid is-${tiles.length}`}>
+            {tiles.map((t) => (
+              <button type="button" class="discover-tile tap tap-scale" key={t.id} onClick={t.onClick} data-testid={`browse-${t.id}`}>
                 <span class="discover-icon">
-                  <Icon name="clock.arrow.circlepath" size={20} />
+                  <Icon name={t.icon} size={19} />
                 </span>
                 <span class="discover-text">
-                  <span class="discover-title">Latest</span>
-                  <span class="discover-sub">From all sources</span>
+                  <span class="discover-title">{t.title}</span>
+                  <span class="discover-sub">{t.sub}</span>
                 </span>
               </button>
-            )}
-            {enabled.some((s) => s.hasFilters) && (
-              <button type="button" class="discover-tile tap tap-scale" onClick={() => setGenresOpen(true)} data-testid="browse-genres">
-                <span class="discover-icon">
-                  <Icon name="square.grid.2x2.fill" size={19} />
-                </span>
-                <span class="discover-text">
-                  <span class="discover-title">Genres</span>
-                  <span class="discover-sub">Browse by genre</span>
-                </span>
-              </button>
-            )}
+            ))}
           </div>
         )}
         <div ref={listRef}>
@@ -370,6 +401,8 @@ export function BrowseScreen() {
 // ---------- first run ----------
 
 const GET_STARTED_KEY = 'tachinovel.browse.getStarted.dismissed';
+/** The get-started card appeared this session (see BrowseScreen). */
+let welcomeShownThisSession = false;
 
 function readFlag(key: string): boolean {
   try {
@@ -413,7 +446,7 @@ function GetStartedCard(props: { onOpenExtensions: () => void; onDismiss: () => 
             </span>
             <span class="get-started-copy">
               <span class="get-started-title">Add more sources</span>
-              <span class="get-started-text">Sources are LNReader plugins from your repositories. These passed a full check in the latest sweep:</span>
+              <span class="get-started-text">Each source is a site TachiNovel can read from. These work well right now:</span>
             </span>
             <button type="button" class="sheet-close tap tap-dim" aria-label="Dismiss" onClick={props.onDismiss} data-testid="get-started-dismiss">
               <Icon name="xmark" size={13} />
@@ -421,6 +454,9 @@ function GetStartedCard(props: { onOpenExtensions: () => void; onDismiss: () => 
           </div>
           {available.status === 'loading' && !available.data ? (
             <SkeletonRows count={3} height={56} />
+          ) : available.status === 'error' && available.error && !available.data ? (
+            // Can't reach the catalog (offline, say): say so, with Retry.
+            <ErrorState error={available.error} onRetry={() => void available.reload()} compact />
           ) : (
             suggestions.map((p) => (
               <Row
@@ -430,7 +466,7 @@ function GetStartedCard(props: { onOpenExtensions: () => void; onDismiss: () => 
                 subtitle={`v${p.version}`}
                 leading={<SourceIcon source={p} size={30} />}
                 trailing={
-                  <Button variant="tinted" size="small" onClick={() => void get(p)} disabled={busy === p.id}>
+                  <Button variant="tinted" size="small" onClick={() => void get(p)} disabled={busy === p.id} label={busy === p.id ? `Installing ${p.name}` : `Get ${p.name}`}>
                     {busy === p.id ? 'Installing…' : 'Get'}
                   </Button>
                 }
@@ -577,41 +613,82 @@ export function extensionMatches(p: { id: string; name: string; site: string }, 
 
 type Verdict = AvailablePlugin['verified'];
 
-/** "Verified" (sweep passed), muted "Partial", or (installed only) "Broken"; nothing when unverified. */
-function VerdictBadge({ verdict }: { verdict: Verdict }) {
-  if (verdict === 'works') {
-    return (
-      <span class="ext-badge is-works" data-testid="badge-verified">
-        <Icon name="checkmark" size={9} />
-        Verified
-      </span>
-    );
-  }
-  if (verdict === 'partial') {
-    return (
-      <span class="ext-badge is-partial" data-testid="badge-partial">
-        Partial
-      </span>
-    );
-  }
-  if (verdict === 'broken') {
-    return (
-      <span class="ext-badge is-broken" data-testid="badge-broken">
-        Broken
-      </span>
-    );
-  }
-  return null;
+/** What each verdict of the PC sweep (plugins/verified.json) means, in the words shown on tap. */
+export const VERDICTS: Record<NonNullable<Verdict>, { label: string; reason: string }> = {
+  works: { label: 'Verified', reason: 'Passed a full check: the popular list, a search, a novel page and a chapter all loaded.' },
+  partial: { label: 'Partial', reason: 'Some steps of the check failed, so parts may not work (search or chapters, for example).' },
+  broken: { label: 'Broken', reason: 'Failed the latest check: the source didn’t load. Sites change, so a plugin update may fix it.' },
+};
+
+const CHECKED_NOTE = 'Checked from a PC for this exact version. Sites behind Cloudflare can behave differently on the phone.';
+
+/** Why: the check's own reason when it found one ("This site no longer exists."), else what the verdict means. */
+export function verdictReason(verdict: NonNullable<Verdict>, reason: SourceFailureReason | undefined): string {
+  return verdict !== 'works' && reason ? `${failureInfo(reason).text}.` : VERDICTS[verdict].reason;
 }
 
-function ExtTitle({ name, verdict, pinned }: { name: string; verdict: Verdict; pinned?: boolean }) {
+/** The verdict explained (tap on its pill), with a way to look at the site. */
+async function explainVerdict(p: { name: string; site: string; verified?: Verdict; verifiedReason?: SourceFailureReason }): Promise<void> {
+  if (!p.verified) return;
+  const v = VERDICTS[p.verified];
+  try {
+    const r = await bridge().call('native.alert', {
+      title: `${p.name}: ${v.label}`,
+      message: `${verdictReason(p.verified, p.verifiedReason)}\n\n${CHECKED_NOTE}`,
+      actions: [{ title: 'Open Website' }],
+      cancel: 'OK',
+    });
+    if (r.index === 0) openInSafari(p.site);
+  } catch {
+    // Nothing to explain without the alert.
+  }
+}
+
+/**
+ * Status pill from the sweep: green "Verified", orange "Partial", red "Broken"; nothing when this
+ * version wasn't checked. With `onExplain` it's a button that says why.
+ */
+function VerdictBadge({ verdict, onExplain }: { verdict: Verdict; onExplain?: (() => void) | undefined }) {
+  if (!verdict) return null;
+  const v = VERDICTS[verdict];
+  const testId = verdict === 'works' ? 'badge-verified' : `badge-${verdict}`;
+  const content = (
+    <>
+      {verdict === 'works' && <Icon name="checkmark" size={9} />}
+      {v.label}
+    </>
+  );
+  return onExplain ? (
+    <button type="button" class={`ext-badge is-${verdict} tap tap-dim`} onClick={onExplain} aria-label={`${v.label}: why?`} data-testid={testId}>
+      {content}
+    </button>
+  ) : (
+    <span class={`ext-badge is-${verdict}`} data-testid={testId}>
+      {content}
+    </span>
+  );
+}
+
+function ExtTitle({ name, verdict, pinned, onExplain }: { name: string; verdict: Verdict; pinned?: boolean; onExplain?: () => void }) {
   return (
     <>
       <span class="ext-name ellipsis">{name}</span>
       {pinned && <Icon name="pin.fill" size={12} class="row-inline-icon ext-pin" />}
-      <VerdictBadge verdict={verdict} />
+      <VerdictBadge verdict={verdict} onExplain={onExplain} />
     </>
   );
+}
+
+type ExtFilter = 'all' | 'installed' | 'verified';
+const EXT_FILTER_KEY = 'tachinovel.extensions.filter';
+
+function readExtFilter(): ExtFilter {
+  try {
+    const v = localStorage.getItem(EXT_FILTER_KEY);
+    return v === 'installed' || v === 'verified' ? v : 'all';
+  } catch {
+    return 'all';
+  }
 }
 
 /**
@@ -630,11 +707,25 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const [brokenOpen, setBrokenOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [filter, setFilterState] = useState<ExtFilter>(readExtFilter);
+  const setFilter = (f: ExtFilter): void => {
+    setFilterState(f);
+    try {
+      localStorage.setItem(EXT_FILTER_KEY, f);
+    } catch {
+      // Remembered for this session only.
+    }
+  };
   const q = query.trim();
+  /** Searching or filtering: only matching plugins, no repositories or footers. */
+  const narrowed = q !== '' || filter !== 'all';
   const shown = (x: { id: string; name: string; site: string }): boolean => q === '' || extensionMatches(x, q);
   const updatable = installed.filter((s) => s.updateAvailable);
 
   const verdicts = useMemo(() => new Map((available.data ?? []).map((p) => [p.id, p.verified])), [available.data]);
+  const reasons = useMemo(() => new Map((available.data ?? []).map((p) => [p.id, p.verifiedReason])), [available.data]);
+  /** " · Site gone" after the version when the check found what's wrong. */
+  const reasonPart = (verdict: Verdict, reason: SourceFailureReason | undefined): string => (verdict && verdict !== 'works' && reason ? ` · ${failureInfo(reason).short}` : '');
   /** Language in a subtitle only when it tells something: several selected, or outside the selection. */
   const langPart = (lang: string): string => (multi || !inLanguages(lang, languages) ? ` · ${languageName(lang)}` : '');
 
@@ -682,14 +773,19 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
 
   async function sourceMenu(s: SourceInfo): Promise<void> {
     const actions = [
+      ...(s.hasSettings ? [{ title: 'Settings' }] : []),
       { title: s.pinned ? 'Unpin' : 'Pin to Top' },
       ...(s.updateAvailable ? [{ title: `Update to v${s.updateAvailable}` }] : []),
       { title: 'Open Website' },
       ...(s.builtIn ? [] : [{ title: 'Uninstall', destructive: true }]),
     ];
-    const i = await actionSheet({ title: s.name, message: `v${s.version} · ${languageName(s.lang)}`, actions });
+    // The sweep's verdict, explained (the pill sits inside this row's button, so the reason is here).
+    const verdict = verdicts.get(s.id);
+    const why = verdict ? `\n${VERDICTS[verdict].label}: ${verdictReason(verdict, reasons.get(s.id))}` : '';
+    const i = await actionSheet({ title: s.name, message: `v${s.version} · ${languageName(s.lang)}${why}`, actions });
     const t = actions[i]?.title ?? '';
-    if (t === 'Unpin' || t === 'Pin to Top') {
+    if (t === 'Settings') push({ name: 'sourceSettings', pluginId: s.id });
+    else if (t === 'Unpin' || t === 'Pin to Top') {
       try {
         sources.value = await bridge().call('sources.setPinned', { id: s.id, pinned: !s.pinned });
       } catch (err) {
@@ -732,8 +828,9 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
   }
 
   // The script already filters by language; filtering here too hides a removed language at once.
-  const notInstalled = (available.data ?? []).filter((p) => !p.installed && inLanguages(p.lang, languages) && shown(p));
-  const installedShown = installed.filter(shown);
+  const notInstalled =
+    filter === 'installed' ? [] : (available.data ?? []).filter((p) => !p.installed && inLanguages(p.lang, languages) && shown(p) && (filter !== 'verified' || p.verified === 'works'));
+  const installedShown = installed.filter((s) => shown(s) && (filter !== 'verified' || verdicts.get(s.id) === 'works'));
   const working = notInstalled.filter((p) => p.verified !== 'broken');
   const broken = notInstalled.filter((p) => p.verified === 'broken');
   const groups = useMemo(() => {
@@ -744,17 +841,17 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
       byLang.set(k, [...(byLang.get(k) ?? []), p]);
     }
     return [...byLang.entries()].sort(([a], [b]) => compareLanguages(a, b)).map(([lang, items]) => ({ lang, items }));
-  }, [available.data, languages, q]);
+  }, [available.data, languages, q, filter]);
 
   const availableRow = (p: AvailablePlugin) => (
     <Row
       key={p.id}
       class={`ext-row${p.verified === 'broken' ? ' is-broken' : ''}`}
-      title={<ExtTitle name={p.name} verdict={p.verified === 'broken' ? undefined : p.verified} />}
-      subtitle={`v${p.version}${langPart(p.lang)}`}
+      title={<ExtTitle name={p.name} verdict={p.verified} onExplain={() => void explainVerdict(p)} />}
+      subtitle={`v${p.version}${langPart(p.lang)}${reasonPart(p.verified, p.verifiedReason)}`}
       leading={<SourceIcon source={p} size={30} />}
       trailing={
-        <Button variant={p.verified === 'broken' ? 'gray' : 'tinted'} size="small" onClick={() => void install(p)} disabled={busy === p.id}>
+        <Button variant={p.verified === 'broken' ? 'gray' : 'tinted'} size="small" onClick={() => void install(p)} disabled={busy === p.id} label={busy === p.id ? `Installing ${p.name}` : `Get ${p.name}`}>
           {busy === p.id ? 'Installing…' : 'Get'}
         </Button>
       }
@@ -765,6 +862,7 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
   const loadingCatalog = available.status === 'loading' && !available.data;
   // A search shows matching broken plugins too.
   const brokenShown = brokenOpen || q !== '';
+  const nothing = narrowed && installedShown.length === 0 && notInstalled.length === 0 && !loadingCatalog;
   const catalogError = available.status === 'error' && available.error && !available.data ? available.error : null;
 
   return (
@@ -772,25 +870,56 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
       <div class="grouped" data-testid="extensions-panel">
         <div class="ext-search">
           <SearchField value={query} onInput={setQuery} onSubmit={setQuery} onCancel={() => setQuery('')} placeholder="Search extensions" testId="ext-search" />
+          <div class="ext-filters" role="tablist" aria-label="Show">
+            {(
+              [
+                ['all', 'All'],
+                ['installed', 'Installed'],
+                ['verified', 'Verified'],
+              ] as const
+            ).map(([f, label]) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={filter === f}
+                class={`chip ext-filter tap tap-dim${filter === f ? ' is-selected' : ''}`}
+                key={f}
+                onClick={() => setFilter(f)}
+                data-testid={`ext-filter-${f}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {q !== '' && installedShown.length === 0 && notInstalled.length === 0 && !loadingCatalog && (
-          <EmptyState icon="magnifyingglass" title="No Matches" message={`No installed or available extension matches “${q}”.`} testId="ext-no-match" />
+        {nothing && (
+          <EmptyState
+            icon="magnifyingglass"
+            title="No Matches"
+            message={
+              q !== ''
+                ? `No ${filter === 'installed' ? 'installed' : filter === 'verified' ? 'verified' : 'installed or available'} extension matches “${q}”.`
+                : filter === 'verified'
+                  ? 'None of these extensions passed the latest check.'
+                  : 'No extensions installed.'
+            }
+            testId="ext-no-match"
+          />
         )}
 
         {installedShown.length > 0 && (
           <Section
-            header={
-              <span class="ext-header-row">
-                <span>Installed</span>
-                {updatable.length > 0 && q === '' && (
-                  <button type="button" class="link-btn tap tap-dim ext-update-all" onClick={() => void updateAll()} disabled={bulk !== null || busy !== null} data-testid="ext-update-all">
-                    {bulk ? `Updating ${bulk.done + 1} of ${bulk.total}…` : updatable.length > 1 ? `Update All (${updatable.length})` : 'Update All'}
-                  </button>
-                )}
-              </span>
+            header="Installed"
+            // Beside the heading, not in it (VoiceOver's rotor reads just "Installed").
+            headerAction={
+              updatable.length > 0 && !narrowed ? (
+                <button type="button" class="link-btn tap tap-dim ext-update-all" onClick={() => void updateAll()} disabled={bulk !== null || busy !== null} data-testid="ext-update-all">
+                  {bulk ? `Updating ${bulk.done + 1} of ${bulk.total}…` : updatable.length > 1 ? `Update All (${updatable.length})` : 'Update All'}
+                </button>
+              ) : undefined
             }
-            {...(q === '' ? { footer: 'Only install sources from repositories you trust: plugins run inside the app.' } : {})}
+            {...(!narrowed ? { footer: 'Only install sources from repositories you trust: plugins run inside the app.' } : {})}
           >
             {installedShown.map((s) => (
               <div class="row source-manage-row ext-row" key={s.id} data-testid={`installed-${s.id}`}>
@@ -804,11 +933,17 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
                       v{s.version}
                       {langPart(s.lang)}
                       {s.builtIn ? ' · Built in' : ''}
+                      {reasonPart(verdicts.get(s.id), reasons.get(s.id))}
                     </span>
                   </span>
                 </button>
+                {s.hasSettings && (
+                  <button type="button" class="src-action ext-settings tap tap-dim" aria-label={`${s.name} settings`} onClick={() => push({ name: 'sourceSettings', pluginId: s.id })} data-testid={`ext-settings-${s.id}`}>
+                    <Icon name="gearshape.fill" size={20} />
+                  </button>
+                )}
                 {s.updateAvailable && (
-                  <Button variant="tinted" size="small" onClick={() => void update(s)} disabled={busy === s.id || bulk !== null}>
+                  <Button variant="tinted" size="small" onClick={() => void update(s)} disabled={busy === s.id || bulk !== null} label={`Update ${s.name} to v${s.updateAvailable}`}>
                     {busy === s.id ? 'Updating…' : 'Update'}
                   </Button>
                 )}
@@ -818,18 +953,7 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
           </Section>
         )}
 
-        {q === '' && (
-          <Section header="Repositories">
-            {repos.status === 'loading' && !repos.data ? (
-              <SkeletonRows count={1} height={52} />
-            ) : (
-              (repos.data ?? []).map((r) => <Row key={r.url} title={r.name} subtitle={`${r.pluginCount} plugins`} chevron onClick={() => void repoMenu(r)} />)
-            )}
-            <Row title="Add Repository…" tint onClick={() => setRepoOpen(true)} testId="add-repo" />
-          </Section>
-        )}
-
-        {loadingCatalog ? (
+        {filter === 'installed' ? null : loadingCatalog ? (
           <Section header="Available">
             <SkeletonRows count={4} height={56} />
           </Section>
@@ -839,12 +963,12 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
           </Section>
         ) : (
           groups
-            .filter((g) => q === '' || g.items.length > 0)
+            .filter((g) => !narrowed || g.items.length > 0)
             .map((g, i, all) => (
               <Section
                 key={g.lang || 'all'}
                 header={g.lang ? `Available in ${languageName(g.lang)}` : 'Available'}
-                {...(i === all.length - 1 && q === '' ? { footer: 'From your repositories. “Verified” plugins passed a full check: browse, search, novel page and a chapter.' } : {})}
+                {...(i === all.length - 1 && !narrowed ? { footer: 'From your repositories. Tap a status to see what it means: “Verified” plugins passed a full check (browse, search, a novel page and a chapter).' } : {})}
               >
                 {g.items.length === 0 ? <Row title="Everything is installed" disabled /> : g.items.map(availableRow)}
               </Section>
@@ -866,6 +990,17 @@ export function ExtensionsPanel(props: { addOpen: boolean; onAddOpenChange: (ope
             </div>
             {brokenShown && <p class="group-footer">These failed the latest automated check, so they probably won’t load. Sites change: one may work again after a plugin update.</p>}
           </section>
+        )}
+
+        {!narrowed && (
+          <Section header="Repositories">
+            {repos.status === 'loading' && !repos.data ? (
+              <SkeletonRows count={1} height={52} />
+            ) : (
+              (repos.data ?? []).map((r) => <Row key={r.url} title={r.name} subtitle={`${r.pluginCount} plugins`} chevron onClick={() => void repoMenu(r)} />)
+            )}
+            <Row title="Add Repository…" tint onClick={() => setRepoOpen(true)} testId="add-repo" />
+          </Section>
         )}
       </div>
       <AddSourceSheet open={props.addOpen} onClose={() => props.onAddOpenChange(false)} onInstalled={() => void available.reload({ silent: true })} />

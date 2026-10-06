@@ -4,6 +4,8 @@
  * in the header (with Undo); a download button per chapter (progress from `downloads.progress`);
  * pull to refresh runs the library update check with a progress bar fed by `updates.progress`.
  */
+import { effect, signal } from '@preact/signals';
+import { Component, type ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { UpdateEntry } from '../../shared/contracts/domain.ts';
 import { bridge, errorText, toUiError } from '../bridge/client.ts';
@@ -14,10 +16,10 @@ import { useAsync, useNow } from '../components/hooks.ts';
 import { Icon } from '../components/icon.tsx';
 import { useRefreshWhenShown } from '../components/navigator.tsx';
 import { Screen } from '../components/screen.tsx';
-import { plural, timeOfDay } from '../lib/format.ts';
+import { plural, shortDate, timeOfDay } from '../lib/format.ts';
 import { attachLongPress } from '../lib/gestures.ts';
 import { attachSwipe } from '../lib/swipe.ts';
-import { groupUpdates, unreadByNovel, type NovelUpdates } from '../lib/updates-history.ts';
+import { checkedLabel, EMPTY_TRACE, groupUpdates, traceCheck, unreadByNovel, type CheckTrace, type NovelUpdates, type UpdatesDay } from '../lib/updates-history.ts';
 import { actionSheet, checkLibraryUpdates } from '../state/actions.ts';
 import { openNovel, openReader } from '../state/nav.ts';
 import { library, progressVersion, refreshUpdatesBadge, updatesProgress } from '../state/store.ts';
@@ -28,9 +30,84 @@ const chapterKey = (u: UpdateEntry): string => `${u.pluginId}:${u.chapterPath}`;
 const novelKey = (u: { pluginId: string; path: string }): string => `${u.pluginId}:${u.path}`;
 
 type DownloadState = 'queued' | 'done';
+
+/**
+ * Rows (novels and single chapters) built for the first paint. The rest follow a small chunk per frame
+ * right after it (and at once if you scroll near the end first): a month of updates for a big library
+ * is ~1,000 entries, about 200 ms to build in one go.
+ */
+const FIRST_ROWS = 60;
+const MORE_ROWS = 24;
+
+/**
+ * One day's rows. Re-renders only when its day or the screen state in `deps` changes, so adding days
+ * below (or a toast) doesn't rebuild the days already shown. `deps` must cover everything the rows
+ * read, since skipped rows keep their old click handlers.
+ */
+class DayBlock extends Component<{ day: UpdatesDay; deps: readonly unknown[]; render: (d: UpdatesDay) => ComponentChildren }> {
+  override shouldComponentUpdate(next: { day: UpdatesDay; deps: readonly unknown[] }): boolean {
+    return next.day !== this.props.day || next.deps.length !== this.props.deps.length || next.deps.some((v, i) => v !== this.props.deps[i]);
+  }
+  render() {
+    return this.props.render(this.props.day);
+  }
+}
 type Filter = 'all' | 'unread' | 'downloaded';
 
 const FILTER_KEY = 'tachinovel.updates.filter';
+const LAST_CHECK_KEY = 'tachinovel.updates.lastCheck';
+
+function readLastCheck(): number | null {
+  try {
+    const v = Number(localStorage.getItem(LAST_CHECK_KEY));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** When the library was last checked for new chapters (any check: pull to refresh, Library, on launch). */
+const lastCheckAt = signal<number | null>(readLastCheck());
+/** What the running check has found, novel by novel. */
+const checkTrace = signal<CheckTrace>(EMPTY_TRACE);
+
+// Follows every check (they all report through `updatesProgress`), even while Updates isn't open.
+let checking = false;
+effect(() => {
+  const p = updatesProgress.value;
+  if (p) {
+    checkTrace.value = traceCheck(checking ? checkTrace.peek() : EMPTY_TRACE, p);
+    checking = true;
+  } else if (checking) {
+    checking = false;
+    const at = Date.now();
+    lastCheckAt.value = at;
+    try {
+      localStorage.setItem(LAST_CHECK_KEY, String(at));
+    } catch {
+      // Remembered for this session only.
+    }
+  }
+});
+
+/** Whether the phone has a connection (the WebView's online/offline events). */
+function useOnline(): boolean {
+  const [online, setOnline] = useState(() => navigator.onLine !== false);
+  useEffect(() => {
+    const on = (): void => setOnline(true);
+    const off = (): void => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+  return online;
+}
+
+/** Novels named in the progress card before it says "+N more". */
+const FOUND_SHOWN = 3;
 
 function readFilter(): Filter {
   try {
@@ -50,7 +127,8 @@ function saveFilter(f: Filter): void {
 }
 
 export function UpdatesScreen() {
-  const data = useAsync(() => bridge().call('updates.list', { limit: 200 }), []);
+  // The script's largest page: about a month of updates for a big library.
+  const data = useAsync(() => bridge().call('updates.list', { limit: 1000 }), []);
   const now = useNow();
   const list = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -58,10 +136,15 @@ export function UpdatesScreen() {
   /** Batches this screen enqueued, per novel, oldest first: `downloads.progress` marks their chapters done in order. */
   const batches = useRef(new Map<string, { keys: string[]; done: number }[]>());
   const [filter, setFilterState] = useState<Filter>(readFilter);
+  /** Rows to build (see FIRST_ROWS). */
+  const [budget, setBudget] = useState(FIRST_ROWS);
   const all = data.data ?? [];
   const itemsRef = useRef<UpdateEntry[]>(all);
   itemsRef.current = all;
   const progress = updatesProgress.value;
+  const trace = checkTrace.value;
+  const lastCheck = lastCheckAt.value;
+  const online = useOnline();
 
   useRefreshWhenShown('updates', () => `${progressVersion.value}:${library.value.length}`, () => void data.reload({ silent: true }));
 
@@ -74,10 +157,37 @@ export function UpdatesScreen() {
   const counts = { unread: all.filter((u) => !u.read).length, downloaded: all.filter(isDownloaded).length };
   const setFilter = (f: Filter): void => {
     setFilterState(f);
+    setBudget(FIRST_ROWS); // a different list: first days now, the rest right after
     saveFilter(f);
   };
 
   const days = useMemo(() => groupUpdates(items, now), [items, now]);
+  // Render whole days up to the row budget, raised a chunk per frame after the first paint.
+  const shownDays = useMemo(() => {
+    const out: UpdatesDay[] = [];
+    let rows = 0;
+    for (const d of days) {
+      if (out.length > 0 && rows >= budget) break;
+      out.push(d);
+      rows += d.novels.length;
+    }
+    return out;
+  }, [days, budget]);
+  const moreDays = shownDays.length < days.length;
+  useEffect(() => {
+    if (!moreDays) return;
+    // After this frame paints: rAF runs before it, the timeout after.
+    let t = 0;
+    const raf = requestAnimationFrame(() => {
+      t = window.setTimeout(() => setBudget((b) => b + MORE_ROWS), 0);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
+  }, [moreDays, budget]);
+  /** Position in `all` per entry (long-press finds the entry by it). */
+  const indexOf = useMemo(() => new Map(all.map((u, i) => [u, i])), [data.data]);
   const groupsRef = useRef(new Map<string, NovelUpdates>());
   groupsRef.current = new Map(days.flatMap((d) => d.novels.map((n) => [n.key, n] as const)));
   const unread = counts.unread;
@@ -266,7 +376,8 @@ export function UpdatesScreen() {
         <button
           type="button"
           class={`media-row upd-main tap tap-row${u.read ? ' is-read' : ''}`}
-          data-index={all.indexOf(u)}
+          data-index={indexOf.get(u) ?? -1}
+          aria-label={`${withCover ? `${u.novelName}, ` : ''}${u.chapterName}, ${timeOfDay(u.foundAt)}${u.read ? ', read' : ''}`}
           onClick={() => openReader(u.pluginId, u.path, u.chapterPath, u.novelName)}
         >
           {withCover && <Cover src={u.cover} pluginId={u.pluginId} title={u.novelName} class="cover-thumb" />}
@@ -291,7 +402,14 @@ export function UpdatesScreen() {
         <div class="sw-row upd-row" data-swipe data-leading="read" data-key={g.key} data-testid="update-group">
           {swipeActions(allRead)}
           <div class="sw-content upd-content">
-            <button type="button" class={`media-row upd-main tap tap-row${allRead ? ' is-read' : ''}`} onClick={() => toggle(g)} aria-expanded={open} data-group={g.key}>
+            <button
+              type="button"
+              class={`media-row upd-main tap tap-row${allRead ? ' is-read' : ''}`}
+              onClick={() => toggle(g)}
+              aria-expanded={open}
+              aria-label={`${g.novelName}, ${plural(g.chapters.length, 'new chapter')}${allRead ? ', all read' : g.unread < g.chapters.length ? `, ${g.unread} unread` : ''}, ${timeOfDay(g.latestAt)}`}
+              data-group={g.key}
+            >
               <Cover src={g.cover} pluginId={g.pluginId} title={g.novelName} class="cover-thumb" />
               <span class="media-main">
                 <span class="media-title ellipsis">{g.novelName}</span>
@@ -313,7 +431,7 @@ export function UpdatesScreen() {
             {missing > 0 && (
               <button type="button" class="upd-download-all tap tap-row" onClick={() => void download(g.chapters)} data-testid="update-download-all">
                 <Icon name="arrow.down.circle" size={20} />
-                Download All New ({missing})
+                {`Download All New (${missing})`}
               </button>
             )}
           </div>
@@ -321,6 +439,62 @@ export function UpdatesScreen() {
       </div>
     );
   };
+
+  /** Mark every unread chapter of one day read (Undo in the toast). */
+  function markDayRead(d: UpdatesDay): void {
+    const affected = d.novels.flatMap((g) => g.chapters).filter((u) => !u.read);
+    if (affected.length === 0) return;
+    void setRead(affected, true);
+    showToast(`Marked ${plural(affected.length, 'chapter')} from ${d.label.toLowerCase() === 'today' || d.label.toLowerCase() === 'yesterday' ? d.label.toLowerCase() : d.label} as read`, {
+      undo: () => void setRead(affected, false),
+    });
+  }
+
+  /** Day header: the day, plus "mark read" and "download all new" for that day when there's something to do. */
+  const dayHeader = (d: UpdatesDay) => {
+    const chapters = d.novels.flatMap((g) => g.chapters);
+    const unreadDay = chapters.filter((u) => !u.read).length;
+    const missing = chapters.filter((u) => !isDownloaded(u) && !downloads.has(chapterKey(u))).length;
+    return (
+      // Only the day is the heading (VoiceOver's rotor), not its buttons.
+      <div class="day-header upd-day-header">
+        <h3 class="upd-day-label">{d.label}</h3>
+        {unreadDay > 0 && (
+          <button
+            type="button"
+            class="upd-day-btn tap tap-dim"
+            aria-label={`Mark ${plural(unreadDay, 'chapter')} from ${d.label} as read`}
+            onClick={() => markDayRead(d)}
+            data-testid="updates-day-read"
+          >
+            <Icon name="checkmark.circle" size={20} />
+          </button>
+        )}
+        {missing > 0 && (
+          <button
+            type="button"
+            class="upd-day-btn tap tap-dim"
+            aria-label={`Download ${plural(missing, 'chapter')} from ${d.label}`}
+            onClick={() => {
+              for (const g of d.novels) void download(g.chapters);
+            }}
+            data-testid="updates-day-download"
+          >
+            <Icon name="arrow.down.circle" size={20} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderDay = (d: UpdatesDay) => (
+    <section class="day-group" data-testid="updates-day">
+      {dayHeader(d)}
+      <div class="plain-list upd-list">{d.novels.map((g) => (g.chapters.length === 1 && g.chapters[0] ? chapterRow(g.chapters[0], true) : novelRow(g)))}</div>
+    </section>
+  );
+  /** What the rows read (see DayBlock). */
+  const rowDeps = [data.data, expanded, downloads, now, indexOf];
 
   let body;
   if (data.status === 'loading' && !data.data) body = <SkeletonRows count={8} thumb height={72} />;
@@ -336,13 +510,11 @@ export function UpdatesScreen() {
       );
   else
     body = (
-      <div ref={list} data-testid="updates-list">
-        {days.map((d) => (
-          <section class="day-group" key={d.key}>
-            <h3 class="day-header">{d.label}</h3>
-            <div class="plain-list upd-list">{d.novels.map((g) => (g.chapters.length === 1 && g.chapters[0] ? chapterRow(g.chapters[0], true) : novelRow(g)))}</div>
-          </section>
+      <div ref={list} data-testid="updates-list" data-days={days.length}>
+        {shownDays.map((d) => (
+          <DayBlock key={d.key} day={d} deps={rowDeps} render={renderDay} />
         ))}
+        {moreDays && <div class="list-loading" aria-hidden="true" />}
       </div>
     );
 
@@ -389,13 +561,47 @@ export function UpdatesScreen() {
               <span class="upd-progress-bar">
                 <span style={{ transform: `scaleX(${progress.total > 0 ? progress.done / progress.total : 0})` }} />
               </span>
-              {progress.newChapters > 0 && <span class="upd-progress-new tabular">{plural(progress.newChapters, 'new chapter')} so far</span>}
+              {/* Novel by novel, as the check finds new chapters. */}
+              {trace.found.length > 0 && (
+                <ul class="upd-progress-found">
+                  {trace.found
+                    .slice(-FOUND_SHOWN)
+                    .reverse()
+                    .map((f, i) => (
+                      <li class="upd-progress-novel" key={`${trace.found.length - i}`} data-testid="updates-progress-novel">
+                        <span class="ellipsis">{f.name}</span>
+                        <span class="upd-progress-n tabular">+{f.newChapters}</span>
+                      </li>
+                    ))}
+                </ul>
+              )}
+              {progress.newChapters > 0 && (
+                <span class="upd-progress-new tabular">
+                  {plural(progress.newChapters, 'new chapter')} so far
+                  {trace.found.length > FOUND_SHOWN ? ` · ${trace.found.length} novels` : ''}
+                </span>
+              )}
             </div>
           )}
         </div>
       }
       onRefresh={refresh}
+      onScroll={(el) => {
+        if (moreDays && el.scrollTop + el.clientHeight > el.scrollHeight - 2 * el.clientHeight) setBudget((b) => b + MORE_ROWS);
+      }}
     >
+      {!online && (
+        // The list is on the phone, so it still works; only checking for new chapters needs a connection.
+        <div class="upd-offline" role="status" data-testid="updates-offline">
+          <Icon name="wifi.slash" size={18} />
+          <span>You’re offline. These updates are saved on your phone; checking for new chapters needs a connection.</span>
+        </div>
+      )}
+      {lastCheck !== null && !progress && data.data && (
+        <p class="upd-last-check tabular" data-testid="updates-last-check">
+          Library last checked {checkedLabel(lastCheck, now, { time: timeOfDay, date: (t) => shortDate(t, now) })}
+        </p>
+      )}
       {body}
     </Screen>
   );

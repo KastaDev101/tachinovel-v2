@@ -6,9 +6,9 @@
 import type { Category, LibraryEntry } from '../../shared/contracts/domain.ts';
 import { novelKeyString } from '../../shared/contracts/domain.ts';
 import { invalidArgs } from '../lib/errors.ts';
-import { isRecord } from '../lib/validate.ts';
 import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import { type Ctx, inBackground } from './context.ts';
+import { category, libraryEntry, validItems } from './records.ts';
 import type { CoverCache } from './covers.ts';
 
 export interface LibraryDoc {
@@ -22,26 +22,22 @@ export const LIBRARY_SPEC: DocSpec<LibraryDoc> = {
   version: 1,
   create: () => ({ schemaVersion: 1, entries: [], categories: [] }),
   normalize(doc) {
+    // Every field checked (records.ts): a bad record is dropped, a bad optional field is left out.
     const seen = new Set<string>();
-    const entries: LibraryEntry[] = [];
-    for (const e of Array.isArray(doc.entries) ? doc.entries : []) {
-      if (!isRecord(e) || typeof e.pluginId !== 'string' || typeof e.path !== 'string' || typeof e.name !== 'string') continue;
-      const key = novelKeyString(e);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      e.key = key;
-      if (!Array.isArray(e.categoryIds)) e.categoryIds = [];
-      if (typeof e.chapterCount !== 'number') e.chapterCount = 0;
-      if (typeof e.unreadCount !== 'number') e.unreadCount = 0;
-      if (typeof e.downloadedCount !== 'number') e.downloadedCount = 0;
-      if (typeof e.addedAt !== 'number') e.addedAt = 0;
-      entries.push(e);
-    }
-    doc.entries = entries;
-    doc.categories = (Array.isArray(doc.categories) ? doc.categories : []).filter(
-      (c) => isRecord(c) && typeof c.id === 'string' && typeof c.name === 'string',
-    );
-    return doc;
+    const entries = validItems(doc.entries, (v) => {
+      const e = libraryEntry(v, { keepDownloadedCount: true });
+      if (!e || seen.has(e.key)) return null;
+      seen.add(e.key);
+      return e;
+    });
+    const ids = new Set<string>();
+    const categories = validItems(doc.categories, (v, i) => {
+      const c = category(v, i);
+      if (!c || ids.has(c.id)) return null;
+      ids.add(c.id);
+      return c;
+    });
+    return { schemaVersion: doc.schemaVersion, entries, categories };
   },
 };
 
@@ -57,10 +53,16 @@ export class LibraryService {
     this.covers = covers;
     this.doc = doc;
     for (const e of doc.value.entries) this.byKey.set(e.key, e);
+    // iCloud delivered the real library after a session started on defaults: index it and repaint.
+    doc.onReloaded = () => {
+      this.byKey.clear();
+      for (const e of doc.value.entries) this.byKey.set(e.key, e);
+      this.emitChanged();
+    };
   }
 
   static async load(ctx: Ctx, covers: CoverCache): Promise<LibraryService> {
-    const doc = await JsonDoc.load(ctx.platform.synced, LIBRARY_SPEC, ctx.timing.libraryWriteMs, ctx.env);
+    const doc = await JsonDoc.load(ctx.platform.synced, LIBRARY_SPEC, ctx.timing.libraryWriteMs, ctx.env, { mirror: ctx.platform.local });
     return new LibraryService(ctx, covers, doc);
   }
 
@@ -78,6 +80,11 @@ export class LibraryService {
 
   get size(): number {
     return this.byKey.size;
+  }
+
+  /** The synced document (iCloud state checks). */
+  get syncDoc(): JsonDoc<LibraryDoc> {
+    return this.doc;
   }
 
   wireEntry(e: LibraryEntry): LibraryEntry {

@@ -6,7 +6,7 @@ import { buildVersion } from '../state/store.ts';
 
 interface Item {
   /** A settings page, or one of the More-only screens (Reading Insights, Migrate). */
-  page: SettingsPage | 'stats' | 'migrate' | 'help';
+  page: SettingsPage | 'stats' | 'migrate' | 'help' | 'narration';
   title: string;
   icon: string;
   value?: string;
@@ -14,7 +14,7 @@ interface Item {
 
 function MoreRow({ item }: { item: Item }) {
   return (
-    <button type="button" class="mrow tap tap-row" onClick={() => push(item.page === 'stats' || item.page === 'migrate' || item.page === 'help' ? { name: item.page } : { name: 'settings', page: item.page })} data-testid={`more-${item.page}`}>
+    <button type="button" class="mrow tap tap-row" onClick={() => push(item.page === 'stats' || item.page === 'migrate' || item.page === 'help' || item.page === 'narration' ? { name: item.page } : { name: 'settings', page: item.page })} data-testid={`more-${item.page}`}>
       <Icon name={item.icon} size={24} class="mrow-icon" />
       <span class="mrow-title">{item.title}</span>
       {item.value && <span class="mrow-value">{item.value}</span>}
@@ -36,6 +36,7 @@ export function MoreScreen() {
     [
       { page: 'stats', title: 'Reading Insights', icon: 'hourglass' },
       { page: 'migrate', title: 'Migrate', icon: 'arrow.triangle.2.circlepath' },
+      { page: 'narration', title: 'Listen in the Car', icon: 'headphones' },
     ],
     [
       { page: 'backup', title: 'Backup & Restore', icon: 'clock.arrow.circlepath' },

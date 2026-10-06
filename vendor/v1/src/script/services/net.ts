@@ -77,8 +77,9 @@ function toNetError(err: unknown, url: string): Error {
   const known = errorCode(err);
   if (known) return err instanceof Error ? err : new AppError(known, errorMessage(err));
   const msg = errorMessage(err);
-  if (/timed? ?out|timeout/i.test(msg)) return new NetError('TIMEOUT', `Request timed out: ${url}`);
-  return new NetError('NETWORK', `${msg} (${url})`);
+  const host = hostOf(url) || url;
+  if (/timed? ?out|timeout/i.test(msg)) return new NetError('TIMEOUT', `${host} took too long to answer. Try again.`);
+  return new NetError('NETWORK', `Couldn't reach ${host}: ${msg}`);
 }
 
 /** The interactive client, plus lane-bound clients sharing the same per-host limits. */

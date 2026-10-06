@@ -31,8 +31,13 @@ import type {
   NovelKey,
   NovelSummary,
   ReadingStats,
+  SourceSettings,
+  PluginSettingValues,
+  NarrationConfig,
+  NarrationStatus,
   CleanupRule,
   RepoInfo,
+  SourceFailureReason,
   SourceInfo,
   StorageCategory,
   StorageUsage,
@@ -65,6 +70,8 @@ export interface BridgeError {
   code: ErrorCode;
   message: string;
   retryable: boolean;
+  /** Source failures only: why the site failed (UI picks plain wording + action from it). */
+  reason?: SourceFailureReason;
 }
 
 export type ResponseEnvelope =
@@ -112,6 +119,19 @@ export interface BrowsePage {
   items: BrowseItem[];
   /** False once a page comes back empty. */
   hasMore: boolean;
+}
+
+export interface BackupPreview {
+  fileName?: string;
+  /** Set when the file was picked (not one of backup.list); pass to backup.restore. */
+  importId?: string;
+  createdAt: number;
+  buildVersion?: string;
+  counts: { novels: number; categories: number; progress: number; history: number; updates: number; sources: number; repos: number; pluginSettings: number };
+  /** Novels in the backup that aren't in the current library. */
+  newNovels: number;
+  /** Records that couldn't be read and would be skipped. */
+  skipped: number;
 }
 
 export interface NovelPage {
@@ -167,6 +187,10 @@ export interface BridgeMethods {
   'sources.list': M<void, SourceInfo[]>;
   'sources.setEnabled': M<{ id: string; enabled: boolean }, SourceInfo[]>;
   'sources.setPinned': M<{ id: string; pinned: boolean }, SourceInfo[]>;
+  /** Plugin settings (LNReader pluginSettings): schema + current values. */
+  'sources.settings.get': M<{ id: string }, SourceSettings>;
+  /** Save some setting values; the plugin reloads. SettingsError → INVALID_ARGS. */
+  'sources.settings.set': M<{ id: string; values: Partial<PluginSettingValues> }, SourceSettings>;
   /** The plugin's filter definitions (LNReader Filters shape), or null if it has none. */
   'sources.filters': M<{ id: string }, Filters | null>;
   /** Filtered by settings.languages unless allLanguages is true (the language picker needs every language). */
@@ -229,15 +253,24 @@ export interface BridgeMethods {
   'storage.clear': M<{ category: Exclude<StorageCategory, 'state' | 'meta'> }, StorageUsage>;
   'downloads.enqueue': M<{ pluginId: string; novelPath: string; chapterPaths: string[] }, void>;
   'downloads.delete': M<{ pluginId: string; novelPath: string; chapterPaths?: string[] }, void>;
+  /** User-confirmed: delete downloads of novels not in the library (never touches library novels). Returns what was removed. */
+  'downloads.deleteOrphans': M<void, { novels: number; bytes: number }>;
 
   // backup & restore (files live in iCloud TachiNovel/backups/, so they're also visible on the PC)
   /** Write a backup (settings, library, categories, progress, history, updates, installed sources + repos). */
   'backup.create': M<void, BackupInfo>;
   'backup.list': M<void, BackupInfo[]>;
   /** Restore from a listed backup, or (no fileName) let the user pick a .json file with the native document picker. */
-  'backup.restore': M<{ fileName?: string; mode: 'merge' | 'replace' }, { novels: number; sources: number }>;
+  /**
+   * Read a backup without applying it: what it holds and what a restore would add. With no fileName the user picks a
+   * file; the returned importId then restores exactly that file without picking again. Bad files → INVALID_ARGS.
+   */
+  'backup.preview': M<{ fileName?: string }, BackupPreview>;
+  'backup.restore': M<{ fileName?: string; importId?: string; mode: 'merge' | 'replace' }, { novels: number; sources: number }>;
   /** Share a backup file through the native share sheet. */
   'backup.share': M<{ fileName: string }, void>;
+  /** Write local exports/tachinovel-library-YYYY-MM-DD.<csv|txt> (name, source, URL, read/total, status, categories, last read) and open the share sheet. */
+  'library.export': M<{ format: 'csv' | 'text' }, { fileName: string; novels: number }>;
 
   // stats, migrate, cleanup
   /** days = range for `days` and `topNovels` (default 30); `totalMs` and `streakDays` are all-time. */
@@ -252,6 +285,10 @@ export interface BridgeMethods {
    */
   'cleanup.test': M<{ rule: CleanupRule; pluginId: string; novelPath: string; chapterPath: string }, { removed: string[] }>;
 
+  // PC narration (tachinovel-narrator reads audio.json and writes narration-status.json in the synced folder)
+  'narration.get': M<void, { config: NarrationConfig; status: NarrationStatus | null }>;
+  'narration.set': M<{ config: NarrationConfig }, NarrationConfig>;
+
   // covers
   /**
    * Fetch a cover through the script (native Request: no CORS/CORP, plugin image headers + Referer applied),
@@ -259,11 +296,18 @@ export interface BridgeMethods {
    * ("covers/<file>"). Used when a direct <img> load fails (CP1: Stonescape sends Cross-Origin-Resource-Policy).
    */
   'covers.fetch': M<{ pluginId: string; url: string }, { src: string }>;
+  /**
+   * Same as covers.fetch for in-chapter images (illustrations) whose direct <img> load failed: cached in
+   * local cache/ (the read-ahead LRU, not covers/), downscaled natively only when wider than 1320 px.
+   */
+  'images.fetch': M<{ pluginId: string; url: string }, { src: string }>;
 
   // native iOS pieces
   'native.actionSheet': M<{ title?: string; message?: string; actions: NativeAction[]; cancel?: string }, { index: number }>;
   'native.alert': M<{ title: string; message?: string; actions: NativeAction[]; cancel?: string }, { index: number }>;
   'native.share': M<{ text?: string; url?: string }, void>;
+  /** Share a UI-rendered image (`data:image/png|jpeg;base64,…`, ≤ 8 MB) via the native share sheet (Save Image, Messages, …). */
+  'native.shareImage': M<{ dataUrl: string; fileName?: string }, void>;
   'native.openUrl': M<{ url: string }, void>;
   /** SF Symbol names → data:image/png;base64 URLs (rendered white on transparent; tint via CSS mask). */
   'native.symbols': M<{ names: string[]; size?: number }, Record<string, string>>;
@@ -308,11 +352,13 @@ export interface BridgeClient {
 export class BridgeCallError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
+  readonly reason?: SourceFailureReason;
   constructor(err: BridgeError) {
     super(err.message);
     this.name = 'BridgeCallError';
     this.code = err.code;
     this.retryable = err.retryable;
+    if (err.reason) this.reason = err.reason;
   }
 }
 

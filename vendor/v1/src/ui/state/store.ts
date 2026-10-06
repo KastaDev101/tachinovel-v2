@@ -16,6 +16,7 @@ import { SYMBOL_NAMES } from '../components/icons.ts';
 import { deepMerge } from '../lib/merge.ts';
 import { DEFAULT_SETTINGS } from './defaults.ts';
 import { push } from './nav.ts';
+import { pushNotice } from './notices.ts';
 
 export const booted = signal(false);
 export const bootError = signal<UiError | null>(null);
@@ -159,7 +160,9 @@ export function installEventListeners(): void {
     updatesProgress.value = p.finished ? null : p;
     if (p.finished) void refreshUpdatesBadge();
   });
+  // User-facing messages from the script ("iCloud isn't ready…"): a calm banner, once per session.
   b.on('app.error', (p) => {
     console.warn('[script error]', p.message);
+    pushNotice(p.message);
   });
 }

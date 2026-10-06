@@ -6,7 +6,7 @@ import type { AppSettings, Category, ChapterPosition, NovelDetails, NovelSummary
 import { novelKeyString } from '../../shared/contracts/domain.ts';
 import type { LogLevel } from '../../shared/contracts/platform.ts';
 import type { BootPayload, MethodHandlers, NativeAction } from '../../shared/contracts/protocol.ts';
-import { invalidArgs } from '../lib/errors.ts';
+import { errorMessage, invalidArgs } from '../lib/errors.ts';
 import { readLogEntries } from '../lib/log-file.ts';
 import {
   type Obj,
@@ -59,6 +59,50 @@ async function withDownloaded(s: Services, entries: readonly UpdateEntry[]): Pro
       return { ...e, downloaded: (await set).has(e.chapterPath) };
     }),
   );
+}
+
+export const MAX_SHARE_IMAGE_BYTES = 8 * 1024 * 1024;
+const IMAGE_DATA_URL_RE = /^data:image\/(?:png|jpeg);base64,/;
+
+/** native.shareImage: the base64 payload of a PNG/JPEG data URL of at most 8 MB (INVALID_ARGS otherwise). */
+export function imageDataUrlPayload(v: unknown): string {
+  if (typeof v !== 'string') throw invalidArgs('dataUrl must be a string');
+  const m = IMAGE_DATA_URL_RE.exec(v);
+  if (!m) throw invalidArgs('dataUrl must start with data:image/png;base64, or data:image/jpeg;base64,');
+  const b64 = v.slice(m[0].length);
+  // Size first (cheap), then the alphabet (one linear regex).
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  const bytes = Math.floor((b64.length * 3) / 4) - padding;
+  if (bytes > MAX_SHARE_IMAGE_BYTES) throw invalidArgs('Image is larger than 8 MB');
+  if (b64.length === 0 || b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) throw invalidArgs('dataUrl is not valid base64');
+  return b64;
+}
+
+/**
+ * native.openUrl: http(s) pages, or the Files app at a folder (`shareddocuments:///<path>`, e.g. the
+ * TachiNovel Audio folder). Nothing else, and nothing script-like inside the path.
+ */
+function openableUrl(o: Obj): string {
+  const v = str(o, 'url', { max: 4096 });
+  if (isHttpUrl(v)) return v;
+  if (!/^shareddocuments:\/\/\//i.test(v)) throw invalidArgs('url must be an http(s) URL or a shareddocuments:/// Files link');
+  const path = v.slice('shareddocuments://'.length);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    throw invalidArgs('url is not a valid Files link');
+  }
+  // A plain folder path: no control characters, quotes, angle brackets, backslashes, nested schemes or "..".
+  const unsafe = (s: string): boolean => {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 0x20 || c === 0x7f) return true;
+    }
+    return /[<>"'`\\]|[a-z][a-z0-9+.-]*:|(^|\/)\.\.(\/|$)/i.test(s);
+  };
+  if (/\s/.test(path) || unsafe(path) || unsafe(decoded)) throw invalidArgs('url is not a valid Files link');
+  return v;
 }
 
 /** Methods whose args are an optional object. */
@@ -205,6 +249,12 @@ export function createHandlers(s: Services, app: AppControl): MethodHandlers {
         return s.sources.setPinned(str(o, 'id'), bool(o, 'pinned'));
       }),
     'sources.filters': (args) => run(() => s.sources.filters(str(obj(args), 'id', { max: 200 }))),
+    'sources.settings.get': (args) => run(() => s.sources.settings(str(obj(args), 'id', { max: 200 }))),
+    'sources.settings.set': (args) =>
+      run(() => {
+        const o = obj(args);
+        return s.sources.setSettings(str(o, 'id', { max: 200 }), o.values);
+      }),
     'sources.available': (args) =>
       run(() => {
         const o = optArgs(args);
@@ -360,6 +410,7 @@ export function createHandlers(s: Services, app: AppControl): MethodHandlers {
         if (!s.sources.get(pluginId)) throw invalidArgs(`Source "${pluginId}" is not installed`);
         s.downloads.enqueue({ pluginId, path: novelPath }, paths);
       }),
+    'downloads.deleteOrphans': () => run(() => s.downloads.deleteOrphans()),
     'downloads.delete': (args) =>
       run(() => {
         const o = obj(args);
@@ -369,16 +420,28 @@ export function createHandlers(s: Services, app: AppControl): MethodHandlers {
     // ---------- backup & restore ----------
     'backup.create': () => run(() => s.backup.create()),
     'backup.list': () => run(() => s.backup.list()),
+    'backup.preview': (args) =>
+      run(() => {
+        const fileName = optStr(optArgs(args), 'fileName', { max: 255 });
+        return s.backup.preview(fileName === undefined ? {} : { fileName });
+      }),
     'backup.restore': (args) =>
       run(() => {
         const o = obj(args);
         const mode = oneOf(o, 'mode', ['merge', 'replace'] as const);
         const fileName = optStr(o, 'fileName', { max: 255 });
+        const importId = optStr(o, 'importId', { max: 100 });
+        if (fileName !== undefined && importId !== undefined) throw invalidArgs('Give fileName or importId, not both');
+        if (importId !== undefined) return s.backup.restore({ importId, mode });
         return s.backup.restore(fileName === undefined ? { mode } : { fileName, mode });
       }),
+    'library.export': (args) => run(() => s.libraryExport.export(oneOf(obj(args), 'format', ['csv', 'text'] as const))),
     'backup.share': (args) => run(() => s.backup.share(str(obj(args), 'fileName', { max: 255 }))),
 
     // ---------- stats, migrate, cleanup, Cloudflare ----------
+    // ---------- PC narration (audio.json / narration-status.json) ----------
+    'narration.get': () => run(async () => ({ config: await s.narration.config(), status: await s.narration.status() })),
+    'narration.set': (args) => run(() => s.narration.set(obj(args).config)),
     'stats.get': (args) => run(() => s.stats.get(optNum(optArgs(args), 'days', { min: 1, max: 400, int: true }) ?? 30)),
     'migrate.preview': (args) =>
       run(() => {
@@ -407,6 +470,13 @@ export function createHandlers(s: Services, app: AppControl): MethodHandlers {
         const pluginId = str(o, 'pluginId', { max: 200 });
         const url = httpUrl(o, 'url');
         return { src: await s.covers.fetch(url, s.sources.imageRequestHeaders(pluginId)) };
+      }),
+    'images.fetch': (args) =>
+      run(async () => {
+        const o = obj(args);
+        const pluginId = str(o, 'pluginId', { max: 200 });
+        const url = httpUrl(o, 'url');
+        return { src: await s.images.fetch(url, s.sources.imageRequestHeaders(pluginId)) };
       }),
 
     // ---------- native ----------
@@ -445,7 +515,18 @@ export function createHandlers(s: Services, app: AppControl): MethodHandlers {
         if (!opts.text && !opts.url) throw invalidArgs('Provide text or url');
         return platform.native.share(opts);
       }),
-    'native.openUrl': (args) => run(() => platform.native.openUrl(httpUrl(obj(args), 'url'))),
+    'native.shareImage': (args) =>
+      run(async () => {
+        const o = obj(args);
+        const base64 = imageDataUrlPayload(o.dataUrl);
+        if (o.fileName !== undefined) optStr(o, 'fileName', { max: 200 }); // accepted; the image item carries no name
+        try {
+          await platform.native.shareImage(base64);
+        } catch (err) {
+          throw invalidArgs(`Image can't be shared: ${errorMessage(err)}`);
+        }
+      }),
+    'native.openUrl': (args) => run(() => platform.native.openUrl(openableUrl(obj(args)))),
     'native.symbols': (args) =>
       run(() => {
         const o = obj(args);

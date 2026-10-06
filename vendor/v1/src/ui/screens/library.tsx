@@ -39,6 +39,7 @@ export function LibraryScreen() {
   const cats = sortedCategories.value;
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const searching = search.trim() !== '';
   /** Selected tab: '' = Default (no category), else a category id. Remembered on this device. */
   const [tab, setTabState] = useState<string>(() => readTab());
   const setTab = (id: string): void => {
@@ -60,8 +61,9 @@ export function LibraryScreen() {
   const category = cats.length === 0 ? null : cats.some((c) => c.id === tab) ? tab : '';
 
   const items = useMemo(
-    () => queryLibrary(entries, { sort: lib.sort, filter: lib.filter, search, categoryId: category }),
-    [entries, lib.sort, lib.filter, search, category],
+    // Searching looks through the whole library, whatever tab is open.
+    () => queryLibrary(entries, { sort: lib.sort, filter: lib.filter, search, categoryId: searching ? null : category }),
+    [entries, lib.sort, lib.filter, search, category, searching],
   );
   const counts = useMemo(() => {
     const m = new Map<string, number>();
@@ -107,6 +109,9 @@ export function LibraryScreen() {
 
   const right = selecting ? (
     <BarButton text="Done" bold onClick={() => setSelected(null)} testId="select-done" />
+  ) : entries.length === 0 ? (
+    // Nothing to search, sort or filter yet.
+    <BarButton icon="ellipsis" iconClass="is-vertical" label="More" onClick={() => void moreMenu()} testId="library-more" />
   ) : (
     <>
       <BarButton
@@ -146,7 +151,7 @@ export function LibraryScreen() {
             testId="library-search"
           />
         )}
-        {cats.length > 0 && (
+        {cats.length > 0 && !searching && (
           <div class="tabs-underline hscroll" role="tablist" data-testid="category-tabs">
             <div class="tabs-underline-inner">
               <UnderlineTab label="Default" count={counts.get('') ?? 0} active={category === ''} onClick={() => setTab('')} testId="category-tab-default" />
@@ -313,9 +318,9 @@ export function LibraryOptionsSheet(props: { open: boolean; onClose: () => void 
       </div>
       {tab === 'filter' && (
         <Section>
-          <CheckRow title="Unread" checked={lib.filter.unread} onClick={() => setLib({ filter: { ...lib.filter, unread: !lib.filter.unread } })} testId="filter-unread" />
-          <CheckRow title="Completed" checked={lib.filter.completed} onClick={() => setLib({ filter: { ...lib.filter, completed: !lib.filter.completed } })} testId="filter-completed" />
-          <CheckRow title="Downloaded" checked={lib.filter.downloaded} onClick={() => setLib({ filter: { ...lib.filter, downloaded: !lib.filter.downloaded } })} testId="filter-downloaded" />
+          <CheckRow title="Unread" checked={lib.filter.unread} onClick={() => setLib({ filter: { ...lib.filter, unread: !lib.filter.unread } })} testId="filter-unread" variant="checkbox" />
+          <CheckRow title="Completed" checked={lib.filter.completed} onClick={() => setLib({ filter: { ...lib.filter, completed: !lib.filter.completed } })} testId="filter-completed" variant="checkbox" />
+          <CheckRow title="Downloaded" checked={lib.filter.downloaded} onClick={() => setLib({ filter: { ...lib.filter, downloaded: !lib.filter.downloaded } })} testId="filter-downloaded" variant="checkbox" />
         </Section>
       )}
       {tab === 'sort' && (

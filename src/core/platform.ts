@@ -167,6 +167,7 @@ export function createNative(host: NativeHost, local: FileStore): NativeUi {
     alert: (opts) => call<number>((cb) => ui.alert(actionsJson(opts), cb)),
     share: (opts) => call<true>((cb) => ui.share(JSON.stringify({ text: opts.text, url: opts.url }), cb)).then(() => undefined),
     shareFile: (absPath) => call<true>((cb) => ui.shareFile(absPath, cb)).then(() => undefined),
+    shareImage: (base64) => call<true>((cb) => ui.shareImage(base64, cb)).then(() => undefined),
     async pickFile(types) {
       local.mkdirp(IMPORTS_DIR);
       try {

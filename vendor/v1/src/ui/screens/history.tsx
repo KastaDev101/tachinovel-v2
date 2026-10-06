@@ -5,7 +5,7 @@
  * search; incognito toggle in the header with a banner while it's on; clear all.
  */
 import { useComputed } from '@preact/signals';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { HistoryEntry } from '../../shared/contracts/domain.ts';
 import { bridge } from '../bridge/client.ts';
 import { BarButton, Button, SearchField } from '../components/controls.tsx';
@@ -15,6 +15,7 @@ import { useAsync, useNow } from '../components/hooks.ts';
 import { Icon } from '../components/icon.tsx';
 import { useRefreshWhenShown } from '../components/navigator.tsx';
 import { Screen } from '../components/screen.tsx';
+import { VirtualList } from '../components/virtual-list.tsx';
 import { dayLabel, percentLabel, readingTime, timeOfDay } from '../lib/format.ts';
 import { attachLongPress } from '../lib/gestures.ts';
 import { primeKeyboard } from '../lib/keyboard.ts';
@@ -28,6 +29,12 @@ import './feed.css';
 
 const keyOf = (h: HistoryEntry): string => `${h.pluginId}:${h.path}`;
 
+/** History entries per request (older ones page in while scrolling). */
+const PAGE = 100;
+/** Virtual list geometry: a row is its 2:3 cover (86 px wide) plus padding; a section header. */
+const ROW_H = 145;
+const HEADER_H = 40;
+
 /** "8:05 AM" in Today/Yesterday (the section says the day); "Monday · 8:05 AM" further back. */
 function whenLabel(h: HistoryEntry, section: HistorySection['key'], now: number): string {
   if (section === 'today' || section === 'yesterday') return timeOfDay(h.readAt);
@@ -36,7 +43,11 @@ function whenLabel(h: HistoryEntry, section: HistorySection['key'], now: number)
 
 export function HistoryScreen() {
   const incognito = useComputed(() => settings.value.incognito).value;
-  const data = useAsync(() => bridge().call('history.list', { limit: 300 }), []);
+  // First page now; older ones page in as you scroll (`before` = the oldest loaded readAt).
+  const data = useAsync(() => bridge().call('history.list', { limit: PAGE }), []);
+  const [older, setOlder] = useState<HistoryEntry[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingMore = useRef(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const now = useNow();
@@ -46,16 +57,114 @@ export function HistoryScreen() {
   // Reading progress changes refresh History when it's shown (not while it sits hidden behind the reader).
   useRefreshWhenShown('history', () => progressVersion.value, () => void data.reload({ silent: true }));
 
+  /** Everything loaded: the first page plus older pages (a refreshed first page wins over stale copies). */
+  const loaded = useMemo(() => {
+    const first = data.data ?? [];
+    const seen = new Set(first.map(keyOf));
+    return [...first, ...older.filter((h) => !seen.has(keyOf(h)))];
+  }, [data.data, older]);
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (data.data ?? []).filter((h) => !hidden.has(keyOf(h)) && (!q || h.novelName.toLowerCase().includes(q) || h.chapterName.toLowerCase().includes(q)));
-  }, [data.data, search, hidden]);
+    return loaded.filter((h) => !hidden.has(keyOf(h)) && (!q || h.novelName.toLowerCase().includes(q) || h.chapterName.toLowerCase().includes(q)));
+  }, [loaded, search, hidden]);
+
+  // A fresh first page that's shorter than a page means there's nothing older.
+  useEffect(() => {
+    if (data.data) setHasMore((m) => m && (data.data?.length ?? 0) >= PAGE);
+  }, [data.data]);
+
+  async function loadOlder(): Promise<void> {
+    const last = loaded[loaded.length - 1];
+    if (!last || !hasMore || loadingMore.current) return;
+    loadingMore.current = true;
+    try {
+      const page = await bridge().call('history.list', { limit: PAGE, before: last.readAt });
+      setOlder((o) => [...o, ...page]);
+      if (page.length < PAGE) setHasMore(false);
+    } catch {
+      // Try again on the next scroll.
+    } finally {
+      loadingMore.current = false;
+    }
+  }
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const searching = search.trim() !== '';
   // The newest entry gets the Continue card (not while searching: results stay a plain list).
   const hero = !searching ? items[0] : undefined;
   const sections = useMemo(() => historySections(hero ? items.slice(1) : items, now), [items, hero, now]);
+  /** Flattened for the virtual list: section headers and rows, with their heights. */
+  const flat = useMemo(() => {
+    const rows: ({ kind: 'header'; key: string; label: string } | { kind: 'row'; h: HistoryEntry; section: HistorySection['key'] })[] = [];
+    for (const sec of sections) {
+      rows.push({ kind: 'header', key: `h:${sec.key}`, label: sec.label });
+      for (const h of sec.items) rows.push({ kind: 'row', h, section: sec.key });
+    }
+    const offsets = [0];
+    const headers: { at: number; label: string }[] = [];
+    for (const r of rows) {
+      const at = offsets[offsets.length - 1] ?? 0;
+      if (r.kind === 'header') headers.push({ at, label: r.label });
+      offsets.push(at + (r.kind === 'header' ? HEADER_H : ROW_H));
+    }
+    return { rows, offsets, headers };
+  }, [sections]);
+  const flatRef = useRef(flat);
+  flatRef.current = flat;
+
+  // The current section's header stays pinned under the bar, and the next one pushes it up (virtual
+  // rows can't be `position: sticky`). Written straight to the DOM on scroll: no re-render.
+  const pin = useRef<HTMLDivElement>(null);
+  const pinShown = useRef<{ el: Element | null; label: string; shift: number; on: boolean }>({ el: null, label: '', shift: 0, on: false });
+  function updatePin(): void {
+    const p = pin.current;
+    const vl = list.current?.querySelector<HTMLElement>('.vlist');
+    const label = p?.firstElementChild as HTMLElement | null | undefined;
+    if (!p || !vl || !label) return;
+    // Where the pin line sits in list coordinates (0 until it sticks).
+    const y = p.getBoundingClientRect().top - vl.getBoundingClientRect().top;
+    const hs = flatRef.current.headers;
+    let k = -1;
+    while (k + 1 < hs.length && (hs[k + 1]?.at ?? 0) <= y) k++;
+    const on = y > 0.5 && k >= 0;
+    const next = hs[k + 1];
+    const shift = on && next ? Math.min(0, next.at - y - HEADER_H) : 0;
+    const text = on ? (hs[k]?.label ?? '') : '';
+    // A new element (remounted) starts unknown, so everything is written once.
+    const s = pinShown.current.el === p ? pinShown.current : { el: p, label: '-', shift: NaN, on: !on };
+    if (s.on !== on) p.classList.toggle('is-on', on);
+    if (s.label !== text) label.textContent = text;
+    if (s.shift !== shift) label.style.transform = shift ? `translate3d(0, ${shift}px, 0)` : '';
+    pinShown.current = { el: p, label: text, shift, on };
+  }
+
+  // Keep what you're looking at in place when the list changes above it (reading moves a novel to the
+  // top, a refresh lands, a row is removed): the virtual list can't rely on browser scroll anchoring.
+  const scroller = useRef<HTMLDivElement>(null);
+  const prevFlat = useRef(flat);
+  const listTopRef = useRef(-1);
+  const flatKey = (r: (typeof flat.rows)[number] | undefined): string => (!r ? '' : r.kind === 'header' ? r.key : keyOf(r.h));
+  useLayoutEffect(() => {
+    const prev = prevFlat.current;
+    prevFlat.current = flat;
+    const sc = scroller.current;
+    const vl = list.current?.querySelector<HTMLElement>('.vlist');
+    if (!sc || !vl) return;
+    const listTop = vl.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
+    const oldTop = listTopRef.current >= 0 ? listTopRef.current : listTop;
+    listTopRef.current = listTop;
+    if (prev === flat || searching) return;
+    const y = sc.scrollTop - oldTop;
+    if (y <= 0) return;
+    let i = 0;
+    while (i + 1 < prev.rows.length && (prev.offsets[i + 1] ?? 0) <= y) i++;
+    const key = flatKey(prev.rows[i]);
+    const j = flat.rows.findIndex((r) => flatKey(r) === key);
+    if (j < 0) return;
+    const target = listTop + (flat.offsets[j] ?? 0) + (y - (prev.offsets[i] ?? 0));
+    if (Math.abs(target - sc.scrollTop) > 1) sc.scrollTop = target;
+  }, [flat]);
+  useLayoutEffect(updatePin, [flat, data.status]);
 
   useEffect(() => {
     const el = list.current;
@@ -125,10 +234,11 @@ export function HistoryScreen() {
   }
 
   const all = data.data ?? [];
+  const indexOf = useMemo(() => new Map(items.map((h, i) => [keyOf(h), i])), [items]);
   const row = (h: HistoryEntry, section: HistorySection['key']) => {
-    const index = items.indexOf(h);
+    const index = indexOf.get(keyOf(h)) ?? -1;
     return (
-      <div class="sw-row" key={keyOf(h)} data-swipe data-trailing="delete" data-key={keyOf(h)} data-testid="history-row">
+      <div class="sw-row" key={keyOf(h)} data-swipe data-trailing="delete" data-key={keyOf(h)} data-section={section} data-testid="history-row">
         <div class="sw-actions is-trailing" aria-hidden="true">
           <button type="button" class="sw-action" tabIndex={-1}>
             <Icon name="trash" size={22} />
@@ -150,6 +260,8 @@ export function HistoryScreen() {
               <span class="hist-meta tabular">
                 <Icon name="clock" size={16} />
                 {whenLabel(h, section, now)}
+                {/* Where in the chapter: "· 38%", or done. */}
+                <span class="hist-time" data-testid="history-progress">{h.percent >= 0.995 ? ' · Finished' : h.percent > 0 ? ` · ${percentLabel(h.percent)}` : ''}</span>
               </span>
             </span>
           </button>
@@ -168,7 +280,7 @@ export function HistoryScreen() {
   else if (items.length === 0) body = <EmptyState icon="magnifyingglass" title="No Results" message={`No history matches “${search}”.`} />;
   else
     body = (
-      <div ref={list} class="hist-list" data-testid="history-list">
+      <div ref={list} class="hist-list" data-testid="history-list" data-count={loaded.length}>
         {hero && (
           <div class="hist-hero" data-testid="history-continue">
             <button type="button" class="hist-hero-main tap tap-scale" data-index={0} onClick={() => resume(hero)} aria-label={`Continue ${hero.novelName}`}>
@@ -191,12 +303,32 @@ export function HistoryScreen() {
             </Button>
           </div>
         )}
-        {sections.map((s) => (
-          <section class="hist-section" key={s.key} data-testid={`history-section-${s.key}`}>
-            <h3 class="day-header">{s.label}</h3>
-            {s.items.map((h) => row(h, s.key))}
-          </section>
-        ))}
+        <div ref={pin} class="hist-pin" aria-hidden="true" data-testid="history-pin">
+          <div class="day-header" />
+        </div>
+        <VirtualList
+          count={flat.rows.length}
+          rowHeight={ROW_H}
+          offsets={flat.offsets}
+          overscan={6}
+          rowKey={(i) => {
+            const r = flat.rows[i];
+            return r ? (r.kind === 'header' ? r.key : keyOf(r.h)) : i;
+          }}
+          renderRow={(i) => {
+            const r = flat.rows[i];
+            if (!r) return null;
+            return r.kind === 'header' ? (
+              <h3 class="day-header hist-header" data-testid={`history-section-${sections.find((x) => `h:${x.key}` === r.key)?.key ?? ''}`}>
+                {r.label}
+              </h3>
+            ) : (
+              row(r.h, r.section)
+            );
+          }}
+          class="hist-vlist"
+        />
+        {hasMore && !searching && <div class="list-loading" aria-hidden="true" />}
       </div>
     );
 
@@ -228,7 +360,20 @@ export function HistoryScreen() {
           <SearchField value={search} onInput={setSearch} onCancel={() => setSearchOpen(false)} placeholder="Search history" autoFocus testId="history-search" />
         ) : undefined
       }
-      onRefresh={() => data.reload({ silent: true })}
+      onRefresh={async () => {
+        setOlder([]);
+        setHasMore(true);
+        await data.reload({ silent: true });
+      }}
+      scrollRef={scroller}
+      onScroll={(el) => {
+        // Where the list starts (the banner or Continue card above it can change size).
+        const vl = list.current?.querySelector<HTMLElement>('.vlist');
+        if (vl) listTopRef.current = vl.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+        updatePin();
+        // Page in older history a couple of screens before the end.
+        if (hasMore && el.scrollTop + el.clientHeight > el.scrollHeight - 2 * el.clientHeight) void loadOlder();
+      }}
     >
       {incognito && (
         <div class="incognito-banner" role="status" data-testid="incognito-banner">

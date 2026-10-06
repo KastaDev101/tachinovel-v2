@@ -18,19 +18,21 @@ export function AutoDownloadSection() {
   return (
     <Section header="Automatic" footer={autoDownloadFooter(a.ahead)}>
       <SwitchRow title="Auto-download next chapters" checked={a.enabled} onChange={(enabled) => patchSettings({ autoDownload: { enabled } })} testId="auto-download" />
-      <div class={`row${a.enabled ? '' : ' is-disabled'}`} data-testid="auto-download-ahead">
-        <span class="row-main">
-          <span class="row-title">Chapters ahead</span>
-        </span>
-        <Stepper
-          label="Chapters ahead"
-          value={a.ahead}
-          min={AHEAD_LIMITS.min}
-          max={AHEAD_LIMITS.max}
-          step={1}
-          onChange={(ahead) => patchSettings({ autoDownload: { ahead } }, 400)}
-        />
-      </div>
+      {a.enabled && (
+        <div class="row" data-testid="auto-download-ahead">
+          <span class="row-main">
+            <span class="row-title">Chapters ahead</span>
+          </span>
+          <Stepper
+            label="Chapters ahead"
+            value={a.ahead}
+            min={AHEAD_LIMITS.min}
+            max={AHEAD_LIMITS.max}
+            step={1}
+            onChange={(ahead) => patchSettings({ autoDownload: { ahead } }, 400)}
+          />
+        </div>
+      )}
     </Section>
   );
 }

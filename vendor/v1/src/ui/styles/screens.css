@@ -2,6 +2,9 @@
 .tabs-underline {
   margin: 0 calc(-1 * var(--gutter)) -10px;
   padding: 0 6px;
+  /* More tabs than fit: the right edge fades out as a scroll hint. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 
 .tabs-underline-inner {
@@ -186,7 +189,7 @@
 
 .media-row.is-read .media-sub,
 .media-row.is-read .media-title {
-  color: var(--label-3);
+  color: var(--label-2);
 }
 
 .media-row.is-read .cover {
@@ -446,7 +449,7 @@
   padding: 0;
   text-align: left;
   font-size: var(--fs-caption1, 12px);
-  color: var(--label-3);
+  color: var(--label-2);
 }
 
 /* Global Search row under the genres (same rhythm as the chapter list header). */
@@ -677,7 +680,8 @@
 
 .chapter-row.is-read .chapter-title,
 .chapter-row.is-read .chapter-sub {
-  color: var(--label-3);
+  /* Dimmed, but still readable (WCAG AA 4.5:1); --label-3 is for icons and disabled things. */
+  color: var(--label-2);
 }
 
 .chapter-row.is-locked .chapter-title {
@@ -837,6 +841,7 @@
 
 .appearance-preview.is-dark {
   background: #1c1c1e;
+  border-color: var(--fill);
 }
 
 .appearance-preview.is-dark span {
@@ -1100,7 +1105,7 @@
 }
 
 .hist-time {
-  color: var(--label-3);
+  color: var(--label-2);
 }
 
 .hist-remove {
@@ -1193,4 +1198,35 @@
 
 .cat-new-form .filter-text {
   height: 30px;
+}
+
+/* ===== Volume headers in chapter lists ===== */
+.vol-header {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--gutter);
+  background: var(--bg-grouped, var(--bg));
+  color: var(--label-2);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The current volume stays pinned under the bar while its chapters scroll by. */
+.vol-sticky {
+  position: sticky;
+  top: calc(var(--safe-top) + var(--nav-h));
+  z-index: 3;
+  height: 30px;
+  margin-bottom: -30px;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+/* Partly read chapters in the reader's chapter list: how far in. */
+.chapter-pct {
+  flex: none;
+  font-size: 12px;
+  color: var(--label-2);
 }

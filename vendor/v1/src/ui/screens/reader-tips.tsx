@@ -18,12 +18,23 @@ export const READER_TIPS_KEY = 'tachinovel.tips.reader';
 /** Let the chapter start loading before the card slides up. */
 const DELAY_MS = 900;
 
-export function readerTips(r: { tapZones: boolean; continuous: boolean }): { icon: string; text: string }[] {
+/** The tips that match how this reader is set up (scroll or page mode, tap zones, continuous). */
+export function readerTips(r: { tapZones: boolean; continuous: boolean; paged: boolean }): { icon: string; text: string }[] {
+  const turn = r.paged
+    ? [{ icon: 'chevron.right', text: 'Swipe, or tap near the left or right edge, to turn the page.' }]
+    : r.tapZones
+      ? [{ icon: 'chevron.right', text: 'Tap near the left or right edge to move a screen at a time.' }]
+      : [];
+  const next = r.paged
+    ? [{ icon: 'arrow.down', text: 'The last page of a chapter turns into the next chapter.' }]
+    : r.continuous
+      ? [{ icon: 'arrow.down', text: 'Keep scrolling: the next chapter follows on its own.' }]
+      : [];
   return [
     { icon: 'textformat.size', text: 'Tap the middle of the page for the controls: chapters, auto-scroll, night mode and Appearance for fonts and spacing.' },
-    ...(r.tapZones ? [{ icon: 'chevron.right', text: 'Tap near the left or right edge to turn the page.' }] : []),
+    ...turn,
     { icon: 'clock', text: 'Double-tap to see the time, battery and how far you are.' },
-    ...(r.continuous ? [{ icon: 'arrow.down', text: 'Keep scrolling: the next chapter follows on its own.' }] : []),
+    ...next,
   ];
 }
 

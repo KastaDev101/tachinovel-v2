@@ -14,16 +14,10 @@
   margin: 0 0 22px;
 }
 
-.ext-header-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
 .ext-update-all {
   font-size: var(--fs-subhead);
   font-weight: 500;
+  line-height: 18px;
   letter-spacing: 0;
 }
 
@@ -67,14 +61,39 @@
 }
 
 .ext-badge.is-partial {
-  color: var(--label-2);
-  background: var(--fill-3);
-  font-weight: 500;
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 15%, transparent);
 }
 
 .ext-badge.is-broken {
-  color: var(--orange);
-  background: color-mix(in srgb, var(--orange) 14%, transparent);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 13%, transparent);
+}
+
+/* A pill you can tap for the reason: the same look, a finger-sized hit area. */
+button.ext-badge {
+  position: relative;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+button.ext-badge::after {
+  content: '';
+  position: absolute;
+  inset: -12px -6px;
+}
+
+/* All · Installed · Verified, under the search field. */
+.ext-filters {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ext-filter {
+  height: 30px;
+  padding: 0 13px;
 }
 
 .ext-row.is-broken .ext-name {
@@ -323,4 +342,200 @@
   padding: 0 14px;
   border-radius: 16px;
   font-size: var(--fs-subhead);
+}
+
+/* Pinned sources: the accent colour, as in the Browse list (not the generic orange inline icon). */
+.ext-row .ext-pin {
+  color: var(--tint);
+}
+
+/* Three discovery tiles: stacked icon over text so each fits a third of the width. */
+.discover-grid.is-3 {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.discover-grid.is-3 .discover-tile {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 12px 10px;
+}
+
+.discover-grid.is-3 .discover-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.discover-grid.is-3 .discover-sub {
+  font-size: var(--fs-caption);
+}
+
+/* For You: the seed novel's cover in the row header */
+.foryou-seed {
+  flex: none;
+  width: 34px;
+  border-radius: 6px;
+}
+
+/* Source settings */
+.setting-text-row {
+  gap: 10px;
+}
+
+.setting-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+}
+
+.setting-error {
+  display: block;
+  color: var(--red);
+}
+
+.settings-reload-note {
+  margin-top: -14px;
+  padding-bottom: 24px;
+}
+
+/* Source rows: language (several selected) · last used */
+.src-sub {
+  font-size: 15px;
+  color: var(--label-2);
+}
+
+.src-sub .src-lang {
+  font-size: inherit;
+}
+
+/* Global search: progress while sources answer, and "No results on" chips at the end */
+.gs-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gs-progress-bar {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--fill-2);
+}
+
+.gs-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--tint);
+  transform-origin: left center;
+  transition: transform 260ms ease;
+}
+
+.gs-waiting {
+  font-size: var(--fs-caption);
+  color: var(--label-3);
+}
+
+.gs-nothing {
+  padding: 6px var(--gutter) 18px;
+}
+
+.gs-nothing-label {
+  margin-bottom: 8px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+.gs-nothing-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gs-nothing-chip {
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px 0 6px;
+  border-radius: 15px;
+}
+
+.gs-nothing-chip .source-icon {
+  border-radius: 5px;
+}
+
+/* Browse › Genres: recent genre searches as chips, each with its own ✕ (a sibling button, not nested). */
+.genre-recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-right: 16px;
+}
+
+.genre-recent-header .link-btn {
+  padding-bottom: 8px;
+  font-size: 14px;
+}
+
+.genre-recent-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+.genre-recent-chip .genre-pop-chip {
+  gap: 6px;
+  padding-right: 34px;
+}
+
+.genre-recent-chip .genre-pop-chip .icon {
+  color: var(--label-2);
+}
+
+.genre-recent-remove {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 50%;
+  color: var(--label-2);
+  background: var(--fill-2);
+}
+
+.genre-recent-remove::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+/* Section headings around the global/genre search headers: semantics only, no look of their own. */
+.gs-h {
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+/* Source screen with "Hide novels in library" on: how many are hidden, and a way back. */
+.src-hidden-note {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 2px var(--gutter) 10px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+.src-hidden-note .link-btn {
+  flex: none;
+}
+
+/* "In library" covers dim the same in carousels as in grids. */
+.gs-row .gs-item.is-in-library .grid-cover-wrap::before {
+  opacity: 0.42;
 }

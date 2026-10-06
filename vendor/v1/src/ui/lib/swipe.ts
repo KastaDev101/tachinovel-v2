@@ -71,6 +71,8 @@ export function attachSwipe(root: HTMLElement, opts: SwipeOptions): () => void {
 
   const down = (e: PointerEvent): void => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // A new touch: a drag's leftover click guard must not eat it (iOS sends no click after a drag).
+    swallowClick = false;
     const target = e.target instanceof Element ? e.target : null;
     const r = target?.closest<HTMLElement>('[data-swipe]') ?? null;
     // Tapping an open action commits it.

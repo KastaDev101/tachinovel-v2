@@ -38,6 +38,8 @@ const LOG_FLUSH_MS = 3000;
 const LOG_BUFFER_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const BROWSER_FETCH_TIMEOUT_MS = 30_000;
+/** A single evaluation in a hidden page normally takes a few ms. */
+const HIDDEN_EVAL_MS = 5000;
 
 export interface ScriptablePlatform extends Platform {
   /** Write buffered log lines now and refresh the iCloud mirror unless `mirror: false` (call before exiting). */
@@ -92,7 +94,19 @@ async function solveChallenge(url: string): Promise<boolean> {
 /** Picked documents are copied here (local store) so the FileStore-based services can read them. */
 export const IMPORTS_DIR = 'imports';
 
+/** iOS shows an evicted iCloud file "x.json" as the placeholder ".x.json.icloud" next to it. */
+function placeholderOf(p: string): string {
+  const i = p.lastIndexOf('/');
+  return `${p.slice(0, i + 1)}.${p.slice(i + 1)}.icloud`;
+}
+
 function fileOps(fm: FileManager, icloud: boolean): FileOps {
+  /**
+   * iCloud: an evicted file still exists (only as its placeholder). Treating it as missing would let a
+   * read return "no file" and the next save write fresh data over the real file (or beside it, which
+   * makes iCloud create a conflict copy). Removing it removes the placeholder.
+   */
+  const evicted = (p: string): boolean => icloud && !fm.fileExists(p) && fm.fileExists(placeholderOf(p));
   const ops: FileOps = {
     readString(p) {
       const s = fm.readString(p) as string | null;
@@ -110,9 +124,9 @@ function fileOps(fm: FileManager, icloud: boolean): FileOps {
       if (!d) throw new Error('Invalid base64 data');
       fm.write(p, d);
     },
-    exists: (p) => fm.fileExists(p),
+    exists: (p) => fm.fileExists(p) || evicted(p),
     isDirectory: (p) => fm.isDirectory(p),
-    remove: (p) => fm.remove(p),
+    remove: (p) => fm.remove(evicted(p) ? placeholderOf(p) : p),
     move: (from, to) => fm.move(from, to),
     list: (p) => fm.listContents(p),
     // FileManager.fileSize returns whole KB rounded down (CP0: 2000 bytes → 1). Report the middle of
@@ -130,8 +144,36 @@ function fileOps(fm: FileManager, icloud: boolean): FileOps {
     },
     join: (base, rel) => fm.joinPath(base, rel),
   };
-  if (icloud) ops.download = (p) => fm.downloadFileFromiCloud(p);
+  if (icloud) ops.download = (p) => boundedDownload(fm, p);
   return ops;
+}
+
+/** iCloud downloads give up after this long (the widget uses the same bound). */
+export const ICLOUD_DOWNLOAD_TIMEOUT_MS = 6000;
+/** After a download timed out, further ones fail fast for this long (iCloud is offline or stuck). */
+const ICLOUD_STALL_MS = 30_000;
+let icloudStalledUntil = 0;
+
+/**
+ * downloadFileFromiCloud with a time limit: offline or stuck iCloud otherwise leaves the promise pending
+ * forever (a blank app that Close can't end). Files already on the device skip the call entirely.
+ * Rejects with an error whose name is "ICloudTimeout" (mapped to STORAGE by the FileStore readers).
+ */
+async function boundedDownload(fm: FileManager, p: string): Promise<void> {
+  try {
+    if (fm.fileExists(p) && fm.isFileDownloaded(p)) return;
+  } catch {
+    // unknown state: try the download
+  }
+  const timedOut = (): Error => Object.assign(new Error(`iCloud didn't deliver ${p.slice(p.lastIndexOf('/') + 1)} within ${ICLOUD_DOWNLOAD_TIMEOUT_MS / 1000} s (offline or iCloud busy)`), { name: 'ICloudTimeout' });
+  if (Date.now() < icloudStalledUntil) throw timedOut();
+  const TIMEOUT = Symbol('timeout');
+  const r = await Promise.race([fm.downloadFileFromiCloud(p), sleep(ICLOUD_DOWNLOAD_TIMEOUT_MS).then(() => TIMEOUT)]);
+  if (r === TIMEOUT) {
+    icloudStalledUntil = Date.now() + ICLOUD_STALL_MS;
+    throw timedOut();
+  }
+  icloudStalledUntil = 0;
 }
 
 /** The synced log mirror: read through the store, written in place with FileManager (no delete/rename). */
@@ -141,12 +183,9 @@ function icloudMirror(synced: FileStore, fm: FileManager): LogMirror {
     async write(path, text) {
       const abs = synced.absolute(path);
       synced.mkdirp(path.slice(0, path.lastIndexOf('/')));
-      // Never write over an evicted placeholder (that is how iCloud ends up with conflict copies).
-      try {
-        await fm.downloadFileFromiCloud(abs);
-      } catch {
-        // missing: first write
-      }
+      // Never write over an evicted placeholder (that is how iCloud ends up with conflict copies): if
+      // the existing file can't be downloaded in time, skip this mirror refresh (the next one retries).
+      if (fm.fileExists(abs)) await boundedDownload(fm, abs);
       fm.writeString(abs, text);
     },
   };
@@ -249,6 +288,14 @@ function baseName(path: string): string {
 function createNative(local: FileStore): NativeUi {
   return {
     ...nativeBase,
+    async shareImage(base64) {
+      // Native decoding (Data.fromBase64String), not Scriptable's atob, which breaks on binary data.
+      const data = Data.fromBase64String(base64) as Data | null;
+      const image = data ? (Image.fromData(data) as Image | null) : null;
+      if (!image) throw new Error('Not a decodable image');
+      // An Image item makes the sheet offer "Save Image"; a dismissed sheet just resolves.
+      await ShareSheet.present([image]);
+    },
     async shareFile(absPath) {
       // ShareSheet has no documented file-path item; share the file's bytes (Data).
       const data = Data.fromFile(absPath) as Data | null;
@@ -267,9 +314,12 @@ function createNative(local: FileStore): NativeUi {
       const fm = FileManager.local();
       try {
         // The picked document may be an un-downloaded iCloud file; this throws for non-iCloud files.
-        await FileManager.iCloud().downloadFileFromiCloud(src);
-      } catch {
-        // not in iCloud
+        await boundedDownload(FileManager.iCloud(), src);
+      } catch (err) {
+        // Not in iCloud: fine. In iCloud but not delivered in time: copying would copy a placeholder.
+        if (err instanceof Error && err.name === 'ICloudTimeout') {
+          throw Object.assign(new Error("The picked file isn't downloaded from iCloud yet; try again in a moment"), { code: 'STORAGE' });
+        }
       }
       local.mkdirp(IMPORTS_DIR);
       const rel = `${IMPORTS_DIR}/${baseName(src)}`;
@@ -281,7 +331,7 @@ function createNative(local: FileStore): NativeUi {
   };
 }
 
-const nativeBase: Omit<NativeUi, 'shareFile' | 'pickFile'> = {
+const nativeBase: Omit<NativeUi, 'shareFile' | 'shareImage' | 'pickFile'> = {
   async actionSheet(opts) {
     const a = new Alert();
     if (opts.title) a.title = opts.title;
@@ -365,10 +415,17 @@ interface PageInfo {
   u?: string;
 }
 
+/** One hidden-page evaluation that gives up after `ms` (a stuck page must never hang a fetch): undefined then. */
+async function evalBounded(wv: WebView, js: string, ms = HIDDEN_EVAL_MS): Promise<unknown> {
+  const TIMEOUT = Symbol('timeout');
+  const r: unknown = await Promise.race([wv.evaluateJavaScript(js, false) as Promise<unknown>, sleep(ms).then(() => TIMEOUT)]);
+  return r === TIMEOUT ? undefined : r;
+}
+
 /** Poll the page every second until it is no longer a challenge page (or the deadline passes). */
 async function waitPastChallenge(wv: WebView, deadline: number, timedOut: () => Error): Promise<PageInfo> {
   for (;;) {
-    const raw: unknown = await wv.evaluateJavaScript('JSON.stringify({t: document.title, ct: document.contentType, u: location.href})', false);
+    const raw: unknown = await evalBounded(wv, 'JSON.stringify({t: document.title, ct: document.contentType, u: location.href})');
     const info = (typeof raw === 'string' ? JSON.parse(raw) : {}) as PageInfo;
     if (!CHALLENGE_TITLE_RE.test(info.t ?? '')) return info;
     if (Date.now() > deadline) throw timedOut();
@@ -388,7 +445,7 @@ const viewPool = createViewPool<WebView>({
   create: () => new WebView(),
   async isOn(wv, origin) {
     if (brokenViews.has(wv)) return false;
-    const at: unknown = await Promise.race([wv.evaluateJavaScript('location.origin', false), sleep(2000).then(() => null)]);
+    const at: unknown = await evalBounded(wv, 'location.origin', 2000);
     return at === origin;
   },
   async open(wv, origin, deadline) {
@@ -418,7 +475,11 @@ async function browserFetch(url: string, opts?: BrowserFetchOptions): Promise<Ht
     if (!loaded) throw timedOut();
     const info = await waitPastChallenge(wv, deadline, timedOut);
     const isHtml = !info.ct || /html|xml/i.test(info.ct);
-    const body: unknown = isHtml ? await wv.getHTML() : await wv.evaluateJavaScript('document.body ? document.body.innerText : ""', false);
+    const TIMEOUT = Symbol('timeout');
+    const body: unknown = isHtml
+      ? await Promise.race([wv.getHTML() as Promise<unknown>, sleep(Math.max(1000, deadline - Date.now())).then(() => TIMEOUT)])
+      : await evalBounded(wv, 'document.body ? document.body.innerText : ""');
+    if (body === TIMEOUT) throw timedOut();
     const headers: Record<string, string> = info.ct ? { 'content-type': info.ct } : {};
     return { url: info.u ?? url, status: 200, headers, body: typeof body === 'string' ? body : '' };
   });
@@ -453,7 +514,8 @@ async function browserPost(url: string, opts: BrowserFetchOptions): Promise<Http
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw timedOut();
     if (browserPostMode === 'poll') {
-      const deps = { evaluate: (js: string) => wv.evaluateJavaScript(js, false) as Promise<unknown>, sleep, now: () => Date.now() };
+      // Each start/poll evaluation is bounded: a stuck one counts as "still pending" until the deadline.
+      const deps = { evaluate: (js: string) => evalBounded(wv, js), sleep, now: () => Date.now() };
       return runPolledPost(deps, url, init, remaining, POST_POLL_MS).catch(mapTimeout);
     }
     const run = (callbackQueues.get(wv) ?? Promise.resolve()).then(async () => {
@@ -540,7 +602,7 @@ export function createScriptablePlatform(): ScriptablePlatform {
     const abs = synced.absolute(rel);
     if (synced.isSynced) {
       try {
-        await syncedFm.downloadFileFromiCloud(abs);
+        await boundedDownload(syncedFm, abs);
       } catch (err) {
         log('warn', `downloadFileFromiCloud(${rel}) failed: ${err instanceof Error ? err.message : String(err)}`);
       }

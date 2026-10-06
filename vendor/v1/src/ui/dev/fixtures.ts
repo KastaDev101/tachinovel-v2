@@ -12,6 +12,7 @@ import type {
   HistoryEntry,
   NovelStatus,
   RepoInfo,
+  SourceFailureReason,
   SourceInfo,
   StorageUsage,
   UpdateEntry,
@@ -38,6 +39,8 @@ export interface FixtureNovel {
   chapterCount: number;
   /** Chapters with number >= lockedFrom are coin-locked. */
   lockedFrom?: number;
+  /** Chapters per volume ("Book One", "Book Two"…), like Royal Road with volumes on. */
+  volumeSize?: number;
   seed: number;
   /** Release time of chapter 1 and spacing (ms). */
   releaseBase: number;
@@ -146,7 +149,14 @@ export function chapterMeta(n: FixtureNovel, num: number): ChapterMeta {
     number: num,
     releaseTime: new Date(n.releaseBase + (num - 1) * n.releaseStep).toISOString(),
     ...(n.lockedFrom !== undefined && num >= n.lockedFrom ? { locked: true } : {}),
+    ...(n.volumeSize ? { volume: volumeName(Math.floor((num - 1) / n.volumeSize)) } : {}),
   };
+}
+
+const VOLUME_WORDS = ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+
+function volumeName(i: number): string {
+  return `Book ${VOLUME_WORDS[i] ?? String(i + 1)}`;
 }
 
 function makeNovel(pluginId: string, name: string, r: () => number, now: number, opts: Partial<FixtureNovel> = {}): FixtureNovel {
@@ -178,9 +188,9 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
   const r = rng(seed);
   const sources: SourceInfo[] = [
     source('stonescape', 'Stonescape', { builtIn: true, pinned: true, version: '1.2.0', lastUsedAt: now - 3_600_000 }),
-    source('royalroad', 'Royal Road', { version: '2.3.1', repoUrl: LIBRARY_REPO, lastUsedAt: now - 2 * 86_400_000, hasFilters: true }),
+    source('royalroad', 'Royal Road', { version: '2.3.1', repoUrl: LIBRARY_REPO, lastUsedAt: now - 2 * 86_400_000, hasFilters: true, hasSettings: true }),
     source('scribblehub', 'Scribble Hub', { version: '1.4.0', repoUrl: LIBRARY_REPO, updateAvailable: '1.5.0', lastUsedAt: now - 9 * 86_400_000, hasFilters: true }),
-    source('novelbin', 'NovelBin', { version: '1.0.3', repoUrl: LIBRARY_REPO, hasFilters: true }),
+    source('novelbin', 'NovelBin', { version: '1.0.3', repoUrl: LIBRARY_REPO, hasFilters: true, hasSettings: true }),
     source('wuxiaworld', 'Wuxiaworld', { version: '3.0.0', repoUrl: LIBRARY_REPO, enabled: false }),
     // LNReader index language names (what settings.languages holds), not ISO codes.
     source('syosetu', 'Syosetu', { version: '1.1.0', lang: '日本語', repoUrl: LIBRARY_REPO }),
@@ -213,6 +223,7 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
       path: SANITIZE_NOVEL.path,
       chapterCount: 64,
       status: 'ongoing',
+      volumeSize: 20,
     }),
   );
 
@@ -332,24 +343,25 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
   }
 
   const repos: RepoInfo[] = [{ url: LIBRARY_REPO, name: 'LNReader plugins', pluginCount: 214, fetchedAt: now - 86_400_000 }];
-  // Repo plugins in several languages, with the PC verification sweep's verdicts (plugins/verified.json).
-  const AVAILABLE: [id: string, name: string, lang: string, version: string, verified?: AvailablePlugin['verified']][] = [
+  // Repo plugins in several languages, with the PC verification sweep's verdicts and, where it found
+  // one, why (plugins/verified.json).
+  const AVAILABLE: [id: string, name: string, lang: string, version: string, verified?: AvailablePlugin['verified'], reason?: SourceFailureReason][] = [
     ['royalroad', 'Royal Road', 'English', '2.3.1', 'works'],
-    ['scribblehub', 'Scribble Hub', 'English', '1.5.0', 'partial'],
+    ['scribblehub', 'Scribble Hub', 'English', '1.5.0', 'partial', 'bot-check'],
     ['novelbin', 'NovelBin', 'English', '1.0.3', 'works'],
     ['wuxiaworld', 'Wuxiaworld', 'English', '3.0.0', 'works'],
     ['syosetu', 'Syosetu', '日本語', '1.1.0', 'works'],
-    ['lightnovelpub', 'LightNovelPub', 'English', '1.2.2', 'broken'],
+    ['lightnovelpub', 'LightNovelPub', 'English', '1.2.2', 'broken', 'bot-check'],
     ['novelfull', 'NovelFull', 'English', '1.0.9', 'works'],
-    ['freewebnovel', 'FreeWebNovel', 'English', '1.1.0', 'partial'],
-    ['readlightnovel', 'ReadLightNovel', 'English', '2.0.1', 'broken'],
+    ['freewebnovel', 'FreeWebNovel', 'English', '1.1.0', 'partial', 'layout-changed'],
+    ['readlightnovel', 'ReadLightNovel', 'English', '2.0.1', 'broken', 'site-gone'],
     ['allnovel', 'AllNovel', 'English', '2.2.2'],
-    ['kakuyomu', 'Kakuyomu', '日本語', '1.0.1', 'partial'],
+    ['kakuyomu', 'Kakuyomu', '日本語', '1.0.1', 'partial', 'rate-limited'],
     ['centralnovel', 'Central Novel', 'Português', '1.0.0', 'works'],
-    ['novelasligeras', 'Novelas Ligeras', 'Español', '1.0.4', 'broken'],
+    ['novelasligeras', 'Novelas Ligeras', 'Español', '1.0.4', 'broken', 'tls'],
     ['ranobes', 'Ranobes', 'Русский', '2.1.0', 'works'],
   ];
-  const available: AvailablePlugin[] = AVAILABLE.map(([id, name, lang, version, verified]) => {
+  const available: AvailablePlugin[] = AVAILABLE.map(([id, name, lang, version, verified, reason]) => {
     const installed = sources.find((s) => s.id === id);
     return {
       id,
@@ -363,6 +375,7 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
       installed: installed !== undefined,
       ...(installed ? { installedVersion: installed.version } : {}),
       ...(verified ? { verified } : {}),
+      ...(reason ? { verifiedReason: reason } : {}),
     };
   });
 
@@ -370,6 +383,8 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
   const storage: StorageUsage = {
     bytes: { state: 0.21 * MB, meta: 0.86 * MB, cache: 6.4 * MB, covers: 3.1 * MB, downloads: 12.8 * MB, logs: 0.12 * MB },
     caps: { cacheBytes: 10 * MB, coverBytes: 10 * MB },
+    // Two novels not in the library still have downloads (counted in downloads above).
+    ...(empty ? {} : { orphanDownloads: { novels: 2, bytes: 4.6 * MB } }),
   };
 
   return {
@@ -395,6 +410,7 @@ export function createWorld(seed: number, now: number, empty: boolean): World {
 export function chapterHtml(n: FixtureNovel, num: number): string {
   const r = rng(n.seed ^ Math.imul(num, 0x9e3779b1));
   if (n.pluginId === SANITIZE_NOVEL.pluginId && n.path === SANITIZE_NOVEL.path && num === 2) return hostileChapter(r);
+  if (n.pluginId === SANITIZE_NOVEL.pluginId && n.path === SANITIZE_NOVEL.path && num >= 40 && num <= 44) return edgeChapter(num, r);
   const long = num % 100 === 0;
   const count = long ? 320 : 46 + (num % 7) * 6;
   const parts: string[] = [];
@@ -405,7 +421,50 @@ export function chapterHtml(n: FixtureNovel, num: number): string {
   }
   // Stonescape-style sources repeat the title as the first paragraph ("Ch 12 - The Gate").
   const echo = n.pluginId === 'stonescape' ? `<p>Ch ${num} - ${chapterTitle(n.seed, num).replace(/^Chapter \d+: /, '')}</p>` : '';
+  // Chapter 44 of Stonescape novels comes back empty (an image-only page the source can't serve as text).
+  if (n.pluginId === 'stonescape' && num === 44) return '<div class="chapter-inner chapter-content"><p>&nbsp;</p></div>';
+  // Chapter 33 of Stonescape novels carries illustrations from the site's CDN (blocked for direct
+  // loads like its covers): one the script can fetch, one that is gone.
+  if (n.pluginId === 'stonescape' && num === 33) {
+    parts.splice(3, 0, `<p><img src="https://cdn.stonescape.invalid/illustrations/${n.path}-33.webp" alt="The valley at dusk" width="600" height="400"></p>`);
+    parts.splice(12, 0, `<p><img src="https://cdn.stonescape.invalid/missing/${n.path}-33b.webp" alt="A lost sketch"></p>`);
+  }
   return `<div class="chapter-inner chapter-content">${echo}${parts.join('\n')}</div>`;
+}
+
+/**
+ * Content edge cases real sources serve (The Lantern Maker's Ledger, chapters 40–44): a ~200 KB
+ * chapter, an images-only chapter, a table wider than the screen, unbroken words and URLs, and
+ * nested blockquotes with <hr> scene breaks.
+ */
+function edgeChapter(num: number, r: () => number): string {
+  const avoid = new Set<number>();
+  const p = (): string => paragraph(r, avoid);
+  switch (num) {
+    case 40: {
+      const parts: string[] = [];
+      let size = 0;
+      while (size < 200_000) {
+        const t = `<p>${p()} ${p()}</p>`;
+        parts.push(t);
+        size += t.length;
+      }
+      return `<div>${parts.join('\n')}</div>`;
+    }
+    case 41:
+      return `<div>${[1, 2, 3, 4].map((i) => `<p><img src="${illustration(i * 11)}" alt="Page ${i} of the comic" width="800" height="1200"></p>`).join('\n')}</div>`;
+    case 42: {
+      const head = ['Name', 'Rank', 'Element', 'Strength', 'Agility', 'Spirit', 'Weapon', 'Notes'].map((h) => `<th>${h}</th>`).join('');
+      const rows = ['Mira', 'Kael', 'Doran', 'Iskra', 'Vela']
+        .map((name, i) => `<tr><td>${name}</td><td>S${i}</td><td>Ash</td><td>${40 + i * 7}</td><td>${55 - i * 3}</td><td>${30 + i * 9}</td><td>Glass-edged halberd of the drowned kings</td><td>Carries the ledger; trusts no one past the Ashen Gate</td></tr>`)
+        .join('');
+      return `<div><p>${p()}</p><p>[Status window]</p><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><p>${p()}</p></div>`;
+    }
+    case 43:
+      return `<div><p>${p()}</p><p>The ward read: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!</p><p>Source: https://www.royalroad.com/fiction/81234/the-lantern-makers-ledger/chapter/1999999/an-extremely-long-chapter-slug-that-never-breaks-anywhere-at-all</p><p>${p()}</p></div>`;
+    default:
+      return `<div><p>${p()}</p><blockquote><p>${p()}</p><blockquote><p>${p()}</p><blockquote><p>“Deeper still,” the letter said.</p></blockquote></blockquote></blockquote><hr><p>${p()}</p><hr/><p>${p()}</p></div>`;
+  }
 }
 
 /** A chapter with the kind of junk and hostile markup real sites serve. */
@@ -532,4 +591,62 @@ function readingAndMirrors(
     });
   });
   return { reading, mirrors };
+}
+
+/**
+ * Load-test data (perf specs, `DevFlags.stress`): many Updates and History entries and extra
+ * browsable sources. Deterministic, added after the normal world so nothing else changes.
+ */
+export function addStress(world: World, stress: { updates?: number; history?: number; sources?: number }): void {
+  const lib = [...world.library.keys()].map((k) => world.novels.get(k)).filter((n): n is FixtureNovel => n !== undefined);
+  const DAY = 86_400_000;
+  if (stress.updates && lib.length > 0) {
+    const span = 60 * DAY;
+    const next = new Map<string, number>(lib.map((n) => [keyOf(n.pluginId, n.path), n.lockedFrom ? n.lockedFrom - 1 : n.chapterCount]));
+    const out: UpdateEntry[] = [];
+    for (let i = 0; i < stress.updates; i++) {
+      const n = lib[i % lib.length] as FixtureNovel;
+      const k = keyOf(n.pluginId, n.path);
+      const num = Math.max(1, next.get(k) ?? 1);
+      next.set(k, num - 1);
+      out.push({
+        pluginId: n.pluginId,
+        path: n.path,
+        novelName: n.name,
+        ...(n.cover !== undefined ? { cover: n.cover } : {}),
+        chapterPath: chapterPath(n, num),
+        chapterName: chapterTitle(n.seed, num),
+        foundAt: world.now - Math.floor((i / stress.updates) * span) - 60_000,
+        read: i % 3 === 0,
+      });
+    }
+    world.updates = out;
+  }
+  if (stress.history) {
+    const novels = [...world.novels.values()];
+    const span = 120 * DAY;
+    world.history = Array.from({ length: stress.history }, (_, i) => {
+      const n = novels[i % novels.length] as FixtureNovel;
+      return {
+        pluginId: n.pluginId,
+        path: `${n.path}-stress-${i}`,
+        novelName: `${n.name} ${i + 1}`,
+        ...(n.cover !== undefined ? { cover: n.cover } : {}),
+        chapterPath: `${n.path}-stress-${i}/1`,
+        chapterName: chapterTitle(n.seed, (i % 300) + 1),
+        readAt: world.now - Math.floor((i / stress.history!) * span) - 120_000,
+        percent: (i % 10) / 10,
+        ...(i % 2 === 0 ? { readingMs: (i % 50) * 600_000 + 60_000 } : {}),
+      };
+    });
+  }
+  if (stress.sources) {
+    const pools = [...world.pools.values()].filter((p) => p.length > 0);
+    for (let i = 1; i <= stress.sources; i++) {
+      const id = `extra${String(i).padStart(2, '0')}`;
+      const name = `Novel Source ${String(i).padStart(2, '0')}`;
+      world.sources.push(source(id, name, { version: '1.0.0' }));
+      world.pools.set(id, [...(pools[i % pools.length] ?? [])]);
+    }
+  }
 }

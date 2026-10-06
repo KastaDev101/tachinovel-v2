@@ -4,15 +4,16 @@
  * a chapter has no title-like first line, its name is inserted as one plain bold paragraph.
  * Far chapters become "spacers" (an empty block of their last height) so unmounting never moves text.
  */
-import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChapterContent } from '../../../shared/contracts/protocol.ts';
 import type { UiError } from '../../bridge/client.ts';
-import { SkeletonLine } from '../../components/feedback.tsx';
+import { failureView, openExtensions, SkeletonLine } from '../../components/feedback.tsx';
 import { Icon } from '../../components/icon.tsx';
 import { firstNumber } from '../../lib/chapters.ts';
 import { isTitleEcho, splitChapterTitle } from '../../lib/chapter-title.ts';
 import { scopeCustomCss } from '../../lib/custom-css.ts';
 import { sanitizeChapter } from '../../lib/sanitize.ts';
+import { wireChapterImages } from './chapter-images.ts';
 
 export { splitChapterTitle };
 
@@ -31,6 +32,62 @@ export interface ChapterEntry {
   eager?: boolean;
 }
 
+/** No readable text and no pictures (only the inserted title, if any). */
+export function isEmptyChapter(body: HTMLElement): boolean {
+  if (body.querySelector('img')) return false;
+  let text = '';
+  for (const child of Array.from(body.children)) if (!child.classList.contains('rd-inserted-title')) text += child.textContent ?? '';
+  return text.trim().length === 0;
+}
+
+/**
+ * A chapter that couldn't be loaded, inline in the text column. With a failure reason: its plain
+ * wording and the one action that helps (Verify, Retry, Check for Updates, or none when the site is
+ * gone); without one: Verify for browser checks, else Retry.
+ */
+export function ChapterErrorNote(props: { error: UiError | undefined; label: string; sourceName: string; onRetry: () => void; onSolve: () => void }) {
+  const e = props.error;
+  const view = e ? failureView(e) : null;
+  const action = view ? view.action : e?.code === 'CLOUDFLARE' ? 'open-site' : 'retry';
+  const text = view
+    ? `Couldn’t load ${props.label}. ${view.text}`
+    : action === 'open-site'
+      ? `${props.sourceName} wants to check you’re a person before ${props.label}`
+      : `Couldn’t load ${props.label}`;
+  return (
+    <p class="rd-inline-note" data-testid="reader-chapter-error" data-action={action ?? 'none'}>
+      {text}
+      {action !== null && ' — '}
+      {action === 'open-site' && (
+        <button type="button" class="rd-link tap tap-dim" onClick={props.onSolve} data-testid="reader-verify">
+          Verify
+        </button>
+      )}
+      {action === 'retry' && (
+        <button type="button" class="rd-link tap tap-dim" onClick={props.onRetry} data-testid="reader-retry">
+          Retry
+        </button>
+      )}
+      {action === 'update' && (
+        <button type="button" class="rd-link tap tap-dim" onClick={openExtensions} data-testid="reader-check-updates">
+          Check for Updates
+        </button>
+      )}
+    </p>
+  );
+}
+
+export function EmptyChapterNote(props: { sourceName: string; onOpenSafari: () => void }) {
+  return (
+    <p class="rd-inline-note" data-testid="reader-empty-chapter">
+      {props.sourceName} sent this chapter without any text. It may be an image-only chapter or a page that needs the website —{' '}
+      <button type="button" class="rd-link tap tap-dim" onClick={props.onOpenSafari}>
+        Open in Safari
+      </button>
+    </p>
+  );
+}
+
 /** Chapter text has a title-like first line (kept as is); otherwise insert the name in bold. */
 export function ensureTitleLine(frag: DocumentFragment, title: string, number?: number): void {
   if (!title) return;
@@ -44,9 +101,18 @@ export function ensureTitleLine(frag: DocumentFragment, title: string, number?: 
   frag.prepend(p);
 }
 
-function ChapterBody(props: { entry: ChapterEntry; onBodyReady: (key: number, body: HTMLElement) => void; onBodyGone: (key: number) => void }) {
+function ChapterBody(props: {
+  entry: ChapterEntry;
+  pluginId: string;
+  sourceName: string;
+  onOpenSafari: () => void;
+  onBodyReady: (key: number, body: HTMLElement) => void;
+  onBodyGone: (key: number) => void;
+}) {
   const { entry } = props;
   const body = useRef<HTMLDivElement>(null);
+  /** The source sent no text (and no pictures): say so instead of a blank page. */
+  const [empty, setEmpty] = useState(false);
   const ready = useRef(props.onBodyReady);
   ready.current = props.onBodyReady;
   const gone = useRef(props.onBodyGone);
@@ -58,7 +124,10 @@ function ChapterBody(props: { entry: ChapterEntry; onBodyReady: (key: number, bo
     const frag = sanitizeChapter(entry.content.html);
     ensureTitleLine(frag, entry.content.title || entry.name || '', entry.number);
     el.replaceChildren(frag);
+    setEmpty(isEmptyChapter(el));
     ready.current(entry.key, el);
+    // Illustrations: direct, or through the script when the site blocks them (near the screen only).
+    return wireChapterImages(el, props.pluginId, { root: el.closest('.reader-scroll'), margin: '800px 0px' });
   }, [entry.content]);
 
   useLayoutEffect(() => () => gone.current(entry.key), []);
@@ -69,18 +138,22 @@ function ChapterBody(props: { entry: ChapterEntry; onBodyReady: (key: number, bo
     <>
       {css && <style>{css}</style>}
       <div class="rd-body selectable" ref={body} data-testid="reader-body" />
+      {empty && <EmptyChapterNote sourceName={props.sourceName} onOpenSafari={props.onOpenSafari} />}
     </>
   );
 }
 
 export function ChapterSection(props: {
   entry: ChapterEntry;
+  pluginId: string;
   /** Not the first chapter in the column: draw the hairline boundary above it. */
   boundary: boolean;
   sourceName: string;
   onBodyReady: (key: number, body: HTMLElement) => void;
   onBodyGone: (key: number) => void;
   onRetry: (key: number) => void;
+  /** Cloudflare check: open the site, then retry. */
+  onSolve: (key: number) => void;
   onOpenSafari: () => void;
 }) {
   const { entry } = props;
@@ -106,12 +179,13 @@ export function ChapterSection(props: {
         </div>
       )}
       {entry.status === 'error' && (
-        <p class="rd-inline-note" data-testid="reader-chapter-error">
-          Couldn’t load {label} —{' '}
-          <button type="button" class="rd-link tap tap-dim" onClick={() => props.onRetry(entry.key)} data-testid="reader-retry">
-            Retry
-          </button>
-        </p>
+        <ChapterErrorNote
+          error={entry.error}
+          label={label}
+          sourceName={props.sourceName}
+          onRetry={() => props.onRetry(entry.key)}
+          onSolve={() => props.onSolve(entry.key)}
+        />
       )}
       {entry.status === 'locked' && (
         <p class="rd-inline-note rd-locked" data-testid="reader-locked">
@@ -124,7 +198,16 @@ export function ChapterSection(props: {
           </button>
         </p>
       )}
-      {entry.status === 'ready' && <ChapterBody entry={entry} onBodyReady={props.onBodyReady} onBodyGone={props.onBodyGone} />}
+      {entry.status === 'ready' && (
+        <ChapterBody
+          entry={entry}
+          pluginId={props.pluginId}
+          sourceName={props.sourceName}
+          onOpenSafari={props.onOpenSafari}
+          onBodyReady={props.onBodyReady}
+          onBodyGone={props.onBodyGone}
+        />
+      )}
     </section>
   );
 }

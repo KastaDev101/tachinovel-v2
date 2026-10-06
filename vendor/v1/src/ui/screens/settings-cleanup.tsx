@@ -2,7 +2,9 @@
  * Settings › Reader › Text Cleanup: rules that hide junk paragraphs ("Read at …", translator credits,
  * Patreon plugs) in chapter text. Rules live in `settings.cleanupRules` and are applied script-side.
  * Each rule can be switched off, edited in a sheet (pattern, regex, scope), tried on a recently read
- * chapter (`cleanup.test`), and deleted by swiping left or touching and holding.
+ * chapter (`cleanup.test`), and deleted by swiping left or touching and holding. Suggestions (one per
+ * source for lines naming its own site, plus common junk; lib/cleanup-suggest.ts) are off until turned
+ * on, and each can be tried first.
  */
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -13,33 +15,13 @@ import { ErrorState, SkeletonRows } from '../components/feedback.tsx';
 import { useAsync } from '../components/hooks.ts';
 import { Screen } from '../components/screen.tsx';
 import { Sheet } from '../components/sheet.tsx';
+import { COMMON_JUNK, ruleFrom, suggestionFor, suggestions, type CleanupSuggestion } from '../lib/cleanup-suggest.ts';
 import { plural } from '../lib/format.ts';
 import { attachLongPress, haptic, VelocityTracker } from '../lib/gestures.ts';
 import { actionSheet } from '../state/actions.ts';
 import { patchSettings, settings, sources } from '../state/store.ts';
 import { showToast } from '../state/toast.ts';
 import '../styles/extras.css';
-
-export interface CleanupPreset {
-  id: string;
-  label: string;
-  pattern: string;
-  regex: boolean;
-  /** A line it hides (shown under the suggestion). */
-  example: string;
-}
-
-/** Suggested rules: listed until added, added rules start enabled. Regexes are matched case-insensitively. */
-export const CLEANUP_PRESETS: readonly CleanupPreset[] = [
-  { id: 'read-at', label: 'Read at …', pattern: String.raw`^\W*read (?:\w+ ){0,3}(?:at|on) \S+\.[a-z]{2,}`, regex: true, example: 'Read at novelsite.com for the fastest updates' },
-  { id: 'translator', label: 'Translator:', pattern: 'Translator:', regex: false, example: 'Translator: Mira · Editor: Kael' },
-  { id: 'patreon', label: 'Support us on Patreon', pattern: String.raw`support (?:us|me|the \w+) on patreon`, regex: true, example: 'Support us on Patreon for 10 advance chapters!' },
-  { id: 'visit', label: 'Visit … for the latest chapters', pattern: String.raw`visit \S+ for (?:the )?(?:latest|newest|fastest)`, regex: true, example: 'Visit novelsite.com for the latest chapters' },
-];
-
-export function presetFor(rule: Pick<CleanupRule, 'id' | 'pattern' | 'regex'>): CleanupPreset | undefined {
-  return CLEANUP_PRESETS.find((p) => rule.id === `preset-${p.id}` || (p.pattern === rule.pattern && p.regex === rule.regex));
-}
 
 /** Why a pattern can't be saved, or null when it's fine. */
 export function patternError(pattern: string, regex: boolean): string | null {
@@ -103,8 +85,8 @@ export function mergeRules(existing: readonly CleanupRule[], incoming: readonly 
   let added = 0;
   for (const r of incoming) {
     if (next.some((x) => sameRule(x, r))) continue;
-    const preset = presetFor({ id: '', pattern: r.pattern, regex: r.regex });
-    const id = preset && r.scope === '*' && !next.some((x) => x.id === `preset-${preset.id}`) ? `preset-${preset.id}` : newId();
+    const preset = COMMON_JUNK.find((s) => s.pattern === r.pattern && s.regex === r.regex);
+    const id = preset && r.scope === '*' && !next.some((x) => x.id === preset.ruleId) ? preset.ruleId : newId();
     next.push({ id, ...r });
     added++;
   }
@@ -112,7 +94,7 @@ export function mergeRules(existing: readonly CleanupRule[], incoming: readonly 
 }
 
 function ruleTitle(r: CleanupRule): string {
-  return presetFor(r)?.label ?? r.pattern;
+  return suggestionFor(r, sources.value)?.label ?? r.pattern;
 }
 
 /**
@@ -321,9 +303,10 @@ export function CleanupPage() {
     });
   }
 
-  function addPreset(p: CleanupPreset): void {
-    upsert({ id: `preset-${p.id}`, pattern: p.pattern, regex: p.regex, scope: '*', enabled: true });
-    showToast(`Added “${p.label}”`);
+  /** A suggestion becomes a rule, on (suggestions are off until turned on). */
+  function turnOn(s: CleanupSuggestion): void {
+    upsert(ruleFrom(s, true));
+    showToast(`Turned on “${s.label}”`);
   }
 
   async function menu(rule: CleanupRule): Promise<void> {
@@ -343,8 +326,10 @@ export function CleanupPage() {
     });
   }, [rules.length > 0]);
 
-  const suggestions = CLEANUP_PRESETS.filter((p) => !rules.some((r) => presetFor(r) === p));
+  const offered = suggestions(sources.value, rules);
   const [importOpen, setImportOpen] = useState(false);
+  const [trying, setTrying] = useState<{ n: number; open: boolean; s: CleanupSuggestion | null }>({ n: 0, open: false, s: null });
+  const openTry = (s: CleanupSuggestion): void => setTrying((t) => ({ n: t.n + 1, open: true, s }));
 
   async function moreMenu(): Promise<void> {
     const actions = [...(rules.length > 0 ? [{ title: 'Share Rules…' }] : []), { title: 'Import Rules…' }];
@@ -391,7 +376,7 @@ export function CleanupPage() {
               <Row title="No rules yet" subtitle="Add one, or start with a suggestion below." disabled testId="cleanup-empty" />
             ) : (
               rules.map((r) => {
-                const preset = presetFor(r);
+                const preset = suggestionFor(r, sources.value);
                 return (
                   <SwipeRow key={r.id} id={r.id} onDelete={() => remove(r)} testId="cleanup-rule">
                     <div class={`row cleanup-rule${r.enabled ? '' : ' is-off'}`}>
@@ -412,25 +397,38 @@ export function CleanupPage() {
           </Section>
         </div>
 
-        {suggestions.length > 0 && (
-          <Section header="Suggested" footer="Common junk lines. Added rules can be edited or switched off.">
-            {suggestions.map((p) => (
-              <Row
-                key={p.id}
-                title={p.label}
-                subtitle={`“${p.example}”`}
-                trailing={
-                  <Button variant="tinted" size="small" onClick={() => addPreset(p)} label={`Add ${p.label}`}>
-                    Add
-                  </Button>
-                }
-                testId={`preset-${p.id}`}
-              />
+        {offered.forSources.length > 0 && (
+          <Section
+            header="For Your Sources"
+            footer="Hides lines that name the site itself, like “Read at stonescape.xyz”. Each is off until you turn it on; tap Try to see what it would hide in chapters you read."
+          >
+            {offered.forSources.map((s) => (
+              <SuggestionRow key={s.id} s={s} onTry={openTry} onTurnOn={turnOn} />
+            ))}
+          </Section>
+        )}
+        {offered.common.length > 0 && (
+          <Section header="Common Junk" footer="Lines many sites add. Off until you turn one on; rules you turn on can be edited or switched off again.">
+            {offered.common.map((s) => (
+              <SuggestionRow key={s.id} s={s} onTry={openTry} onTurnOn={turnOn} />
             ))}
           </Section>
         )}
       </div>
 
+      {trying.s && (
+        <TrySheet
+          key={trying.n}
+          open={trying.open}
+          s={trying.s}
+          on={rules.some((r) => r.id === trying.s?.ruleId)}
+          onClose={() => setTrying((t) => ({ ...t, open: false }))}
+          onTurnOn={(s) => {
+            turnOn(s);
+            setTrying((t) => ({ ...t, open: false }));
+          }}
+        />
+      )}
       <ImportSheet open={importOpen} onClose={() => setImportOpen(false)} onImport={importRules} />
       <RuleSheet
         key={sheet.n}
@@ -441,6 +439,50 @@ export function CleanupPage() {
         onDelete={(r) => remove(r)}
       />
     </Screen>
+  );
+}
+
+// ---------- suggestions ----------
+
+function SuggestionRow(props: { s: CleanupSuggestion; onTry: (s: CleanupSuggestion) => void; onTurnOn: (s: CleanupSuggestion) => void }) {
+  const { s } = props;
+  return (
+    <div class="row cleanup-suggest" data-testid={`preset-${s.id}`}>
+      <span class="row-main">
+        <span class="row-title">{s.label}</span>
+        <span class="row-subtitle">
+          {s.scope !== '*' ? `${scopeName(s.scope)} only · ` : ''}“{s.example}”
+        </span>
+      </span>
+      <Button variant="gray" size="small" onClick={() => props.onTry(s)} label={`Try ${s.label}`}>
+        Try
+      </Button>
+      <Switch checked={false} onChange={(v) => v && props.onTurnOn(s)} label={`Turn on ${s.label}`} />
+    </div>
+  );
+}
+
+/** A suggestion tried on chapters you read (nothing changes until it's turned on). */
+function TrySheet(props: { open: boolean; s: CleanupSuggestion; on: boolean; onClose: () => void; onTurnOn: (s: CleanupSuggestion) => void }) {
+  const { s } = props;
+  return (
+    <Sheet open={props.open} onClose={props.onClose} title={s.label} detents={['large']} testId="try-sheet">
+      <div class="grouped">
+        <Section header="Hides lines like" footer={s.scope === '*' ? 'In every source.' : `Only in ${scopeName(s.scope)}.`}>
+          <div class="row cleanup-hit">
+            <span class="cleanup-hit-text">
+              <Highlighted text={s.example} ranges={matchRanges(s.example, s)} />
+            </span>
+          </div>
+        </Section>
+        <RuleTester rule={ruleFrom(s, true)} scope={s.scope} />
+      </div>
+      <div class="sheet-pad">
+        <Button variant="filled" size="large" onClick={() => props.onTurnOn(s)} disabled={props.on}>
+          {props.on ? 'Turned On' : 'Turn On'}
+        </Button>
+      </div>
+    </Sheet>
   );
 }
 

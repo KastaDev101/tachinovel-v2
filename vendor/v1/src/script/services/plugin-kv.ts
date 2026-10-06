@@ -37,12 +37,22 @@ class KvState implements PluginKV {
   }
 
   attach(doc: JsonDoc<KvDoc>): void {
-    const loaded = isRecord(doc.value.values) ? doc.value.values : {};
+    // Changes the plugin made before the stored values arrived win: a clear drops what was stored, a
+    // delete removes the stored key, a set replaces it.
+    const loaded: Record<string, unknown> = this.earlyCleared ? {} : isRecord(doc.value.values) ? { ...doc.value.values } : {};
+    for (const k of this.earlyDeleted) delete loaded[k];
     if (this.earlyWrites) {
-      for (const k of Object.keys(this.values)) loaded[k] = this.values[k] as KvEntry;
+      for (const k of Object.keys(this.values)) loaded[k] = this.values[k];
     }
+    this.earlyDeleted.clear();
+    this.earlyCleared = false;
     const values = Object.create(null) as Record<string, KvEntry>;
-    for (const k of Object.keys(loaded)) values[k] = loaded[k] as KvEntry;
+    for (const k of Object.keys(loaded)) {
+      // Only well-formed entries ({v, e?}); anything else is dropped rather than handed to a plugin.
+      const entry = loaded[k];
+      if (!isRecord(entry) || !('v' in entry)) continue;
+      values[k] = typeof entry.e === 'number' && Number.isFinite(entry.e) ? { v: entry.v, e: entry.e } : { v: entry.v };
+    }
     this.values = values;
     this.doc = doc;
     doc.beforeWrite = () => {
@@ -50,6 +60,10 @@ class KvState implements PluginKV {
     };
     if (this.earlyWrites) doc.changed();
   }
+
+  /** Before the stored values loaded: keys deleted and whether everything was cleared. */
+  private readonly earlyDeleted = new Set<string>();
+  private earlyCleared = false;
 
   private changed(): void {
     if (this.doc) this.doc.changed();
@@ -80,6 +94,12 @@ class KvState implements PluginKV {
   }
 
   delete(key: string): void {
+    if (!this.doc) {
+      this.earlyDeleted.add(key); // the key may exist in the stored values that haven't loaded yet
+      delete this.values[key];
+      this.changed();
+      return;
+    }
     if (!(key in this.values)) return;
     delete this.values[key];
     this.changed();
@@ -87,6 +107,10 @@ class KvState implements PluginKV {
 
   clearAll(): void {
     this.values = Object.create(null) as Record<string, KvEntry>;
+    if (!this.doc) {
+      this.earlyCleared = true;
+      this.earlyDeleted.clear();
+    }
     this.changed();
   }
 

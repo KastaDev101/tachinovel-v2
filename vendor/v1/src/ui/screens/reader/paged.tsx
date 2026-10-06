@@ -8,19 +8,21 @@ import type { RefObject } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ChapterMeta, ChapterPosition } from '../../../shared/contracts/domain.ts';
 import type { ChapterContent } from '../../../shared/contracts/protocol.ts';
-import { errorText, toUiError, type UiError } from '../../bridge/client.ts';
+import { toUiError, type UiError } from '../../bridge/client.ts';
 import { SkeletonLine } from '../../components/feedback.tsx';
 import { Icon } from '../../components/icon.tsx';
 import { VelocityTracker } from '../../lib/gestures.ts';
 import { pageCount, pageForPosition, positionOnPage, swipeTurn, type Fragment } from '../../lib/paged.ts';
 import { sanitizeChapter } from '../../lib/sanitize.ts';
-import { ensureTitleLine } from './chapter-section.tsx';
+import { wireChapterImages } from './chapter-images.ts';
+import { ChapterErrorNote, EmptyChapterNote, ensureTitleLine, isEmptyChapter } from './chapter-section.tsx';
 
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 const TURN_MS = 300;
 
 export interface PagedHandle {
-  goTo: (meta: Pick<ChapterMeta, 'path' | 'name' | 'number'>) => void;
+  /** Opens `meta` at `position` (else where it was last read). */
+  goTo: (meta: Pick<ChapterMeta, 'path' | 'name' | 'number'>, position?: ChapterPosition) => void;
   /** 0..1 within the current chapter. */
   seek: (fraction: number) => void;
   turn: (dir: 1 | -1) => void;
@@ -53,8 +55,9 @@ function noAnimations(): boolean {
   return window.__TACHI_DEV__?.noAnimations === true || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-function PagedBody(props: { content: ChapterContent; name?: string; number?: number; onReady: () => void }) {
+function PagedBody(props: { content: ChapterContent; pluginId: string; name?: string; number?: number; sourceName: string; onOpenSafari: () => void; onReady: () => void }) {
   const el = useRef<HTMLDivElement>(null);
+  const [empty, setEmpty] = useState(false);
   const ready = useRef(props.onReady);
   ready.current = props.onReady;
   useLayoutEffect(() => {
@@ -63,11 +66,15 @@ function PagedBody(props: { content: ChapterContent; name?: string; number?: num
     const frag = sanitizeChapter(props.content.html);
     ensureTitleLine(frag, props.content.title || props.name || '', props.number);
     body.replaceChildren(frag);
+    setEmpty(isEmptyChapter(body));
     ready.current();
+    // Illustrations on this page and the next ones load as they come near.
+    return wireChapterImages(body, props.pluginId, { root: body.closest('.rd-paged'), margin: '0px 200%' });
   }, [props.content]);
   return (
     <div class="rd-pcols">
       <div class="rd-body selectable" ref={el} data-testid="reader-body" />
+      {empty && <EmptyChapterNote sourceName={props.sourceName} onOpenSafari={props.onOpenSafari} />}
     </div>
   );
 }
@@ -84,6 +91,11 @@ export function PagedReader(props: {
   layoutKey: string;
   sourceName: string;
   onOpenSafari: () => void;
+  /** Cloudflare check: open the site, then call `again`. */
+  onSolve: (again: () => void) => void;
+  pluginId: string;
+  /** Saved positions at or past this fraction count as finished: open those chapters at the start. */
+  finishedAt: number;
 }) {
   const keySeq = useRef(2);
   const [sections, setSections] = useState<PSection[]>([{ key: 1, path: props.startPath, status: 'loading' }]);
@@ -245,7 +257,9 @@ export function PagedReader(props: {
       if (sec && sec.status !== 'loading') {
         pendingPos.current = null;
         const n = pages.current.get(p.key) ?? 1;
-        const pos = p.pos ?? (sec.status === 'ready' ? propsRef.current.positionFor(sec.path) ?? sec.content?.position : undefined);
+        const saved = sec.status === 'ready' ? (propsRef.current.positionFor(sec.path) ?? sec.content?.position) : undefined;
+        // A chapter finished earlier opens at its start (re-reading); an explicit spot is exact.
+        const pos = p.pos ?? (saved && saved.percent >= propsRef.current.finishedAt ? undefined : saved);
         const page = p.page ?? (pos && sec.status === 'ready' ? pageForPosition(fragmentsOf(p.key), pos, n) : 0);
         spot.current = { key: p.key, page: Math.min(page, n - 1) };
         setX(xOf(spot.current));
@@ -342,11 +356,12 @@ export function PagedReader(props: {
       setX(xOf(cur));
       report();
     },
-    goTo: (meta) => {
+    goTo: (meta, position) => {
       const ss = sectionsRef.current;
       const there = ss.find((s) => s.path === meta.path && s.status === 'ready');
       if (there) {
-        spot.current = { key: there.key, page: 0 };
+        const n = pages.current.get(there.key) ?? 1;
+        spot.current = { key: there.key, page: position ? pageForPosition(fragmentsOf(there.key), position, n) : 0 };
         setX(xOf(spot.current));
         report();
         ensureAround();
@@ -356,7 +371,7 @@ export function PagedReader(props: {
       pages.current.clear();
       frags.current.clear();
       spot.current = null;
-      pendingPos.current = { key, pos: undefined };
+      pendingPos.current = { key, pos: position };
       setSections([{ key, path: meta.path, name: meta.name, ...(meta.number !== undefined ? { number: meta.number } : {}), status: 'loading' }]);
       void load(key, meta.path);
     },
@@ -388,6 +403,9 @@ export function PagedReader(props: {
 
   function onPointerDown(e: PointerEvent): void {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // Inside a table that scrolls sideways, the swipe belongs to the table.
+    const table = e.target instanceof Element ? e.target.closest<HTMLElement>('.rd-table') : null;
+    if (table && table.scrollWidth > table.clientWidth + 1) return;
     const cur = spot.current;
     const vp = viewport.current;
     if (!cur || !vp) return;
@@ -436,12 +454,21 @@ export function PagedReader(props: {
   // ---------- render ----------
 
   return (
-    <div class="rd-paged" ref={viewport} onClick={onClick} onPointerDown={onPointerDown} data-testid="reader-paged">
+    <div
+      class="rd-paged"
+      ref={viewport}
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      onMouseDown={(e) => {
+        if (e.detail > 1) e.preventDefault(); // a double tap must not select a word
+      }}
+      data-testid="reader-paged"
+    >
       <div class="rd-ptrack" ref={track}>
         {sections.map((s) => (
           <section class="rd-psec" key={s.key} data-key={s.key} data-path={s.path} data-status={s.status} data-testid="reader-chapter">
             {s.status === 'ready' && s.content ? (
-              <PagedBody content={s.content} {...(s.name !== undefined ? { name: s.name } : {})} {...(s.number !== undefined ? { number: s.number } : {})} onReady={() => frags.current.delete(s.key)} />
+              <PagedBody content={s.content} pluginId={props.pluginId} sourceName={props.sourceName} onOpenSafari={props.onOpenSafari} {...(s.name !== undefined ? { name: s.name } : {})} {...(s.number !== undefined ? { number: s.number } : {})} onReady={() => frags.current.delete(s.key)} />
             ) : (
               <div class="rd-pnote">
                 {s.status === 'loading' && (
@@ -463,20 +490,21 @@ export function PagedReader(props: {
                   </p>
                 )}
                 {s.status === 'error' && (
-                  <p class="rd-inline-note" data-testid="reader-chapter-error">
-                    Couldn’t load {s.number !== undefined ? `chapter ${s.number}` : 'this chapter'}
-                    {s.error ? ` (${errorText(s.error)})` : ''} —{' '}
-                    <button
-                      type="button"
-                      class="rd-link tap tap-dim"
-                      onClick={() => {
+                  <ChapterErrorNote
+                    error={s.error}
+                    label={s.number !== undefined ? `chapter ${s.number}` : 'this chapter'}
+                    sourceName={props.sourceName}
+                    onRetry={() => {
+                      patch(s.key, { status: 'loading' });
+                      void load(s.key, s.path);
+                    }}
+                    onSolve={() =>
+                      props.onSolve(() => {
                         patch(s.key, { status: 'loading' });
                         void load(s.key, s.path);
-                      }}
-                    >
-                      Retry
-                    </button>
-                  </p>
+                      })
+                    }
+                  />
                 )}
               </div>
             )}

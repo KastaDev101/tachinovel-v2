@@ -82,17 +82,19 @@
   /* --- type --- */
   --font: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-rounded: ui-rounded, 'SF Pro Rounded', -apple-system, system-ui, sans-serif;
-  --fs-large-title: 34px;
-  --fs-title-1: 28px;
-  --fs-title-2: 22px;
-  --fs-title-3: 20px;
-  --fs-headline: 17px;
-  --fs-body: 17px;
-  --fs-callout: 16px;
-  --fs-subhead: 15px;
-  --fs-footnote: 13px;
-  --fs-caption: 12px;
-  --fs-caption-2: 11px;
+  /* Text sizes follow iOS Dynamic Type: rem of html's -apple-system-body (17 px at the default size),
+     capped at 1.6× so the accessibility sizes stay usable. The reader uses its own size setting. */
+  --fs-large-title: min(2.0rem, 54.4px);
+  --fs-title-1: min(1.6471rem, 44.8px);
+  --fs-title-2: min(1.2941rem, 35.2px);
+  --fs-title-3: min(1.1765rem, 32.0px);
+  --fs-headline: min(1.0rem, 27.2px);
+  --fs-body: min(1.0rem, 27.2px);
+  --fs-callout: min(0.9412rem, 25.6px);
+  --fs-subhead: min(0.8824rem, 24.0px);
+  --fs-footnote: min(0.7647rem, 20.8px);
+  --fs-caption: min(0.7059rem, 19.2px);
+  --fs-caption-2: min(0.6471rem, 17.6px);
 
   /* --- geometry --- */
   --gutter: 16px;

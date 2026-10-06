@@ -72,6 +72,11 @@ export class LruStore {
     return this.index.has(file);
   }
 
+  /** Recorded size of a cached file in bytes (undefined if not cached). */
+  sizeOf(file: string): number | undefined {
+    return this.index.get(file)?.bytes;
+  }
+
   path(file: string): string {
     return `${this.opts.dir}/${file}`;
   }
@@ -154,9 +159,13 @@ export class LruStore {
     const rows: [string, number, number][] = [];
     let repaired = false;
     for (const row of Array.isArray(doc.value.entries) ? doc.value.entries : []) {
-      const [file, bytes, used] = row;
+      if (!Array.isArray(row)) {
+        repaired = true;
+        continue;
+      }
+      const [file, bytes, used] = row as unknown[];
       if (typeof file === 'string' && names.has(file)) {
-        rows.push([file, typeof bytes === 'number' ? bytes : 0, typeof used === 'number' ? used : 0]);
+        rows.push([file, typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : 0, typeof used === 'number' && Number.isFinite(used) ? used : 0]);
         names.delete(file);
       } else {
         repaired = true;

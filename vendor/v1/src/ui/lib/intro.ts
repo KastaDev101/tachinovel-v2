@@ -42,6 +42,18 @@ export function decideIntro(i: IntroInput): IntroDecision {
   return { show: null, write: { ...write, build: i.build } };
 }
 
+/** At most this many releases at once for someone whose last seen release isn't known. */
+export const MAX_UNSEEN_RELEASES = 2;
+
+/**
+ * Releases (newest first) to show at launch: everything newer than the one last seen, so two
+ * updates in a row don't hide the first; when the seen one is unknown, the newest few.
+ */
+export function unseenReleases<T extends { id: string }>(all: readonly T[], seen: string | null): T[] {
+  const i = seen === null ? -1 : all.findIndex((r) => r.id === seen);
+  return i >= 0 ? all.slice(0, i) : all.slice(0, MAX_UNSEEN_RELEASES);
+}
+
 export interface FlagStore {
   readonly persistent: boolean;
   get(key: string): string | null;

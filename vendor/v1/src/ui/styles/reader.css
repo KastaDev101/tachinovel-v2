@@ -3,7 +3,7 @@
 .theme-light {
   --rd-bg: #ffffff;
   --rd-fg: #1d1d1f;
-  --rd-fg2: rgba(29, 29, 31, 0.5);
+  --rd-fg2: rgba(29, 29, 31, 0.64);
   --rd-bar: #f9f9f9;
   --rd-sep: rgba(60, 60, 67, 0.18);
   --rd-fill: rgba(120, 120, 128, 0.1);
@@ -15,7 +15,7 @@
 .theme-sepia {
   --rd-bg: #f5edda;
   --rd-fg: #4f3d2e;
-  --rd-fg2: rgba(79, 61, 46, 0.55);
+  --rd-fg2: rgba(79, 61, 46, 0.78);
   --rd-bar: #eee4cd;
   --rd-sep: rgba(79, 61, 46, 0.18);
   --rd-fill: rgba(120, 90, 50, 0.1);
@@ -27,7 +27,7 @@
 .theme-dark {
   --rd-bg: #1c1c1e;
   --rd-fg: #e3e3e8;
-  --rd-fg2: rgba(235, 235, 245, 0.5);
+  --rd-fg2: rgba(235, 235, 245, 0.62);
   --rd-bar: #242426;
   --rd-sep: rgba(84, 84, 88, 0.6);
   --rd-fill: rgba(120, 120, 128, 0.2);
@@ -39,7 +39,7 @@
 .theme-black {
   --rd-bg: #000000;
   --rd-fg: #c9c9ce;
-  --rd-fg2: rgba(235, 235, 245, 0.42);
+  --rd-fg2: rgba(235, 235, 245, 0.6);
   --rd-bar: #161618;
   --rd-sep: rgba(84, 84, 88, 0.55);
   --rd-fill: rgba(120, 120, 128, 0.18);
@@ -52,7 +52,7 @@
   :root:not([data-appearance='light']) .theme-system {
     --rd-bg: #000000;
     --rd-fg: #d8d8dd;
-    --rd-fg2: rgba(235, 235, 245, 0.46);
+    --rd-fg2: rgba(235, 235, 245, 0.6);
     --rd-bar: #161618;
     --rd-sep: rgba(84, 84, 88, 0.55);
     --rd-fill: rgba(120, 120, 128, 0.2);
@@ -65,7 +65,7 @@
 :root[data-appearance='dark'] .theme-system {
   --rd-bg: #000000;
   --rd-fg: #d8d8dd;
-  --rd-fg2: rgba(235, 235, 245, 0.46);
+  --rd-fg2: rgba(235, 235, 245, 0.6);
   --rd-bar: #161618;
   --rd-sep: rgba(84, 84, 88, 0.55);
   --rd-fill: rgba(120, 120, 128, 0.2);
@@ -143,7 +143,8 @@
   line-height: var(--rd-lh);
   text-align: var(--rd-align);
   color: var(--rd-fg);
-  overflow-wrap: break-word;
+  /* Unbroken words and URLs wrap instead of widening the page (also inside table cells). */
+  overflow-wrap: anywhere;
   font-kerning: normal;
   text-rendering: optimizeLegibility;
   -webkit-user-select: text;
@@ -151,9 +152,20 @@
   -webkit-touch-callout: default;
 }
 
-.reader.is-justify .rd-body {
+/* Hyphenation (the setting; by default with justified text, where it evens out word gaps). The page
+   is lang="en"; chapters in other languages carry their own lang where the source sets it. */
+.reader.is-hyphenated .rd-body {
   -webkit-hyphens: auto;
   hyphens: auto;
+  /* Don't hyphenate short words, and keep at least 3 letters on each side of the break. */
+  -webkit-hyphenate-limit-before: 3;
+  -webkit-hyphenate-limit-after: 3;
+  hyphenate-limit-chars: 6 3 3;
+}
+
+/* Justified text: tolerate a little letter-spacing stretch instead of wide word gaps ("rivers"). */
+.reader.is-justify .rd-body {
+  text-justify: inter-word;
 }
 
 .rd-body > * {
@@ -162,6 +174,8 @@
 
 .rd-body > p {
   text-indent: var(--rd-indent);
+  /* Better line breaks: no lonely last word, more even rag (Safari 17.5+; ignored elsewhere). */
+  text-wrap: pretty;
 }
 
 /* Chapter name inserted when the text has no title line of its own: plain bold, body font and size. */
@@ -175,6 +189,16 @@
   height: auto;
   margin: 0.4em auto;
   border-radius: 6px;
+}
+
+/* Illustrations stay invisible until loaded (no broken-image icon); space is kept when the size is
+   known, and an image that can't be had collapses. */
+.rd-body img.is-pending {
+  visibility: hidden;
+}
+
+.rd-body img.is-gone {
+  display: none;
 }
 
 .rd-body h1,
@@ -198,11 +222,34 @@
   font-style: italic;
 }
 
+/* Nested quotes (letters within letters): a thinner rule, less indent, no extra italics stacking. */
+.rd-body blockquote blockquote {
+  margin: 0.6em 0 0;
+  padding-left: 0.8em;
+  border-left-width: 2px;
+}
+
+.rd-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* Scene break: a quiet centered glyph (a line would look like the chapter boundary hairline). */
 .rd-body hr {
-  height: 1px;
-  margin: 2em 25%;
+  height: auto;
+  margin: 1.4em 0;
   border: 0;
-  background: var(--rd-sep);
+  background: none;
+  color: var(--rd-fg3);
+  text-align: center;
+  overflow: visible;
+}
+
+.rd-body hr::before {
+  content: '⁂';
+  display: block;
+  font-size: 1.1em;
+  line-height: 1;
+  letter-spacing: 0.2em;
 }
 
 .rd-body ul,
@@ -210,8 +257,25 @@
   padding-left: 1.4em;
 }
 
+/* Tables wider than the column scroll sideways inside themselves, never the page. */
 .rd-table {
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Lay the table out at its natural width (it scrolls), with long cells wrapping at a readable width
+   instead of being squeezed into a tall narrow column. */
+.rd-body .rd-table table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.rd-body .rd-table td,
+.rd-body .rd-table th {
+  max-width: 14em;
+  overflow-wrap: break-word;
 }
 
 .rd-body table {
@@ -289,7 +353,8 @@
 
 .rd-end-note {
   margin: 0;
-  padding: 56px var(--rd-margin) 24px;
+  /* Room below so its button can scroll clear of the bottom bar. */
+  padding: 56px var(--rd-margin) 120px;
   font-family: var(--font);
   font-size: 13px;
   letter-spacing: 0.04em;
@@ -344,7 +409,9 @@
   min-width: 0;
   flex-direction: column;
   align-items: center;
+  padding: 0;
   text-align: center;
+  color: inherit;
 }
 
 .rd-top-novel {
@@ -368,6 +435,11 @@
   justify-content: center;
   width: 44px;
   height: 44px;
+  /* Neutral like every other screen's bar icons; the tint is for active states only. */
+  color: var(--rd-fg);
+}
+
+.rd-icon-btn.is-on {
   color: var(--rd-tint);
 }
 
@@ -433,6 +505,10 @@
   content: '·';
   margin-right: 8px;
   opacity: 0.6;
+}
+
+.rd-pill > span:empty {
+  display: none;
 }
 
 /* Nothing overlays the text while reading: the pill only shows on double tap (or "Always"). */
@@ -536,11 +612,13 @@
 .rs-theme.is-dark .rs-swatch {
   background: #1c1c1e;
   color: #e3e3e8;
+  border: 1px solid var(--fill);
 }
 
 .rs-theme.is-black .rs-swatch {
   background: #000;
   color: #c9c9ce;
+  border: 1px solid var(--fill);
 }
 
 .rs-theme.is-selected .rs-swatch {
@@ -725,4 +803,136 @@ mark.rd-find-mark.is-current {
 
 .rd-pnote {
   padding: calc(var(--safe-top) + 28px) var(--rd-margin) 0;
+}
+
+/* "Back to Ch. 12 · 45%" after a jump (chapter list, slider, prev/next). */
+.rd-jump-row {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 6px;
+}
+
+.rd-jump-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  background: var(--rd-sep);
+  color: var(--rd-tint);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Brief feedback while the bars are hidden (auto-scroll started / resumed). */
+.rd-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 10px);
+  z-index: 5;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 13px;
+  background: var(--rd-pill-bg);
+  color: var(--rd-fg2);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 26px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.rd-hint.is-shown {
+  opacity: 1;
+}
+
+.bars-visible .rd-hint {
+  opacity: 0;
+}
+
+.rd-end-note p {
+  margin: 0 0 10px;
+}
+
+.rd-end-note .rd-link {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+/* "You were here": a bar in the left margin beside the resumed paragraph, fading out. */
+.rd-body > .rd-resume-mark {
+  position: relative;
+}
+
+.rd-body > .rd-resume-mark::before {
+  content: '';
+  position: absolute;
+  top: 0.2em;
+  bottom: 0.2em;
+  left: calc(-0.5 * var(--rd-margin) - 1.5px);
+  width: 3px;
+  border-radius: 2px;
+  background: var(--rd-tint);
+  animation: rd-resume-fade 3s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes rd-resume-fade {
+  0%,
+  60% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* "45% · 8 min left" above the slider while the bars show. */
+.rd-progress-caption {
+  min-height: 15px;
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 15px;
+  color: var(--rd-fg2);
+  text-align: center;
+}
+
+/* Selected text: "Copy quote" / "Share quote" (with the novel and chapter), above the home bar. */
+.rd-quote-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 14px);
+  z-index: 25;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 18px;
+  background: var(--rd-bar);
+  box-shadow: 0 0 0 0.5px var(--rd-sep), 0 6px 20px rgba(0, 0, 0, 0.18);
+  transform: translateX(-50%);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.rd-quote-bar.is-raised {
+  bottom: calc(var(--safe-bottom) + 132px);
+}
+
+.rd-quote-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 15px;
+  color: var(--rd-tint);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
 }

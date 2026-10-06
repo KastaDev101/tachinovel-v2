@@ -4,7 +4,9 @@
  * Owned by the coordinator; agents request changes instead of editing.
  */
 import type { Filters } from '../lnreader/filters.ts';
-import type { ChapterMeta, NovelDetails, NovelSummary } from './domain.ts';
+import type { ChapterMeta, NovelDetails, NovelSummary, PluginSettingValues, PluginSettings, SourceFailureReason } from './domain.ts';
+
+export type { SourceFailureReason } from './domain.ts';
 import type { BrowserFetchOptions, HttpClient, HttpResponse, LogLevel } from './platform.ts';
 
 /** Synchronous key/value store per plugin (LNReader's @libs/storage is sync). Host persists it. */
@@ -38,6 +40,8 @@ export interface SourceMeta {
   /** Ignored by the app, surfaced for diagnostics. */
   hasCustomJS: boolean;
   customCSS?: string;
+  /** Settings the user can change (absent when none). */
+  settings?: PluginSettings;
 }
 
 /**
@@ -53,6 +57,13 @@ export interface SourceAdapter {
   chapter(path: string): Promise<string>;
   /** Absolute URL for a novel or chapter path (for "Open in Safari"). */
   resolveUrl(path: string, isNovel: boolean): string;
+  /** Current values (stored ?? default) for every key in meta.settings; {} when none. */
+  getSettings?(): PluginSettingValues;
+  /**
+   * Saves the given keys (others unchanged) in the plugin's storage, reloads the plugin, returns all values.
+   * Throws SettingsError: unknown key, wrong type, value not among options, or plugin fails to load with them (nothing changed).
+   */
+  setSettings?(values: Partial<PluginSettingValues>): PluginSettingValues;
 }
 
 export interface PluginHost {
@@ -74,9 +85,19 @@ export class PluginLoadError extends Error {
 /** Thrown by adapters; maps to bridge ErrorCode. */
 export class SourceError extends Error {
   readonly code: 'NETWORK' | 'TIMEOUT' | 'CLOUDFLARE' | 'NOT_FOUND' | 'LOCKED' | 'PLUGIN';
-  constructor(code: SourceError['code'], message: string) {
+  readonly reason?: SourceFailureReason;
+  constructor(code: SourceError['code'], message: string, reason?: SourceFailureReason) {
     super(message);
     this.name = 'SourceError';
     this.code = code;
+    if (reason !== undefined) this.reason = reason;
+  }
+}
+
+/** Invalid plugin setting values (maps to bridge INVALID_ARGS). */
+export class SettingsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SettingsError';
   }
 }

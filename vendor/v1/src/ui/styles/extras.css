@@ -651,7 +651,7 @@
   width: 44px;
   height: 44px;
   margin-right: 6px;
-  color: var(--label-3);
+  color: var(--label-2);
 }
 
 /* ===== Cloudflare verify (ErrorState onSolve) ===== */
@@ -717,14 +717,12 @@
 }
 
 /* Migrate All (batch) */
-.mig-group-header {
-  display: flex;
-  width: 100%;
-}
-
 .mig-all {
-  margin-left: auto;
-  padding: 2px 0 2px 12px;
+  flex: none;
+  /* A 44 pt tap target that doesn't make the header row taller. */
+  min-height: 44px;
+  margin: -14px 0;
+  padding: 0 0 0 12px;
   font-size: 14px;
   font-weight: 500;
   color: var(--tint);
@@ -1296,4 +1294,523 @@
   .onb-pages {
     scroll-behavior: auto;
   }
+}
+
+/* Insights: reading report image */
+.ins-report {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 4px var(--gutter) 8px;
+}
+
+.ins-report-img {
+  width: min(100%, 340px);
+  height: auto;
+  border-radius: 18px;
+  box-shadow: var(--shadow-float);
+  /* Let iOS offer its own Save / Share menu on touch and hold. */
+  -webkit-touch-callout: default;
+}
+
+.ins-report-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ins-report-note {
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+  text-align: center;
+}
+
+/* ===== Listen in the car ===== */
+.nar-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  margin: 0 var(--gutter) 14px;
+  padding: 0 14px 0 4px;
+  border-radius: 14px;
+  background: var(--fill-4);
+}
+
+.nar-card.is-loading {
+  background: var(--skeleton);
+}
+
+.nar-card-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  padding-left: 10px;
+  text-align: left;
+}
+
+.nar-card-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tint) 16%, transparent);
+  color: var(--tint);
+}
+
+.nar-card-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nar-card-title {
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.nar-card-line {
+  overflow: hidden;
+  font-size: var(--fs-footnote);
+  line-height: 17px;
+  color: var(--label-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nar-updated {
+  padding: 2px 16px 14px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+.nar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 28px;
+  padding: 22px 22px 20px;
+  border-radius: 16px;
+  background: var(--bg-grouped-2);
+  text-align: center;
+}
+
+.nar-empty-icon {
+  color: var(--tint);
+}
+
+.nar-empty h2 {
+  font-size: var(--fs-headline);
+  font-weight: 600;
+}
+
+.nar-empty p {
+  max-width: 320px;
+  font-size: var(--fs-footnote);
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.nar-novel {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.nar-novel .cover-thumb {
+  width: 40px;
+}
+
+.nar-novel-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  align-self: stretch;
+  text-align: left;
+  color: inherit;
+}
+
+.nar-stale {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: -8px 16px 14px;
+  font-size: var(--fs-footnote);
+  color: var(--orange);
+}
+
+.nar-stale .icon {
+  margin-top: 1px;
+}
+
+.group-body > .nar-novel + .nar-novel::before {
+  left: 68px;
+}
+
+.nar-novel .row-subtitle {
+  white-space: normal;
+}
+
+.nar-line {
+  color: var(--label);
+}
+
+.nar-error {
+  color: var(--orange);
+}
+
+.nar-speed {
+  gap: 10px;
+}
+
+.nar-speed-end {
+  flex: none;
+  color: var(--label-3);
+}
+
+.nar-speed-value {
+  flex: none;
+  min-width: 46px;
+  font-size: var(--fs-body);
+  color: var(--label-2);
+  text-align: right;
+}
+
+.nar-how {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 16px;
+  list-style: none;
+}
+
+.nar-how li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: var(--fs-subhead);
+  line-height: 20px;
+}
+
+.nar-how-n {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--tint-container);
+  color: var(--on-tint-container);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Insights: year heatmap */
+.ins-heat-scroll {
+  margin: 10px -16px 0;
+  padding: 0 16px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.ins-heat-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.ins-heat svg {
+  display: block;
+}
+
+.ins-heat-month {
+  font-size: 10px;
+  fill: var(--label-2);
+}
+
+.ins-heat .lv-0 {
+  fill: var(--fill-3);
+  background: var(--fill-3);
+}
+
+.ins-heat .lv-1 {
+  fill: color-mix(in srgb, var(--tint) 28%, transparent);
+  background: color-mix(in srgb, var(--tint) 28%, transparent);
+}
+
+.ins-heat .lv-2 {
+  fill: color-mix(in srgb, var(--tint) 50%, transparent);
+  background: color-mix(in srgb, var(--tint) 50%, transparent);
+}
+
+.ins-heat .lv-3 {
+  fill: color-mix(in srgb, var(--tint) 75%, transparent);
+  background: color-mix(in srgb, var(--tint) 75%, transparent);
+}
+
+.ins-heat .lv-4 {
+  fill: var(--tint);
+  background: var(--tint);
+}
+
+.ins-heat rect.is-today {
+  stroke: var(--label-2);
+  stroke-width: 1;
+}
+
+.ins-heat rect.is-sel {
+  stroke: var(--label);
+  stroke-width: 2;
+}
+
+.ins-heat-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: var(--fs-caption-2, 11px);
+  color: var(--label-2);
+}
+
+.ins-heat-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2.5px;
+}
+
+.ins-heat-legend span:first-child {
+  margin-right: 3px;
+}
+
+.ins-heat-legend span:last-child {
+  margin-left: 3px;
+}
+
+.ins-heat-skel {
+  height: 132px;
+  margin-top: 16px;
+  border-radius: 10px;
+}
+
+.wn-release + .wn-release {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--separator);
+}
+
+h2.wn-sub {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Migrate: match confidence */
+.mig-confidence {
+  padding: 12px 16px;
+}
+
+.mig-confidence.is-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mig-confidence-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.mig-confidence.is-high .mig-confidence-title {
+  color: var(--green);
+}
+
+.mig-confidence.is-medium .mig-confidence-title {
+  color: var(--orange);
+}
+
+.mig-confidence.is-low .mig-confidence-title {
+  color: var(--red);
+}
+
+.mig-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-subhead);
+  color: var(--label-2);
+}
+
+.mig-signals li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.mig-signals .icon {
+  flex: none;
+  transform: translateY(1px);
+}
+
+.mig-signals .is-ok .icon {
+  color: var(--green);
+}
+
+.mig-signals .is-off {
+  color: var(--label);
+}
+
+.mig-signals .is-off .icon {
+  color: var(--orange);
+}
+
+.nar-ready {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 16px 18px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--tint) 12%, var(--bg-2));
+}
+
+.nar-ready-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nar-ready-title {
+  font-weight: 600;
+}
+
+.nar-ready-line {
+  font-size: var(--fs-subhead);
+  color: var(--label-2);
+}
+
+/* Voice radios sit in a radiogroup (VoiceOver: "1 of 5"), so draw the row separators here too. */
+.nar-voices > * {
+  position: relative;
+}
+
+.nar-voices > * + *::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: var(--hairline);
+  background: var(--separator);
+  pointer-events: none;
+}
+
+/* Backup restore: preview sheet */
+.restore {
+  padding: 4px var(--gutter) 12px;
+}
+
+.restore-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px 16px;
+  text-align: center;
+}
+
+.restore-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 6px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--tint) 14%, transparent);
+  color: var(--tint);
+}
+
+.restore-when {
+  font-size: var(--fs-headline);
+  font-weight: 600;
+}
+
+.restore-contents {
+  font-size: var(--fs-subhead);
+  color: var(--label-2);
+}
+
+.restore-skipped {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--fs-footnote);
+  color: var(--orange);
+}
+
+.restore-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--label);
+  font-size: var(--fs-subhead);
+}
+
+.restore-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.restore-note {
+  margin: 0 4px 8px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+  text-align: center;
+}
+
+.nar-ready-open {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+.nar-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mig-unchecked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
 }

@@ -7,8 +7,9 @@
  * Hot-path updates are quiet writes (persisted with the next write, app.flush or close).
  */
 import type { ReadingStats } from '../../shared/contracts/domain.ts';
+import { localDate } from '../lib/dates.ts';
 import { isRecord } from '../lib/validate.ts';
-import { JsonDoc } from '../storage/json-doc.ts';
+import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
 
 export const STATS_PATH = 'stats.json';
@@ -31,6 +32,16 @@ interface StatsDoc {
   names: Record<string, { name: string; cover?: string }>;
   /** All-time reading ms (kept when old days are pruned). */
   totalMs: number;
+  /** All-time longest continuous session (saves < 60 s apart, per novel); absent until one is recorded. */
+  longest?: LongestSession;
+}
+
+interface LongestSession {
+  ms: number;
+  /** When the session started. */
+  at: number;
+  key?: string;
+  name?: string;
 }
 
 function sumDays(days: Record<string, DayRecord>): number {
@@ -68,16 +79,19 @@ export function sanitizeStats(d: Record<string, unknown>): StatsDoc {
   const stored = msValue(d.totalMs);
   const summed = sumDays(days);
   // Never below what the kept days add up to (pruning only ever lowers the days, not the total).
-  return { schemaVersion: 1, days, names, totalMs: Math.max(stored, summed) };
+  const out: StatsDoc = { schemaVersion: 1, days, names, totalMs: Math.max(stored, summed) };
+  const l = d.longest;
+  if (isRecord(l) && msValue(l.ms) > 0 && typeof l.at === 'number' && Number.isFinite(l.at)) {
+    const longest: LongestSession = { ms: msValue(l.ms), at: l.at };
+    if (typeof l.key === 'string' && l.key) longest.key = l.key;
+    if (typeof l.name === 'string' && l.name) longest.name = l.name;
+    out.longest = longest;
+  }
+  return out;
 }
 
-const p2 = (n: number): string => String(n).padStart(2, '0');
-
-/** Local calendar date of an epoch ms. */
-export function localDate(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-}
+/** Local calendar date of an epoch ms (re-exported: the widget imports it from here). */
+export { localDate };
 
 /** Local dates from `days - 1` days before `ms` through `ms`, oldest first. */
 function dateRange(ms: number, days: number): string[] {
@@ -92,9 +106,18 @@ function dateRange(ms: number, days: number): string[] {
   return out;
 }
 
+export const STATS_SPEC: DocSpec<StatsDoc> = {
+  path: STATS_PATH,
+  version: 1,
+  create: () => ({ schemaVersion: 1, days: {}, names: {}, totalMs: 0 }),
+  normalize: (d) => sanitizeStats(d as unknown as Record<string, unknown>),
+};
+
 export class StatsService {
   private readonly ctx: Ctx;
   private doc: Promise<JsonDoc<StatsDoc>> | null = null;
+  /** The session in progress per novel: started at, ms so far, time of its last save (memory only). */
+  private readonly sessions = new Map<string, { start: number; ms: number; last: number }>();
 
   constructor(ctx: Ctx) {
     this.ctx = ctx;
@@ -103,12 +126,7 @@ export class StatsService {
   private load(): Promise<JsonDoc<StatsDoc>> {
     this.doc ??= JsonDoc.load<StatsDoc>(
       this.ctx.platform.synced,
-      {
-        path: STATS_PATH,
-        version: 1,
-        create: () => ({ schemaVersion: 1, days: {}, names: {}, totalMs: 0 }),
-        normalize: (d) => sanitizeStats(d as unknown as Record<string, unknown>),
-      },
+      STATS_SPEC,
       this.ctx.timing.historyWriteMs,
       this.ctx.env,
     ).then(
@@ -159,7 +177,28 @@ export class StatsService {
     doc.value.totalMs += ms;
     const prev = doc.value.names[key];
     if (!prev || prev.name !== info.name || prev.cover !== info.cover) doc.value.names[key] = info.cover ? { name: info.name, cover: info.cover } : { name: info.name };
+    this.extendSession(doc, key, ms, this.at(at), info.name);
     doc.changedQuietly();
+  }
+
+  /**
+   * Running record of the longest session: a gap continues the novel's session when it starts at that
+   * session's last save (no gap ≥ 60 s in between, which addReading never sees); otherwise it starts one.
+   */
+  private extendSession(doc: JsonDoc<StatsDoc>, key: string, ms: number, at: number, name: string): void {
+    let s = this.sessions.get(key);
+    if (!s || s.last !== at - ms) {
+      s = { start: at - ms, ms: 0, last: at - ms };
+      this.sessions.set(key, s);
+      if (this.sessions.size > 50) {
+        const oldest = this.sessions.keys().next().value;
+        if (oldest !== undefined && oldest !== key) this.sessions.delete(oldest);
+      }
+    }
+    s.ms += ms;
+    s.last = at;
+    const best = doc.value.longest;
+    if (!best || s.ms > best.ms) doc.value.longest = { ms: s.ms, at: s.start, key, name };
   }
 
   async addChapter(at: number): Promise<void> {
@@ -218,7 +257,9 @@ export class StatsService {
         if (info?.cover) top.cover = info.cover;
         return top;
       });
-    return { days: out, streakDays, totalMs: doc.value.totalMs, topNovels };
+    const stats: ReadingStats = { days: out, streakDays, totalMs: doc.value.totalMs, topNovels };
+    if (doc.value.longest) stats.longestSession = { ...doc.value.longest };
+    return stats;
   }
 
   async flush(): Promise<void> {

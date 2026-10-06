@@ -3,17 +3,19 @@ import { useComputed } from '@preact/signals';
 import { render, type VNode } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { CategoryPickerHost } from './components/category-picker.tsx';
+import { NoticeHost } from './components/notice-banner.tsx';
 import { ToastHost, ErrorState } from './components/feedback.tsx';
 import { Icon } from './components/icon.tsx';
 import { Navigator } from './components/navigator.tsx';
 import { installPressManager } from './lib/gestures.ts';
 import { BrowseScreen } from './screens/browse.tsx';
-import { GenreScreen, LatestScreen } from './screens/genre.tsx';
+import { ForYouScreen, GenreScreen, LatestScreen } from './screens/genre.tsx';
 import { GlobalSearchScreen } from './screens/global-search.tsx';
 import { HistoryScreen } from './screens/history.tsx';
 import { LibraryScreen } from './screens/library.tsx';
 import { DiagnosticsScreen } from './screens/diagnostics.tsx';
 import { HelpScreen } from './screens/help.tsx';
+import { NarrationScreen } from './screens/narration.tsx';
 import { MigrateScreen, MigrateSearchScreen } from './screens/migrate.tsx';
 import { LaunchIntro } from './screens/onboarding.tsx';
 import { ReaderTips } from './screens/reader-tips.tsx';
@@ -21,6 +23,7 @@ import { MoreScreen } from './screens/more.tsx';
 import { NovelScreen } from './screens/novel.tsx';
 import { ReaderScreen } from './screens/reader/reader.tsx';
 import { SettingsScreen } from './screens/settings.tsx';
+import { SourceSettingsScreen } from './screens/source-settings.tsx';
 import { SourceScreen } from './screens/source.tsx';
 import { StatsScreen } from './screens/stats.tsx';
 import { UpdatesScreen } from './screens/updates.tsx';
@@ -92,9 +95,13 @@ function renderRoute(route: Route): VNode {
     case 'globalSearch':
       return <GlobalSearchScreen {...(route.query !== undefined ? { query: route.query } : {})} />;
     case 'genre':
-      return <GenreScreen genre={route.genre} {...(route.pluginId !== undefined ? { pluginId: route.pluginId } : {})} />;
+      return <GenreScreen genre={route.genre} {...(route.pluginId !== undefined ? { pluginId: route.pluginId } : {})} {...(route.also ? { also: route.also } : {})} />;
     case 'latest':
       return <LatestScreen />;
+    case 'forYou':
+      return <ForYouScreen />;
+    case 'sourceSettings':
+      return <SourceSettingsScreen pluginId={route.pluginId} />;
     case 'settings':
       return <SettingsScreen page={route.page} />;
     case 'stats':
@@ -107,6 +114,8 @@ function renderRoute(route: Route): VNode {
       return <DiagnosticsScreen />;
     case 'help':
       return <HelpScreen />;
+    case 'narration':
+      return <NarrationScreen />;
   }
 }
 
@@ -144,6 +153,7 @@ function App() {
     <>
       <Navigator render={renderRoute} />
       <CategoryPickerHost />
+      <NoticeHost />
       <ToastHost />
       <LaunchIntro />
       <ReaderTips />

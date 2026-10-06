@@ -4,22 +4,24 @@
  * in; sources with results bubble up (pinned first); a new query makes older responses stale.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { LibraryEntry, SourceInfo } from '../../shared/contracts/domain.ts';
+import type { LibraryEntry, SourceFailureReason, SourceInfo } from '../../shared/contracts/domain.ts';
 import type { BrowseItem } from '../../shared/contracts/protocol.ts';
-import { bridge, errorText, toUiError, type UiError } from '../bridge/client.ts';
-import { Button, SearchField } from '../components/controls.tsx';
+import { bridge, toUiError, type UiError } from '../bridge/client.ts';
+import { SearchField } from '../components/controls.tsx';
 import { Cover } from '../components/cover.tsx';
-import { EmptyState } from '../components/feedback.tsx';
+import { EmptyState, ErrorState } from '../components/feedback.tsx';
 import { ChapterCountBadge } from '../components/novel-grid.tsx';
 import { Icon } from '../components/icon.tsx';
 import { Screen } from '../components/screen.tsx';
 import { attachLongPress } from '../lib/gestures.ts';
 import { matchesSearch } from '../lib/library-query.ts';
+import { reasonOf } from '../lib/source-failure.ts';
 import { actionSheet, quickAddToLibrary, removeFromLibrary } from '../state/actions.ts';
 import { openNovel, push } from '../state/nav.ts';
 import { library, libraryKeys, patchSettings, settings, sources } from '../state/store.ts';
 import { showToast } from '../state/toast.ts';
-import { browsableSources, SourceIcon } from './browse.tsx';
+import { browsableSources, healthMark, recordSourceHealth, SourceIcon } from './browse.tsx';
+import { itemLabel, offlineEverywhere, SourceErrorRow, useRerunRecovered } from './genre.tsx';
 
 const MAX_IN_FLIGHT = 4;
 
@@ -27,6 +29,10 @@ export interface SourceResult {
   status: 'pending' | 'loading' | 'ok' | 'error';
   items: BrowseItem[];
   error?: UiError;
+  /** Why the site failed, when the script could tell (plain wording in lib/source-failure.ts). */
+  reason?: SourceFailureReason;
+  /** Source-health mark when it failed: a success recorded after it means it's worth another try. */
+  failMark?: number;
 }
 
 /** Order: sources with results first, then still searching, then errors, then empty; pinned first within each. */
@@ -66,22 +72,36 @@ function Carousel({ items }: { items: readonly CarouselItem[] }) {
     if (!el) return;
     return attachLongPress(el, '[data-key]', (t) => itemsRef.current.find((i) => i.key === t.dataset['key'])?.onLongPress?.());
   }, []);
+  // Titles on the cover only in the library's Compact display (else under it), like the library.
+  const compact = settings.value.library.display === 'compact';
   return (
     <div class="gs-row hscroll" ref={row}>
       {items.map((it) => (
-        <button type="button" class={`gs-item tap tap-scale${it.inLibrary ? ' is-in-library' : ''}`} key={it.key} data-key={it.key} onClick={it.onOpen}>
+        <button
+          type="button"
+          class={`gs-item tap tap-scale${it.inLibrary ? ' is-in-library' : ''}`}
+          key={it.key}
+          data-key={it.key}
+          onClick={it.onOpen}
+          aria-label={itemLabel(it.name, { inLibrary: it.inLibrary, chapters: it.chapterCount })}
+        >
           <span class="grid-cover-wrap">
             <Cover src={it.cover} pluginId={it.pluginId} title={it.name} />
-            <span class="grid-compact-title">
+            {compact ? (
+              <span class="grid-compact-title">
+                <ChapterCountBadge count={it.chapterCount} />
+                <span class="clamp-2">{it.name}</span>
+              </span>
+            ) : (
               <ChapterCountBadge count={it.chapterCount} />
-              <span class="clamp-2">{it.name}</span>
-            </span>
+            )}
             {it.inLibrary && (
               <span class="badges">
                 <span class="badge badge-library">In library</span>
               </span>
             )}
           </span>
+          {!compact && <span class="gs-name clamp-2">{it.name}</span>}
         </button>
       ))}
     </div>
@@ -159,11 +179,17 @@ export function GlobalSearchScreen(props: { query?: string }) {
     update(g, id, { status: 'loading', items: [] });
     try {
       const page = await bridge().call('browse.search', { pluginId: id, query: q, page: 1 }, { timeoutMs: 45_000 });
+      recordSourceHealth(id);
       update(g, id, { status: 'ok', items: page.items });
     } catch (err) {
-      update(g, id, { status: 'error', items: [], error: toUiError(err) });
+      const e = toUiError(err);
+      recordSourceHealth(id, e);
+      const reason = reasonOf(err) ?? reasonOf(e);
+      update(g, id, { status: 'error', items: [], error: e, failMark: healthMark(), ...(reason ? { reason } : {}) });
     }
   }
+  // Back from verifying a site elsewhere (the source screen, say): search that source again.
+  useRerunRecovered(results, (id) => void searchOne(generation.current, id, query));
 
   async function run(q: string): Promise<void> {
     const g = ++generation.current;
@@ -198,6 +224,22 @@ export function GlobalSearchScreen(props: { query?: string }) {
   const libMatches = useMemo<LibraryEntry[]>(() => (query ? library.value.filter((e) => matchesSearch(e, query)).slice(0, 20) : []), [query, library.value]);
   const ordered = orderSources(enabled, results);
   const done = [...results.values()].filter((r) => r.status === 'ok' || r.status === 'error').length;
+  // Sources that found nothing fold into one line of chips at the end; the rest keep their rows.
+  const nothing = ordered.filter((s) => {
+    const r = results.get(s.id);
+    return r?.status === 'ok' && r.items.length === 0;
+  });
+  const rows = ordered.filter((s) => !nothing.includes(s));
+  const finished = results.size > 0 && done === results.size;
+  /** Offline: one state for every source (your library still answers). */
+  const offline = finished ? offlineEverywhere(results.values()) : null;
+  /** Nothing anywhere that answered: say so plainly, above the "No results on" chips (and any failures). */
+  const noResults = finished && !offline && libMatches.length === 0 && nothing.length > 0 && [...results.values()].every((r) => r.items.length === 0);
+  const someFailed = [...results.values()].some((r) => r.status === 'error');
+  const waiting = ordered.filter((s) => {
+    const st = results.get(s.id)?.status;
+    return st === 'pending' || st === 'loading';
+  });
 
   return (
     <Screen
@@ -219,9 +261,21 @@ export function GlobalSearchScreen(props: { query?: string }) {
             testId="global-search-field"
           />
           {query && !showRecents && results.size > 0 && (
-            <p class="gs-progress tabular" aria-live="polite" data-testid="gs-progress">
-              {done < results.size ? `Searching ${results.size} sources · ${done} done` : `Searched ${results.size} sources`}
-            </p>
+            <div class="gs-progress-wrap">
+              <p class="gs-progress tabular" aria-live="polite" data-testid="gs-progress">
+                {done < results.size ? `Searching ${results.size} sources · ${done} done` : `Searched ${results.size} sources`}
+              </p>
+              {done < results.size && (
+                <>
+                  <span class="gs-progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={results.size} aria-valuenow={done}>
+                    <span style={{ transform: `scaleX(${results.size > 0 ? done / results.size : 0})` }} />
+                  </span>
+                  <p class="gs-waiting ellipsis" data-testid="gs-waiting">
+                    Waiting for {waiting.map((s) => s.name).join(', ')}
+                  </p>
+                </>
+              )}
+            </div>
           )}
         </div>
       }
@@ -242,30 +296,49 @@ export function GlobalSearchScreen(props: { query?: string }) {
 
       {query && !showRecents && libMatches.length > 0 && (
         <section class="gs-section" data-testid="gs-library">
-          <div class="gs-header">
+          <h3 class="gs-header gs-h" aria-label={`In your library, ${libMatches.length}`}>
             <span class="gs-lib-icon">
               <Icon name="books.vertical.fill" size={15} />
             </span>
             <span class="gs-title">In your library</span>
             <span class="gs-count">{libMatches.length}</span>
-          </div>
+          </h3>
           <Carousel items={libMatches.map((e) => ({ key: e.key, pluginId: e.pluginId, name: e.name, cover: e.cover, inLibrary: false, onOpen: () => openNovel(e) }))} />
         </section>
       )}
 
+      {query && !showRecents && offline && <ErrorState error={offline} onRetry={() => void run(query)} compact={libMatches.length > 0} />}
+      {query && !showRecents && noResults && (
+        <EmptyState
+          icon="magnifyingglass"
+          title="No Results"
+          message={`Nothing for “${query}” in your library or ${someFailed ? 'the sources that answered' : 'your sources'}. Try fewer words, or another spelling.`}
+          testId="gs-empty"
+        />
+      )}
+
       {query &&
         !showRecents &&
-        ordered.map((s) => {
+        !offline &&
+        rows.map((s) => {
           const r = results.get(s.id);
           if (!r) return null;
           return (
             <section class="gs-section" key={s.id} data-testid={`gs-${s.id}`} data-status={r.status}>
-              <button type="button" class="gs-header tap tap-dim" onClick={() => push({ name: 'source', pluginId: s.id, query })}>
-                <SourceIcon source={s} size={26} />
-                <span class="gs-title">{s.name}</span>
-                {r.status === 'ok' && <span class="gs-count">{r.items.length}</span>}
-                <Icon name="chevron.right" size={13} class="row-chevron" />
-              </button>
+              {/* A heading per source, so VoiceOver's rotor jumps between them. */}
+              <h3 class="gs-h">
+                <button
+                  type="button"
+                  class="gs-header tap tap-dim"
+                  onClick={() => push({ name: 'source', pluginId: s.id, query })}
+                  aria-label={`${s.name}${r.status === 'ok' ? `, ${r.items.length} ${r.items.length === 1 ? 'result' : 'results'}` : ''}, see all`}
+                >
+                  <SourceIcon source={s} size={26} />
+                  <span class="gs-title">{s.name}</span>
+                  {r.status === 'ok' && <span class="gs-count">{r.items.length}</span>}
+                  <Icon name="chevron.right" size={13} class="row-chevron" />
+                </button>
+              </h3>
               {r.status === 'pending' || r.status === 'loading' ? (
                 <div class="gs-row hscroll" aria-busy="true">
                   {Array.from({ length: 4 }, (_, i) => (
@@ -275,12 +348,7 @@ export function GlobalSearchScreen(props: { query?: string }) {
                   ))}
                 </div>
               ) : r.status === 'error' && r.error ? (
-                <div class="gs-message is-error">
-                  <span>{errorText(r.error)}</span>
-                  <Button variant="tinted" size="small" onClick={() => void searchOne(generation.current, s.id, query)}>
-                    Retry
-                  </Button>
-                </div>
+                <SourceErrorRow source={s} error={r.error} reason={r.reason} onRetry={() => void searchOne(generation.current, s.id, query)} />
               ) : r.items.length === 0 ? (
                 <p class="gs-message">No results</p>
               ) : (
@@ -300,6 +368,19 @@ export function GlobalSearchScreen(props: { query?: string }) {
             </section>
           );
         })}
+      {query && !showRecents && nothing.length > 0 && (
+        <section class="gs-nothing" data-testid="gs-no-results">
+          <p class="gs-nothing-label">No results on</p>
+          <div class="gs-nothing-chips">
+            {nothing.map((s) => (
+              <button type="button" class="chip gs-nothing-chip tap tap-dim" key={s.id} onClick={() => push({ name: 'source', pluginId: s.id, query })} data-testid={`gs-none-${s.id}`}>
+                <SourceIcon source={s} size={18} />
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {query && !showRecents && enabled.length === 0 && <EmptyState icon="puzzlepiece.extension" title="No Sources" message="Enable or install a source to search it." />}
     </Screen>
   );

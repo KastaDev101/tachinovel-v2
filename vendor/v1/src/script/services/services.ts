@@ -29,6 +29,12 @@ import { SETTINGS_SPEC } from './settings.ts';
 import { type LoadPluginHost, SourceService } from './sources.ts';
 import { MigrateService } from './migrate.ts';
 import { StatsService } from './stats.ts';
+import { ICloudState } from './icloud-state.ts';
+import { ImageCache } from './images.ts';
+import { StorageAlarm } from './storage-alarm.ts';
+import { LibraryExport } from './library-export.ts';
+import { type LogLimiter, createLogLimiter } from '../lib/log-limit.ts';
+import { NarrationService } from './narration.ts';
 import { SymbolService } from './symbols.ts';
 import { UpdatesService } from './updates.ts';
 
@@ -70,6 +76,15 @@ export interface Services {
   autoDownload: AutoDownloadService;
   stats: StatsService;
   migrate: MigrateService;
+  narration: NarrationService;
+  images: ImageCache;
+  /** Repeated info/warn lines are rate-limited; flush() writes what was suppressed (session end). */
+  logLimiter: LogLimiter;
+  /** Boot documents not backed by iCloud this session (iCloud didn't deliver them in time). */
+  icloud: ICloudState;
+  libraryExport: LibraryExport;
+  /** Tells the user (once per session) when saving fails, e.g. the iPhone is out of storage. */
+  storageAlarm: StorageAlarm;
 }
 
 /** Persist every pending debounced write (docs, progress, LRU indexes, manifests, plugin storage). */
@@ -87,6 +102,8 @@ export async function flushServices(s: Services): Promise<void> {
     ['downloads', () => s.downloads.flushAll()],
     ['symbols', () => s.symbols.flush()],
     ['stats', () => s.stats.flush()],
+    ['narration', () => s.narration.flush()],
+    ['update checks', () => s.novels.flush()],
   ];
   const results = await Promise.allSettled(tasks.map(([, fn]) => fn()));
   results.forEach((r, i) => {
@@ -118,16 +135,30 @@ export function lazyPluginHost(platform: Platform): LoadPluginHost {
   };
 }
 
+/**
+ * The platform as services see it: the same object (prototype-linked, so every property and getter is
+ * the original's) with a rate-limited `log` (lib/log-limit.ts).
+ */
+function withLogLimit(base: Platform): { platform: Platform; limiter: LogLimiter } {
+  const limiter = createLogLimiter((level, message, data) => base.log(level, message, data), { now: () => base.now() });
+  const platform = Object.create(base) as Platform;
+  platform.log = limiter.log;
+  return { platform, limiter };
+}
+
 export async function createServices(opts: ServicesOptions): Promise<Services> {
-  const { platform } = opts;
+  const { platform, limiter } = withLogLimit(opts.platform);
   const timing: Timing = { ...DEFAULT_TIMING, ...opts.timing };
+  const storageAlarm = new StorageAlarm();
   const env: DocEnv = {
     sleep: (ms) => platform.sleep(ms),
     now: () => platform.now(),
     log: (level, message, data) => platform.log(level, message, data),
+    writeFailed: (_path, err) => storageAlarm.stateWriteFailed(err),
   };
-  const settingsDoc = await JsonDoc.load(platform.synced, SETTINGS_SPEC, timing.settingsWriteMs, env);
+  const settingsDoc = await JsonDoc.load(platform.synced, SETTINGS_SPEC, timing.settingsWriteMs, env, { mirror: platform.local });
   const ctx: Ctx = { platform, env, timing, events: new EventHub(opts.keepRecentEvents ?? 0), settings: () => settingsDoc.value };
+  storageAlarm.attach(ctx.events);
   const net = createNet(platform, opts.net);
   const covers = new CoverCache(ctx, net.lane('cover'));
   const kv = new PluginKvStore(ctx);
@@ -143,9 +174,14 @@ export async function createServices(opts: ServicesOptions): Promise<Services> {
   const progress = new ProgressService(ctx);
   const updates = new UpdatesService(ctx);
   const store = new NovelStore(ctx);
+  // Settings change what a source's pages contain: forget its cached novel pages.
+  sources.onSettingsChanged = (id) => {
+    store.forgetSource(id);
+  };
   const downloads = new DownloadService(ctx, library, store);
+  downloads.storageAlarm = storageAlarm;
   const chapters = new ChapterService(ctx, sources, store, progress, downloads);
-  const novels = new NovelService(ctx, { sources, store, library, progress, updates, covers, downloads });
+  const novels = new NovelService(ctx, { sources, store, library, progress, updates, covers, downloads, history });
   const reading = new ReadingService(ctx, { progress, history, library, updates, novels: store, downloads, chapters });
   const browse = new BrowseService(sources, library, store);
   // Chapter lists for lock checks when a chapter's novel isn't known yet (kept for the session).
@@ -178,6 +214,12 @@ export async function createServices(opts: ServicesOptions): Promise<Services> {
     backup: undefined as unknown as BackupService, // set right below (it needs the services object)
     autoDownload: new AutoDownloadService(ctx, { history, progress, downloads, chapters }),
     stats: new StatsService(ctx),
+    narration: new NarrationService(ctx),
+    images: new ImageCache(ctx, net.lane('cover'), chapters.cache),
+    logLimiter: limiter,
+    storageAlarm,
+    libraryExport: new LibraryExport(ctx, { library, sources }),
+    icloud: new ICloudState(ctx, [settingsDoc, library.syncDoc, history.syncDoc, sources.syncDoc]),
     migrate: undefined as unknown as MigrateService, // needs `stats`: set right below
   };
   services.migrate = new MigrateService(ctx, { novels, store, chapters, library, progress, history, stats: services.stats });
@@ -198,5 +240,7 @@ export async function createServices(opts: ServicesOptions): Promise<Services> {
     flush: () => flushServices(services),
     settingsChanged: () => applySettingsEffects(services),
   });
+  // iCloud delivered the real settings after a session started on defaults: apply their side effects.
+  settingsDoc.onReloaded = () => applySettingsEffects(services);
   return services;
 }

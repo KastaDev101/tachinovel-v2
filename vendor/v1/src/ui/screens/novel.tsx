@@ -3,18 +3,19 @@
  * actions, sticky Start/Resume, and a virtualized chapter list (read dimming, locks, bookmarks,
  * sort, filters, jump, long-press range select → mark read/unread, bookmark, download).
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChapterView, NovelDetails, NovelStatus, NovelSummary } from '../../shared/contracts/domain.ts';
 import { bridge, errorText, toUiError } from '../bridge/client.ts';
 import { BarButton, Button, CheckRow, Section } from '../components/controls.tsx';
 import { Cover, CoverBackdrop } from '../components/cover.tsx';
-import { ErrorState, SkeletonLine, SkeletonRows } from '../components/feedback.tsx';
+import { ErrorState, SkeletonLine, SkeletonRows, solveChallengeThen } from '../components/feedback.tsx';
 import { useAsync, useNow } from '../components/hooks.ts';
 import { Icon } from '../components/icon.tsx';
 import { useOnReveal } from '../components/navigator.tsx';
 import { Screen } from '../components/screen.tsx';
 import { Sheet } from '../components/sheet.tsx';
 import { VirtualList, type VirtualListHandle } from '../components/virtual-list.tsx';
+import { volumeAt, volumeLayout } from '../lib/volumes.ts';
 import { chapterOrder, findChapter, hasChapterFilter, nextToRead, NO_CHAPTER_FILTER, rangeBetween, type ChapterFilter } from '../lib/chapters.ts';
 import { displayUrl, formatCount, percentLabel, plural, readingTime, releaseLabel } from '../lib/format.ts';
 import { attachLongPress, haptic } from '../lib/gestures.ts';
@@ -22,10 +23,14 @@ import { primeKeyboard } from '../lib/keyboard.ts';
 import { actionSheet, changeCategories, openInSafari, quickAddToLibrary, removeFromLibrary, share } from '../state/actions.ts';
 import { openReader, push } from '../state/nav.ts';
 import { getNovelPage, putNovelPage } from '../state/novel-cache.ts';
+import { NarrationCard } from './narration-card.tsx';
 import { libraryKeys, progressVersion, recent, reloadLibrary, settings, sourceById } from '../state/store.ts';
 import { errorToast, showToast } from '../state/toast.ts';
 
 const ROW_H = 60;
+const NO_CHAPTERS: ChapterView[] = [];
+/** Slim volume header rows ("Book One") in the chapter list. */
+const VOL_H = 30;
 
 const STATUS_LABEL: Record<NovelStatus, string> = {
   ongoing: 'Ongoing',
@@ -43,7 +48,8 @@ interface Selection {
 export function NovelScreen(props: { pluginId: string; path: string; preview?: NovelSummary }) {
   const key = `${props.pluginId}:${props.path}`;
   const data = useAsync(() => bridge().call('novel.get', { pluginId: props.pluginId, path: props.path }, { timeoutMs: 60_000 }), []);
-  const [chapters, setChapters] = useState<ChapterView[]>([]);
+  /** Local edits (read marks, bookmarks) on top of the loaded list; reset whenever a new list loads. */
+  const [edited, setEdited] = useState<{ base: ChapterView[]; list: ChapterView[] } | null>(null);
   const [desc, setDesc] = useState(false);
   const [filter, setFilter] = useState<ChapterFilter>(NO_CHAPTER_FILTER);
   const [expanded, setExpanded] = useState(false);
@@ -58,10 +64,18 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
   const inLib = libraryKeys.value.has(key);
   const source = sourceById(props.pluginId);
 
-  // Layout effect so the chapter list renders in the same frame the data arrives.
-  useLayoutEffect(() => {
-    if (data.data) setChapters(data.data.chapters);
-  }, [data.data]);
+  // The list renders in the same pass the data arrives (no extra render to copy it into state).
+  const loaded = data.data?.chapters;
+  const chapters: ChapterView[] = (edited && edited.base === loaded ? edited.list : loaded) ?? NO_CHAPTERS;
+  const loadedRef = useRef(loaded);
+  loadedRef.current = loaded;
+  const setChapters = (fn: (cs: ChapterView[]) => ChapterView[]): void => {
+    setEdited((e) => {
+      const base = loadedRef.current ?? NO_CHAPTERS;
+      const current = e && e.base === base ? e.list : base;
+      return { base, list: fn(current) };
+    });
+  };
 
   // Shared with the reader (no second novel.get there), including local changes made here.
   useEffect(() => {
@@ -81,6 +95,16 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
   );
 
   const order = useMemo(() => chapterOrder(chapters, filter, desc), [chapters, filter, desc]);
+  // Volume headers wherever the volume changes (only for novels whose chapters have volumes).
+  const layout = useMemo(() => volumeLayout(order.map((i) => chapters[i]?.volume), ROW_H, VOL_H), [order, chapters]);
+  const [topVolume, setTopVolume] = useState<string | null>(null);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  /** The bar's height: the sticky volume header sits right under it. */
+  const barInset = useMemo(() => {
+    const cs = getComputedStyle(document.documentElement);
+    return (parseFloat(cs.getPropertyValue('--nav-h')) || 44) + (parseFloat(cs.getPropertyValue('--safe-top')) || 0);
+  }, []);
   const orderRef = useRef(order);
   orderRef.current = order;
   const selectionRef = useRef(selection);
@@ -231,7 +255,7 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
       { title: 'Mark All as Read' },
       { title: 'Open in Safari' },
       { title: 'Share' },
-      ...(inLib ? [{ title: 'Set Categories' }] : []),
+      ...(inLib ? [{ title: 'Set Categories' }, { title: 'Migrate' }] : []),
     ];
     const i = await actionSheet({ title: details.name, actions });
     const choice = actions[i]?.title;
@@ -240,6 +264,7 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
     else if (choice === 'Open in Safari') openInSafari(details.url);
     else if (choice === 'Share') share(details.name, details.url);
     else if (choice === 'Set Categories') void changeCategories([key]);
+    else if (choice === 'Migrate') push({ name: 'migrateSearch', pluginId: props.pluginId, path: props.path });
   }
 
   function jumpTo(query: string): void {
@@ -248,14 +273,20 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
       showToast(`No chapter matches “${query}”`);
       return;
     }
+    setJumpOpen(false);
+    showChapter(idx);
+  }
+
+  /** Scrolls the list to chapter `idx` (clearing filters that hide it) and flashes its row. */
+  function showChapter(idx: number): void {
     let pos = order.indexOf(idx);
     if (pos < 0) {
       setFilter(NO_CHAPTER_FILTER);
       pos = chapterOrder(chapters, NO_CHAPTER_FILTER, desc).indexOf(idx);
     }
-    setJumpOpen(false);
     setFlash(idx);
-    window.setTimeout(() => listHandle.current?.scrollToIndex(pos, { align: 'center' }), 30);
+    // After the (possibly unfiltered) list has rendered: map the position through its volume headers.
+    window.setTimeout(() => listHandle.current?.scrollToIndex(layoutRef.current.rowOfPos[pos] ?? pos, { align: 'center' }), 30);
     window.setTimeout(() => setFlash(-1), 1600);
   }
 
@@ -266,9 +297,12 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
 
   const hasRating = details.rating !== undefined && details.rating > 0;
   const readingMs = useReadingMs(props.pluginId, props.path, reveals);
+  const readCount = useMemo(() => chapters.reduce((n, c) => n + (c.read ? 1 : 0), 0), [chapters]);
   const stats = [
     ...(hasRating ? [String(Number((details.rating ?? 0).toFixed(2)))] : []),
     ...(page ? [`${formatCount(chapters.length)} ${chapters.length === 1 ? 'chapter' : 'chapters'}`] : []),
+    // How far into the novel (once started; "99%" until every chapter is read).
+    ...(page && readCount > 0 ? [readCount === chapters.length ? 'All read' : `${Math.min(99, Math.floor((readCount / chapters.length) * 100))}% read`] : []),
   ];
 
   const header = (
@@ -330,6 +364,7 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
           <span>Share</span>
         </button>
       </div>
+      <NarrationCard pluginId={details.pluginId} path={details.path} name={details.name} />
       {loading ? (
         <div class="novel-summary">
           <SkeletonLine width="100%" height={12} />
@@ -388,6 +423,16 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
             data-testid="jump">
             <Icon name="number" size={19} />
           </button>
+          <button
+            type="button"
+            class="tool-btn tap tap-dim"
+            aria-label="Show the chapter you're on"
+            onClick={() => showChapter(resumeIndex)}
+            disabled={!page || resumeIndex < 0}
+            data-testid="chapter-locate"
+          >
+            <Icon name="scope" size={19} />
+          </button>
           <button type="button" class={`tool-btn tap tap-dim${hasChapterFilter(filter) ? ' is-on' : ''}`} aria-label="Filter chapters" onClick={() => setFilterOpen(true)} disabled={!page} data-testid="chapter-filter">
             <Icon name={hasChapterFilter(filter) ? 'line.3.horizontal.decrease.circle' : 'line.3.horizontal.decrease'} size={20} />
           </button>
@@ -408,19 +453,39 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
 
   let list;
   if (loading) list = <SkeletonRows count={10} height={ROW_H} />;
-  else if (data.status === 'error' && data.error && !page) list = <ErrorState error={data.error} onRetry={() => void data.reload()} compact />;
+  else if (data.status === 'error' && data.error && !page)
+    list = <ErrorState error={data.error} onRetry={() => void data.reload()} onSolve={solveChallengeThen(props.pluginId, () => void data.reload())} compact />;
   else if (order.length === 0) list = <p class="list-footnote">{chapters.length === 0 ? 'No chapters yet.' : 'No chapters match the filters.'}</p>;
   else
     list = (
       <div class="chapter-list">
+        {layout.offsets && topVolume && (
+          <div class="vol-header vol-sticky" aria-hidden="true" data-testid="volume-sticky">
+            {topVolume}
+          </div>
+        )}
         <VirtualList
-          count={order.length}
+          count={layout.rows.length}
           rowHeight={ROW_H}
+          offsets={layout.offsets}
+          onTopRow={layout.offsets ? (i) => setTopVolume(volumeAt(layout.rows, i)) : undefined}
+          topInset={barInset}
           handle={listHandle}
           testId="chapter-list"
-          rowKey={(i) => order[i] ?? i}
+          rowKey={(i) => {
+            const row = layout.rows[i];
+            return row?.kind === 'volume' ? `v${i}:${row.name}` : (order[row?.pos ?? i] ?? i);
+          }}
           renderRow={(i) => {
-            const idx = order[i] ?? 0;
+            const row = layout.rows[i];
+            if (row?.kind === 'volume') {
+              return (
+                <div class="vol-header" role="heading" aria-level={3} data-testid="volume-header">
+                  {row.name}
+                </div>
+              );
+            }
+            const idx = order[row?.pos ?? i] ?? 0;
             const c = chapters[idx];
             if (!c) return null;
             const sel = selection?.set.has(idx) ?? false;
@@ -429,7 +494,8 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
             return (
               <button
                 type="button"
-                class={`chapter-row tap tap-row${c.read ? ' is-read' : ''}${sel ? ' is-selected' : ''}${c.locked ? ' is-locked' : ''}${flash === idx ? ' is-flash' : ''}`}
+                class={`chapter-row tap tap-row${c.read ? ' is-read' : ''}${sel ? ' is-selected' : ''}${c.locked ? ' is-locked' : ''}${flash === idx ? ' is-flash' : ''}${started && idx === resumeIndex ? ' is-current' : ''}`}
+                aria-current={started && idx === resumeIndex ? 'step' : undefined}
                 data-index={idx}
                 data-testid="chapter-row"
                 onClick={() => (selecting ? toggleSelect(idx) : openChapter(idx))}
@@ -479,7 +545,7 @@ export function NovelScreen(props: { pluginId: string; path: string; preview?: N
     <Screen
       title={selecting ? `${selectedList.length} Selected` : details.name}
       back={selecting ? false : true}
-      transparentUntil={selecting ? 0 : 150}
+      {...(selecting ? {} : { transparentUntil: 150 })} // selecting: an opaque bar, so "N Selected" shows
       class="novel-screen"
       testId="screen-novel"
       left={

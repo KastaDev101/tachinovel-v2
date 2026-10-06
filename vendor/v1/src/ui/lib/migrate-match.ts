@@ -137,3 +137,65 @@ export function batchStatus(c: BatchCounts, target: string): string {
   const base = `${formatCount(c.found)} of ${formatCount(c.total)} found on ${target}`;
   return c.failed > 0 ? `${base} · ${formatCount(c.failed)} couldn’t be searched` : base;
 }
+
+// ---------- match confidence ----------
+
+/** Comparable author: no "by"/"Author:" prefix, accents, punctuation or case. */
+export function normalizeAuthor(s: string): string {
+  return s
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/^\s*(?:by|author\s*:)\s*/, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Same author, or null when either side doesn't say (sites often leave it out). */
+export function sameAuthor(a: string | undefined, b: string | undefined): boolean | null {
+  const x = a ? normalizeAuthor(a) : '';
+  const y = b ? normalizeAuthor(b) : '';
+  if (!x || !y) return null;
+  return x === y || (Math.min(x.length, y.length) >= 5 && (x.includes(y) || y.includes(x)));
+}
+
+/** Chapter counts close enough for the same novel on another site (mirrors lag or skip a few). */
+export function similarLength(a: number, b: number): boolean {
+  return Math.abs(a - b) <= Math.max(5, 0.1 * Math.max(a, b));
+}
+
+export interface MatchSignal {
+  ok: boolean;
+  text: string;
+}
+
+export interface MatchConfidence {
+  /** high: everything known agrees; medium: one thing is off; low: more than one. */
+  level: 'high' | 'medium' | 'low';
+  signals: MatchSignal[];
+}
+
+/** How sure we are the result is the same novel: title, author and length, as far as they're known. */
+export function matchConfidence(i: { titleScore: number; fromAuthor?: string; toAuthor?: string; fromChapters?: number; toChapters?: number }): MatchConfidence {
+  const signals: MatchSignal[] = [];
+  signals.push(i.titleScore >= 1 ? { ok: true, text: 'Same title' } : i.titleScore >= STRONG_MATCH ? { ok: true, text: 'Very similar title' } : { ok: false, text: 'Different title' });
+  const author = sameAuthor(i.fromAuthor, i.toAuthor);
+  if (author === true) signals.push({ ok: true, text: `Same author (${i.toAuthor?.trim() ?? ''})` });
+  else if (author === false) signals.push({ ok: false, text: `Different author: ${i.toAuthor?.trim() ?? ''}` });
+  if (i.fromChapters !== undefined && i.toChapters !== undefined && i.fromChapters > 0 && i.toChapters > 0) {
+    const counts = `${formatCount(i.fromChapters)} vs ${formatCount(i.toChapters)} chapters`;
+    signals.push(similarLength(i.fromChapters, i.toChapters) ? { ok: true, text: `Similar length (${counts})` } : { ok: false, text: `Different length (${counts})` });
+  }
+  const off = signals.filter((s) => !s.ok).length;
+  return { level: off === 0 ? 'high' : off === 1 ? 'medium' : 'low', signals };
+}
+
+/**
+ * Read marks after migrating, by chapter number: "All 1,250 read chapters keep their read marks", or
+ * "1,247 of 1,250 read chapters keep their read marks". Null when the old entry has nothing read.
+ */
+export function readMarksLine(carried: number, read: number): string | null {
+  if (read <= 0) return null;
+  const n = Math.min(carried, read);
+  if (n === read) return read === 1 ? 'The read chapter keeps its read mark' : `All ${formatCount(read)} read chapters keep their read marks`;
+  return `${formatCount(n)} of ${formatCount(read)} read chapters keep their read marks`;
+}

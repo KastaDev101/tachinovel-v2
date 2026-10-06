@@ -6,8 +6,9 @@
  *       sort: (none = latest) | popular_month | popular_year | title | title_desc
  *   GET /api/series/by-slug/{slug}                                   → series details
  *   GET /api/series/by-slug/{slug}/chapters                          → { chapters } (unpaginated, ascending)
- *   GET /api/series/by-slug/{slug}/chapters/{chapterNumber}/novel-content → { contentHtml, noteBeforeHtml, … }
- *       (402 for paywalled chapters)
+ *   GET /api/series/by-slug/{slug}/chapters/{chapterNumber}/novel-content → { contentHtml, noteBeforeHtml,
+ *       noteAfterHtml, illustrations: [{ pageId, pageNumber, imageUrl }], renderMode, … }
+ *       (402 { paywalled } for paid chapters, 401/403 for account-only ones)
  * Access rules: only free, logged-out content. Never calls unlock/purchase/login/view-tracking
  * endpoints and never requests the content of a chapter it has seen marked as locked.
  *
@@ -128,9 +129,21 @@ interface ApiChapter {
   status?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
+  /** Scheduled release (seen 2026-10-06, always null so far). */
+  availableAt?: string | null;
   accessMode?: string | null;
+  coinPrice?: number | null;
+  price?: number | null;
   locked?: boolean | null;
   isFreeNow?: boolean | null;
+  freeAt?: string | null;
+  freeAfterChaptersRemaining?: number | null;
+}
+
+interface ApiIllustration {
+  pageId?: string | number | null;
+  pageNumber?: number | null;
+  imageUrl?: string | null;
 }
 
 interface ApiContent {
@@ -138,6 +151,8 @@ interface ApiContent {
   noteBeforeHtml?: string | null;
   noteAfterHtml?: string | null;
   isFreeNow?: boolean | null;
+  /** Chapter illustrations, which the site shows under the text (seen 2026-10-06). */
+  illustrations?: ApiIllustration[] | null;
 }
 
 class HttpStatusError extends Error {
@@ -209,13 +224,39 @@ function genreLabel(slug: string): string {
   return GENRES[slug] ?? slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function positive(n: unknown): boolean {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
+function inFuture(iso: string | null | undefined, now: number): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && t > now;
+}
+
 /** Locked unless the API says it is free to read right now, logged out. Errs on the side of locked. */
-function isChapterLocked(c: ApiChapter): boolean {
+function isChapterLocked(c: ApiChapter, now: number): boolean {
   if (c.locked === true) return true;
   if (c.status && c.status !== 'published') return true;
-  if (c.accessMode && c.accessMode !== 'free' && c.isFreeNow !== true) return true;
   if (c.isFreeNow === false) return true;
-  return false;
+  if (inFuture(c.availableAt, now)) return true;
+  if (c.isFreeNow === true) return false;
+  // Not said to be free now: a paid access mode, any price or a wait means locked.
+  if (c.accessMode && c.accessMode !== 'free') return true;
+  return positive(c.coinPrice) || positive(c.price) || positive(c.freeAfterChaptersRemaining) || inFuture(c.freeAt, now);
+}
+
+/** The site's illustration block (shown under the text), with absolute image URLs. */
+function illustrationsHtml(list: ApiIllustration[] | null | undefined): string {
+  if (!Array.isArray(list)) return '';
+  const imgs = list
+    .filter((x) => isObject(x) && typeof x.imageUrl === 'string' && x.imageUrl !== '')
+    .sort((a, b) => (a.pageNumber ?? 0) - (b.pageNumber ?? 0))
+    .map((x, i) => {
+      const src = (absolute(x.imageUrl) ?? '').replace(/"/g, '&quot;');
+      return `<img src="${src}" alt="Illustration ${typeof x.pageNumber === 'number' ? x.pageNumber : i + 1}">`;
+    });
+  return imgs.length ? `<div class="chapter-illustrations">\n${imgs.join('\n')}\n</div>` : '';
 }
 
 function splitChapterPath(path: string): { slug: string; number: string } {
@@ -229,7 +270,7 @@ function splitChapterPath(path: string): { slug: string; number: string } {
 class StonescapePlugin implements Plugin.PluginBase {
   id = 'stonescape';
   name = 'Stonescape';
-  version = '1.0.0';
+  version = '1.0.1';
   site = SITE;
   icon = 'https://stonescape.xyz/logo.png';
   filters = filters;
@@ -285,11 +326,12 @@ class StonescapePlugin implements Plugin.PluginBase {
     const raw = isObject(chaptersJson) && Array.isArray(chaptersJson.chapters) ? chaptersJson.chapters.filter(isChapter) : [];
     // Trim to what we keep right away (lists can be thousands of rows).
     const locked = new Set<string>();
+    const now = Date.now();
     const chapters: Plugin.ChapterItem[] = raw
       .map((c, i) => ({ c, i, n: parseFloat(c.chapterNumber) }))
       .sort((a, b) => (Number.isFinite(a.n) && Number.isFinite(b.n) && a.n !== b.n ? a.n - b.n : a.i - b.i))
       .map(({ c, n }) => {
-        const isLocked = isChapterLocked(c);
+        const isLocked = isChapterLocked(c, now);
         if (isLocked) locked.add(c.chapterNumber);
         const title = (c.title ?? '').trim();
         const item: Plugin.ChapterItem = {
@@ -324,7 +366,10 @@ class StonescapePlugin implements Plugin.PluginBase {
     if (this.lockedChapters.get(slug)?.has(number)) throw new LockedChapterError(chapterPath);
     const url = `${API}/series/by-slug/${encodeURIComponent(slug)}/chapters/${encodeURIComponent(number)}/novel-content`;
     const res = await fetchApi(url, { headers: { Accept: 'application/json' } });
-    if (res.status === 402) throw new LockedChapterError(chapterPath);
+    // 402: paid; 401, or a JSON 403 from the API: needs an account. Neither is readable logged out.
+    if (res.status === 402 || res.status === 401 || (res.status === 403 && /json/i.test(res.headers.get('content-type') ?? ''))) {
+      throw new LockedChapterError(chapterPath);
+    }
     if (!res.ok) throw new HttpStatusError(res.status, url);
     const json = await res.json();
     const data: ApiContent = isObject(json) ? json : {};
@@ -337,6 +382,8 @@ class StonescapePlugin implements Plugin.PluginBase {
     if (data.noteBeforeHtml?.trim()) parts.push(`<div class="author-note-before">${data.noteBeforeHtml}</div>`, '<hr>');
     parts.push(body);
     if (data.noteAfterHtml?.trim()) parts.push('<hr>', `<div class="author-note-after">${data.noteAfterHtml}</div>`);
+    const illustrations = illustrationsHtml(data.illustrations);
+    if (illustrations) parts.push(illustrations);
     return parts.join('\n');
   }
 

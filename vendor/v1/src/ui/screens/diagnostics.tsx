@@ -4,12 +4,12 @@
  * Diagnostics", which hands the plain-text report to the native share sheet.
  */
 import { useEffect } from 'preact/hooks';
-import { bridge, errorText, toUiError } from '../bridge/client.ts';
-import { Row, Section } from '../components/controls.tsx';
+import { bridge, errorText, toUiError, type UiError } from '../bridge/client.ts';
+import { Button, Row, Section } from '../components/controls.tsx';
 import { SkeletonRows } from '../components/feedback.tsx';
 import { useAsync } from '../components/hooks.ts';
 import { Screen } from '../components/screen.tsx';
-import { diagnosticsText, RECENT_PROBLEMS, sourceLine, STORAGE_LABELS, storageTotal } from '../lib/diagnostics.ts';
+import { diagnosticsText, problemReport, RECENT_PROBLEMS, sourceLine, STORAGE_LABELS, storageTotal } from '../lib/diagnostics.ts';
 import { formatBytes, plural, relativeTime } from '../lib/format.ts';
 import { Icon } from '../components/icon.tsx';
 import { useNow } from '../components/hooks.ts';
@@ -17,6 +17,22 @@ import { buildVersion, categories, library, reloadSources, settings, sources } f
 import { errorToast, showToast } from '../state/toast.ts';
 import type { StorageCategory } from '../../shared/contracts/domain.ts';
 import '../styles/extras.css';
+
+/** A part that couldn't be read, with why and a Retry (pull to refresh retries everything). */
+function RetryRow(props: { title: string; error: UiError | null | undefined; onRetry: () => void; testId: string }) {
+  return (
+    <Row
+      title={props.title}
+      subtitle={props.error ? errorText(props.error) : undefined}
+      trailing={
+        <Button variant="tinted" size="small" onClick={props.onRetry} label={`Retry: ${props.title}`}>
+          Retry
+        </Button>
+      }
+      testId={props.testId}
+    />
+  );
+}
 
 export function DiagnosticsScreen() {
   const device = useAsync(() => bridge().call('native.device'), []);
@@ -49,18 +65,32 @@ export function DiagnosticsScreen() {
       .catch((err: unknown) => errorToast(errorText(toUiError(err))));
   }
 
+  function sendReport(): void {
+    const text = problemReport({
+      now: Date.now(),
+      build: buildVersion.value,
+      ui: { version: __BUILD_VERSION__, hash: __BUILD_HASH__, time: __BUILD_TIME__ },
+      device: device.data ?? null,
+      logs: logs.data ?? null,
+    });
+    bridge()
+      .call('native.share', { text }, { timeoutMs: 600_000 })
+      .catch((err: unknown) => errorToast(errorText(toUiError(err))));
+  }
+
   return (
     <Screen class="is-grouped" title="Diagnostics" back="About" testId="screen-diagnostics" onRefresh={() => Promise.all([device.reload({ silent: true }), storage.reload({ silent: true }), logs.reload({ silent: true }), reloadSources()]).then(() => undefined)}>
       <div class="grouped">
-        <Section footer="Shares a plain-text report you can paste into a bug report. Your library list, searches and reading history aren’t in it; a recent problem can mention a source or a novel.">
-          <Row title="Copy Diagnostics" tint onClick={copy} testId="diagnostics-copy" />
+        <Section footer="A problem report is short: your app and iOS versions, the latest problems, and a line for you to say what happened. Full diagnostics add storage, sources and settings. Your library list, searches and reading history aren’t in either; a recent problem can mention a source or a novel.">
+          <Row title="Send a Problem Report" tint onClick={sendReport} testId="diagnostics-send" />
+          <Row title="Copy Full Diagnostics" tint onClick={copy} testId="diagnostics-copy" />
         </Section>
 
         <Section header="Recent Problems" footer={`The last ${RECENT_PROBLEMS} warnings and errors the app logged.`}>
           {logs.status === 'loading' && !logs.data ? (
             <SkeletonRows count={2} height={56} />
           ) : !logs.data ? (
-            <Row title="Couldn’t read the log" subtitle={logs.error ? errorText(logs.error) : undefined} disabled testId="diagnostics-log-error" />
+            <RetryRow title="Couldn’t read the log" error={logs.error} onRetry={() => void logs.reload()} testId="diagnostics-log-error" />
           ) : logs.data.length === 0 ? (
             <Row title="No problems logged" leading={<Icon name="checkmark.circle.fill" size={22} class="diag-ok" />} disabled testId="diagnostics-no-problems" />
           ) : (
@@ -95,7 +125,7 @@ export function DiagnosticsScreen() {
               <Row title="Battery" value={`${Math.round(device.data.batteryLevel * 100)}%${device.data.charging ? ' · charging' : ''}`} />
             </>
           ) : (
-            <Row title="Device info unavailable" subtitle={device.error ? errorText(device.error) : undefined} disabled />
+            <RetryRow title="Device info unavailable" error={device.error} onRetry={() => void device.reload()} testId="diagnostics-device-error" />
           )}
         </Section>
 
@@ -110,7 +140,7 @@ export function DiagnosticsScreen() {
               ))}
             </>
           ) : (
-            <Row title="Storage info unavailable" disabled />
+            <RetryRow title="Storage info unavailable" error={storage.error} onRetry={() => void storage.reload()} testId="diagnostics-storage-error" />
           )}
         </Section>
 

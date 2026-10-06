@@ -4,7 +4,9 @@
  *
  * - Atomic writes: write `<file>.tmp`, remove the old file, move the temp into place. FileManager.move
  *   fails if the destination exists, hence the remove. A crash between remove and move leaves only the
- *   complete temp file, which the next read/exists recovers.
+ *   complete temp file, which the next read promotes (a torn .json temp is dropped instead); a crash
+ *   while writing the temp leaves the old file intact and a stale temp, which the next listing of its
+ *   folder removes. Temp files younger than TMP_SETTLE_MS are never touched (another process's write).
  * - iCloud: `download()` (FileManager.downloadFileFromiCloud) is always awaited before reading; the file
  *   may be an evicted placeholder.
  * - Relative paths only; '..' and absolute paths are rejected.
@@ -33,6 +35,8 @@ export interface FileOps {
 }
 
 const TMP = '.tmp';
+/** Temp files younger than this may be a write in progress (another process): left alone. */
+export const TMP_SETTLE_MS = 30_000;
 
 function attempt<T>(fn: () => T): Promise<T> {
   try {
@@ -62,9 +66,56 @@ export function createFileStore(ops: FileOps, root: string, isSynced: boolean): 
     return p === '' ? root : ops.join(root, p);
   };
 
-  /** Finish an interrupted atomic write. */
-  const recover = (p: string): void => {
-    if (!ops.exists(p) && ops.exists(p + TMP)) ops.move(p + TMP, p);
+  /** Age of a temp file (ms), Infinity when unknown. */
+  const tmpAge = (tmp: string): number => {
+    const at = ops.modifiedAt(tmp);
+    return at === null ? Infinity : Date.now() - at;
+  };
+
+  /** A temp file can be promoted: complete JSON for .json files (a torn first write is dropped). */
+  const promotable = (p: string): boolean => {
+    if (!p.endsWith('.json')) return true;
+    try {
+      JSON.parse(ops.readString(p + TMP));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Finish an interrupted atomic write (crash between "remove old" and "move temp into place"): the
+   * temp file becomes the file. A temp file younger than TMP_SETTLE_MS may belong to a write in
+   * progress in another process (the widget writes its own files): it is read, never moved. A .json
+   * temp file that doesn't parse is a torn first write and is removed.
+   * Returns the path to read.
+   */
+  const recover = (p: string): string => {
+    const tmp = p + TMP;
+    if (ops.exists(p) || !ops.exists(tmp)) return p;
+    if (tmpAge(tmp) < TMP_SETTLE_MS) return tmp;
+    if (!promotable(p)) {
+      ops.remove(tmp);
+      return p;
+    }
+    ops.move(tmp, p);
+    return p;
+  };
+
+  /** Listing heals leftovers: stale temp files next to a file are removed, orphaned ones recovered. */
+  const healTemp = (dir: string, name: string): string | null => {
+    const tmp = ops.join(dir, name);
+    const p = tmp.slice(0, -TMP.length);
+    if (tmpAge(tmp) < TMP_SETTLE_MS) return null;
+    try {
+      if (ops.exists(p)) {
+        ops.remove(tmp); // the write never got past the temp file; the old file is intact
+        return null;
+      }
+      return recover(p) === p && ops.exists(p) ? name.slice(0, -TMP.length) : null;
+    } catch {
+      return null;
+    }
   };
 
   const ensureDir = (rel: string): void => {
@@ -94,8 +145,7 @@ export function createFileStore(ops: FileOps, root: string, isSynced: boolean): 
     root,
     isSynced,
     async readText(rel) {
-      const p = abs(rel);
-      recover(p);
+      const p = recover(abs(rel));
       if (!ops.exists(p)) return null;
       if (ops.download) await ops.download(p);
       return ops.readString(p);
@@ -104,8 +154,7 @@ export function createFileStore(ops: FileOps, root: string, isSynced: boolean): 
       return attempt(() => atomicWrite(rel, (tmp) => ops.writeString(tmp, text)));
     },
     async readBase64(rel) {
-      const p = abs(rel);
-      recover(p);
+      const p = recover(abs(rel));
       if (!ops.exists(p)) return null;
       if (ops.download) await ops.download(p);
       return ops.readBase64(p);
@@ -131,7 +180,11 @@ export function createFileStore(ops: FileOps, root: string, isSynced: boolean): 
       if (!ops.exists(p) || !ops.isDirectory(p)) return [];
       const out = new Set<string>();
       for (const name of ops.list(p)) {
-        if (name.endsWith(TMP)) continue;
+        if (name.endsWith(TMP)) {
+          const healed = healTemp(p, name);
+          if (healed) out.add(healed);
+          continue;
+        }
         // Evicted iCloud files may be listed as ".name.icloud" placeholders.
         const m = /^\.(.+)\.icloud$/.exec(name);
         out.add(m ? (m[1] as string) : name);

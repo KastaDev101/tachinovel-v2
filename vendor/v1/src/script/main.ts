@@ -43,11 +43,18 @@ async function main(): Promise<void> {
     buildVersion: BUILD,
     // Deep links: scriptable:///run/TachiNovel?plugin=...&novel=...[&chapter=...] (args read by the platform adapter).
     createApp,
-    startHost: async () => {
-      const flags = await readFlags(platform);
-      if (flags.browserPostCallback) platform.setBrowserPostMode('callback');
-      return startWebViewHost({ local: platform.local, buildStamp: BUILD_STAMP, log, fastPresent: flags.fastPresent });
-    },
+    startHost: () =>
+      startWebViewHost({
+        local: platform.local,
+        buildStamp: BUILD_STAMP,
+        log,
+        // Read after present(), during the view's settle wait: an iCloud read never holds the screen.
+        fastPresent: async () => {
+          const flags = await readFlags(platform);
+          if (flags.browserPostCallback) platform.setBrowserPostMode('callback');
+          return flags.fastPresent;
+        },
+      }),
   });
 }
 

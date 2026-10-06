@@ -337,3 +337,133 @@
   height: var(--hairline);
   background: var(--separator);
 }
+
+/* Updates day header: label + per-day actions */
+.upd-day-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.upd-day-label {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.upd-day-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-right: -6px;
+  color: var(--tint);
+}
+
+/* History as a virtual list: fixed row and header heights (see ROW_H / HEADER_H in history.tsx). */
+.hist-vlist .sw-row {
+  height: 145px;
+}
+
+.hist-vlist .hist-header {
+  position: static;
+  display: flex;
+  align-items: flex-end;
+  height: 40px;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 6px;
+}
+
+/* The current section's header pinned under the bar (rows in a virtual list can't be sticky). It's
+   hidden until the list scrolls under the bar; the next header pushes it up (transform, set in JS). */
+.hist-pin {
+  position: sticky;
+  top: calc(var(--safe-top) + var(--nav-h) + var(--accessory-h, 0px));
+  z-index: 3;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.hist-pin.is-on {
+  visibility: visible;
+}
+
+.hist-pin .day-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  height: 40px;
+  margin: 0;
+  padding-top: 0;
+  padding-bottom: 6px;
+}
+
+/* Update check: the novels that got new chapters so far, newest first. */
+.upd-progress-found {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.upd-progress-novel {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+  animation: upd-found-in 240ms var(--ease-out);
+}
+
+.upd-progress-n {
+  flex: none;
+  font-weight: 600;
+  color: var(--tint);
+}
+
+@keyframes upd-found-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+/* "Library last checked 12 min ago" above the list. */
+.upd-last-check {
+  margin: 0;
+  padding: 2px var(--gutter) 6px;
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+}
+
+/* Updates while offline: the list still works; checking doesn't. */
+.upd-offline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 var(--gutter) 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  font-size: var(--fs-footnote);
+  color: var(--label-2);
+  background: var(--bg-grouped-2);
+}
+
+.upd-offline .icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--label-2);
+}

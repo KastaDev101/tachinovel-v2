@@ -9,6 +9,8 @@ import type {
   HistoryEntry,
   LibraryEntry,
   NovelDetails,
+  NarrationConfig,
+  NarrationStatus,
   NovelSummary,
   ReadingStats,
   SourceInfo,
@@ -34,6 +36,7 @@ import {
   chapterMeta,
   chapterNumberFromPath,
   chapterPath,
+  addStress,
   createWorld,
   keyOf,
   localDayKey,
@@ -42,7 +45,47 @@ import {
   type NovelState,
 } from './fixtures.ts';
 import type { Filters } from '../../shared/lnreader/filters.ts';
+import type { SourceFailureReason, PluginSettings, PluginSettingValues } from '../../shared/contracts/domain.ts';
 import type { DevFlags, MockCall, MockControls } from './flags.ts';
+
+/** Plugin settings (LNReader pluginSettings) per mock source: Royal Road's one switch, NovelBin with every type. */
+const SOURCE_SETTINGS: Record<string, PluginSettings> = {
+  royalroad: { enableVol: { type: 'Switch', label: 'Group chapters by volume', value: false } },
+  novelbin: {
+    hideLocked: { type: 'Switch', label: 'Hide locked chapters', value: true },
+    mirror: { type: 'Text', label: 'Mirror domain', value: '' },
+    order: {
+      type: 'Select',
+      label: 'Chapter order',
+      value: 'asc',
+      options: [
+        { label: 'Oldest first', value: 'asc' },
+        { label: 'Newest first', value: 'desc' },
+      ],
+    },
+    kinds: {
+      type: 'CheckboxGroup',
+      label: 'Show',
+      value: ['novel'],
+      options: [
+        { label: 'Novels', value: 'novel' },
+        { label: 'Web novels', value: 'webnovel' },
+        { label: 'Fan fiction', value: 'fanfic' },
+      ],
+    },
+  },
+};
+
+/** Like a plugin's own validation: the script turns its SettingsError into INVALID_ARGS. */
+function settingsProblem(id: string, values: Partial<PluginSettingValues>): string | null {
+  if (id === 'novelbin') {
+    const mirror = values['mirror'];
+    if (typeof mirror === 'string' && mirror !== '' && !/^https:\/\/[\w.-]+\/?$/i.test(mirror)) return 'Mirror domain must be an https:// address, like https://novelbin.me';
+    const kinds = values['kinds'];
+    if (Array.isArray(kinds) && kinds.length === 0) return 'Choose at least one kind of novel to show.';
+  }
+  return null;
+}
 import { presentMockSheet } from './mock-sheet.ts';
 import { chapterTitle } from './text-gen.ts';
 
@@ -239,9 +282,26 @@ const NETWORK_METHODS = new Set<MethodName>([
 /** Sources whose browse listings include chapter counts (the others leave them out). */
 const SOURCES_WITH_COUNTS = new Set(['stonescape', 'royalroad', 'novelbin']);
 
-function fail(code: ErrorCode, message: string, retryable = false): never {
-  throw new BridgeCallError({ code, message, retryable });
+function fail(code: ErrorCode, message: string, retryable = false, reason?: SourceFailureReason): never {
+  throw new BridgeCallError({ code, message, retryable, ...(reason ? { reason } : {}) });
 }
+
+/** The error code the script would send with each failure reason. */
+const REASON_CODES: Record<SourceFailureReason, ErrorCode> = {
+  offline: 'NETWORK',
+  'site-gone': 'NETWORK',
+  parked: 'NETWORK',
+  tls: 'NETWORK',
+  unreachable: 'NETWORK',
+  'site-down': 'NETWORK',
+  'rate-limited': 'NETWORK',
+  'bot-check': 'CLOUDFLARE',
+  blocked: 'CLOUDFLARE',
+  'not-found': 'NOT_FOUND',
+  'layout-changed': 'PLUGIN',
+  'needs-account': 'PLUGIN',
+  unsupported: 'PLUGIN',
+};
 
 function hashStr(s: string): number {
   let h = 0;
@@ -254,11 +314,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function createMockBridge(flags: DevFlags): BridgeClient {
-  const world = createWorld(flags.seed ?? 7, flags.now ?? Date.now(), flags.empty ?? false);
+  const world = createWorld(flags.seed ?? 7, flags.now ?? Date.now(), (flags.empty ?? false) || flags.freshInstall === true);
+  if (flags.stress) addStress(world, flags.stress);
+  /** Sources a fresh install doesn't have yet; installing one brings back its full definition. */
+  const shelved = new Map<string, SourceInfo>();
+  if (flags.freshInstall) {
+    for (const s of world.sources) if (!s.builtIn) shelved.set(s.id, s);
+    world.sources = world.sources.filter((s) => s.builtIn);
+    for (const s of world.sources) delete s.lastUsedAt;
+  }
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const calls: MockCall[] = [];
   const sheetAnswers: number[] = [];
   let offline = flags.offline ?? false;
+  const failingSources = new Map<string, SourceFailureReason>();
+  /** Methods that fail outright (any call), with this message. */
+  const failingMethods = new Map<string, string>();
   let latency: number | [number, number] = flags.latency ?? [80, 260];
   let failRate = flags.failRate ?? 0;
   let brightness = 0.6;
@@ -267,8 +338,47 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     { fileName: 'tachinovel-2026-09-12-0930.json', createdAt: world.now - 23 * 86_400_000, bytes: 52_224 },
   ];
   let libraryChangedTimer = 0;
+  /** Saved plugin setting values per source (defaults come from SOURCE_SETTINGS). */
+  const pluginSettingValues = new Map<string, PluginSettingValues>();
   /** Sources whose Cloudflare check was passed (sources.solveChallenge). */
   const solved = new Set<string>();
+  /** Picked backups awaiting restore (backup.preview without fileName → importId). */
+  const imports = new Set<string>();
+  let importSeq = 0;
+  /** PC narration: the app's config (audio.json) and what the narrator last reported (null = never ran). */
+  // A fresh install (or an empty world) has picked nothing, and the PC has never run for it.
+  const noNarration = flags.empty === true || flags.freshInstall === true;
+  let narrationConfig: NarrationConfig = noNarration
+    ? { novels: [], voice: 'af_heart', speed: 1, bundle: 0 }
+    : {
+        novels: [
+          { key: 'stonescape:shadow-of-the-ninth-gate', ahead: 10 },
+          { key: 'royalroad:81234-the-lantern-makers-ledger', ahead: 10 },
+        ],
+        voice: 'af_heart',
+        speed: 1,
+        bundle: 0,
+      };
+  // Shaped like the real narration-status.json from the PC narrator (one chapter ready + 9 queued; a
+  // second novel queued but not run yet), on fixture novels, written 3 h before "now".
+  const narrationStatus: NarrationStatus | null = noNarration
+    ? null
+    : {
+        generatedAt: world.now - 3 * 3_600_000,
+        novels: [
+          {
+            key: 'stonescape:shadow-of-the-ninth-gate',
+            name: 'Shadow of the Ninth Gate',
+            ready: [{ from: 1001, to: 1001 }],
+            queued: 9,
+            failed: 0,
+            // Stonescape's paid chapters inside the narration window: skipped, retried later.
+            locked: 3,
+            lastRunAt: world.now - 3 * 3_600_000 - 35 * 60_000,
+          },
+          { key: 'royalroad:81234-the-lantern-makers-ledger', name: 'The Lantern Maker’s Ledger', ready: [], queued: 10, failed: 0 },
+        ],
+      };
   /** The script's log (app.log / app.logs), oldest first, with a few problems from earlier sessions. */
   const logLines: { at: number; level: string; message: string }[] = flags.empty
     ? []
@@ -295,6 +405,15 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     calls,
     queueSheetAnswer: (i) => {
       sheetAnswers.push(i);
+    },
+    emitError: (message) => emit('app.error', { message }),
+    failSource: (pluginId, reason) => {
+      if (reason) failingSources.set(pluginId, reason);
+      else failingSources.delete(pluginId);
+    },
+    failMethod: (method, message) => {
+      if (message) failingMethods.set(method, message);
+      else failingMethods.delete(method);
     },
   };
   window.__tachiMock = controls;
@@ -542,7 +661,25 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
         const nv = world.novels.get(key);
         return { key, name: nv?.name ?? key, ...(nv?.cover !== undefined ? { cover: nv.cover } : {}), ms };
       });
-    return { days, streakDays, totalMs, topNovels };
+    return { days, streakDays, totalMs, topNovels, ...longestSession() };
+  }
+
+  /** All-time longest session: most of the biggest reading day, in that day's most-read novel, that evening. */
+  function longestSession(): Pick<ReadingStats, 'longestSession'> {
+    let best: { date: string; day: { ms: number; byNovel: Map<string, number> } } | null = null;
+    for (const [date, day] of world.reading) if (!best || day.ms > best.day.ms) best = { date, day };
+    if (!best) return {};
+    const key = [...best.day.byNovel].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const [y, m, d] = best.date.split('-').map(Number);
+    const name = key ? world.novels.get(key)?.name : undefined;
+    return {
+      longestSession: {
+        ms: Math.round((best.day.ms * 0.8) / 60_000) * 60_000,
+        at: new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, 21, 10).getTime(),
+        ...(key ? { key } : {}),
+        ...(name ? { name } : {}),
+      },
+    };
   }
 
   /** Chapters of `from` that find a counterpart on `to` (same numbering; a few drop out on long novels). */
@@ -561,11 +698,19 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       .map((p) => p.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim())
       .filter((t) => t !== '');
     const mid = Math.floor(paragraphs.length / 2);
+    // Aggregators carry the lines of the sites they copy from.
+    const copied =
+      n.pluginId === 'novelbin'
+        ? ['Find authorized novels in Webnovel, faster updates, better experience. Please click www.webnovel.com for visiting.']
+        : n.pluginId === 'scribblehub'
+          ? ['This tale has been unlawfully lifted from Royal Road; report any instances of this story if found elsewhere.']
+          : [];
     return [
       'Translator: Mira · Editor: Kael',
       `Read at ${host} for the fastest updates!`,
       ...paragraphs.slice(0, mid),
       'Support us on Patreon for 10 advance chapters!',
+      ...copied,
       ...paragraphs.slice(mid),
       `Visit ${host} for the latest chapters.`,
     ];
@@ -587,6 +732,14 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       console.info(`[script log] ${a.level}: ${a.message}`, a.data ?? '');
       logLines.push({ at: now(), level: a.level, message: a.message });
       return Promise.resolve();
+    },
+    'narration.get': () => Promise.resolve({ config: structuredClone(narrationConfig), status: narrationStatus ? structuredClone(narrationStatus) : null }),
+    'narration.set': (a) => {
+      const c = a.config;
+      if (c.speed < 0.7 || c.speed > 1.3) fail('INVALID_ARGS', 'Speed must be between 0.7 and 1.3');
+      if (c.bundle !== 0 && (c.bundle < 2 || c.bundle > 50)) fail('INVALID_ARGS', 'Bundle size out of range');
+      narrationConfig = structuredClone(c);
+      return Promise.resolve(structuredClone(narrationConfig));
     },
     'app.logs': (a) => {
       const levels = a.level === 'error' ? ['error'] : ['warn', 'error'];
@@ -610,6 +763,22 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     'sources.setEnabled': (a) => {
       findSource(a.id).enabled = a.enabled;
       return Promise.resolve(world.sources.map((s) => ({ ...s })));
+    },
+    'sources.settings.get': (a) => {
+      findSource(a.id);
+      const schema = SOURCE_SETTINGS[a.id] ?? {};
+      const defaults = Object.fromEntries(Object.entries(schema).map(([k, s]) => [k, s.value]));
+      return Promise.resolve({ schema: structuredClone(schema), values: { ...defaults, ...(pluginSettingValues.get(a.id) ?? {}) } });
+    },
+    'sources.settings.set': (a) => {
+      findSource(a.id);
+      const schema = SOURCE_SETTINGS[a.id] ?? {};
+      const problem = settingsProblem(a.id, a.values);
+      if (problem) fail('INVALID_ARGS', problem);
+      const known = Object.fromEntries(Object.entries(a.values).filter(([k, v]) => k in schema && v !== undefined)) as PluginSettingValues;
+      pluginSettingValues.set(a.id, { ...(pluginSettingValues.get(a.id) ?? {}), ...known });
+      const defaults = Object.fromEntries(Object.entries(schema).map(([k, s]) => [k, s.value]));
+      return Promise.resolve({ schema: structuredClone(schema), values: { ...defaults, ...(pluginSettingValues.get(a.id) ?? {}) } });
     },
     'sources.setPinned': (a) => {
       findSource(a.id).pinned = a.pinned;
@@ -657,18 +826,23 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
         existing.version = version;
         return Promise.resolve({ ...existing });
       }
-      const s: SourceInfo = {
-        id,
-        name,
-        site: site || `https://${id}.example`,
-        version,
-        lang,
-        iconUrl: sourceIcon(name, pickHue(name)),
-        enabled: true,
-        pinned: false,
-        builtIn: false,
-        hasFilters: false,
-      };
+      const tpl = shelved.get(id);
+      const s: SourceInfo = tpl
+        ? { ...tpl, version, enabled: true, pinned: false }
+        : {
+            id,
+            name,
+            site: site || `https://${id}.example`,
+            version,
+            lang,
+            iconUrl: sourceIcon(name, pickHue(name)),
+            enabled: true,
+            pinned: false,
+            builtIn: false,
+            hasFilters: false,
+          };
+      delete s.updateAvailable;
+      delete s.lastUsedAt; // just installed: never used
       world.sources.push(s);
       if (!world.pools.has(id)) world.pools.set(id, []);
       return Promise.resolve({ ...s });
@@ -720,7 +894,7 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     'browse.search': async (a) => {
       // Sources answer at different speeds (global search streams in); one sits behind a browser check.
       await sleep((hashStr(a.pluginId) % 5) * 90);
-      if (a.pluginId === 'scribblehub' && !solved.has(a.pluginId)) fail('CLOUDFLARE', 'Scribble Hub is behind a browser check right now.', true);
+      if (a.pluginId === 'scribblehub' && !solved.has(a.pluginId)) fail('CLOUDFLARE', 'Scribble Hub is behind a browser check right now.', true, 'bot-check');
       const q = a.query.trim().toLowerCase();
       const matches = (k: string): boolean => (world.novels.get(k)?.name.toLowerCase() ?? '').includes(q);
       // Copies of library novels (Migrate) only turn up for a close title search, never for short queries.
@@ -736,7 +910,7 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
           .filter((s) => s.enabled)
           .map((s) => {
             if (s.id === 'scribblehub' && !solved.has(s.id)) {
-              return { pluginId: s.id, items: [], error: { code: 'CLOUDFLARE' as const, message: 'Blocked by a browser check', retryable: true } };
+              return { pluginId: s.id, items: [], error: { code: 'CLOUDFLARE' as const, message: 'Blocked by a browser check', retryable: true, reason: 'bot-check' as const } };
             }
             const items = (world.pools.get(s.id) ?? [])
               .filter((k) => (world.novels.get(k)?.name.toLowerCase() ?? '').includes(q))
@@ -751,6 +925,11 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     'novel.get': (a) => {
       const n = novel(a.pluginId, a.path);
       const k = keyOf(n.pluginId, n.path);
+      // A refresh of an ongoing novel finds one new chapter (the site moved on).
+      if (a.refresh && n.status === 'ongoing' && n.lockedFrom === undefined) {
+        n.chapterCount += 1;
+        metaCache.delete(k);
+      }
       const st = state(n);
       const chapters: ChapterView[] = new Array<ChapterView>(n.chapterCount);
       const metas = metaList(n);
@@ -785,6 +964,7 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       if (!Number.isInteger(num) || num < 1 || num > n.chapterCount) fail('NOT_FOUND', 'Chapter not found');
       const meta = chapterMeta(n, num);
       if (meta.locked) fail('LOCKED', 'This chapter is locked on the source site.');
+      if (flags.cloudflareChapters && n.pluginId === 'scribblehub' && !solved.has('scribblehub')) fail('CLOUDFLARE', 'Scribble Hub is behind a browser check right now.', true, 'bot-check');
       const pos = world.positions.get(`${keyOf(n.pluginId, n.path)}|${a.chapterPath}`);
       return Promise.resolve({
         pluginId: n.pluginId,
@@ -947,11 +1127,58 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       return { ...b };
     },
     'backup.list': () => Promise.resolve(backups.map((b) => ({ ...b }))),
+    'backup.preview': async (a) => {
+      await sleep(200);
+      if (a.fileName !== undefined) {
+        const b = backups.find((x) => x.fileName === a.fileName);
+        if (!b) fail('NOT_FOUND', 'Backup not found');
+        return {
+          fileName: b.fileName,
+          createdAt: b.createdAt,
+          buildVersion: __BUILD_VERSION__,
+          counts: { novels: world.library.size, categories: world.categories.length, progress: 140, history: world.history.length, updates: world.updates.length, sources: world.sources.length, repos: 1, pluginSettings: 1 },
+          newNovels: 0,
+          skipped: 0,
+        };
+      }
+      // The native document picker; a queued answer of -1 stands for Cancel (like the script: NOT_FOUND).
+      if (sheetAnswers[0] === -1) {
+        sheetAnswers.shift();
+        fail('NOT_FOUND', 'No backup was picked');
+      }
+      const importId = `imp-${++importSeq}`;
+      imports.add(importId);
+      const created = new Date(now());
+      created.setDate(created.getDate() - 1);
+      created.setHours(21, 14, 0, 0);
+      // An older phone's backup: a few novels this library doesn't have, two damaged records.
+      return {
+        importId,
+        createdAt: created.getTime(),
+        buildVersion: '0.0.1',
+        counts: { novels: 12, categories: 4, progress: 1240, history: 85, updates: 30, sources: 2, repos: 1, pluginSettings: 0 },
+        newNovels: 3,
+        skipped: 2,
+      };
+    },
     'backup.restore': async (a) => {
       await sleep(500);
       if (a.fileName && !backups.some((b) => b.fileName === a.fileName)) fail('NOT_FOUND', 'Backup not found');
+      if (a.importId !== undefined) {
+        // Single use, like the script's.
+        if (!imports.delete(a.importId)) fail('NOT_FOUND', 'That backup is no longer available. Pick it again.');
+      }
       libraryChanged();
       return { novels: world.library.size, sources: world.sources.length };
+    },
+    'library.export': async (a) => {
+      await sleep(250);
+      if (a.format !== 'csv' && a.format !== 'text') fail('INVALID_ARGS', 'Unknown format');
+      const d = new Date(now());
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const fileName = `tachinovel-library-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.${a.format === 'csv' ? 'csv' : 'txt'}`;
+      console.info('[mock] export library', fileName);
+      return { fileName, novels: world.library.size };
     },
     'backup.share': (a) => {
       console.info('[mock] share backup', a.fileName);
@@ -964,9 +1191,17 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       if (!art || a.url.includes('/the-forgotten')) fail('NOT_FOUND', 'Cover not found');
       return { src: art };
     },
+    // In-chapter illustrations the site won't serve directly: a stand-in picture (or gone).
+    'images.fetch': async (a) => {
+      await sleep(60);
+      if (a.url.includes('/missing')) fail('NOT_FOUND', 'Image not found');
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><rect width="600" height="400" fill="#7a86c8"/><circle cx="300" cy="170" r="70" fill="#f2e8c9"/><path d="M0 400 L200 230 L330 330 L420 260 L600 400Z" fill="#3b4270"/></svg>`;
+      return { src: `data:image/svg+xml,${encodeURIComponent(svg)}` };
+    },
     'storage.usage': () => Promise.resolve(structuredClone(world.storage)),
     'storage.clear': (a) => {
       world.storage.bytes[a.category] = 0;
+      if (a.category === 'downloads') delete world.storage.orphanDownloads;
       return Promise.resolve(structuredClone(world.storage));
     },
     'downloads.enqueue': (a) => {
@@ -984,6 +1219,13 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
         libraryChanged();
       })();
       return Promise.resolve();
+    },
+    'downloads.deleteOrphans': () => {
+      // Only downloads of novels no longer in the library; library novels keep theirs.
+      const o = world.storage.orphanDownloads ?? { novels: 0, bytes: 0 };
+      world.storage.bytes.downloads = Math.max(0, world.storage.bytes.downloads - o.bytes);
+      delete world.storage.orphanDownloads;
+      return Promise.resolve({ novels: o.novels, bytes: o.bytes });
     },
     'downloads.delete': (a) => {
       const n = novel(a.pluginId, a.novelPath);
@@ -1006,6 +1248,12 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
     },
     'native.share': (a) => {
       console.info('[mock] share', a);
+      return Promise.resolve();
+    },
+    'native.shareImage': (a) => {
+      if (!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(a.dataUrl)) fail('INVALID_ARGS', 'Not a PNG or JPEG data URL');
+      if (a.dataUrl.length > 8 * 1024 * 1024 * (4 / 3)) fail('INVALID_ARGS', 'Image is larger than 8 MB');
+      console.info('[mock] share image', a.fileName ?? '(unnamed)', `${Math.round(a.dataUrl.length / 1024)} KB`);
       return Promise.resolve();
     },
     'native.openUrl': (a) => {
@@ -1146,6 +1394,10 @@ export function createMockBridge(flags: DevFlags): BridgeClient {
       if (ms > 0) await sleep(ms);
       if (net && offline) fail('NETWORK', 'The Internet connection appears to be offline.', true);
       if (net && failRate > 0 && Math.random() < failRate) fail('TIMEOUT', 'The request timed out.', true);
+      const failing = net ? failingSources.get((args as { pluginId?: string } | undefined)?.pluginId ?? '') : undefined;
+      if (failing) fail(REASON_CODES[failing], `Source failure: ${failing}`, true, failing);
+      const broken = failingMethods.get(method);
+      if (broken) fail('UNKNOWN', broken, true);
       const handler = handlers[method] as (a: unknown) => Promise<unknown>;
       return handler(args);
     },

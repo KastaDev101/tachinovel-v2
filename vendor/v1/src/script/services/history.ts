@@ -3,6 +3,7 @@ import type { HistoryEntry, NovelKey } from '../../shared/contracts/domain.ts';
 import { novelKeyString } from '../../shared/contracts/domain.ts';
 import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
+import { historyEntry, validItems } from './records.ts';
 
 export interface HistoryDoc {
   schemaVersion: number;
@@ -16,8 +17,17 @@ export const HISTORY_SPEC: DocSpec<HistoryDoc> = {
   version: 1,
   create: () => ({ schemaVersion: 1, entries: [] }),
   normalize(doc) {
-    if (!Array.isArray(doc.entries)) doc.entries = [];
-    return doc;
+    // One entry per novel, newest first, valid records only (records.ts).
+    const seen = new Set<string>();
+    const entries = validItems(doc.entries, (v) => {
+      const h = historyEntry(v);
+      if (!h) return null;
+      const key = novelKeyString(h);
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return h;
+    }).slice(0, HISTORY_CAP);
+    return { schemaVersion: doc.schemaVersion, entries };
   },
 };
 
@@ -35,7 +45,12 @@ export class HistoryService {
   }
 
   static async load(ctx: Ctx): Promise<HistoryService> {
-    return new HistoryService(await JsonDoc.load(ctx.platform.synced, HISTORY_SPEC, ctx.timing.historyWriteMs, ctx.env));
+    return new HistoryService(await JsonDoc.load(ctx.platform.synced, HISTORY_SPEC, ctx.timing.historyWriteMs, ctx.env, { mirror: ctx.platform.local }));
+  }
+
+  /** The synced document (iCloud state checks). */
+  get syncDoc(): JsonDoc<HistoryDoc> {
+    return this.doc;
   }
 
   /**
@@ -86,6 +101,18 @@ export class HistoryService {
   clear(): void {
     this.doc.value.entries = [];
     this.doc.changed();
+  }
+
+  /** A novel's cover changed on its source: its history row follows. */
+  setCover(key: string, cover: string): void {
+    let changed = false;
+    for (const e of this.doc.value.entries) {
+      if (e.cover !== cover && novelKeyString(e) === key) {
+        e.cover = cover;
+        changed = true;
+      }
+    }
+    if (changed) this.doc.changed();
   }
 
   all(): HistoryEntry[] {

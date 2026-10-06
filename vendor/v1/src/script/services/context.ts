@@ -23,6 +23,13 @@ export interface Timing {
   repoTtlMs: number;
   /** Delay before the update-on-open check starts after boot. */
   bootUpdateDelayMs: number;
+  /**
+   * Post-boot work (widget merge, download queue, then the launch tasks) starts this long after the
+   * first app.boot, so the UI paints the library first.
+   */
+  postBootDelayMs: number;
+  /** ...or this long after the app was created when the UI never boots. */
+  launchWithoutBootMs: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -36,6 +43,8 @@ export const DEFAULT_TIMING: Timing = {
   novelMemoryTtlMs: 10 * 60_000,
   repoTtlMs: 30 * 60_000,
   bootUpdateDelayMs: 1_500,
+  postBootDelayMs: 300,
+  launchWithoutBootMs: 10_000,
 };
 
 export interface Ctx {

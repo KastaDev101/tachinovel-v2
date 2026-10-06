@@ -3,6 +3,7 @@ import type { UpdateEntry } from '../../shared/contracts/domain.ts';
 import { novelKeyString } from '../../shared/contracts/domain.ts';
 import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
+import { updateEntry, validItems } from './records.ts';
 
 export interface UpdatesDoc {
   schemaVersion: number;
@@ -16,8 +17,17 @@ export const UPDATES_SPEC: DocSpec<UpdatesDoc> = {
   version: 1,
   create: () => ({ schemaVersion: 1, entries: [] }),
   normalize(doc) {
-    if (!Array.isArray(doc.entries)) doc.entries = [];
-    return doc;
+    // Valid records only, one per (novel, chapter) (records.ts).
+    const seen = new Set<string>();
+    const entries = validItems(doc.entries, (v) => {
+      const u = updateEntry(v);
+      if (!u) return null;
+      const id = `${novelKeyString(u)}\n${u.chapterPath}`;
+      if (seen.has(id)) return null;
+      seen.add(id);
+      return u;
+    }).slice(0, UPDATES_CAP);
+    return { schemaVersion: doc.schemaVersion, entries };
   },
 };
 
@@ -30,7 +40,10 @@ export class UpdatesService {
   }
 
   private load(): Promise<JsonDoc<UpdatesDoc>> {
-    this.doc ??= JsonDoc.load(this.ctx.platform.synced, UPDATES_SPEC, this.ctx.timing.updatesWriteMs, this.ctx.env);
+    this.doc ??= JsonDoc.load(this.ctx.platform.synced, UPDATES_SPEC, this.ctx.timing.updatesWriteMs, this.ctx.env).catch((err: unknown) => {
+      this.doc = null; // e.g. iCloud didn't deliver it in time: retried on the next call
+      throw err;
+    });
     return this.doc;
   }
 

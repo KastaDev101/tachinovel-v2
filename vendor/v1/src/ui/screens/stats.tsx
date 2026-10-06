@@ -5,10 +5,10 @@
  * CSS, and the most-read novels. Data comes from `stats.get`; the goal lives in settings.readingGoal.
  */
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { parseNovelKey, type ReadingStats } from '../../shared/contracts/domain.ts';
-import { bridge } from '../bridge/client.ts';
-import { BarButton, Button, Chip, Section, Segmented, SelectRow, Stepper } from '../components/controls.tsx';
+import { bridge, toUiError } from '../bridge/client.ts';
+import { BarButton, Button, Chip, Row, Section, Segmented, SelectRow, Stepper } from '../components/controls.tsx';
 import { Cover } from '../components/cover.tsx';
 import { EmptyState, ErrorState, SkeletonLine } from '../components/feedback.tsx';
 import { useAsync, useNow } from '../components/hooks.ts';
@@ -18,6 +18,7 @@ import { Sheet } from '../components/sheet.tsx';
 import {
   bucketAria,
   chartBuckets,
+  dayKey,
   durationParts,
   durationSpoken,
   formatDuration,
@@ -29,8 +30,14 @@ import {
   goalProgress,
   goalStreak,
   goalToMs,
+  HEAT_DAYS,
+  HEAT_WEEKS,
+  heatCellLabel,
+  heatMonths,
+  longestSessionDetail,
   niceScale,
   parseDayKey,
+  readLearnedPace,
   rangeFacts,
   rangeTotals,
   streakCaption,
@@ -40,11 +47,16 @@ import {
   weekSummary,
   weekTotals,
   weekVsLastWeek,
+  wordsEstimate,
+  yearGrid,
   type StatsRange,
 } from '../lib/stats-data.ts';
 import { plural } from '../lib/format.ts';
+import { cardModel, CARD, drawCard } from '../lib/stats-card.ts';
+import { actionSheet } from '../state/actions.ts';
 import { openNovel, popToRoot, selectTab } from '../state/nav.ts';
 import { library, patchSettings, settings } from '../state/store.ts';
+import { showToast } from '../state/toast.ts';
 import '../styles/extras.css';
 
 const RANGES: { value: `${StatsRange}`; label: string }[] = [
@@ -138,6 +150,46 @@ function Tiles({ stats, now, goal }: { stats: ReadingStats; now: number; goal: n
       />
       <Tile label="Total Time" value={<Duration ms={stats.totalMs} />} caption="All time" testId="ins-total" />
     </div>
+  );
+}
+
+/** The pace the reader learned on this device (localStorage), or null. Never throws. */
+function storedPace(): number | null {
+  return readLearnedPace(() => window.localStorage);
+}
+
+/**
+ * All-time records: the longest sitting (when the script knows it; opens that novel) and the reading
+ * speed the reader learned on this device. Nothing shows until there's something to show.
+ */
+function PersonalBests({ stats, now }: { stats: ReadingStats; now: number }) {
+  const [wpm] = useState(storedPace);
+  const ls = stats.longestSession && stats.longestSession.ms > 0 ? stats.longestSession : null;
+  if (!ls && wpm === null) return null;
+  const k = ls?.key ? parseNovelKey(ls.key) : null;
+  const name = ls?.name?.trim();
+  return (
+    <Section footer={wpm !== null ? 'Reading speed is learned while you read on this iPhone, from steady reading only.' : undefined}>
+      {ls && (
+        <Row
+          title="Longest Session"
+          subtitle={longestSessionDetail(ls, now)}
+          value={<span class="tabular">{formatDuration(ls.ms)}</span>}
+          icon={{ name: 'book.clock', color: 'var(--indigo)' }}
+          {...(k && name ? { onClick: () => openNovel({ pluginId: k.pluginId, path: k.path, name }), chevron: true } : {})}
+          testId="ins-longest"
+        />
+      )}
+      {wpm !== null && (
+        <Row
+          title="Reading Speed"
+          subtitle={`${wordsEstimate(stats.totalMs, wpm).replace(/^a/, 'A')} in all, at this pace`}
+          value={<span class="tabular">{wpm} words/min</span>}
+          icon={{ name: 'bolt.fill', color: 'var(--orange)' }}
+          testId="ins-speed"
+        />
+      )}
+    </Section>
   );
 }
 
@@ -347,6 +399,111 @@ function RangeFactsRow({ stats, goal }: { stats: ReadingStats; goal: number | nu
   );
 }
 
+const HEAT_CELL = 12;
+const HEAT_PITCH = 15;
+const HEAT_TOP = 16;
+
+/**
+ * The last 12 months as a calendar (a column per week, GitHub-style), scrolled to this week. Tap a day
+ * for its reading; tap it again to go back to the year's total. Its own request (a year of days).
+ */
+function YearHeatmap({ goal, now }: { goal: number | null; now: number }) {
+  const year = useAsync(() => bridge().call('stats.get', { days: HEAT_DAYS }), []);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const today = dayKey(now);
+  const grid = useMemo(() => (year.data ? yearGrid(year.data.days, now, goal) : null), [year.data, today, goal]);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [grid !== null]);
+
+  let body;
+  if (!grid && year.status === 'error' && year.error) body = <ErrorState error={year.error} onRetry={() => void year.reload()} compact />;
+  else if (!grid)
+    body = (
+      <div class="ins-card" aria-busy="true" aria-label="Loading">
+        <SkeletonLine width="44%" height={12} />
+        <div class="ins-heat-skel skel" />
+      </div>
+    );
+  else {
+    const cell = sel ? grid.weeks.flat().find((c) => c.date === sel) : undefined;
+    // Room on the right for the newest month's label, which starts over the last column.
+    const width = HEAT_WEEKS * HEAT_PITCH - (HEAT_PITCH - HEAT_CELL) + 12;
+    const height = HEAT_TOP + 7 * HEAT_PITCH - (HEAT_PITCH - HEAT_CELL);
+    const summary = `${plural(grid.activeDays, 'day')} read`;
+    body = (
+      <div class="ins-card ins-heat" data-testid="ins-heat">
+        <div class="ins-readout" aria-live="polite">
+          <span class="ins-readout-label" data-testid="ins-heat-day">
+            {cell ? heatCellLabel(cell) : 'Last 12 months'}
+          </span>
+          <span class="ins-readout-value tabular" data-testid="ins-heat-total">
+            {summary}
+            <span class="ins-readout-sub"> · {formatDuration(grid.totalMs)}</span>
+          </span>
+        </div>
+        <div class="ins-heat-scroll" ref={scroller}>
+          <svg
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label={`Reading over the last 12 months: ${summary}, ${formatDuration(grid.totalMs)} in all.`}
+            onClick={(e) => {
+              const date = (e.target as Element).closest('[data-date]')?.getAttribute('data-date') ?? null;
+              if (date) setSel((cur) => (cur === date ? null : date));
+            }}
+          >
+            {grid.months.map((m) => (
+              <text key={`${m.col}-${m.label}`} x={m.col * HEAT_PITCH} y={10} class="ins-heat-month">
+                {m.label}
+              </text>
+            ))}
+            {grid.weeks.map((col, w) =>
+              col.map((c, d) =>
+                c.future ? null : (
+                  <rect
+                    key={c.date}
+                    x={w * HEAT_PITCH}
+                    y={HEAT_TOP + d * HEAT_PITCH}
+                    width={HEAT_CELL}
+                    height={HEAT_CELL}
+                    rx={3}
+                    class={`lv-${c.level}${c.date === sel ? ' is-sel' : ''}${c.date === today ? ' is-today' : ''}`}
+                    data-date={c.date}
+                  />
+                ),
+              ),
+            )}
+          </svg>
+        </div>
+        <ul class="sr-only" data-testid="ins-heat-months">
+          {heatMonths(grid).map((m) => (
+            <li key={m.key}>{m.days > 0 ? `${m.label}: ${plural(m.days, 'day')} read, ${durationSpoken(m.ms)}` : `${m.label}: no reading`}</li>
+          ))}
+        </ul>
+        <div class="ins-heat-legend" aria-hidden="true">
+          <span>Less</span>
+          {[0, 1, 2, 3, 4].map((l) => (
+            <i key={l} class={`lv-${l}`} />
+          ))}
+          <span>More</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Section
+      header="Your Year"
+      footer={goal !== null ? 'Shades step up at half your daily goal, the goal itself, and twice it.' : 'Shades step up at 15 m, 30 m and an hour of reading a day.'}
+    >
+      {body}
+    </Section>
+  );
+}
+
 function TopNovels({ stats }: { stats: ReadingStats }) {
   const top = stats.topNovels.slice(0, 10);
   if (top.length === 0) return null;
@@ -416,6 +573,62 @@ function WeekSummaryCard({ stats, now }: { stats: ReadingStats; now: number }) {
 }
 
 /**
+ * "Reading report" image: drawn on a canvas, shown in a sheet, shared through the native share sheet
+ * (native.shareImage: Save Image, Messages, …). If the script can't share it (an older build, or it
+ * refuses), the same summary goes out as text instead.
+ */
+function ReportSheet(props: { open: boolean; stats: ReadingStats; goal: number | null; onClose: () => void; onShareText: () => void }) {
+  const [src] = useState<string | null>(() => {
+    try {
+      const canvas = document.createElement('canvas');
+      return drawCard(canvas, cardModel(props.stats, Date.now(), props.goal)) ? canvas.toDataURL('image/png') : null;
+    } catch {
+      return null;
+    }
+  });
+  const [busy, setBusy] = useState(false);
+
+  async function shareImage(): Promise<void> {
+    if (!src || busy) return;
+    setBusy(true);
+    try {
+      // The call returns when the share sheet closes, which can take a while.
+      await bridge().call('native.shareImage', { dataUrl: src, fileName: 'TachiNovel Reading Report.png' }, { timeoutMs: 600_000 });
+    } catch (err) {
+      // A timeout means the sheet may still be up: don't stack a second one on it.
+      if (toUiError(err).code !== 'TIMEOUT') {
+        showToast('Couldn’t share the image, so here it is as text');
+        props.onShareText();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet open={props.open} onClose={props.onClose} title="Reading Report" detents={['fit']} testId="report-sheet">
+      <div class="ins-report">
+        {src ? (
+          <img class="ins-report-img selectable" src={src} width={CARD.width} height={CARD.height} alt="Reading report for this week" data-testid="report-image" />
+        ) : (
+          <p class="ins-report-note">The report image couldn’t be drawn on this device.</p>
+        )}
+      </div>
+      <div class="sheet-pad ins-report-actions">
+        {src && (
+          <Button variant="filled" size="large" icon="square.and.arrow.up" onClick={() => void shareImage()} disabled={busy}>
+            Share Image
+          </Button>
+        )}
+        <Button variant={src ? 'plain' : 'tinted'} size="large" onClick={props.onShareText}>
+          Share as Text
+        </Button>
+      </div>
+    </Sheet>
+  );
+}
+
+/**
  * Days fetched for the tiles, the weekly summary and the goal streak, whatever the chart shows. A goal
  * streak longer than this shows as "60+".
  */
@@ -426,12 +639,26 @@ export function StatsScreen() {
   const overview = useAsync(() => bridge().call('stats.get', { days: OVERVIEW_DAYS }), []);
   const data = useAsync(() => bridge().call('stats.get', { days: range }), [range]);
   const [customGoal, setCustomGoal] = useState<{ n: number; open: boolean }>({ n: 0, open: false });
+  const [report, setReport] = useState<{ n: number; open: boolean }>({ n: 0, open: false });
   const now = useNow();
   const head = overview.data;
   const stats = data.data;
   const goalMinutes = settings.value.readingGoal?.minutesPerDay ?? null;
   const goal = goalToMs(settings.value.readingGoal);
   const empty = head !== undefined && head.totalMs <= 0 && head.days.every((d) => d.ms <= 0) && head.topNovels.length === 0;
+
+  function shareText(): void {
+    if (!head) return;
+    void bridge()
+      .call('native.share', { text: weekShareText(head, Date.now(), goal) })
+      .catch(() => undefined);
+  }
+
+  async function shareMenu(): Promise<void> {
+    const i = await actionSheet({ title: 'Share My Week', actions: [{ title: 'Share as Text' }, { title: 'Reading Report Image…' }] });
+    if (i === 0) shareText();
+    else if (i === 1) setReport((r) => ({ n: r.n + 1, open: true }));
+  }
 
   function reloadAll(silent: boolean): Promise<unknown> {
     return Promise.all([overview.reload({ silent }), data.reload({ silent })]);
@@ -460,15 +687,17 @@ export function StatsScreen() {
       <>
         <WeekSummaryCard stats={head} now={now} />
         <Tiles stats={head} now={now} goal={goal} />
+        <PersonalBests stats={head} now={now} />
         <GoalSection minutes={goalMinutes} onCustom={() => setCustomGoal((c) => ({ n: c.n + 1, open: true }))} />
         <Section header="Activity">
           <div class="ins-range">
             <Segmented options={RANGES} value={`${range}`} onChange={(v) => setRange(Number(v) as StatsRange)} />
           </div>
-          {stats ? (
-            <ActivityChart key={stats.days.length} stats={stats} now={now} busy={data.status === 'loading'} goal={goal} />
-          ) : data.status === 'error' && data.error ? (
+          {/* An error wins over older data: after a failed range switch that data is another range's. */}
+          {data.status === 'error' && data.error ? (
             <ErrorState error={data.error} onRetry={() => void data.reload()} compact />
+          ) : stats ? (
+            <ActivityChart key={stats.days.length} stats={stats} now={now} busy={data.status === 'loading'} goal={goal} />
           ) : (
             <div class="ins-card" aria-busy="true" aria-label="Loading">
               <SkeletonLine width="38%" height={12} />
@@ -476,7 +705,8 @@ export function StatsScreen() {
             </div>
           )}
         </Section>
-        {stats && <TopNovels stats={stats} />}
+        <YearHeatmap goal={goal} now={now} />
+        {stats && data.status !== 'error' && <TopNovels stats={stats} />}
       </>
     );
 
@@ -491,11 +721,7 @@ export function StatsScreen() {
           <BarButton
             icon="square.and.arrow.up"
             label="Share my week"
-            onClick={() => {
-              void bridge()
-                .call('native.share', { text: weekShareText(head, Date.now(), goal) })
-                .catch(() => undefined);
-            }}
+            onClick={() => void shareMenu()}
             testId="ins-share"
           />
         ) : undefined
@@ -503,6 +729,16 @@ export function StatsScreen() {
       onRefresh={() => reloadAll(true).then(() => undefined)}
     >
       <div class="grouped ins">{body}</div>
+      {head && report.n > 0 && (
+        <ReportSheet
+          key={report.n}
+          open={report.open}
+          stats={head}
+          goal={goal}
+          onClose={() => setReport((r) => ({ ...r, open: false }))}
+          onShareText={shareText}
+        />
+      )}
       <CustomGoalSheet key={customGoal.n} open={customGoal.open} initial={goalMinutes ?? 45} onClose={() => setCustomGoal((c) => ({ ...c, open: false }))} />
     </Screen>
   );

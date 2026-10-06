@@ -13,10 +13,20 @@ import type { CallRecord, PluginContext } from '../context.ts';
 import { encodeMultipart, makeBoundary } from '../polyfills/formdata.ts';
 import { Headers, headersToRecord } from '../polyfills/headers.ts';
 import { TextDecoder, normalizeEncoding } from '../polyfills/text.ts';
-import { base64ToBytes } from '../polyfills/base64.ts';
+import { base64ToBytes, bytesToBase64 } from '../polyfills/base64.ts';
 import { URL } from '../polyfills/url.ts';
 import { utf8Encode } from '../polyfills/utf8.ts';
+import { crossSiteRedirect, isParkedPage, withReason } from '../failure.ts';
 import { hostProvided } from './internal.ts';
+import { grpcFrame, grpcUnframe, ProtoRoot } from './proto.ts';
+
+/** LNReader's ProtoRequestInit: proto source, message type names and the request object. */
+export interface ProtoRequestInit {
+  proto: string;
+  requestType: string;
+  responseType: string;
+  requestData?: unknown;
+}
 
 type HeadersInit = Headers | Record<string, string | undefined> | [string, string][];
 
@@ -172,7 +182,7 @@ export function toHttpRequest(input: unknown, init: FetchInit | undefined, site?
     throw new TypeError(`Invalid URL: ${url}`);
   }
   const method = String(init?.method ?? 'GET').toUpperCase();
-  if (!METHODS.has(method)) throw new SourceError('PLUGIN', `HTTP method ${method} is not supported`);
+  if (!METHODS.has(method)) throw withReason(new SourceError('PLUGIN', `HTTP method ${method} is not supported`), 'unsupported');
   const headers = headersToRecord(init?.headers);
   const hasHeader = (name: string): boolean => Object.keys(headers).some((k) => k.toLowerCase() === name.toLowerCase());
   const req: HttpRequest & { referer?: string } = { url, method: method as HttpRequest['method'], headers };
@@ -190,7 +200,7 @@ export function toHttpRequest(input: unknown, init: FetchInit | undefined, site?
     } else if (tag === '[object FormData]') {
       const entries: [string, string][] = [];
       for (const [k, v] of body as unknown as Iterable<[string, unknown]>) {
-        if (typeof v !== 'string') throw new SourceError('PLUGIN', 'FormData file fields are not supported');
+        if (typeof v !== 'string') throw withReason(new SourceError('PLUGIN', 'FormData file fields are not supported'), 'unsupported');
         entries.push([k, v]);
       }
       const boundary = makeBoundary(simpleHash(JSON.stringify(entries)));
@@ -200,7 +210,7 @@ export function toHttpRequest(input: unknown, init: FetchInit | undefined, site?
       if (ct) delete headers[ct];
       headers['Content-Type'] = enc.contentType;
     } else if (tag === '[object ArrayBuffer]' || ArrayBuffer.isView(body)) {
-      throw new SourceError('PLUGIN', 'Binary request bodies are not supported');
+      throw withReason(new SourceError('PLUGIN', 'Binary request bodies are not supported'), 'unsupported');
     } else {
       req.body = String(body);
       if (!hasHeader('Content-Type')) headers['Content-Type'] = 'text/plain;charset=UTF-8';
@@ -214,6 +224,8 @@ export function toHttpRequest(input: unknown, init: FetchInit | undefined, site?
 }
 
 export function createFetchLib(ctx: PluginContext) {
+  /** Parsed proto sources (plugins pass the same text on every call). */
+  const protoRoots = new Map<string, ProtoRoot>();
   /** Sends a request, attributing its outcome to the adapter calls it belongs to (context.ts). */
   async function send(url: unknown, init?: FetchInit): Promise<FetchResponse> {
     const req = toHttpRequest(url, init, ctx.site);
@@ -230,6 +242,11 @@ ${JSON.stringify(req.headers ?? {})}`, () => ctx.net.request(req)) : await ctx.n
     }
     ctx.recordStatus(calls, res.status);
     ctx.recordBody(calls, res.status, res.url || req.url, res.body);
+    if (calls.length) {
+      if (isParkedPage(req.url, res.url || req.url, res.body)) ctx.recordParked(calls, new URL(req.url).host);
+      const moved = res.url ? crossSiteRedirect(req.url, res.url) : undefined;
+      if (moved) ctx.recordMoved(calls, moved);
+    }
     return new ResponseImpl(res, req.url);
   }
 
@@ -266,7 +283,7 @@ ${JSON.stringify(req.headers ?? {})}`, () => ctx.net.request(req)) : await ctx.n
     }
     if (!enc) {
       const calls = ctx.attribute(typeof url === 'string' ? url : '');
-      ctx.recordFailure(calls, new SourceError('PLUGIN', `Text encoding "${String(encoding)}" is not supported`));
+      ctx.recordFailure(calls, withReason(new SourceError('PLUGIN', `Text encoding "${String(encoding)}" is not supported`), 'unsupported'));
       return '';
     }
     const res = await sendBytes(url, init);
@@ -280,9 +297,49 @@ ${JSON.stringify(req.headers ?? {})}`, () => ctx.net.request(req)) : await ctx.n
     return res && res.status >= 200 && res.status < 300 ? res.base64 : '';
   }
 
-  /** gRPC-web/protobuf requests need protobufjs, which TachiNovel does not ship. */
-  function fetchProto(..._args: unknown[]): Promise<never> {
-    return Promise.reject(new SourceError('PLUGIN', 'fetchProto (protobuf) is not supported by TachiNovel'));
+  /**
+   * LNReader's fetchProto: a gRPC-web call described by proto source. LNReader posts binary
+   * `application/grpc-web+proto`; the host only carries text bodies, so this posts the same frame
+   * as `application/grpc-web-text` (base64), which gRPC-web servers accept alike, and decodes the
+   * response message with our protobuf codec (libs/proto.ts).
+   */
+  async function fetchProto(protoInit: ProtoRequestInit, url: string, init?: FetchInit): Promise<Record<string, unknown>> {
+    if (!protoInit || typeof protoInit !== 'object' || typeof protoInit.proto !== 'string') {
+      throw new SourceError('PLUGIN', 'fetchProto: protoInit.proto must be the proto source text');
+    }
+    let root = protoRoots.get(protoInit.proto);
+    if (!root) {
+      root = new ProtoRoot(protoInit.proto);
+      if (protoRoots.size >= 8) protoRoots.delete(protoRoots.keys().next().value as string);
+      protoRoots.set(protoInit.proto, root);
+    }
+    const request = root.lookupType(String(protoInit.requestType)).encode(protoInit.requestData ?? {});
+    const headers = headersToRecord(init?.headers);
+    for (const k of Object.keys(headers)) if (/^(content-type|accept|x-grpc-web)$/i.test(k)) delete headers[k];
+    headers['Content-Type'] = 'application/grpc-web-text';
+    headers.Accept = 'application/grpc-web-text';
+    headers['X-Grpc-Web'] = '1';
+    const res = await send(url, { ...init, method: 'POST', headers, body: bytesToBase64(grpcFrame(request)) });
+    const type = res.headers.get('content-type') ?? '';
+    const text = await res.text();
+    if (!res.ok) throw new Error(`fetchProto: HTTP ${res.status} from ${url}`);
+    if (!/grpc-web-text/i.test(type)) throw new Error(`fetchProto: ${url} did not answer in grpc-web-text (${type || 'no content type'})`);
+    // The body may be several base64 chunks back to back, each with its own padding.
+    const chunks = text.replace(/\s+/g, '').match(/[^=]+=*/g) ?? [];
+    const parts = chunks.map((c) => base64ToBytes(c));
+    const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) {
+      body.set(p, o);
+      o += p.length;
+    }
+    const { message, trailers } = grpcUnframe(body);
+    const status = trailers['grpc-status'] ?? res.headers.get('grpc-status') ?? '0';
+    if (status !== '0') {
+      const msg = trailers['grpc-message'] ?? res.headers.get('grpc-message') ?? '';
+      throw new Error(`fetchProto: gRPC status ${status}${msg ? `: ${decodeURIComponent(msg)}` : ''} from ${url}`);
+    }
+    return root.lookupType(String(protoInit.responseType)).decode(message ?? new Uint8Array(0));
   }
 
   return { fetchApi, fetchText, fetchFile, fetchProto };

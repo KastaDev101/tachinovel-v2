@@ -74,6 +74,8 @@ export interface NativeUiApi {
   /** JSON {text?, url?}. */
   share(optsJson: string, cb: NativeCallback<true>): void;
   shareFile(absPath: string, cb: NativeCallback<true>): void;
+  /** Share PNG/JPEG bytes as an image ("Save Image"); error if the bytes aren't a decodable image. */
+  shareImage(base64: string, cb: NativeCallback<true>): void;
   /** UTType identifiers or file extensions; the picked file is copied into the app's local store first. */
   pickFile(typesJson: string, destDir: string, cb: NativeCallback<string>): void;
   openUrl(url: string): void;

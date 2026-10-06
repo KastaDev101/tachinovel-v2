@@ -38,6 +38,10 @@ export interface CallRecord {
   lastStatus?: number;
   /** At least one 2xx response was attributed to this call. */
   ok: boolean;
+  /** Host whose response was a domain-parking / for-sale page (failure.ts isParkedPage). */
+  parked?: string;
+  /** Another site a request was redirected to (failure.ts crossSiteRedirect). */
+  movedTo?: string;
   /** When set, 2xx text responses whose URL passes it are kept in `captured` (see enrich.ts). */
   capture?: (url: string) => boolean;
   captured?: { url: string; body: string }[];
@@ -170,6 +174,14 @@ export class PluginContext {
       c.lastStatus = status;
       if (status >= 200 && status < 300) c.ok = true;
     }
+  }
+
+  recordParked(calls: readonly CallRecord[], host: string): void {
+    for (const c of calls) c.parked ??= host;
+  }
+
+  recordMoved(calls: readonly CallRecord[], host: string): void {
+    for (const c of calls) c.movedTo ??= host;
   }
 
   /** Keeps a 2xx text response for the calls that asked to capture it. */

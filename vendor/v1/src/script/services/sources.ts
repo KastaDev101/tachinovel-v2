@@ -6,7 +6,7 @@
  *   `app/plugins/stonescape.js` (so deploys update it). Built-ins can be disabled, not uninstalled.
  * - The plugin host (and its parser libraries) loads lazily on first source use.
  */
-import type { AvailablePlugin, RepoInfo, SourceInfo } from '../../shared/contracts/domain.ts';
+import type { AvailablePlugin, PluginSettingValues, RepoInfo, SourceInfo, SourceSettings } from '../../shared/contracts/domain.ts';
 import type { Filters } from '../../shared/lnreader/filters.ts';
 import type { PluginHost, PluginHostDeps, SourceAdapter, SourceMeta } from '../../shared/contracts/plugin-host.ts';
 import { Inflight, type Lane, mapLimit } from '../lib/async.ts';
@@ -19,7 +19,8 @@ import { type DocSpec, JsonDoc } from '../storage/json-doc.ts';
 import type { Ctx } from './context.ts';
 import type { Net } from './net.ts';
 import type { PluginKvStore } from './plugin-kv.ts';
-import { verifiedRank, verifiedStatus } from './verified.ts';
+import { copyOptional, isNonEmpty, isNum, isStr, repoInfo, validItems } from './records.ts';
+import { verifiedRank, verifiedReason, verifiedStatus } from './verified.ts';
 
 export interface InstalledSource extends SourceInfo {
   /** Plugin code, relative to the synced store. */
@@ -40,6 +41,10 @@ export interface InstalledSource extends SourceInfo {
   /** The plugin's filter definitions (null = none), cached for `filtersVersion`. */
   filters?: Filters | null;
   filtersVersion?: string;
+  /** meta.settings has at least one setting (SourceInfo.hasSettings). */
+  hasSettings?: boolean;
+  /** Keys of meta.settings: which plugin-storage keys are settings (backups keep only these). */
+  settingKeys?: string[];
 }
 
 interface RegistryDoc {
@@ -88,24 +93,82 @@ export const UPDATE_CHECK_FAILURE_LIMIT = 3;
 export const UPDATE_CHECK_SKIP_MS = 60 * 60 * 1000;
 const CSS_TYPES = new Set(['text/css', 'text/plain']);
 
+function settingKeysOf(meta: SourceMeta): string[] {
+  return meta.settings ? Object.keys(meta.settings) : [];
+}
+
+function sameKeys(a: readonly string[] | undefined, b: readonly string[]): boolean {
+  const x = a ?? [];
+  return x.length === b.length && x.every((k, i) => k === b[i]);
+}
+
+function setSettingKeys(s: InstalledSource, keys: string[]): void {
+  if (keys.length > 0) {
+    s.hasSettings = true;
+    s.settingKeys = keys;
+  } else {
+    delete s.hasSettings;
+    delete s.settingKeys;
+  }
+}
+
+/** Plugin code lives only here (written by install, or deployed for built-ins). */
+const PLUGIN_FILE_RE = /^(?:sources|app)\/plugins\/[A-Za-z0-9_-][A-Za-z0-9._-]{0,80}\.js$/;
+
+/** A stored registry source made safe to use (records.ts style): null drops it. */
+export function storedSource(v: unknown): InstalledSource | null {
+  if (!isRecord(v) || !isNonEmpty(v.id) || v.id.includes(':') || !isStr(v.file) || !PLUGIN_FILE_RE.test(v.file)) return null;
+  const s: InstalledSource = {
+    id: v.id,
+    name: isNonEmpty(v.name) ? v.name : v.id,
+    site: isStr(v.site) ? v.site : '',
+    version: isStr(v.version) ? v.version : '',
+    lang: isNonEmpty(v.lang) ? v.lang : 'Unknown',
+    enabled: v.enabled !== false,
+    pinned: v.pinned === true,
+    builtIn: v.builtIn === true,
+    hasFilters: v.hasFilters === true,
+    file: v.file,
+  };
+  copyOptional(s, v, ['iconUrl', 'repoUrl', 'updateAvailable', 'installUrl', 'customCSSUrl', 'customCSS', 'customCSSFrom', 'filtersVersion'], isStr);
+  copyOptional(s, v, ['lastUsedAt', 'checkSkipUntil'], isNum);
+  if (isNum(v.checkFailures) && v.checkFailures > 0) s.checkFailures = Math.floor(v.checkFailures);
+  if (isRecord(v.imageHeaders)) {
+    const headers: Record<string, string> = {};
+    for (const [k, h] of Object.entries(v.imageHeaders)) if (isStr(h)) headers[k] = h;
+    s.imageHeaders = headers;
+  }
+  if (v.filters === null || isRecord(v.filters)) s.filters = v.filters as Filters | null;
+  if (v.hasSettings === true) s.hasSettings = true;
+  if (Array.isArray(v.settingKeys)) s.settingKeys = v.settingKeys.filter(isNonEmpty).slice(0, 200);
+  // Early registries stored the stylesheet URL in `customCSS`.
+  if (s.customCSS !== undefined && s.customCSSFrom === undefined) {
+    if (s.customCSSUrl === undefined && isHttpUrl(s.customCSS)) s.customCSSUrl = s.customCSS;
+    delete s.customCSS;
+  }
+  return s;
+}
+
 export const REGISTRY_SPEC: DocSpec<RegistryDoc> = {
   path: 'sources/index.json',
   version: 1,
   create: () => ({ schemaVersion: 1, sources: [], repos: [], seeded: false }),
   normalize(doc) {
-    doc.sources = (Array.isArray(doc.sources) ? doc.sources : []).filter(
-      (s) => isRecord(s) && typeof s.id === 'string' && typeof s.file === 'string',
-    );
-    for (const src of doc.sources) {
-      // Early registries stored the stylesheet URL in `customCSS`.
-      if (typeof src.customCSS === 'string' && src.customCSSFrom === undefined) {
-        if (src.customCSSUrl === undefined && isHttpUrl(src.customCSS)) src.customCSSUrl = src.customCSS;
-        delete src.customCSS;
-      }
-    }
-    doc.repos = (Array.isArray(doc.repos) ? doc.repos : []).filter((r) => isRecord(r) && typeof r.url === 'string');
-    if (typeof doc.seeded !== 'boolean') doc.seeded = false;
-    return doc;
+    const ids = new Set<string>();
+    const sources = validItems(doc.sources, (v) => {
+      const s = storedSource(v);
+      if (!s || ids.has(s.id)) return null;
+      ids.add(s.id);
+      return s;
+    });
+    const urls = new Set<string>();
+    const repos = validItems(doc.repos, (v) => {
+      const r = repoInfo(v);
+      if (!r || urls.has(r.url)) return null;
+      urls.add(r.url);
+      return r;
+    });
+    return { schemaVersion: doc.schemaVersion, sources, repos, seeded: doc.seeded === true };
   },
 };
 
@@ -178,11 +241,18 @@ export class SourceService {
     loadHost: LoadPluginHost,
     solver?: (url: string) => Promise<boolean>,
   ): Promise<SourceService> {
-    const doc = await JsonDoc.load(ctx.platform.synced, REGISTRY_SPEC, ctx.timing.indexWriteMs, ctx.env);
+    const doc = await JsonDoc.load(ctx.platform.synced, REGISTRY_SPEC, ctx.timing.indexWriteMs, ctx.env, { mirror: ctx.platform.local });
     const svc = new SourceService(ctx, net, kv, doc, loadHost, solver);
     svc.ensureDefaults();
+    // iCloud delivered the real registry after a session started on defaults: built-ins stay listed.
+    doc.onReloaded = () => svc.ensureDefaults();
     await svc.fillBuiltInVersions();
     return svc;
+  }
+
+  /** The synced registry document (iCloud state checks). */
+  get syncDoc(): JsonDoc<RegistryDoc> {
+    return this.doc;
   }
 
   // ---------- registry ----------
@@ -256,6 +326,7 @@ export class SourceService {
     if (s.repoUrl) out.repoUrl = s.repoUrl;
     if (s.updateAvailable) out.updateAvailable = s.updateAvailable;
     if (s.lastUsedAt) out.lastUsedAt = s.lastUsedAt;
+    if (s.hasSettings) out.hasSettings = true;
     return out;
   }
 
@@ -361,9 +432,9 @@ export class SourceService {
     try {
       code = await this.ctx.platform.synced.readText(src.file);
     } catch (err) {
-      throw new AppError('STORAGE', `Cannot read plugin ${src.file}: ${errorMessage(err)}`);
+      throw new AppError('STORAGE', `Couldn't read the code of ${src.name}: ${errorMessage(err)}`);
     }
-    if (code === null) throw new AppError('PLUGIN', `Plugin file is missing: ${src.file}${src.builtIn ? ' (deploy the app again)' : ''}`);
+    if (code === null) throw new AppError('PLUGIN', src.builtIn ? `The built-in source ${src.name} is missing its code; deploy the app again` : `The code of ${src.name} is missing; reinstall the source`);
     const host = await this.host(lane);
     await this.kv.preload(id);
     const opts: { expectedId: string; sourceUrl?: string } = { expectedId: id };
@@ -416,6 +487,100 @@ export class SourceService {
     if (s.filters !== undefined && s.filtersVersion === s.version) return s.filters;
     await this.adapter(id);
     return this.get(id)?.filters ?? null;
+  }
+
+  // ---------- plugin settings ----------
+
+  /** Called after a source's settings changed (services drop that source's cached novel pages). */
+  onSettingsChanged: ((id: string) => void) | null = null;
+
+  private settingsOf(adapter: SourceAdapter): SourceSettings {
+    const schema = adapter.meta.settings ?? {};
+    const values = Object.keys(schema).length > 0 && adapter.getSettings ? adapter.getSettings() : {};
+    return { schema, values };
+  }
+
+  /** sources.settings.get: the plugin's settings and current values ({} / {} when it has none). */
+  async settings(id: string): Promise<SourceSettings> {
+    this.require(id);
+    return this.settingsOf(await this.adapter(id));
+  }
+
+  /**
+   * sources.settings.set: saved through the loaded (interactive) instance, which reloads itself with
+   * them (SettingsError → INVALID_ARGS; nothing changes then). The background instance is dropped so
+   * it reloads with the new values, and cached novel pages of the source are forgotten.
+   */
+  async setSettings(id: string, values: unknown): Promise<SourceSettings> {
+    const s = this.require(id);
+    if (!isRecord(values)) throw invalidArgs('values must be an object of setting key → value');
+    const adapter = await this.adapter(id);
+    const schema = adapter.meta.settings ?? {};
+    if (Object.keys(schema).length === 0 || !adapter.setSettings) throw invalidArgs(`${s.name} has no settings`);
+    adapter.setSettings(values as Partial<PluginSettingValues>);
+    this.adapters.delete(`background:${id}`);
+    const current = this.get(id);
+    if (current) {
+      this.applyMeta(current, adapter.meta);
+      this.cacheFilters(current, adapter.meta);
+    }
+    try {
+      this.onSettingsChanged?.(id);
+    } catch (err) {
+      this.ctx.platform.log('warn', `After settings of ${id} changed: ${errorMessage(err)}`);
+    }
+    this.ctx.platform.log('info', `Settings of ${id} changed: ${Object.keys(values).join(', ')}`);
+    return this.settingsOf(adapter);
+  }
+
+  /**
+   * Setting values as stored in plugin storage (raw items), per source, for backups. Only keys that
+   * are settings are included; no other plugin storage. Sources never loaded with settings are absent.
+   */
+  async backupSettings(): Promise<Record<string, Record<string, unknown>>> {
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const s of this.doc.value.sources) {
+      if (!s.settingKeys?.length) continue;
+      try {
+        await this.kv.preload(s.id);
+      } catch (err) {
+        this.ctx.platform.log('warn', `Backup: settings of ${s.id} unreadable: ${errorMessage(err)}`);
+        continue;
+      }
+      const kv = this.kv.kvFor(s.id);
+      const values: Record<string, unknown> = {};
+      for (const key of s.settingKeys) {
+        const item = kv.get(key);
+        if (item !== undefined && item !== null) values[key] = item;
+      }
+      if (Object.keys(values).length > 0) out[s.id] = values;
+    }
+    return out;
+  }
+
+  /**
+   * Put backed-up setting values back into plugin storage (sources installed now; others skipped).
+   * merge: keys already set on this device are kept. Loaded instances reload on next use.
+   */
+  async restoreSettings(all: Record<string, Record<string, unknown>>, mode: 'merge' | 'replace'): Promise<number> {
+    let restored = 0;
+    for (const [id, values] of Object.entries(all)) {
+      if (!this.get(id)) continue;
+      try {
+        await this.kv.preload(id);
+      } catch (err) {
+        this.ctx.platform.log('warn', `Restore: settings of ${id} not restored: ${errorMessage(err)}`);
+        continue;
+      }
+      const kv = this.kv.kvFor(id);
+      for (const [key, item] of Object.entries(values)) {
+        if (mode === 'merge' && kv.get(key) !== undefined) continue;
+        kv.set(key, item);
+      }
+      this.dropAdapters(id);
+      restored++;
+    }
+    return restored;
   }
 
   // ---------- update-check health ----------
@@ -559,6 +724,7 @@ export class SourceService {
   private applyMeta(s: InstalledSource, meta: SourceMeta): void {
     const hasFilters = !!meta.filters && Object.keys(meta.filters).length > 0;
     const lang = meta.lang ?? s.lang;
+    const settingKeys = settingKeysOf(meta);
     if (
       s.name === meta.name &&
       s.site === meta.site &&
@@ -566,10 +732,12 @@ export class SourceService {
       s.lang === lang &&
       s.iconUrl === meta.iconUrl &&
       s.hasFilters === hasFilters &&
-      s.customCSSUrl === meta.customCSS
+      s.customCSSUrl === meta.customCSS &&
+      sameKeys(s.settingKeys, settingKeys)
     ) {
       return;
     }
+    setSettingKeys(s, settingKeys);
     s.name = meta.name;
     s.site = meta.site;
     s.version = meta.version;
@@ -594,7 +762,7 @@ export class SourceService {
     if ('url' in input) {
       url = input.url;
       const res = await this.net.request({ url, headers: { Accept: 'application/javascript, text/plain, */*' } });
-      if (res.status !== 200) throw new AppError('NETWORK', `Plugin download failed: HTTP ${res.status} (${url})`, res.status >= 500);
+      if (res.status !== 200) throw new AppError('NETWORK', `Couldn't download the source from ${hostOf(url) || url} (HTTP ${res.status})`, res.status >= 500);
       code = res.body;
     } else {
       code = input.code;
@@ -616,7 +784,7 @@ export class SourceService {
     try {
       await this.ctx.platform.synced.writeText(file, code);
     } catch (err) {
-      throw new AppError('STORAGE', `Cannot save plugin: ${errorMessage(err)}`);
+      throw new AppError('STORAGE', `Couldn't save the source: ${errorMessage(err)}`);
     }
     const existing = this.get(meta.id);
     const entry: InstalledSource = {
@@ -633,6 +801,7 @@ export class SourceService {
     };
     if (meta.iconUrl) entry.iconUrl = meta.iconUrl;
     if (meta.customCSS) entry.customCSSUrl = meta.customCSS;
+    setSettingKeys(entry, settingKeysOf(meta));
     entry.filters = meta.filters && Object.keys(meta.filters).length > 0 ? meta.filters : null;
     entry.filtersVersion = meta.version;
     if (existing?.lastUsedAt) entry.lastUsedAt = existing.lastUsedAt;
@@ -814,14 +983,14 @@ export class SourceService {
     if (!force && cached && this.ctx.platform.now() - cached.at < this.ctx.timing.repoTtlMs) return Promise.resolve(cached.items);
     return this.repoFetches.run(url, async () => {
       const res = await this.net.request({ url, headers: { Accept: 'application/json' } });
-      if (res.status !== 200) throw new AppError('NETWORK', `Repo ${url}: HTTP ${res.status}`, res.status >= 500);
+      if (res.status !== 200) throw new AppError('NETWORK', `Couldn't load the repository at ${hostOf(url) || url} (HTTP ${res.status})`, res.status >= 500);
       let parsed: unknown;
       try {
         parsed = JSON.parse(res.body);
       } catch {
-        throw new AppError('PLUGIN', `Repo ${url} is not valid JSON`);
+        throw new AppError('PLUGIN', `${repoNameOf(url)} isn't a repository file (it isn't valid JSON)`);
       }
-      if (!Array.isArray(parsed)) throw new AppError('PLUGIN', `Repo ${url} must be a JSON array of plugins`);
+      if (!Array.isArray(parsed)) throw new AppError('PLUGIN', `${repoNameOf(url)} isn't a repository file (no list of sources in it)`);
       const items: RepoPlugin[] = [];
       for (const raw of parsed) {
         const item = parseRepoItem(raw);
@@ -867,6 +1036,8 @@ export class SourceService {
         if (p.iconUrl) ap.iconUrl = p.iconUrl;
         const verified = verifiedStatus(p.id, p.version);
         if (verified) ap.verified = verified;
+        const why = verified && verified !== 'works' ? verifiedReason(p.id, p.version) : undefined;
+        if (why) ap.verifiedReason = why;
         if (installed) {
           ap.installedVersion = installed.version;
           if (!installed.builtIn && (!installed.repoUrl || installed.repoUrl === r.repo)) {

@@ -1,9 +1,15 @@
 /**
  * Single-instance guard. Two TachiNovel runs at once (e.g. a widget deep link while the app is open)
  * would write the same files concurrently. The running instance keeps a lock file in local storage
- * (`run.lock`: {id, startedAt, heartbeat}) fresh; a second instance finds a fresh heartbeat and backs
- * off, or takes over when it is stale (the previous run was killed or suspended for > LOCK_STALE_MS).
- * An instance whose lock was taken over notices on its next heartbeat and stops.
+ * (`run.lock`: {id, startedAt, heartbeat}) fresh. A second launch that finds a fresh heartbeat
+ * announces itself (`run.next.json`) and, once its own view is on screen, takes the lock over (run.ts:
+ * the newest launch wins; if its view is refused it yields instead). A stale lock (the previous run was
+ * killed or suspended for > LOCK_STALE_MS) is simply taken. An instance whose lock was taken over
+ * notices on its next heartbeat and stops.
+ *
+ * Pending links (`pending-link.json`): a hand-off format for deep links to a running instance, which
+ * reads them on its heartbeat. Nothing in the app writes one any more (the newest launch takes over
+ * instead); it is kept for links handed over by other tools.
  */
 import type { Platform } from '../../shared/contracts/platform.ts';
 import { errorMessage } from '../lib/errors.ts';
@@ -26,16 +32,6 @@ export async function writePendingLink(platform: Pick<Platform, 'local' | 'now'>
   await platform.local.writeText(PENDING_LINK_FILE, JSON.stringify({ ...link, at: platform.now() }));
 }
 
-/**
- * A launch that found another instance running: leave its deep link (if any) for the running instance and
- * report what happened. Never shows UI — the caller just exits (Script.complete()).
- */
-export async function handleBusyLaunch(platform: Pick<Platform, 'local' | 'now'>, link: PendingLink | null): Promise<'handed-over' | 'exit'> {
-  if (!link) return 'exit';
-  await writePendingLink(platform, link);
-  return 'handed-over';
-}
-
 /** Running instance: take (and remove) a pending deep link, if a fresh one is there. */
 export async function takePendingLink(platform: Pick<Platform, 'local' | 'now'>): Promise<PendingLink | null> {
   const { local } = platform;
@@ -55,6 +51,8 @@ export async function takePendingLink(platform: Pick<Platform, 'local' | 'now'>)
   return link;
 }
 export const LOCK_STALE_MS = 10_000;
+/** A second launch that found the lock busy announces itself here while it starts (see announce()). */
+export const RUN_NEXT_FILE = 'run.next.json';
 export const HEARTBEAT_MS = 3_000;
 
 interface LockFile {
@@ -76,6 +74,13 @@ export interface RunLock {
   startHeartbeat(onLost: () => void, onBeat?: () => Promise<void>): void;
   /** Stop the heartbeat and remove the lock if it is still ours. */
   release(): Promise<void>;
+  /**
+   * A launch that found the lock busy says it is starting (before presenting its view), so the lock
+   * owner can tell "another run's view is on screen" from a real failure. Cleared by takeOver/release.
+   */
+  announce(): Promise<void>;
+  /** Another run is live: it holds a fresh lock, or has announced itself recently. */
+  otherRunLive(): Promise<boolean>;
 }
 
 export function newRunId(now: number): string {
@@ -100,6 +105,17 @@ export function createRunLock(platform: Pick<Platform, 'local' | 'now' | 'sleep'
     return null;
   }
 
+  /** Remove our own announcement (never another run's). */
+  function clearAnnounce(): void {
+    void local
+      .readText(RUN_NEXT_FILE)
+      .then((text) => {
+        const v: unknown = text ? JSON.parse(text) : null;
+        if (isRecord(v) && v.id === id) local.remove(RUN_NEXT_FILE);
+      })
+      .catch(() => undefined);
+  }
+
   async function write(): Promise<void> {
     const lock: LockFile = { id, startedAt, heartbeat: platform.now() };
     await local.writeText(RUN_LOCK_FILE, JSON.stringify(lock));
@@ -118,7 +134,27 @@ export function createRunLock(platform: Pick<Platform, 'local' | 'now' | 'sleep'
       const check = await read();
       return check?.id === id ? 'acquired' : 'busy';
     },
+    async announce() {
+      try {
+        await local.writeText(RUN_NEXT_FILE, JSON.stringify({ id, at: platform.now() }));
+      } catch (err) {
+        platform.log('warn', `Run announce failed: ${errorMessage(err)}`);
+      }
+    },
+    async otherRunLive() {
+      const now = platform.now();
+      const current = await read();
+      if (current && current.id !== id && now - current.heartbeat <= LOCK_STALE_MS) return true;
+      try {
+        const text = await local.readText(RUN_NEXT_FILE);
+        const v: unknown = text ? JSON.parse(text) : null;
+        return isRecord(v) && typeof v.id === 'string' && v.id !== id && typeof v.at === 'number' && Math.abs(now - v.at) <= 3 * LOCK_STALE_MS;
+      } catch {
+        return false;
+      }
+    },
     async takeOver() {
+      clearAnnounce();
       const current = await read();
       if (current && current.id !== id) platform.log('info', `Run lock: newest launch takes over from ${current.id}`);
       startedAt = platform.now();
@@ -149,6 +185,7 @@ export function createRunLock(platform: Pick<Platform, 'local' | 'now' | 'sleep'
     },
     async release() {
       beating = false;
+      clearAnnounce();
       const current = await read();
       if (current?.id === id) {
         try {
