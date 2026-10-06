@@ -9,9 +9,9 @@
 //  Layout (models directory = KokoroAneManager's `directory`):
 //    <dir>/kokoro-82m-coreml/ANE/*.mlmodelc, vocab.json, <voice>.bin     ← read in place
 //    <dir>/kokoro-82m-coreml/G2P*.mlmodelc, g2p_vocab.json, us_lexicon_cache.json
-//  FluidAudio reads the G2P and lexicon from a fixed cache path (TtsCacheDirectory: Application Support
-//  on iOS, ~/.cache on macOS), so those four entries are SYMLINKED there, pointing into the bundle (the
-//  bundle path changes on every app update, so the links are refreshed on each load).
+//  FluidAudio reads the G2P and lexicon from a fixed cache path (<TtsCacheDirectory>/Models/kokoro/;
+//  Application Support on iOS, ~/.cache on macOS), so those four entries are SYMLINKED there, pointing
+//  into the bundle (the bundle path changes on every app update, so the links are refreshed on each load).
 //
 //  Shared by the app (via KokoroService) and the CI voice check (KokoroCheck), so CI tests exactly the
 //  code and files that ship.
@@ -198,7 +198,8 @@ public actor KokoroRuntime {
     public static func linkSharedAssets(from dir: URL) throws {
         let source = dir.appendingPathComponent("kokoro-82m-coreml")
         let root = try TtsCacheDirectory.ensure()
-        let target = root.appendingPathComponent("Models").appendingPathComponent("kokoro-82m-coreml")
+        // FluidAudio's `Repo.kokoro.folderName` ("kokoro"): where G2PModel and the lexicon cache look.
+        let target = root.appendingPathComponent("Models").appendingPathComponent("kokoro")
         let fm = FileManager.default
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
         for name in ["G2PEncoder.mlmodelc", "G2PDecoder.mlmodelc", "g2p_vocab.json", "us_lexicon_cache.json"] {

@@ -57,6 +57,13 @@ const ICON = {
   play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
 };
 
+/** Window event after a voice setting changed here (v1-hooks.ts re-checks "Use PC audio"). */
+export const VOICE_SETTINGS_CHANGED = 'tn-voice-settings';
+
+function changed(): void {
+  window.dispatchEvent(new Event(VOICE_SETTINGS_CHANGED));
+}
+
 export const SAMPLE_TEXT = 'The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath.';
 
 function esc(s: string): string {
@@ -231,7 +238,7 @@ export function openVoicesScreen(): void {
   p.body.addEventListener('change', (ev) => {
     const el = ev.target as HTMLInputElement;
     if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
-    if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load);
+    if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);
   });
   render();
   void load();

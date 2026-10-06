@@ -61,6 +61,13 @@ function tapFeedback(): void {
   void Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined);
 }
 
+let openPlayer: (() => void) | null = null;
+
+/** Open the Listen player (More › Listen, the mini player). */
+export function openListenPlayer(): void {
+  openPlayer?.();
+}
+
 export function installNarrationOverlay(): void {
   const chapters = new Map<string, ChapterRef>();
   let state: NarrationState = { status: 'idle' };
@@ -72,6 +79,10 @@ export function installNarrationOverlay(): void {
   /** Speech: the reader's own script per chapter (re-made when the reader re-renders the body). */
   const speechScripts = new Map<string, DomScript>();
   const car = installCarMode();
+  openPlayer = () => {
+    car.open();
+    render();
+  };
 
   // Learn which novel each chapter belongs to from bridge traffic.
   observeCalls((method, args) => {

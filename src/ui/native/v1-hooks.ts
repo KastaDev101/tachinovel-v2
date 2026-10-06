@@ -1,30 +1,49 @@
 /**
  * Small additions to v1 screens without editing v1 (DOM hooks, re-applied when v1 re-renders):
- *  - More: a "Voices" row (Settings › Voices, voices-ui.ts) right after "Listen in the Car".
+ *  - More: a "Voices" row (Settings › Voices, voices-ui.ts). v1's "Listen in the Car" screen is about the
+ *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
+ *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
  *  - About: tap the version 5 times → the hidden Voice Lab (voice-lab.ts).
- *  - Open Source Licenses: THIRD_PARTY_NOTICES.md (Capacitor, Kokoro, FluidAudio, …) after v1's list,
- *    without the ones v1 already shows.
+ * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
-import { v2Notices } from './third-party.ts';
+import { Narration } from './narration.ts';
+import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceLab } from './voice-lab.ts';
-import { openVoicesScreen } from './voices-ui.ts';
+import { openVoicesScreen, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
-function addVoicesRow(): void {
-  const more = document.querySelector('[data-testid="screen-more"]');
-  if (!more || more.querySelector('[data-testid="more-voices"]')) return;
-  const anchor = more.querySelector<HTMLElement>('[data-testid="more-narration"]');
-  if (!anchor) return;
+/** Settings › Voices › Advanced › "Use PC audio when available" (off by default). */
+let pcAudio = false;
+
+function cloneRow(anchor: HTMLElement, testId: string, title: string, onClick: () => void): HTMLElement {
   const row = anchor.cloneNode(true) as HTMLElement;
-  row.dataset.testid = 'more-voices';
-  const title = row.querySelector('.mrow-title');
-  if (title) title.textContent = 'Voices';
+  row.dataset.testid = testId;
+  row.style.display = '';
+  const t = row.querySelector('.mrow-title');
+  if (t) t.textContent = title;
   row.querySelector('.mrow-value')?.remove();
   row.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    openVoicesScreen();
+    onClick();
   });
-  anchor.after(row);
+  return row;
+}
+
+function addMoreRows(): void {
+  const more = document.querySelector('[data-testid="screen-more"]');
+  const anchor = more?.querySelector<HTMLElement>('[data-testid="more-narration"]');
+  if (!more || !anchor) return;
+  // v1's PC-narrator screen only when PC audio is on; otherwise our Listen row stands in for it.
+  anchor.style.display = pcAudio ? '' : 'none';
+  let listen = more.querySelector<HTMLElement>('[data-testid="more-listen"]');
+  if (!pcAudio && !listen) {
+    listen = cloneRow(anchor, 'more-listen', 'Listen', openListenPlayer);
+    anchor.after(listen);
+  }
+  if (listen) listen.style.display = pcAudio ? 'none' : '';
+  if (!more.querySelector('[data-testid="more-voices"]')) {
+    (listen ?? anchor).after(cloneRow(anchor, 'more-voices', 'Voices', openVoicesScreen));
+  }
 }
 
 function hookAboutVersion(): void {
@@ -42,46 +61,13 @@ function hookAboutVersion(): void {
   });
 }
 
-function addLicenses(): void {
-  const screen = document.querySelector('[data-testid="screen-licenses"]');
-  const grouped = screen?.querySelector('.grouped');
-  if (!grouped || grouped.querySelector('[data-tn-notice]')) return;
-  const shown = new Set(Array.from(grouped.querySelectorAll('.row-title'), (el) => (el.textContent ?? '').trim().toLowerCase()));
-  const same = (name: string): boolean => shown.has(name.toLowerCase()) || (name === 'Preact Signals' && shown.has('@preact/signals'));
-  for (const n of v2Notices().filter((x) => !same(x.name))) {
-    const section = document.createElement('section');
-    section.className = 'group';
-    section.dataset.tnNotice = n.name;
-    section.innerHTML = `<div class="group-body"><button type="button" class="row tap tap-row" aria-expanded="false"><span class="row-main"><span class="row-title"></span></span><span class="row-value"></span></button></div>`;
-    (section.querySelector('.row-title') as HTMLElement).textContent = n.name;
-    (section.querySelector('.row-value') as HTMLElement).textContent = n.license;
-    const body = section.querySelector('.group-body') as HTMLElement;
-    const btn = section.querySelector('button') as HTMLButtonElement;
-    btn.addEventListener('click', () => {
-      const open = body.querySelector('pre');
-      if (open) {
-        open.remove();
-        btn.setAttribute('aria-expanded', 'false');
-        return;
-      }
-      const pre = document.createElement('pre');
-      pre.className = 'license-text selectable';
-      pre.textContent = n.text;
-      body.append(pre);
-      btn.setAttribute('aria-expanded', 'true');
-    });
-    grouped.append(section);
-  }
-}
-
 export function installV1Hooks(): void {
   let queued = false;
   const apply = (): void => {
     queued = false;
     try {
-      addVoicesRow();
+      addMoreRows();
       hookAboutVersion();
-      addLicenses();
     } catch (err) {
       console.warn('v1 hooks', err);
     }
@@ -92,5 +78,14 @@ export function installV1Hooks(): void {
     requestAnimationFrame(apply);
   };
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  const refresh = (): void =>
+    void Narration.voiceSettings()
+      .then((v) => {
+        pcAudio = v.usePCAudio === true;
+        schedule();
+      })
+      .catch(() => undefined);
+  window.addEventListener(VOICE_SETTINGS_CHANGED, refresh);
+  refresh();
   schedule();
 }

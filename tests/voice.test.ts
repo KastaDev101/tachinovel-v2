@@ -168,20 +168,11 @@ describe('CI voice checks', () => {
   });
 });
 
-describe('open-source notices shown in the app', () => {
-  it('parses THIRD_PARTY_NOTICES.md: every section has a license and text; Apache text appended', async () => {
-    const { parseNotices } = await import('../src/ui/native/notices.ts');
+describe('voice notices in THIRD_PARTY_NOTICES.md (the Licenses screen is built from it)', () => {
+  it('has Kokoro, its Core ML conversion, misaki and FluidAudio with their licenses', () => {
     const md = readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8');
-    const notices = parseNotices(md);
-    const names = notices.map((n) => n.name);
-    for (const n of ['Kokoro-82M', 'Kokoro Core ML conversion', 'FluidAudio', 'misaki', 'Capacitor']) expect(names).toContain(n);
-    expect(names).not.toContain('Apache License 2.0');
-    for (const n of notices) {
-      expect(n.license, n.name).not.toBe('');
-      expect(n.text.length, n.name).toBeGreaterThan(20);
+    for (const [name, license] of [['Kokoro-82M', 'Apache-2.0'], ['Kokoro Core ML conversion', 'Apache-2.0'], ['misaki', 'Apache-2.0'], ['FluidAudio', 'Apache-2.0'], ['fastcluster', 'BSD-2-Clause']] as const) {
+      expect(md.replace(/\r\n/g, '\n'), name).toContain(`\n## ${name}\n\n- License: ${license}\n`);
     }
-    const kokoro = notices.find((n) => n.name === 'Kokoro-82M');
-    expect(kokoro?.license).toBe('Apache-2.0');
-    expect(kokoro?.text).toMatch(/TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION/);
   });
 });
