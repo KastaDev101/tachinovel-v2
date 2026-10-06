@@ -1,8 +1,8 @@
 {
   "ipa": {
-    "baselineBytes": null,
+    "baselineBytes": 94521461,
     "maxGrowthPercent": 10,
-    "note": "Unsigned sideload IPA built by the ios-ipa job. Hard budget: a PR fails when it grows more than maxGrowthPercent over the baseline. Change the baseline only on purpose: node tools/budgets.ts set-ipa <bytes>, with the reason in the PR."
+    "note": "Unsigned sideload IPA built by the ios-ipa job. Hard budget: a PR fails when it grows more than maxGrowthPercent over the baseline. Baseline: main after #7 (bundled Kokoro model), ios-ipa run 37542120127, build 133. Change it only on purpose: node tools/budgets.ts set-ipa <bytes>, with the reason in the PR."
   },
   "boot": {
     "metric": "process->library",
