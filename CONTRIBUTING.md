@@ -94,8 +94,10 @@ Security problems go through private reporting, not issues: see [SECURITY.md](SE
 
 - Commit messages: `Area: what changed (why)`, for example `CI smoke: capture launchctl output before
   grep`. AI agents add their `Co-Authored-By` trailer.
-- Add a line to [CHANGELOG.md](CHANGELOG.md) under **Unreleased** for anything that changes the app,
-  the build or releases.
+- Add a **changelog fragment**, `changelog.d/<branch-name>.md`, for anything that changes the app, the
+  build or releases ([format](changelog.d/README.md)). Don't edit `CHANGELOG.md` itself: parallel PRs
+  conflicted there; the release merges the fragments. The CI job `changelog` requires a fragment when a
+  PR changes `src/` or `ios/` and only reminds otherwise.
 - Update `docs/architecture.md` or `docs/roadmap.md` when behavior, contracts or setup change.
 
 ## Parallel work

@@ -62,8 +62,8 @@ procedure: [docs/release.md](docs/release.md).
 ## Contributing
 
 `main` is protected: every change goes through a pull request with green checks. The workflow (also for
-AI agents working in this repo) is in [CONTRIBUTING.md](CONTRIBUTING.md); notable changes go in
-[CHANGELOG.md](CHANGELOG.md). Security issues: [SECURITY.md](SECURITY.md).
+AI agents working in this repo) is in [CONTRIBUTING.md](CONTRIBUTING.md); notable changes go in a
+[changelog fragment](changelog.d/README.md) and end up in [CHANGELOG.md](CHANGELOG.md) at release time. Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
