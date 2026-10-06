@@ -1,5 +1,9 @@
 /**
  * v2's narration overlay over the v1 UI (src/ui/native/narration-overlay.ts), in the PC shell:
+ *  - "Listen" lives in the reader's bottom bar with v1's tools (same style, one row) and shows and hides
+ *    with the bars; while listening, the mini player follows the bars in the reader too;
+ *  - the mini player says which voice speaks ("Kokoro · Heart", or "System voice (fallback) · why");
+ *  - the Listen player's speed slider + chips and "Voice volume" slider, saved natively (survive a reload);
  *  - the mini player must not cover v1's bottom UI: the tab bar (it covered all five tabs while
  *    listening), the reader's bottom bar, the novel page's Resume button;
  *  - scrolling content gets room at its end, so nothing stays under the player;
@@ -26,6 +30,34 @@ const routes: Record<string, Route> = {
 
 let shell: PcShell;
 const top = () => shell.page.locator('.nav-root > .layer').last();
+/** What the native side saved through Narration.setVoiceSettings (the mock persists it like UserDefaults). */
+const saved: { speed: number; volume: number; usePCAudio: boolean } = { speed: 1, volume: 1, usePCAudio: false };
+
+const readerBars = (): Promise<boolean> => shell.page.evaluate(() => !!document.querySelector('[data-testid="screen-reader"].bars-visible'));
+/** Toggle the reader's bars like a reader does: a tap in the middle of the page. */
+async function tapPageMiddle(): Promise<void> {
+  const vp = shell.page.viewportSize() ?? { width: 393, height: 852 };
+  await shell.page.mouse.click(vp.width / 2, vp.height / 2);
+}
+/** Where an element is relative to the viewport: on screen, or pushed below it (v1 slides hidden bars away). */
+function placement(selector: string): Promise<{ top: number; bottom: number; right: number; vh: number; vw: number } | null> {
+  return shell.page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), right: Math.round(r.right), vh: innerHeight, vw: innerWidth };
+  }, selector);
+}
+async function setRange(testSel: string, value: number): Promise<void> {
+  await shell.page.locator(testSel).evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    input.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    input.value = String(v);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  }, value);
+}
 const waitStack = (n: number) =>
   shell.page.waitForFunction((d) => document.querySelectorAll('.nav-root > .layer').length === d && !document.querySelector('.nav-root.is-animating'), n);
 
@@ -55,6 +87,14 @@ describe('narration overlay over v1 screens (PC shell)', () => {
       },
       initStorage: { 'tachinovel.tips.reader': '1' },
     });
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({ ...saved }));
+    shell.pluginReplies.set('Narration.setVoiceSettings', (o) => {
+      const a = o as { speed?: number; volume?: number; usePCAudio?: boolean };
+      if (typeof a.speed === 'number') saved.speed = a.speed;
+      if (typeof a.volume === 'number') saved.volume = a.volume;
+      if (typeof a.usePCAudio === 'boolean') saved.usePCAudio = a.usePCAudio;
+      return {};
+    });
     await shell.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     await shell.page.getByTestId('onboarding-skip').click();
     await shell.page.getByTestId('tab-browse').click();
@@ -65,14 +105,110 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await top().getByTestId('resume').click();
     await waitStack(4);
     await shell.page.locator('[data-testid="reader-chapter"][data-status="ready"]').first().waitFor({ timeout: 15_000 });
-    await shell.page.locator('.tn-listen').click();
-    // NarrationPlugin answers play() and then reports its state, which shows the mini player.
-    shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1 - Nightmare Begins' });
-    await shell.page.locator('.tn-player').waitFor({ state: 'visible', timeout: 5000 });
   });
 
   afterAll(async () => {
     await shell?.close();
+  });
+
+  it("puts Listen in the reader's bottom bar, styled and laid out like v1's tools", async () => {
+    const tool = top().getByTestId('reader-listen');
+    await tool.waitFor({ timeout: 5000 });
+    expect(await tool.evaluate((el) => el.parentElement?.classList.contains('rd-tools') && el.closest('.rd-bottom') !== null)).toBe(true);
+    expect(await tool.textContent()).toBe('Listen');
+    const looks = await shell.page.evaluate(() => {
+      const tools = [...document.querySelectorAll<HTMLElement>('[data-testid="screen-reader"] .rd-tools > .rd-tool')];
+      const css = (el: HTMLElement) => {
+        const c = getComputedStyle(el);
+        return `${c.fontSize} ${c.fontWeight} ${c.color} ${c.flexDirection}`;
+      };
+      return {
+        count: tools.length,
+        sameStyle: new Set(tools.map(css)).size === 1,
+        oneRow: new Set(tools.map((t) => Math.round(t.getBoundingClientRect().top))).size === 1,
+        fits: tools.every((t) => t.getBoundingClientRect().right <= innerWidth && t.getBoundingClientRect().left >= 0),
+        icon: !!document.querySelector('[data-testid="reader-listen"] i.icon'),
+      };
+    });
+    expect(looks).toEqual({ count: 5, sameStyle: true, oneRow: true, fits: true, icon: true });
+    // No floating button over the page any more.
+    expect(await shell.page.locator('.tn-listen').count()).toBe(0);
+  });
+
+  it('shows and hides with the bars', async () => {
+    expect(await readerBars()).toBe(true);
+    await tapPageMiddle();
+    await expect.poll(readerBars, { timeout: 3000 }).toBe(false);
+    await expect.poll(async () => { const p = await placement('[data-testid="reader-listen"]'); return p ? p.top >= p.vh - 1 : null; }, { timeout: 3000 }).toBe(true);
+    await tapPageMiddle();
+    await expect.poll(readerBars, { timeout: 3000 }).toBe(true);
+    await expect.poll(async () => { const p = await placement('[data-testid="reader-listen"]'); return p ? p.bottom <= p.vh && p.right <= p.vw : null; }, { timeout: 3000 }).toBe(true);
+  });
+
+  it('starts listening from the page; while listening it opens the player and the mini player follows the bars', async () => {
+    await top().getByTestId('reader-listen').click();
+    await expect.poll(() => shell.pluginCalls.filter((c) => c.pluginId === 'Narration' && c.methodName === 'play').length, { timeout: 5000 }).toBe(1);
+    // NarrationPlugin answers play() and then reports its state, which shows the mini player.
+    shell.emitPluginEvent('Narration', 'state', {
+      status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1 - Nightmare Begins',
+      voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' },
+    });
+    await shell.page.locator('.tn-player').waitFor({ state: 'visible', timeout: 5000 });
+    await expect.poll(() => top().getByTestId('reader-listen').textContent()).toBe('Player');
+    await tapPageMiddle();
+    await expect.poll(readerBars, { timeout: 3000 }).toBe(false);
+    await shell.page.locator('.tn-player').waitFor({ state: 'hidden', timeout: 3000 });
+    await tapPageMiddle();
+    await expect.poll(readerBars, { timeout: 3000 }).toBe(true);
+    await shell.page.locator('.tn-player').waitFor({ state: 'visible', timeout: 3000 });
+  });
+
+  it('says which voice speaks, and why the system voice stands in', async () => {
+    const sub = shell.page.locator('.tn-player .tn-title small');
+    await expect.poll(() => sub.textContent()).toBe('Kokoro · Heart');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', appleName: 'Samantha', fallback: 'modelLoading' } });
+    await expect.poll(() => sub.textContent()).toBe('System voice (fallback) · Kokoro is starting');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', fallback: 'modelUnavailable', kokoroStatus: 'Turned off after crashing twice' } });
+    await expect.poll(() => sub.textContent()).toBe('System voice (fallback) · Kokoro unavailable: Turned off after crashing twice');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' } });
+    await expect.poll(() => sub.textContent()).toBe('Kokoro · Heart');
+  });
+
+  it('Listen player: the speed slider and its chips agree, and "Voice volume" goes to 150 %', async () => {
+    await shell.page.locator('.tn-player .tn-title').click();
+    const player = shell.page.getByTestId('car-player');
+    await player.locator('[data-testid="listen-controls"]').waitFor({ timeout: 5000 });
+    const speed = '[data-testid="car-player"] [data-act="speed-slider"]';
+    const volume = '[data-testid="car-player"] [data-act="volume"]';
+    expect(await shell.page.locator(speed).evaluate((el) => [(el as HTMLInputElement).min, (el as HTMLInputElement).max, (el as HTMLInputElement).step])).toEqual(['0.5', '2.5', '0.05']);
+    const onChip = () => player.locator('[data-act="speed"].on').allTextContents();
+    expect(await onChip()).toEqual(['1×']);
+    // The slider lights up the chip it sits on, and nothing between chips.
+    await setRange(speed, 1.25);
+    await expect.poll(onChip).toEqual(['1.25×']);
+    expect(await player.locator('[data-speed-val]').textContent()).toBe('1.25×');
+    await expect.poll(() => saved.speed).toBe(1.25);
+    await setRange(speed, 1.35);
+    await expect.poll(onChip).toEqual([]);
+    await expect.poll(() => saved.speed).toBe(1.35);
+    // A chip snaps the slider.
+    await player.locator('[data-act="speed"][data-v="1.5"]').click();
+    await expect.poll(() => shell.page.locator(speed).inputValue()).toBe('1.5');
+    await expect.poll(() => saved.speed).toBe(1.5);
+    // Voice volume, 0–150 %.
+    expect(await shell.page.locator(volume).evaluate((el) => [(el as HTMLInputElement).min, (el as HTMLInputElement).max])).toEqual(['0', '150']);
+    await setRange(volume, 130);
+    expect(await player.locator('[data-volume-val]').textContent()).toBe('130%');
+    await expect.poll(() => saved.volume).toBe(1.3);
+  });
+
+  it('Listen player: speed and volume are kept (reopen, and after a reload)', async () => {
+    const player = shell.page.getByTestId('car-player');
+    await player.locator('[data-act="close"]').click();
+    await shell.page.locator('.tn-player .tn-title').click();
+    await expect.poll(() => shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]').inputValue()).toBe('1.5');
+    expect(await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').inputValue()).toBe('130');
+    await player.locator('[data-act="close"]').click();
   });
 
   it('sits above the reader bottom bar and gives the chapter room at its end', async () => {
@@ -110,10 +246,21 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await expect.poll(() => shell.page.evaluate(() => document.documentElement.classList.contains('tn-player-on'))).toBe(false);
   });
 
+  it('after a reload, More › Listen opens the player with the saved speed and volume', async () => {
+    await shell.page.reload();
+    await shell.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
+    await shell.page.getByTestId('tab-more').click();
+    await shell.page.getByTestId('more-listen').click();
+    await expect.poll(() => shell.page.locator('[data-testid="car-player"] [data-act="speed-slider"]').inputValue(), { timeout: 5000 }).toBe('1.5');
+    expect(await shell.page.locator('[data-testid="car-player"] [data-act="volume"]').inputValue()).toBe('130');
+    expect(await shell.page.getByTestId('car-player').locator('[data-act="speed"].on').allTextContents()).toEqual(['1.5×']);
+    await shell.page.getByTestId('car-player').locator('[data-act="close"]').click();
+  });
+
   it('Listen in the Car: "Open the player" is centered and leaves the last rows reachable', async () => {
     // That screen is the PC narrator's: More lists it only with Settings › Voices › Advanced › "Use PC audio
     // when available" on (src/ui/native/v1-hooks.ts); otherwise More › Listen opens the player directly.
-    shell.pluginReplies.set('Narration.voiceSettings', () => ({ usePCAudio: true }));
+    saved.usePCAudio = true;
     await shell.page.evaluate(() => window.dispatchEvent(new Event('tn-voice-settings')));
     await shell.page.getByTestId('tab-more').click();
     await shell.page.getByTestId('more-narration').waitFor({ state: 'visible', timeout: 3000 });

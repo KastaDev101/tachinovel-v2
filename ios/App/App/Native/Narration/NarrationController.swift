@@ -23,6 +23,8 @@
 //  - Chapter changes: the next chapter's text is fetched ahead and Kokoro renders its first sentences
 //    while this chapter ends, so there is no silence between chapters (a background-time assertion covers
 //    the change while the phone is locked).
+//  - Speed (0.5–2.5×) and "Voice volume" (0–150 %) from the Listen player are persisted (VoiceSettings)
+//    and apply to every voice: all of them play through the app's own audio graph.
 //
 
 import AVFoundation
@@ -165,6 +167,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         engine.delegate = self
         // Simulator voice self-test (CI): no audio device, so render headless at real-time pace.
         if NarrationSelfTest.isActive { engine.useManualOutput() }
+        let prefs = VoiceSettings.shared.prefs
+        rate = Float(prefs.speed)
+        engine.volume = prefs.volume
+        audio.volume = prefs.volume
         audio.onTime = { [weak self] t in self?.audioTick(fileTime: t) }
         audio.onEnd = { [weak self] in self?.finishChapter() }
         audio.onFail = { [weak self] message in self?.audioFailed(message) }
@@ -607,8 +613,15 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + minutes * 60, execute: item)
     }
 
+    /// Listen speed 0.5–2.5× (persisted; the same for every voice).
     func applyRate(_ r: Float) {
-        rate = max(0.5, min(2, r))
+        let clamped = Float(SpeechSpeed.clamp(Double(r)))
+        let changed = abs(clamped - rate) > 0.001
+        rate = clamped
+        if abs(VoiceSettings.shared.prefs.speed - Double(clamped)) > 0.001 {
+            VoiceSettings.shared.update { $0.speed = Double(clamped) }
+        }
+        guard changed else { return }
         if mode == .audio {
             audio.setRate(rate)
         } else if status == .playing {
@@ -651,7 +664,18 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         return d
     }
 
-    /// Which voice is speaking (for the mini player / Listen player subtitle).
+    /// "Voice volume" 0–1.5 (persisted; applied live to every voice).
+    func applyVolume(_ v: Double) {
+        let clamped = VoiceVolume.clamp(v)
+        engine.volume = clamped
+        audio.volume = clamped
+        if abs(VoiceSettings.shared.prefs.volume - clamped) > 0.0001 {
+            VoiceSettings.shared.update { $0.volume = clamped }
+        }
+    }
+
+    /// Which voice is speaking (for the mini player / Listen player subtitle): Kokoro with its name, or the
+    /// system voice standing in, and why.
     private func voiceDict() -> [String: Any] {
         let id = kokoroVoiceForCurrentNovel()
         var v: [String: Any] = ["kokoroVoice": id, "kokoroName": VoiceCatalog.voice(id)?.name ?? id]
@@ -660,6 +684,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             let apple = VoiceSettings.appleVoice(explicit: voiceIdentifier, kokoroVoice: id)
             v["appleName"] = apple?.name ?? "System voice"
             if let reason = engine.lastFallback { v["fallback"] = reason.rawValue }
+            v["kokoroStatus"] = KokoroService.shared.statusText
         }
         return v
     }
@@ -696,6 +721,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     @objc private func voiceSettingsChanged() {
         DispatchQueue.main.async {
             RemoteCommandHub.shared.apply(VoiceSettings.shared.prefs.carButtonsChoice)
+            // Speed and volume set elsewhere (Settings, the Listen player through setVoiceSettings).
+            let prefs = VoiceSettings.shared.prefs
+            if abs(Double(self.rate) - prefs.speed) > 0.001 { self.applyRate(Float(prefs.speed)) }
+            if abs(self.engine.volume - prefs.volume) > 0.0001 { self.applyVolume(prefs.volume) }
             guard self.mode == .speech, self.status == .playing || self.status == .paused, !self.items.isEmpty,
                   self.voiceKey() != self.appliedVoiceKey else {
                 self.onState?(self.stateDict())

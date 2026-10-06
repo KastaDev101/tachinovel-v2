@@ -125,8 +125,8 @@ public enum RemoteCommandMap {
     /// "Previous" within this many seconds of a chapter's start goes to the previous chapter; later, it
     /// starts the chapter over (like a music player).
     public static let restartWindow: Double = 5
-    /// Speeds offered by the system's rate control (some cars, Siri "play faster").
-    public static let rates: [Float] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    /// Speeds offered by the system's rate control (some cars, Siri "play faster"): the Listen player's chips.
+    public static let rates: [Float] = SpeechSpeed.presets.map { Float($0) }
 
     public static func enabled(_ buttons: CarButtons) -> EnabledCommands {
         switch buttons {
@@ -150,7 +150,7 @@ public enum RemoteCommandMap {
         case .skipForward(let s): return .seekBy(interval(s))
         case .skipBackward(let s): return .seekBy(-interval(s))
         case .changePlaybackPosition(let t): return .seekTo(t.isFinite ? max(0, t) : 0)
-        case .changePlaybackRate(let r): return .setRate(min(2, max(0.5, r.isFinite ? r : 1)))
+        case .changePlaybackRate(let r): return .setRate(Float(SpeechSpeed.clamp(Double(r))))
         }
     }
 

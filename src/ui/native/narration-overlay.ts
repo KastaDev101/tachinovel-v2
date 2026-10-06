@@ -1,13 +1,15 @@
 /**
  * Listening UI layered over the v1 UI (v1 itself is not modified):
  *
- * - Reader: a "Listen" button (headphones). Tap = listen from the first visible paragraph with the novel's
- *   voice: Kokoro on device (bundled), the Apple voice standing in sentence by sentence when Kokoro can't
- *   keep up. The sentence script is built from exactly what the reader shows (speech-dom.ts, the v1
+ * - Reader: "Listen" in the reader's bottom bar (next to Chapters / Auto-scroll / Night / Appearance, same
+ *   style), so it shows and hides with the bars. Tap = listen from the first visible paragraph with the
+ *   novel's voice: Kokoro on device (bundled), the system voice standing in sentence by sentence when Kokoro
+ *   can't keep up. While listening it becomes "Player" (opens the Listen player). The sentence script is built from exactly what the reader shows (speech-dom.ts, the v1
  *   narration front-end + the pronunciation lexicon). PC-narrated audio only with Settings › Voices ›
  *   Advanced › "Use PC audio when available".
  * - While listening: a mini player on every screen (title, voice, play/pause, stop); tapping the title
- *   opens the Listen player (car-mode.ts).
+ *   opens the Listen player (car-mode.ts). In the reader it follows the bars: hidden while reading with the
+ *   bars hidden.
  * - Highlighting: the spoken SENTENCE for every source (speech: from the script's canonical ranges;
  *   narrated audio: timestamps re-aligned onto the reader's DOM, highlight.ts). The view follows along
  *   unless the user scrolled in the last few seconds.
@@ -15,6 +17,8 @@
  * pluginId/novelPath for a chapter come from observed bridge calls (chapter.get / progress.save).
  */
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
+import { symbols } from '@v1/ui/state/store.ts';
 import type { Lexicon } from '@v1tts/frontend.ts';
 import { callCore, observeCalls } from '../capacitor-client.ts';
 import { installCarMode } from './car-mode.ts';
@@ -31,11 +35,10 @@ interface ChapterRef {
 }
 
 const STYLE = `
-.tn-listen{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 132px);z-index:60;
-  width:52px;height:52px;border-radius:26px;border:0;background:rgba(168,180,255,.94);color:#15151a;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 4px 16px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent;transition:transform .15s,opacity .2s}
-.tn-listen:active{transform:scale(.92)}
-.tn-listen[hidden],.tn-player[hidden],.tn-open-car[hidden]{display:none}
+/* "Listen" joins the reader's bottom tools: they share the row so five fit on a narrow phone. */
+.rd-tools:has(.tn-rd-listen) .rd-tool{width:auto;flex:1 1 0;min-width:0}
+.rd-tools .tn-rd-listen span{white-space:nowrap}
+.tn-player[hidden],.tn-open-car[hidden]{display:none}
 .tn-player{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);z-index:61;display:flex;align-items:center;gap:10px;
   padding:8px 10px;border-radius:16px;background:rgba(40,40,48,.86);-webkit-backdrop-filter:blur(20px) saturate(1.6);color:#f2f2f7;
   font:500 14px -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
@@ -53,8 +56,6 @@ html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-cont
 ${HIGHLIGHT_CSS}
 `;
 
-const ICON_HEADPHONES =
-  '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z"/><path d="M3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/></svg>';
 const ICON_PAUSE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
 const ICON_PLAY = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7z"/></svg>';
 const ICON_CLOSE =
@@ -122,14 +123,6 @@ export function installNarrationOverlay(): void {
   style.textContent = STYLE;
   document.head.append(style);
 
-  const listen = document.createElement('button');
-  listen.className = 'tn-listen';
-  listen.type = 'button';
-  listen.setAttribute('aria-label', 'Listen from here');
-  listen.dataset.testid = 'listen-button';
-  listen.innerHTML = ICON_HEADPHONES;
-  listen.hidden = true;
-
   const player = document.createElement('div');
   player.className = 'tn-player';
   player.hidden = true;
@@ -143,7 +136,7 @@ export function installNarrationOverlay(): void {
   openCar.hidden = true;
   openCar.dataset.testid = 'open-car-player';
 
-  document.body.append(listen, player, openCar);
+  document.body.append(player, openCar);
   const toggle = player.querySelector<HTMLButtonElement>('.tn-toggle') as HTMLButtonElement;
   const titleBtn = player.querySelector<HTMLButtonElement>('.tn-title') as HTMLButtonElement;
   const stop = player.querySelector<HTMLButtonElement>('.tn-stop') as HTMLButtonElement;
@@ -176,10 +169,12 @@ export function installNarrationOverlay(): void {
     // Only the screen on top counts: a reader or the Listen in the Car screen further down the stack
     // (covered by a pushed screen) must not put its buttons over the visible one.
     const top = topLayer();
-    const inReader = !!top?.querySelector('[data-testid="screen-reader"]');
+    const reader = top?.querySelector<HTMLElement>('[data-testid="screen-reader"]') ?? null;
     const onNarrationScreen = !!top?.querySelector('[data-testid="screen-narration"]');
-    set.hidden(listen, !inReader || active() || car.isOpen);
-    set.hidden(player, !active() || car.isOpen);
+    if (reader) readerTool(reader);
+    // In the reader the mini player shows and hides with the bars (like the Listen tool itself).
+    const barsHidden = !!reader && !reader.classList.contains('bars-visible'); // the reader root is v1's `.reader`
+    set.hidden(player, !active() || car.isOpen || barsHidden);
     set.hidden(openCar, !onNarrationScreen || active() || car.isOpen);
     document.documentElement.classList.toggle('tn-player-on', !player.hidden);
     document.documentElement.classList.toggle('tn-open-car-on', !openCar.hidden);
@@ -193,7 +188,42 @@ export function installNarrationOverlay(): void {
     );
   }
 
-  listen.addEventListener('click', () => {
+  /** The "Listen" tool in the reader's bottom bar (re-added when v1 re-renders the bar). */
+  function readerTool(reader: HTMLElement): void {
+    const bar = reader.querySelector<HTMLElement>('.rd-tools');
+    if (!bar) return;
+    let tool = bar.querySelector<HTMLButtonElement>('[data-testid="reader-listen"]');
+    if (!tool) {
+      tool = document.createElement('button');
+      tool.type = 'button';
+      tool.className = 'rd-tool tap tap-dim tn-rd-listen';
+      tool.dataset.testid = 'reader-listen';
+      const icon = symbols.value.headphones ?? fallbackIconUrl('headphones');
+      tool.innerHTML = `<i class="icon" style="--icon:url(&quot;${icon.replace(/"/g, '%22')}&quot;);--icon-size:22px" aria-hidden="true"></i><span></span>`;
+      tool.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (active()) {
+          tapFeedback();
+          car.open();
+          render();
+        } else {
+          listenFromHere();
+        }
+      });
+      bar.append(tool);
+      // Follow the bars right away (render() also runs on a timer): v1 toggles `bars-visible` on the root.
+      if (!reader.dataset.tnBars) {
+        reader.dataset.tnBars = '1';
+        new MutationObserver(() => render()).observe(reader, { attributes: true, attributeFilter: ['class'] });
+      }
+    }
+    const on = active();
+    set.text(tool.querySelector('span') as HTMLElement, on ? 'Player' : 'Listen');
+    set.attr(tool, 'aria-label', on ? 'Open the Listen player' : 'Listen from here');
+    if (tool.classList.contains('is-on') !== on) tool.classList.toggle('is-on', on);
+  }
+
+  function listenFromHere(): void {
     const root = topLayer()?.querySelector<HTMLElement>('[data-testid="screen-reader"]') ?? null;
     if (!root) return;
     // From the first visible paragraph (the reader hides its bars while reading).
@@ -228,7 +258,7 @@ export function installNarrationOverlay(): void {
         autoContinue: true,
       });
     })();
-  });
+  }
   toggle.addEventListener('click', () => {
     tapFeedback();
     void (state.status === 'paused' ? Narration.resume() : Narration.pause());

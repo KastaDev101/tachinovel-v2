@@ -12,9 +12,12 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 
 ```
  reader DOM ──speech-dom.ts──┐                                  ┌─► Kokoro (FluidAudio Core ML, bundled)
-                             ├─► sentence script ─► Narration ──┤     rendered 2–3 sentences ahead → AVAudioEngine
- core (lock screen) ─────────┘   (v1 front-end +    Controller  └─► Apple voice (AVSpeechSynthesizer)
-   narration.chapterText          lexicon, pauses)  HybridSpeechEngine: HybridScheduler picks per sentence
+                             ├─► sentence script ─► Narration ──┤     rendered 2–3 sentences ahead ─┐
+ core (lock screen) ─────────┘   (v1 front-end +    Controller  └─► Apple voice (AVSpeechSynthesizer │
+   narration.chapterText          lexicon, pauses)  HybridSpeechEngine: .write → 24 kHz buffers) ───┤
+                                                                                                      ▼
+            one player node → gain stage ("Voice volume") → peak limiter (above 100 %) → output
+ PC/prepared audio files: AVAudioFile → player node → time-pitch (speed) → gain → limiter → output
 ```
 
 | Piece | Where |
@@ -23,10 +26,12 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 | Pronunciations: global + per novel, the v1 lexicon format (paste a PC-narrator lexicon to import it) | core `narration.lexicon.get/set` (synced store `narration-lexicons.json`); editor in `voices-ui.ts` |
 | Which voice speaks each sentence; render-ahead; fallback and return | `ios/App/HDVoice/Sources/HDVoiceCore/HybridScheduler.swift` (XCTest) |
 | Kokoro: bundled model loaded read-only, lexicon phoneme splicing | `HDVoiceKokoro/KokoroRuntime.swift` (shared by the app and CI) |
-| Audio: Kokoro buffers (trimmed, loudness-matched, faded, pause appended) on AVAudioEngine, gapless; Apple utterances in between; shared audio session | `ios/App/App/Native/Voice/HybridSpeechEngine.swift` |
+| Audio: Kokoro buffers (trimmed, loudness-matched, faded, pause appended) and the Apple voice (rendered with `AVSpeechSynthesizer.write`, converted to 24 kHz mono) on one AVAudioEngine player node, gapless; gain stage + peak limiter; shared audio session. A voice that can't render to buffers speaks directly (no volume above 100 % for it) | `ios/App/App/Native/Voice/HybridSpeechEngine.swift` |
+| Files (PC-narrated, prepared): AVAudioEngine file player with time-pitch for speed, the same gain + limiter | `ios/App/App/Native/Narration/AudioChapterPlayer.swift` |
+| Listen player: speed 0.5–2.5× (0.05 steps, chips 0.9/1/1.1/1.25/1.5/2) and "Voice volume" 0–150 %, saved natively, every voice | `HDVoiceCore/ListenControls.swift`, `src/ui/native/listen-controls.ts`, `car-mode.ts` |
 | Load/release, memory pressure, idle release, warm-up, crash containment | `Native/Voice/KokoroService.swift`, `HDVoiceCore/CrashSentinel.swift` |
 | Preferences: default voice, per-novel voice, Kokoro on/off, "Use PC audio when available" (off) | `HDVoiceCore/VoiceCatalog.swift`, `Native/Voice/VoiceSettings.swift` |
-| UI: More › Voices, voice picker per novel (Listen player › Voice), pronunciations, hidden Voice Lab | `src/ui/native/voices-ui.ts`, `voice-lab.ts`, `v1-hooks.ts`, `car-mode.ts` |
+| UI: "Listen" in the reader's bottom bar (shows and hides with the bars, like the mini player in the reader), More › Voices, voice picker per novel (Listen player › Voice), pronunciations, hidden Voice Lab. The mini player says "Kokoro · Heart", or "System voice (fallback) · why" | `src/ui/native/narration-overlay.ts`, `voices-ui.ts`, `voice-lab.ts`, `v1-hooks.ts`, `car-mode.ts` |
 
 ### When the Apple voice speaks
 

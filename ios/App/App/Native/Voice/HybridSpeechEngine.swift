@@ -8,13 +8,16 @@
 //            playing one, so playback is gapless.
 //    Apple   AVSpeechSynthesizer (best installed voice, Premium > Enhanced > default) speaks a sentence
 //            when Kokoro isn't loaded yet, failed, ran dry, or the phone is throttled; Kokoro takes over
-//            again at a sentence boundary once it is two sentences ahead.
+//            again at a sentence boundary once it is two sentences ahead. It is rendered with
+//            AVSpeechSynthesizer.write into the same player node as Kokoro (converted to 24 kHz mono), so
+//            both voices get the same speed handling, "Voice volume" and limiter; a voice that can't
+//            render to buffers falls back to speaking directly.
 //  Both share the app's audio session (.playback/.spokenAudio), so lock screen, Now Playing, remote
 //  commands and interruptions work the same for either voice. Main thread only.
 //
-//  Output: the real-time audio graph, or (CI / simulator self-test without an audio device) a manual
-//  rendering mode in which a timer pulls audio at real-time pace; the Apple voice is then rendered with
-//  AVSpeechSynthesizer.write to time its sentences.
+//  Graph: player → gain stage ("Voice volume", 0–150 %) → peak limiter (only above 100 %) → output, or (CI /
+//  simulator self-test without an audio device) a manual rendering mode in which a timer pulls audio at
+//  real-time pace.
 //
 
 import AVFoundation
@@ -41,6 +44,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     private var audioEngine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
+    private var gainStage = AudioGraphParts.gainStage()
+    private var limiter = AudioGraphParts.limiter()
+    /// "Voice volume" 0–1.5 (VoiceVolume): applied live to every voice.
+    var volume: Double = 1 {
+        didSet { AudioGraphParts.apply(volume: volume, gain: gainStage, limiter: limiter) }
+    }
     private let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
     private var graphReady = false
     private var manualTimer: DispatchSourceTimer?
@@ -57,6 +66,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var queued: [Int] = []
     private var appleSegment: Int?
     private var appleUtterance: AVSpeechUtterance?
+    /// The Apple sentence being rendered into the graph (nil: none, or spoken directly by the synthesizer).
+    private var appleRender: AppleRender?
+    /// The Apple sentence is spoken directly by AVSpeechSynthesizer (its voice couldn't render to buffers).
+    private var appleDirect = false
     private var waitItem: DispatchWorkItem?
     private var waiting = false
     private var paused = false
@@ -119,6 +132,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         buffers.removeAll()
         appleSegment = nil
         appleUtterance = nil
+        appleRender = nil
+        appleDirect = false
         segments.removeAll()
         paused = false
         stopOutput()
@@ -129,11 +144,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         paused = true
         scheduler?.paused = true
         cancelWait()
-        if !queued.isEmpty {
+        if !queued.isEmpty || appleRender != nil {
             player.pause()
             pauseOutput()
         }
-        if appleSegment != nil, synth.isSpeaking { synth.pauseSpeaking(at: .word) }
+        if appleSegment != nil, appleDirect, synth.isSpeaking { synth.pauseSpeaking(at: .word) }
     }
 
     func resume() {
@@ -142,6 +157,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         scheduler?.paused = false
         if !queued.isEmpty {
             if startOutput() { player.play() } else { replayFromQueuedWithApple() }
+        } else if let i = appleSegment, !appleDirect {
+            if startOutput() { player.play() } else { speakApple(i, reason: lastFallback ?? .queueDry, restart: true) }
         } else if let i = appleSegment {
             if !(synth.isPaused && synth.continueSpeaking()) {
                 // An interruption can end the utterance: say this sentence again.
@@ -303,22 +320,96 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         u.rate = VoiceSettings.avRate(seg.rate)
         u.pitchMultiplier = max(0.5, min(2, seg.pitch))
         u.voice = VoiceSettings.appleVoice(explicit: explicitAppleVoice, kokoroVoice: kokoroVoice)
-        u.postUtteranceDelay = seg.pauseAfter
         appleSegment = i
         appleUtterance = u
-        if queued.isEmpty { pauseOutput() } // no Kokoro audio pending: let the graph sleep
-        if manualOutput {
-            speakAppleManually(i, utterance: u)
-        } else {
-            if restart, synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
-            synth.speak(u)
+        appleRender = nil
+        appleDirect = false
+        if restart, synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
+        guard startOutput() else { return speakAppleDirectly(i, utterance: u) }
+        renderAppleIntoGraph(i, utterance: u, pause: seg.pauseAfter)
+    }
+
+    /// AVSpeechSynthesizer.write → 24 kHz mono buffers on the player node (the same path as Kokoro). The
+    /// sentence starts when its first buffer is queued and ends when its last one (+ the pause) has played.
+    private func renderAppleIntoGraph(_ i: Int, utterance u: AVSpeechUtterance, pause: TimeInterval) {
+        let g = gen
+        let render = AppleRender(output: format)
+        appleRender = render
+        // A voice that never delivers audio (some can't render to buffers): speak it directly instead.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, g == self.gen, u === self.appleUtterance, render === self.appleRender, !render.gotAudio, !render.ended else { return }
+            self.log.error("voice: the Apple voice gave no audio buffers; speaking it directly")
+            self.synth.stopSpeaking(at: .immediate)
+            self.appleRender = nil
+            if self.manualOutput {
+                u.postUtteranceDelay = pause
+                self.speakAppleManually(i, utterance: u)
+            } else {
+                self.speakAppleDirectly(i, utterance: u)
+            }
         }
+        synth.write(u) { [weak self] buffer in
+            guard let pcm = buffer as? AVAudioPCMBuffer else { return }
+            let converted = pcm.frameLength > 0 ? render.convert(pcm) : nil
+            let ended = pcm.frameLength == 0
+            DispatchQueue.main.async {
+                guard let self, g == self.gen, u === self.appleUtterance, render === self.appleRender else { return }
+                if ended {
+                    guard !render.ended else { return }
+                    render.ended = true
+                    if let silence = self.silence(seconds: pause) { self.scheduleApple(silence, render: render, index: i) }
+                    if render.pending == 0 { self.appleFinished(u) }
+                    return
+                }
+                guard let converted, converted.frameLength > 0 else { return }
+                render.gotAudio = true
+                self.scheduleApple(converted, render: render, index: i)
+            }
+        }
+    }
+
+    private func scheduleApple(_ buf: AVAudioPCMBuffer, render: AppleRender, index i: Int) {
+        let g = gen
+        let e = epoch
+        render.pending += 1
+        player.scheduleBuffer(buf, completionCallbackType: manualOutput ? .dataRendered : .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, g == self.gen, e == self.epoch, render === self.appleRender else { return }
+                render.pending -= 1
+                if render.pending == 0, render.ended, let u = self.appleUtterance { self.appleFinished(u) }
+            }
+        }
+        if !render.started {
+            render.started = true
+            if !paused, !player.isPlaying { player.play() }
+            began(i, .apple)
+        }
+    }
+
+    private func silence(seconds: TimeInterval) -> AVAudioPCMBuffer? {
+        let frames = AVAudioFrameCount(max(0, seconds) * format.sampleRate)
+        guard frames > 0, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        buf.frameLength = frames
+        if let ch = buf.floatChannelData?[0] { ch.update(repeating: 0, count: Int(frames)) }
+        return buf
+    }
+
+    /// The old path: the synthesizer plays the sentence itself (its own output, not our graph).
+    private func speakAppleDirectly(_ i: Int, utterance u: AVSpeechUtterance) {
+        guard i == appleSegment, u === appleUtterance else { return }
+        appleDirect = true
+        u.postUtteranceDelay = segments[i].pauseAfter
+        u.volume = Float(min(1, volume))
+        if queued.isEmpty { pauseOutput() } // no Kokoro audio pending: let the graph sleep
+        synth.speak(u)
     }
 
     private func appleFinished(_ u: AVSpeechUtterance) {
         guard u === appleUtterance, let i = appleSegment else { return }
         appleSegment = nil
         appleUtterance = nil
+        appleRender = nil
+        appleDirect = false
         scheduler?.finished(i)
         let g = gen
         delegate?.speechEngine(didFinish: segments[i].id)
@@ -345,18 +436,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         onMain {
-            guard !self.manualOutput, utterance === self.appleUtterance, let i = self.appleSegment else { return }
+            guard !self.manualOutput, self.appleDirect, utterance === self.appleUtterance, let i = self.appleSegment else { return }
             self.began(i, .apple)
         }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        onMain { if !self.manualOutput { self.appleFinished(utterance) } }
+        onMain { if !self.manualOutput, self.appleDirect { self.appleFinished(utterance) } }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange, utterance: AVSpeechUtterance) {
         onMain {
-            guard utterance === self.appleUtterance, let i = self.appleSegment else { return }
+            // Word ranges only while the synthesizer speaks itself (rendering into the graph runs ahead of playback).
+            guard self.appleDirect, utterance === self.appleUtterance, let i = self.appleSegment else { return }
             self.delegate?.speechEngine(willSpeak: self.segments[i].id, range: characterRange)
         }
     }
@@ -373,7 +465,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func buildGraph() throws {
         guard !graphReady else { return }
         audioEngine.attach(player)
-        audioEngine.connect(player, to: audioEngine.mainMixerNode, format: format)
+        audioEngine.attach(gainStage)
+        audioEngine.attach(limiter)
+        audioEngine.connect(player, to: gainStage, format: format)
+        audioEngine.connect(gainStage, to: limiter, format: format)
+        audioEngine.connect(limiter, to: audioEngine.mainMixerNode, format: format)
+        AudioGraphParts.apply(volume: volume, gain: gainStage, limiter: limiter)
         if manualOutput {
             let out = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
             try audioEngine.enableManualRenderingMode(.offline, format: out, maximumFrameCount: 4096)
@@ -392,6 +489,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         manualTimer = nil
         audioEngine = AVAudioEngine()
         player = AVAudioPlayerNode()
+        gainStage = AudioGraphParts.gainStage()
+        limiter = AudioGraphParts.limiter()
         graphReady = false
         epoch += 1
     }
@@ -444,6 +543,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         DispatchQueue.main.async {
             // The engine stopped itself (route/format change, e.g. Bluetooth). Restart and replay the queued
             // sentences from the start of the audible one.
+            if self.scheduler != nil, self.queued.isEmpty, let i = self.appleSegment, !self.appleDirect {
+                self.epoch += 1
+                self.player.stop()
+                if !self.paused { self.speakApple(i, reason: self.lastFallback ?? .queueDry, restart: true) }
+                return
+            }
             guard self.scheduler != nil, !self.queued.isEmpty else { return }
             let replay = self.queued
             self.queued.removeAll()
@@ -460,6 +565,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             self.queued.removeAll()
             self.teardownGraph()
             if self.scheduler != nil, !replay.isEmpty { self.requeue(replay, play: !self.paused) }
+            if self.scheduler != nil, replay.isEmpty, let i = self.appleSegment, !self.appleDirect, !self.paused {
+                self.speakApple(i, reason: self.lastFallback ?? .queueDry, restart: true)
+            }
         }
     }
 
@@ -540,6 +648,44 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             self.log.info("voice: thermal throttling \(throttled ? "on" : "off", privacy: .public)")
             self.pumpRender()
         }
+    }
+}
+
+/// One Apple sentence rendered into the graph: converts the synthesizer's buffers (whatever its voice's
+/// format) to the graph's 24 kHz mono, and counts what is still queued. `convert` runs on the synthesizer's
+/// thread, one buffer at a time; the counters are main-thread only.
+private final class AppleRender {
+    let output: AVAudioFormat
+    private var converter: AVAudioConverter?
+    var pending = 0
+    var started = false
+    var ended = false
+    var gotAudio = false
+
+    init(output: AVAudioFormat) {
+        self.output = output
+    }
+
+    func convert(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if converter == nil || converter?.inputFormat != input.format {
+            converter = AVAudioConverter(from: input.format, to: output)
+        }
+        guard let converter else { return nil }
+        let ratio = output.sampleRate / max(1, input.format.sampleRate)
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio + 1024)
+        guard let out = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        let status = converter.convert(to: out, error: &error) { _, inputStatus in
+            if fed {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            inputStatus.pointee = .haveData
+            return input
+        }
+        return status == .error || out.frameLength == 0 ? nil : out
     }
 }
 

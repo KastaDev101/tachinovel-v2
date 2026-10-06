@@ -70,7 +70,7 @@ Apple voices as the fallback.
 | 2 | More › **Backup & Restore** › **Restore from Files…** → iCloud Drive › Scriptable › TachiNovel › backups → newest `.json` | The Restore Backup sheet shows what it holds; restore → your library, progress and settings from v1 |
 | 3 | Library → open a novel → Resume | Reader opens at your v1 position; scrolling flows into the next chapter |
 | 4 | Browse → Stonescape → Popular → a novel | Covers load, chapter list appears, locked chapters show a lock |
-| 5 | In the reader, tap **Listen** (round button, bottom right) | The Apple voice reads from the first visible paragraph; the paragraph is highlighted and followed; a mini player appears at the bottom |
+| 5 | In the reader, tap the middle of the page for the bars, then **Listen** (bottom bar, next to Appearance) | Kokoro reads from the first visible paragraph (the mini player says "Kokoro · Heart"; for the first seconds after installing it may say "System voice (fallback) · Kokoro is starting"); the sentence is highlighted and followed; tapping the page hides the bars and the mini player together |
 | 6 | Lock the phone | Lock-screen player with title and cover; play/pause and next chapter work; audio keeps going |
 | 7 | Let a chapter end (or skip to its last paragraphs) | It continues into the next chapter by itself |
 | 8 | Pause, swipe the app away, reopen the novel | The reader opens where listening stopped |

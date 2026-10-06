@@ -15,6 +15,7 @@
 import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } from '@v1tts/frontend.ts';
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
+import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { Narration, type CarButtons, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
 
 const CSS = `
@@ -96,14 +97,8 @@ export function toast(msg: string): void {
 
 /** Subtitle for the mini player / Listen player: which voice is speaking. */
 export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status' | 'prepared'>): string {
-  if (s.engine === 'audio') return s.prepared ? `Kokoro · ${s.voice?.kokoroName ?? 'prepared'} · prepared` : 'PC audio';
-  const v = s.voice;
-  if (!v) return 'Kokoro';
-  if (v.source === 'apple') {
-    const why = v.fallback === 'modelLoading' || v.fallback === 'queueDry' ? ' · Kokoro catching up' : v.fallback === 'thermal' ? ' · phone is hot' : '';
-    return `Apple voice · ${v.appleName ?? 'System'}${why}`;
-  }
-  return `Kokoro · ${v.kokoroName}`;
+  if (s.engine === 'audio' && s.prepared) return `Kokoro · ${s.voice?.kokoroName ?? 'prepared'} · prepared`;
+  return describeVoice(s);
 }
 
 /** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
@@ -121,6 +116,8 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     kokoroEnabled: r.kokoroEnabled !== false,
     usePCAudio: r.usePCAudio === true,
     carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
+    speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
+    volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
       bundled: k.bundled === true,
       status: typeof k.status === 'string' ? k.status : '',

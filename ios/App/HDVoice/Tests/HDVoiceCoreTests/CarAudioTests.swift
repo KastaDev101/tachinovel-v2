@@ -40,7 +40,7 @@ final class RemoteCommandMapTests: XCTestCase {
         XCTAssertEqual(RemoteCommandMap.action(for: .skipForward(0), in: playing), .seekBy(RemoteCommandMap.skipInterval))
         XCTAssertEqual(RemoteCommandMap.action(for: .changePlaybackPosition(123.5), in: playing), .seekTo(123.5))
         XCTAssertEqual(RemoteCommandMap.action(for: .changePlaybackPosition(-3), in: playing), .seekTo(0))
-        XCTAssertEqual(RemoteCommandMap.action(for: .changePlaybackRate(3), in: playing), .setRate(2))
+        XCTAssertEqual(RemoteCommandMap.action(for: .changePlaybackRate(3), in: playing), .setRate(2.5), "the Listen player's range")
         XCTAssertEqual(RemoteCommandMap.action(for: .changePlaybackRate(1.25), in: playing), .setRate(1.25))
     }
 
