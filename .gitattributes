@@ -1,0 +1,7 @@
+# Normalize line endings: LF in the repo and in checkouts (shell scripts, Swift and the Xcode project
+# must be LF on the macOS runners; Windows editors handle LF fine).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ipa binary
+*.p8 binary
