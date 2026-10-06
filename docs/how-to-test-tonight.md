@@ -80,6 +80,14 @@ Apple voices as the fallback.
 If something fails: More › About › Diagnostics › **Copy Full Diagnostics**, and paste it to Claude. The
 full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot helps for anything visual.
 
+**Let Claude read the phone's diagnostics (once, recommended):** More › About › Diagnostics ›
+**Diagnostics Folder** › Choose Folder… → iCloud Drive › TachiNovel-Builds › make a folder
+`diagnostics` › Open. From then on the app copies its log, crash/hang reports and a short list of the
+last screens there every few minutes and when you leave the app; iCloud syncs it to the PC. When
+something goes wrong, **shake the phone** (or the same row › Report a Problem…), type one line and Save:
+a report with a screenshot lands in `diagnostics/reports/`. Nothing about your library or reading
+leaves the app except novel titles in the screen list.
+
 ### Optional (advanced): PC-narrated audio files
 
 Parked for now (the PC narrator is sidelined). The player can still play chapters the PC narrator wrote to

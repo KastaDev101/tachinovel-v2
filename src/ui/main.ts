@@ -3,10 +3,11 @@
  *  1. prelude: native shims (wake lock, splash, status bar) before the v1 UI starts;
  *  2. the v1 UI, unchanged (its phone bridge is swapped for capacitor-client.ts at build time);
  *  3. v2 additions that observe the v1 UI without modifying it: narration overlay, Voices/Voice Lab hooks,
- *     crash-report sharing on the Diagnostics screen, ads (store + --ads).
+ *     crash-report sharing on the Diagnostics screen, the phone QA folder (qa-folder.ts), ads (store + --ads).
  */
 import './native/prelude.ts';
 import './native/v2-text.ts'; // v2 wording globals: before v1's modules evaluate
+import { installQaFolder } from './native/qa-folder.ts';
 import '@v1/ui/main.ts';
 import { installAds } from './monetization/ads.ts';
 import { installDiagnosticsOverlay } from './native/diagnostics-overlay.ts';
@@ -20,6 +21,7 @@ installNarrationOverlay();
 installV1Hooks();
 installDiagnosticsOverlay();
 void installRecovery();
+installQaFolder();
 runSmokeTour();
 
 if (__ADS__) {
