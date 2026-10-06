@@ -176,7 +176,8 @@ if own:
     fresh = rows.get(first)
     msg = f'process->library median {int(statistics.median(own))} ms, best {min(own)} ms (n={len(own)})'
     msg += f'; fresh install ({first}): ' + (f'tap->library {fresh["vis"] - fresh["tap"]} ms' if fresh else 'no boot line')
-    print(f'::notice title=Boot time (simulator, cold launches)::{msg}')
+    # Workflow-command properties escape ',' and ':' (%2C, %3A); the message only escapes '%' and newlines.
+    print(f'::notice title=Boot time (simulator%2C cold launches)::{msg.replace("%", "%25")}')
 else:
     print('::warning::No boot timing lines captured (see boot-log.txt)')
 PY
