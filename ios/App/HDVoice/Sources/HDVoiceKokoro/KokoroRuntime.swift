@@ -18,6 +18,7 @@
 //
 
 import CoreML
+import Darwin
 import FluidAudio
 import Foundation
 import HDVoiceCore
@@ -155,6 +156,9 @@ public actor KokoroRuntime {
         manager = nil
         if state == .ready { state = .unloaded }
         await m?.cleanup()
+        // The lexicon maps and Core ML buffers are freed, but malloc keeps the pages until asked: hand them
+        // back to the system now (the point of releasing is lowering the footprint under memory pressure).
+        _ = malloc_zone_pressure_relief(nil, 0)
     }
 
     /// One sentence. `runs` carries lexicon phoneme overrides (see PhonemeJoiner); without overrides the
