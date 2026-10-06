@@ -1,7 +1,7 @@
 //
 //  SmokeResponder.swift — Debug only. During the CI simulator smoke tour (`-tachiSmokeTour native`,
 //  ci/ios-sim-smoke.sh, src/ui/native/smoke.ts) nobody can tap system sheets, so this answers them the
-//  way a user tapping Cancel would, a few seconds after they appear (time for a screenshot):
+//  way a user tapping Cancel would, two seconds after they appear:
 //   - document pickers: the first (Restore from Files…) like the Cancel button (dismissed, then the
 //     delegate's documentPickerWasCancelled); the second (Link audio folder) like a swipe down, which
 //     calls no delegate method at all — the popup queue must still go on (the share sheet comes next);
@@ -22,7 +22,7 @@ final class SmokeResponder {
     private var running = false
     private var seenController: ObjectIdentifier?
     private var seenSince = Date.distantFuture
-    private let delay: TimeInterval = 3
+    private let delay: TimeInterval = 2
     private var pickersSeen = 0
 
     /// Polls twice a second for the rest of the process's life (smoke runs only).

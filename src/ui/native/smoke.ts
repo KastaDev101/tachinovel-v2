@@ -78,8 +78,14 @@ async function closeSheets(): Promise<void> {
   }
 }
 
-/** The native SmokeResponder cancels a system sheet after ~3 s; this covers that plus the dismissal. */
-const NATIVE_SHEET_MS = 5000;
+/** The native SmokeResponder cancels a system sheet ~2 s after it is on screen (slow runners take a few
+ *  seconds to show it); this covers that plus the dismissal. */
+const NATIVE_SHEET_MS = 7000;
+
+/** Wait until `selector` is visible again (the UI is back after a native sheet), up to `timeoutMs`. */
+async function backTo(selector: string, what: string, timeoutMs: number): Promise<void> {
+  if (!(await waitFor(selector, timeoutMs))) log(`skipped waiting for ${what} (not back after ${timeoutMs} ms)`);
+}
 
 async function nativeTour(): Promise<void> {
   log('tour start');
@@ -88,7 +94,12 @@ async function nativeTour(): Promise<void> {
   // 1. Document picker: More › Backup & Restore › Restore from Files… → picker → Cancel.
   await tap('[data-testid="tab-more"]', 'tab more');
   if (await tap('[data-testid="more-backup"]', 'open Backup & Restore')) {
-    if (await tap('[data-testid="backup-restore-files"]', 'Restore from Files… (document picker)')) await sleep(NATIVE_SHEET_MS);
+    if (await tap('[data-testid="backup-restore-files"]', 'Restore from Files… (document picker)')) {
+      await sleep(1500);
+      // The row reads "Reading Backup…" until the picker answered (cancelled).
+      await backTo('button[data-testid="backup-restore-files"]', 'Restore from Files…', 20_000);
+      await sleep(800);
+    }
     await back();
   }
 
