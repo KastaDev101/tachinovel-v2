@@ -50,7 +50,9 @@ Install: AltStore › **My Apps** › **+** (top left) → pick the `.ipa` in Fi
 The IPA is the **sideload variant**: it has no entitlements a free account can't sign (iCloud, CarPlay,
 push, App Groups, Associated Domains). What that means while you test:
 
-- Data lives in the app's own local storage, not in iCloud. Bring your v1 library over with a backup (step 3).
+- Data lives on the phone, not in iCloud: library, progress, settings, backups and logs are in the Files
+  app under **On My iPhone › TachiNovel** (copy a backup or the `logs` folder from there). Bring your v1
+  library over with a backup (section 3, step 2).
 - CarPlay's own app screen doesn't appear, but audio still plays through the car (Bluetooth or CarPlay
   audio) with Now Playing and the steering-wheel buttons.
 - Background audio, the lock screen player and local notifications all work.
@@ -75,8 +77,8 @@ Apple voices as the fallback.
 | 9 | More › **Listen in the Car** › **Open the player** › Continue reading aloud › the novel | Listening resumes at that paragraph; with the Apple voice the ↺15/15↻ buttons step a paragraph back/forward; the speed buttons work |
 | 10 | Bluetooth or the car | Steering-wheel next/previous and play/pause work; after a call or Siri it resumes only if it was playing |
 
-If something fails: More › About › Diagnostics › **Copy Full Diagnostics**, and paste it to Claude. A screenshot
-helps for anything visual.
+If something fails: More › About › Diagnostics › **Copy Full Diagnostics**, and paste it to Claude. The
+full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot helps for anything visual.
 
 ### Optional (advanced): PC-narrated audio files
 
