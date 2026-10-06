@@ -6,6 +6,7 @@
  *     crash-report sharing on the Diagnostics screen, ads (store + --ads).
  */
 import './native/prelude.ts';
+import './native/v2-text.ts'; // v2 wording globals: before v1's modules evaluate
 import '@v1/ui/main.ts';
 import { installAds } from './monetization/ads.ts';
 import { installDiagnosticsOverlay } from './native/diagnostics-overlay.ts';
