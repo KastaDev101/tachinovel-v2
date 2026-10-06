@@ -19,7 +19,7 @@ import type { CoreHarness, MockOptions } from './native-mock.ts';
 import { startCoreInVm } from './native-mock.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
-const nativeBridgeJs = path.join(root, 'node_modules', '@capacitor', 'ios', 'Capacitor', 'Capacitor', 'assets', 'native-bridge.js');
+export const nativeBridgeJs = path.join(root, 'node_modules', '@capacitor', 'ios', 'Capacitor', 'Capacitor', 'assets', 'native-bridge.js');
 
 type Rtype = 'promise' | 'callback' | null;
 /** Plugin headers as JSExport.swift builds them (base methods + the plugin's own). */
@@ -29,7 +29,7 @@ function swiftPluginMethods(rel: string): string[] {
   return [...src.matchAll(/CAPPluginMethod\(name: "([A-Za-z]+)"/g)].map((m) => m[1] as string);
 }
 
-const PLUGINS: Record<string, Record<string, Rtype>> = {
+export const PLUGINS: Record<string, Record<string, Rtype>> = {
   Core: { call: 'promise' },
   TachiNative: { setKeepAwake: 'promise' },
   // Exactly the methods NarrationPlugin.swift registers (read from the Swift source, so they can't drift).
@@ -40,7 +40,7 @@ const PLUGINS: Record<string, Record<string, Rtype>> = {
   StatusBar: { setStyle: 'promise', setBackgroundColor: 'promise', show: 'promise', hide: 'promise', getInfo: 'promise', setOverlaysWebView: 'promise' },
 };
 
-function headersScript(): string {
+export function headersScript(): string {
   const base = [
     { name: 'addListener', rtype: null },
     { name: 'removeListener', rtype: null },

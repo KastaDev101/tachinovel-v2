@@ -3,13 +3,13 @@
  *  - More: a "Voices" row (Settings › Voices, voices-ui.ts). v1's "Listen in the Car" screen is about the
  *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
  *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
- *  - About: tap the version 5 times → the hidden Voice Lab (voice-lab.ts).
+ *  - About: tap the version to copy it (for bug reports); 5 taps → the hidden Voice Lab (voice-lab.ts).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceLab } from './voice-lab.ts';
-import { openVoicesScreen, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
+import { openVoicesScreen, toast, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
 /** Settings › Voices › Advanced › "Use PC audio when available" (off by default). */
 let pcAudio = false;
@@ -57,8 +57,20 @@ function hookAboutVersion(): void {
     if (taps.length >= 5) {
       taps = [];
       openVoiceLab();
+      return;
     }
+    // The first tap copies the version (for bug reports); the next ones just count toward the Voice Lab.
+    if (taps.length === 1) void copyVersion(version.textContent.trim());
   });
+}
+
+async function copyVersion(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Version copied');
+  } catch {
+    toast(text);
+  }
 }
 
 export function installV1Hooks(): void {

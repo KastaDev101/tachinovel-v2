@@ -79,7 +79,7 @@ function ensureStyle(): void {
   document.head.append(style);
 }
 
-function toast(msg: string): void {
+export function toast(msg: string): void {
   const t = document.createElement('div');
   t.className = 'tn-v toast';
   t.setAttribute('role', 'status');
@@ -99,6 +99,35 @@ export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'
   }
   return `Kokoro · ${v.kokoroName}`;
 }
+
+/** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
+export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<VoiceSettingsInfo>;
+  const voices = Array.isArray(r.voices) ? r.voices.filter((v) => typeof v.id === 'string' && typeof v.name === 'string') : [];
+  const first = voices[0];
+  if (!first) return null;
+  const k: Partial<VoiceSettingsInfo['kokoro']> = r.kokoro ?? {};
+  return {
+    ...r,
+    voices,
+    defaultVoice: typeof r.defaultVoice === 'string' && voices.some((v) => v.id === r.defaultVoice) ? r.defaultVoice : first.id,
+    kokoroEnabled: r.kokoroEnabled !== false,
+    usePCAudio: r.usePCAudio === true,
+    kokoro: {
+      bundled: k.bundled === true,
+      status: typeof k.status === 'string' ? k.status : '',
+      ready: k.ready === true,
+      crashDisabled: k.crashDisabled === true,
+      crashes: typeof k.crashes === 'number' ? k.crashes : 0,
+      revision: typeof k.revision === 'string' ? k.revision : null,
+      bytes: typeof k.bytes === 'number' ? k.bytes : null,
+    },
+    apple: r.apple ?? { name: 'System voice', quality: 'default', onlyDefault: true },
+  };
+}
+
+const UNAVAILABLE = '<p class="note">Voices aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>';
 
 function describe(v: KokoroVoiceInfo): string {
   return `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender} · ${v.blurb}`;
@@ -171,10 +200,11 @@ function appleCard(info: VoiceSettingsInfo): string {
 export function openVoicesScreen(): void {
   const p = panel('Voices', 'screen-voices');
   let info: VoiceSettingsInfo | null = null;
+  let failed = false;
 
   const render = (): void => {
     if (!info) {
-      p.body.innerHTML = '<p class="note">Loading…</p>';
+      p.body.innerHTML = failed ? UNAVAILABLE : '<p class="note">Loading…</p>';
       return;
     }
     const k = info.kokoro;
@@ -210,12 +240,14 @@ export function openVoicesScreen(): void {
   };
 
   const load = async (): Promise<void> => {
-    info = await Narration.voiceSettings().catch(() => null);
+    info = normalizeVoiceSettings(await Narration.voiceSettings().catch(() => null));
+    failed = !info;
     render();
   };
 
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
+    if (el?.dataset.act === 'retry') return void load();
     if (!el || !info) return;
     switch (el.dataset.act ?? '') {
       case 'sample':
@@ -250,9 +282,10 @@ export function openVoicesScreen(): void {
 export function openVoicePicker(novel: { pluginId: string; novelPath: string; name: string }, onChange?: () => void): void {
   const p = panel(`Voice · ${novel.name || 'This novel'}`, 'voice-picker');
   let info: VoiceSettingsInfo | null = null;
+  let failed = false;
   const render = (): void => {
     if (!info) {
-      p.body.innerHTML = '<p class="note">Loading…</p>';
+      p.body.innerHTML = failed ? UNAVAILABLE : '<p class="note">Loading…</p>';
       return;
     }
     const own = info.novelVoice ?? null;
@@ -268,11 +301,13 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
       ${appleCard(info)}`;
   };
   const load = async (): Promise<void> => {
-    info = await Narration.voiceSettings({ pluginId: novel.pluginId, novelPath: novel.novelPath }).catch(() => null);
+    info = normalizeVoiceSettings(await Narration.voiceSettings({ pluginId: novel.pluginId, novelPath: novel.novelPath }).catch(() => null));
+    failed = !info;
     render();
   };
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
+    if (el?.dataset.act === 'retry') return void load();
     if (!el || !info) return;
     const act = el.dataset.act;
     if (act === 'sample') return void sample(el as HTMLButtonElement, el.dataset.voice ?? 'af_heart');
@@ -384,7 +419,7 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
         const word = e.say ?? e.match;
         const runs = e.ipa ? [{ p: e.ipa }, { t: '. I said, ' }, { p: e.ipa }, { t: '.' }] : undefined;
         void Narration.voiceSettings()
-          .then((s) => sample(el as HTMLButtonElement, s.defaultVoice, `${word}. I said, ${word}.`, runs))
+          .then((s) => sample(el as HTMLButtonElement, normalizeVoiceSettings(s)?.defaultVoice ?? 'af_heart', `${word}. I said, ${word}.`, runs))
           .catch(() => undefined);
         return;
       }

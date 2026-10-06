@@ -20,6 +20,7 @@
     "cap:sync": "npm run build && npx cap sync ios",
     "cap:copy": "npm run build && npx cap copy ios",
     "test:shell": "vitest run --config vitest.shell.config.ts",
+    "crawl": "node tools/ui-crawler.ts",
     "ios:project": "node tools/ios-project.ts",
     "revenue": "node tools/revenue-model.ts",
     "release:prepare": "node tools/release.ts prepare"
