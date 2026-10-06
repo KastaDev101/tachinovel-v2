@@ -9,13 +9,15 @@
 #   - background modes (audio, fetch) are Info.plist keys, not entitlements: they keep working.
 #
 # Usage: bash ci/ios-unsigned-ipa.sh <out-dir>   (expects `npx cap sync ios` to have run)
+# Env: BUILD_NUMBER (CFBundleVersion, CI run number), MARKETING_VERSION (default: tools/release.ts
+#      version, i.e. package.json without the pre-release suffix), IPA_NAME (optional file name).
 set -euo pipefail
 
 OUT="${1:?output dir}"
 mkdir -p "$OUT"
 DERIVED=build/DerivedData-device
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
-MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('./package.json').version.split('-')[0]")}"
+MARKETING_VERSION="${MARKETING_VERSION:-$(node tools/release.ts version)}"
 
 set -o pipefail
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
@@ -41,7 +43,8 @@ STAGE=$(mktemp -d)
 mkdir -p "$STAGE/Payload"
 cp -R "$APP" "$STAGE/Payload/"
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")
-IPA="$(cd "$OUT" && pwd)/TachiNovel-${VERSION}-${BUILD_NUMBER}-unsigned.ipa"
+# IPA_NAME: the release workflow names the file after the full version (e.g. 2.1.0-beta.1).
+IPA="$(cd "$OUT" && pwd)/${IPA_NAME:-TachiNovel-${VERSION}-${BUILD_NUMBER}-unsigned.ipa}"
 (cd "$STAGE" && zip -qry "$IPA" Payload)
 ls -l "$IPA"
 echo "ipa=$IPA" >> "${GITHUB_OUTPUT:-/dev/null}"

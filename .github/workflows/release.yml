@@ -1,0 +1,135 @@
+# Release: a tag v<version> on a commit that is on main builds the unsigned sideload IPA and publishes a
+# GitHub Release with that version's CHANGELOG notes. The repository is public, so releases are public.
+# How to cut one: docs/release.md.
+#
+#  verify   ubuntu: the tagged commit is on main; tag == v<package.json version>; the Xcode project's
+#           MARKETING_VERSION matches; CHANGELOG.md has a section for the version (→ release notes).
+#  build    macOS 26: personal-flavor web build, cap sync, unsigned device build → TachiNovel-<version>-
+#           unsigned.ipa (CFBundleVersion = this workflow's run number) + SHA256SUMS.txt. Read-only token.
+#  publish  ubuntu: build provenance attestation for the IPA, then `gh release create` (pre-release when
+#           the version has a suffix such as -alpha.1). The only job with write access.
+#
+# The ios workflow also runs on the same tag (web checks, simulator smoke, TestFlight once secrets exist).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FLAVOR: ${{ vars.FLAVOR || 'personal' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Tagged commit is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; tag a commit that has been merged."
+            exit 1
+          fi
+      - name: Tag, version and changelog agree
+        id: check
+        run: node tools/release.ts verify-tag "$GITHUB_REF_NAME" --notes=release-notes.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 7
+
+  build:
+    needs: verify
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node tools/build.ts --flavor=${FLAVOR}
+      - run: npx cap sync ios
+      - name: Unsigned device build → .ipa
+        run: bash ci/ios-unsigned-ipa.sh build/ipa
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          IPA_NAME: TachiNovel-${{ needs.verify.outputs.version }}-unsigned.ipa
+      - name: Checksum
+        working-directory: build/ipa
+        run: shasum -a 256 -- *.ipa > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-ipa
+          path: |
+            build/ipa/*.ipa
+            build/ipa/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcodebuild-release-log
+          path: build/ipa/xcodebuild-device.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.ipa
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          {
+            cat dist/release-notes.md
+            echo
+            echo '---'
+            echo
+            echo "**Install:** \`TachiNovel-${VERSION}-unsigned.ipa\` is an unsigned build for sideloading with AltStore or"
+            echo 'SideStore and a free Apple ID (see docs/how-to-test-tonight.md). Not an App Store or TestFlight build.'
+            echo
+            echo "**Verify:** compare the SHA-256 with \`SHA256SUMS.txt\`, or run"
+            echo "\`gh attestation verify TachiNovel-${VERSION}-unsigned.ipa --repo ${GITHUB_REPOSITORY}\`."
+          } > notes.md
+          flags=(--verify-tag --title "TachiNovel ${VERSION}" --notes-file notes.md)
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/*.ipa dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" "${flags[@]}"
