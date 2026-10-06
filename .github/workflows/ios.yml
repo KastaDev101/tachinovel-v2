@@ -1,6 +1,7 @@
 # TachiNovel v2 CI. Free on a public repo; macOS jobs are the expensive ones, so they run only on pushes
 # to main, pull requests and manual dispatch (no schedule while there is no Apple Developer account).
 #
+#  changes      ubuntu: docs-only pull request? (tools/ci-changes.ts) Then the macOS jobs are skipped.
 #  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
 #  lint         ubuntu: ESLint (typescript-eslint, type-aware) on src/, tools/, tests/.
 #  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
@@ -57,6 +58,27 @@ env:
   BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.kasta.tachinovel' }}
 
 jobs:
+  # Docs-only pull requests (tools/ci-changes.ts) skip the macOS jobs; skipped jobs count as passing
+  # required checks. Pushes, tags and manual runs always run everything. Fails safe (app=true).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then node tools/ci-changes.ts "origin/$BASE"; else node tools/ci-changes.ts --all; fi
+
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -114,7 +136,8 @@ jobs:
 
   ios-compile:
     name: ios-compile + simulator smoke
-    needs: web
+    needs: [web, changes]
+    if: ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -172,9 +195,12 @@ jobs:
 
   ios-ipa:
     name: ios-ipa (unsigned, for AltStore)
-    needs: web
+    needs: [web, changes]
     # PRs too: it is a required check on main (a real device compile), and the PR's IPA can be tried first.
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # Docs-only PRs skip it (see the changes job).
+    if: >-
+      ${{ !cancelled() && needs.web.result == 'success' && needs.changes.outputs.app != 'false' &&
+      (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
