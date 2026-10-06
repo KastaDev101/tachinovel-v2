@@ -60,7 +60,7 @@ export function buildInfo(opts: BuildOptions): BuildInfo {
   let hash = git(root, 'rev-parse --short HEAD') || 'nogit';
   if (git(root, 'status --porcelain')) hash += '-dirty';
   const v1 = v1Root();
-  let v1Hash = '';
+  let v1Hash: string;
   const vendoredNote = path.join(v1, 'VENDORED.md');
   if (existsSync(vendoredNote)) v1Hash = /commit:\s*([0-9a-f]{7,40})/i.exec(readFileSync(vendoredNote, 'utf8'))?.[1]?.slice(0, 7) ?? 'vendored';
   else v1Hash = git(v1, 'rev-parse --short HEAD') + (git(v1, 'status --porcelain') ? '-dirty' : '');

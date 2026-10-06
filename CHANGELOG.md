@@ -37,8 +37,11 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ### Changed
 
+- ESLint for v2's own code: typescript-eslint type-aware rules and per-context globals (core: no
+  DOM/browser/Node; UI: no Node, no network, no `__native`); CI job `lint`. TypeScript runs side by side:
+  TypeScript 7 typechecks, the TypeScript 6 API (`@typescript/typescript6` alias) serves typescript-eslint.
 - Typechecking uses TypeScript 7 (native compiler): `npm run typecheck` takes ~0.7 s instead of ~4.5 s
-  on the dev PC; same files checked, same (zero) errors. Nothing in the repo uses the TypeScript JS API.
+  on the dev PC; same files checked, same (zero) errors.
 - Swift: main-thread-only types are now `@MainActor` (browser fetcher, presentation queue, device
   snapshot refresh); thread-safe image helpers are `nonisolated`; 106 concurrency warnings fewer.
 - The package license field is now `UNLICENSED` (proprietary, all rights reserved; previously `MIT`).

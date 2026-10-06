@@ -1,7 +1,7 @@
 /** Unit tests for the v2-only pure modules (run in Node; no build needed). */
 import { describe, expect, it } from 'vitest';
 import { createDeclarativeAdapter, jsonPath, toPath } from '../src/core/declarative/engine.ts';
-import { looksLikeSpec, parseSpec, SpecError, type SourceSpec } from '../src/core/declarative/spec.ts';
+import { looksLikeSpec, parseSpec, SpecError } from '../src/core/declarative/spec.ts';
 import { htmlToParagraphs, narrationScript, normalizeForSpeech, splitSentences } from '../src/core/narration/text.ts';
 import { AdPolicy, DEFAULT_AD_POLICY, emptyAdState } from '../src/ui/monetization/ad-policy.ts';
 import { allowed, FEATURES, NO_ENTITLEMENTS, remaining } from '../src/ui/monetization/entitlements.ts';
@@ -45,14 +45,14 @@ function fakeDeps(routes: Record<string, unknown>): PluginHostDeps & { seen: str
   return {
     seen,
     http: {
-      async request(req: HttpRequest): Promise<HttpResponse> {
+      request(req: HttpRequest): Promise<HttpResponse> {
         seen.push(req.url);
         const body = routes[req.url];
-        if (body === undefined) return { url: req.url, status: 404, headers: {}, body: 'nope' };
-        return { url: req.url, status: 200, headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) };
+        if (body === undefined) return Promise.resolve({ url: req.url, status: 404, headers: {}, body: 'nope' });
+        return Promise.resolve({ url: req.url, status: 200, headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) });
       },
-      async requestBytes(req: HttpRequest) {
-        return { url: req.url, status: 404, headers: {}, base64: '' };
+      requestBytes(req: HttpRequest) {
+        return Promise.resolve({ url: req.url, status: 404, headers: {}, base64: '' });
       },
     },
     storageFor: () => ({ get: () => undefined, set: () => undefined, delete: () => undefined, clearAll: () => undefined, getAllKeys: () => [] }),
@@ -116,7 +116,7 @@ describe('declarative engine (JSON API source)', () => {
   it('honours minIntervalMs politeness between requests', async () => {
     const deps = fakeDeps(routes);
     const spec = parseSpec(JSON.stringify({ ...MIN_SPEC, minIntervalMs: 120 }));
-    const a = createDeclarativeAdapter(spec as SourceSpec, deps, createNet(deps));
+    const a = createDeclarativeAdapter(spec, deps, createNet(deps));
     const t0 = Date.now();
     await a.popular(1, { latest: false });
     await a.popular(1, { latest: false });

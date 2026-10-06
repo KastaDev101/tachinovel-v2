@@ -2,6 +2,7 @@
 # to main, pull requests and manual dispatch (no schedule while there is no Apple Developer account).
 #
 #  web          ubuntu: typecheck, build both flavors, unit + core-in-vm tests, Xcode project check.
+#  lint         ubuntu: ESLint (typescript-eslint, type-aware) on src/, tools/, tests/.
 #  shell        ubuntu: PC shell test (WebKit + Capacitor native-bridge.js + built UI + built core).
 #  ios-compile  macOS 26: Capacitor sync, unsigned SIMULATOR build (proves the Swift compiles), then a
 #               simulator smoke test: install, launch, screenshot the first screens (artifact
@@ -71,6 +72,20 @@ jobs:
       - run: node tools/build.ts --flavor=personal
       - run: npm test
       - run: node tools/ios-project.ts --check
+
+  # ESLint with typescript-eslint type-aware rules and per-context globals (eslint.config.js). Separate
+  # from web so a lint finding and a test failure show up as two clear checks.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
 
   shell:
     needs: web
