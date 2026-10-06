@@ -86,6 +86,10 @@ shot 3-browse "$WAIT" -tachiSmokeTab browse || status=1
 shot 4-updates "$WAIT" -tachiSmokeTab updates || status=1
 shot 5-history "$WAIT" -tachiSmokeTab history || status=1
 shot 6-more "$WAIT" -tachiSmokeTab more || status=1
+# Web content recovery: Debug builds kill the web view's content process 6 s in, like iOS under memory
+# pressure (WebContentRecovery.swift); the reloaded UI must restore its screen (src/ui/native/recovery.ts,
+# checked in the log below) and the app must stay up.
+shot 6b-webcontent-recovered $((WAIT + 12)) -tachiSmokeTab more -tachiSmokeKillWebContentAfter 6 || status=1
 # Personal flavor only (built-in source): a live source list over the network.
 if [ "${SMOKE_SOURCE:-}" != "" ]; then
   shot 7-source-"$SMOKE_SOURCE" $((WAIT + 8)) -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
@@ -98,6 +102,10 @@ if ! running; then echo "::error::App exited after the tour"; collect_crashes; s
 xcrun simctl spawn "$UDID" log show --last 10m --style compact \
   --predicate "subsystem == \"app.tachinovel\" OR process == \"App\"" > "$OUT/app-log.txt" 2>/dev/null || true
 grep -E "core exception|startup failed|core boot failed|Fatal" "$OUT/app-log.txt" && echo "::warning::core errors in the log (see app-log.txt)" || true
+if ! grep -q "recovery: the web view was restarted" "$OUT/app-log.txt"; then
+  echo "::error::The UI did not restore its screen after the WebContent process was killed (see app-log.txt, 6b-webcontent-recovered.png)"
+  status=1
+fi
 
 # Boot time per launch: tap (simctl launch) → WebView start → library painted (boot-times.txt + a notice).
 kill "$BOOT_STREAM" 2>/dev/null || true
