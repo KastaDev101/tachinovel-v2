@@ -6,6 +6,9 @@
  *           rendered, the chapter ended, and every sentence event mapped onto the DOM (highlight).
  *   slow    with Kokoro slowed down, the Apple voice took over, and Kokoro came back after the delay lifted.
  *   fail    with Kokoro failing, every sentence was still spoken (Apple) and the chapter ended.
+ *   car     Now Playing fields, remote commands (chapters / ±15 s / scrubbing / play-pause), the chapter
+ *           change by itself with little silence, and a chapter prepared for the drive playing from its
+ *           file (src/ui/native/voice-selftest-car.ts; warnings don't fail).
  *
  * Usage: node ci/check-voice-selftest.ts <report.json>
  */
@@ -29,8 +32,17 @@ interface Phase {
   error?: string;
 }
 
+export interface CarReport {
+  steps: Record<string, { ok: boolean; detail?: string }>;
+  gapsMs: number[];
+  warnings: string[];
+}
+
+/** Car steps that must pass (voice-selftest-car.ts). */
+export const CAR_STEPS = ['buttons-chapters', 'now-playing', 'auto-advance', 'next', 'previous', 'toggle', 'skip', 'scrub', 'buttons-skip', 'prepare', 'prepared-plays'] as const;
+
 export interface SelfTestReport {
-  ui?: { sentences: number; phases: Phase[] };
+  ui?: { sentences: number; phases: Phase[]; car?: CarReport };
   output?: { renderedFrames: number; audibleFrames: number; maxRMS: number; manual: boolean };
   lab?: { stats?: { totalSentences?: number; aggregateX?: number; firstAudio?: { ms: number; source: string }[] }; session?: Record<string, unknown> };
 }
@@ -65,6 +77,18 @@ export function checkSelfTest(r: SelfTestReport): { problems: string[]; summary:
   }
   const f = phase('fail');
   if (f && (f.sources.kokoro ?? 0) > 0) problems.push('fail: Kokoro "spoke" although every synthesis failed');
+  const car = r.ui?.car;
+  if (!car) {
+    problems.push('car phase missing');
+  } else {
+    const failed = CAR_STEPS.filter((s) => car.steps[s]?.ok !== true);
+    const gap = car.gapsMs.length > 0 ? `, chapter change ${car.gapsMs.map((g) => `${Math.round(g)} ms`).join(' / ')}` : '';
+    summary.push(`car: ${CAR_STEPS.length - failed.length}/${CAR_STEPS.length} steps${gap}${car.warnings.length > 0 ? ` (warnings: ${car.warnings.join('; ')})` : ''}`);
+    for (const s of failed) problems.push(`car: ${s} failed${car.steps[s]?.detail ? ` (${car.steps[s]?.detail ?? ''})` : ''}`);
+    for (const [name, st] of Object.entries(car.steps)) {
+      if (!st.ok && !(CAR_STEPS as readonly string[]).includes(name)) problems.push(`car: ${name}${st.detail ? ` (${st.detail})` : ''}`);
+    }
+  }
   const out = r.output;
   if (out) {
     summary.push(`audio rendered: ${(out.renderedFrames / 24000).toFixed(1)} s, audible ${(out.audibleFrames / 24000).toFixed(1)} s, max RMS ${out.maxRMS.toFixed(3)} (${out.manual ? 'headless' : 'device'} output)`);

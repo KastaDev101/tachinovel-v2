@@ -4,8 +4,11 @@
  * the car, and continues into the next chapter without the WebView. Engines:
  *  - 'speech': Kokoro-82M on device (bundled model, the default voice) with the Apple system voice taking
  *    over sentence by sentence when Kokoro can't keep up; `source` says which one spoke;
- *  - 'audio': PC-narrated chapter files from the linked "TachiNovel Audio" folder, only with
- *    Settings › Voices › Advanced › "Use PC audio when available" (off by default).
+ *  - 'audio': chapter audio files: chapters prepared on this iPhone ("Prepare for the drive", `prepared`),
+ *    or PC-narrated files from the linked "TachiNovel Audio" folder, only with Settings › Voices › Advanced ›
+ *    "Use PC audio when available" (off by default).
+ * In the car: Now Playing + remote commands (CarPlay's Now Playing screen, steering wheel, Siri), see
+ * docs/car.md.
  */
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { SpeechScript } from '../../core/narration/speech-script.ts';
@@ -78,9 +81,15 @@ export interface SpeakingVoice {
   fallback?: 'modelLoading' | 'modelUnavailable' | 'queueDry' | 'thermal' | 'segmentFailed' | 'disabled';
 }
 
+export type CarButtons = 'chapters' | 'skip15';
+
 export interface NarrationState {
   status: 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
   engine?: 'audio' | 'speech';
+  /** Audio engine: a chapter prepared on this iPhone (Kokoro, "Prepare for the drive"). */
+  prepared?: boolean;
+  /** What the car's side buttons do (Settings › Voices › In the car). */
+  carButtons?: CarButtons;
   /** Speech: which voice speaks. */
   voice?: SpeakingVoice;
   pluginId?: string;
@@ -89,7 +98,8 @@ export interface NarrationState {
   chapterName?: string;
   paragraph?: number;
   sentence?: number;
-  /** Audio engine: manifest segment id, chapter position and length (seconds). */
+  /** Manifest segment id (audio). Chapter position and length in seconds at 1×: exact for audio, estimated
+   * from the text for speech (refined as sentences are spoken). */
   segment?: number;
   position?: number;
   duration?: number;
@@ -146,12 +156,52 @@ export interface VoiceSettingsInfo {
   defaultVoice: string;
   kokoroEnabled: boolean;
   usePCAudio: boolean;
+  carButtons?: CarButtons;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
   /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
   apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
   /** With pluginId/novelPath: the novel's own choice (null = the default) and the voice it uses. */
   novelVoice?: string | null;
   effectiveVoice?: string;
+}
+
+/** One "Prepare for the drive" request. */
+export interface DriveJobInfo {
+  novelKey: string;
+  pluginId: string;
+  novelPath: string;
+  novelName: string;
+  /** Chapters asked for, and done so far (prepared now or already). */
+  count: number;
+  done: number;
+  titles: string[];
+  when: 'now' | 'chargingOrWifi';
+  voice: string;
+  state: 'running' | 'waiting' | 'queued' | 'done' | 'failed';
+  /** Why it waits (charging/Wi-Fi, live narration, heat). */
+  reason?: string;
+  error?: string;
+  /** The chapter being rendered: sentences done of all. */
+  current?: { chapterPath: string; title: string; sentence: number; sentences: number };
+}
+
+export interface PreparedChapterInfo {
+  novelKey: string;
+  chapterPath: string;
+  title: string;
+  voice: string;
+  bytes: number;
+  durationSec: number;
+  createdAt: number;
+}
+
+export interface DriveStatus {
+  jobs: DriveJobInfo[];
+  prepared: PreparedChapterInfo[];
+  /** Bytes for the novel asked about (or all). */
+  bytes: number;
+  totalBytes: number;
+  capBytes: number;
 }
 
 export interface NarrationPlugin {
@@ -183,6 +233,7 @@ export interface NarrationPlugin {
     novel?: { pluginId: string; novelPath: string; voice: string | null };
     usePCAudio?: boolean;
     kokoroEnabled?: boolean;
+    carButtons?: CarButtons;
   }): Promise<void>;
   /** ▶ a sample: a Kokoro voice id, or 'apple'. Resolves when audio starts (ms = time to first audio). */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
@@ -194,8 +245,23 @@ export interface NarrationPlugin {
   voicePlacement(): Promise<{ stages: { stage: string; configured: string; ane: number; cpu: number; gpu: number; error: string | null; summary: string }[] }>;
   /** Simulator voice self-test only (-tachiVoiceSelfTest): write the report file. */
   selfTestReport(opts: { json: string }): Promise<{ path: string | null }>;
+  /** "Prepare for the drive": render the next `chapters` chapters with Kokoro (from `startChapterPath`, else
+   * where listening would resume), now or while charging / on Wi-Fi. Replaces the novel's earlier request. */
+  prepareDrive(opts: { pluginId: string; novelPath: string; novelName: string; coverUrl?: string; chapters: number; when: 'now' | 'chargingOrWifi'; startChapterPath?: string }): Promise<DriveStatus>;
+  cancelDrive(opts: { pluginId: string; novelPath: string }): Promise<void>;
+  /** One novel's request and prepared chapters, or everything (no args). */
+  driveStatus(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
+  /** Delete prepared audio: one novel, or all (no args). */
+  clearDrive(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
+  /** What the lock screen / car show now and which remote commands are offered (Voice Lab, self-test). */
+  nowPlaying(): Promise<{ info: Record<string, unknown>; commands: Record<string, unknown>; state: NarrationState; carPlayTemplates: boolean; chapterGapsMs?: number[] }>;
+  /** Simulator self-test only: a remote command through the handler MPRemoteCommandCenter calls. */
+  remoteCommand(opts: { command: string; value?: number }): Promise<{ handled: boolean }>;
+  /** Simulator self-test only: a synthetic novel (narration.chapterText answers by chapterPath). */
+  selfTestChapters(opts: { chapters: unknown[] }): Promise<{ chapters: number }>;
   addListener(event: 'state', fn: (s: NarrationState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'progress', fn: (p: NarrationProgress) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'drive', fn: (s: DriveStatus) => void): Promise<PluginListenerHandle>;
 }
 
 export const Narration = registerPlugin<NarrationPlugin>('Narration');

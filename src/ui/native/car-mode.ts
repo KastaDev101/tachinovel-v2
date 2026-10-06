@@ -127,7 +127,7 @@ export function installCarMode(): CarMode {
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
       <span class="eng">${engine}${state.status === 'loading' ? ' · loading…' : ''}</span>
-      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span>${fmt(pos)}</span><span>${fmt(dur)}</span></div>` : ''}
+      ${dur ? `<div class="bar" data-act="seek"><div><i style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span>${fmt(pos)}</span><span>${state.engine === 'audio' ? '' : '≈ '}${fmt(dur)}</span></div>` : ''}
       <div class="ctl">
         <button type="button" data-act="back" aria-label="Back 15 seconds">${ICON.back15}</button>
         <button type="button" class="pp" data-act="toggle" aria-label="${state.status === 'playing' ? 'Pause' : 'Play'}">${state.status === 'playing' ? ICON.pause : ICON.play}</button>

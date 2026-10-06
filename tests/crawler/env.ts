@@ -193,7 +193,24 @@ export class CrawlEnv {
   narration: NarrationMockState = { status: 'idle' };
   audioLinked = true;
   /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings). */
-  voicePrefs = { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, novelVoices: {} as Record<string, string> };
+  voicePrefs = { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, carButtons: 'chapters', novelVoices: {} as Record<string, string> };
+  /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
+  drive = {
+    jobs: [] as Record<string, unknown>[],
+    prepared: [] as { novelKey: string; chapterPath: string; title: string; voice: string; bytes: number; durationSec: number; createdAt: number }[],
+  };
+
+  private driveStatus(key: string | null): Record<string, unknown> {
+    const prepared = this.drive.prepared.filter((c) => key === null || c.novelKey === key);
+    const total = this.drive.prepared.reduce((a, c) => a + c.bytes, 0);
+    return {
+      jobs: this.drive.jobs.filter((j) => key === null || j.novelKey === key),
+      prepared,
+      bytes: key === null ? total : prepared.reduce((a, c) => a + c.bytes, 0),
+      totalBytes: total,
+      capBytes: 600_000_000,
+    };
+  }
 
   constructor(opts: EnvOptions) {
     this.opts = opts;
@@ -483,6 +500,7 @@ export class CrawlEnv {
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
             usePCAudio: v.usePCAudio,
+            carButtons: v.carButtons,
             kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: '006395f', bytes: 93_100_000 },
             apple: { id: 'com.apple.voice.premium.en-US.Zoe', name: 'Zoe (Premium)', language: 'en-US', quality: 'premium', onlyDefault: false },
             ...(key ? { novelVoice: v.novelVoices[key] ?? null, effectiveVoice: v.novelVoices[key] ?? v.defaultVoice } : {}),
@@ -493,6 +511,7 @@ export class CrawlEnv {
           if (typeof o.defaultVoice === 'string') v.defaultVoice = o.defaultVoice;
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
           if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
+          if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
             const key = `${novel.pluginId}:${novel.novelPath}`;
@@ -518,6 +537,41 @@ export class CrawlEnv {
           };
         case 'voicePlacement':
           return { stages: [] };
+        case 'prepareDrive': {
+          const key = `${String(o.pluginId)}:${String(o.novelPath)}`;
+          const count = Number(o.chapters) || 3;
+          this.drive.jobs = this.drive.jobs.filter((j) => j.novelKey !== key);
+          this.drive.jobs.push({
+            novelKey: key, pluginId: o.pluginId, novelPath: o.novelPath, novelName: o.novelName ?? '', count, done: 1, titles: ['Chapter 1'],
+            when: o.when === 'now' ? 'now' : 'chargingOrWifi', voice: 'af_heart', state: o.when === 'now' ? 'running' : 'waiting',
+            ...(o.when === 'now' ? { current: { chapterPath: 'c2', title: 'Chapter 2', sentence: 40, sentences: 120 } } : { reason: 'Waiting for charging or Wi-Fi' }),
+          });
+          if (!this.drive.prepared.some((c) => c.novelKey === key)) {
+            this.drive.prepared.push({ novelKey: key, chapterPath: 'c1', title: 'Chapter 1', voice: 'af_heart', bytes: 6_800_000, durationSec: 1140, createdAt: 1 });
+          }
+          return this.driveStatus(key);
+        }
+        case 'driveStatus':
+          return this.driveStatus(typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null);
+        case 'cancelDrive': {
+          const key = `${String(o.pluginId)}:${String(o.novelPath)}`;
+          this.drive.jobs = this.drive.jobs.filter((j) => j.novelKey !== key);
+          return {};
+        }
+        case 'clearDrive': {
+          const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
+          this.drive.jobs = this.drive.jobs.filter((j) => key !== null && j.novelKey !== key);
+          this.drive.prepared = this.drive.prepared.filter((c) => key !== null && c.novelKey !== key);
+          return this.driveStatus(key);
+        }
+        case 'nowPlaying':
+          return {
+            info: n.status === 'idle' ? {} : { title: n.chapterName ?? '', artist: 'Novel', album: 'TachiNovel', duration: 600, elapsed: 0, rate: n.status === 'playing' ? 1 : 0 },
+            commands: { buttons: this.voicePrefs.carButtons, nextTrack: this.voicePrefs.carButtons === 'chapters', skipForward: this.voicePrefs.carButtons === 'skip15' },
+            state: { ...n },
+            carPlayTemplates: false,
+            chapterGapsMs: [],
+          };
         default:
           return {};
       }

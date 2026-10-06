@@ -139,6 +139,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     private var prefetchingPath: String?
     /// Background time across a chapter change (nothing plays for a moment).
     private var transitionTask: UIBackgroundTaskIdentifier = .invalid
+    /// Silence between chapters: from the end of a chapter to the first sound of the next (last 10, ms).
+    private(set) var chapterGapsMs: [Double] = []
+    private var chapterEndedAt: TimeInterval?
     /// Cover passed to playNovel (CarPlay, the Listen player) for chapters of that novel loaded later.
     private var coverHint: (key: String, url: String)?
     /// Interruption bookkeeping (calls, Siri, other audio). See InterruptionPolicy.
@@ -260,6 +263,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     func stop() {
         interruption.userActed()
+        chapterEndedAt = nil
         generation += 1
         engine.stop()
         if mode == .audio { saveAudioPosition(force: true) }
@@ -513,6 +517,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         // Bundles (.m4b) don't end per chapter: stop at this chapter's length.
         if let timing, timing.offset > 0, timing.duration > 0, t >= timing.duration { return finishChapter() }
         if let timing, let i = timing.segmentIndex(at: t), i != lastSegment {
+            if lastSegment == nil { recordChapterGap() }
             lastSegment = i
             let seg = timing.segments[i]
             if audioOrigin == .prepared {
@@ -768,6 +773,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         sentenceStartedAt = ProcessInfo.processInfo.systemUptime
         sentencePlayed = 0
         sentenceInterrupted = false
+        recordChapterGap()
         let sourceChanged = speechSource != source
         speechSource = source
         var p: [String: Any] = ["chapterPath": ch.chapterPath, "engine": "speech", "source": source.rawValue,
@@ -814,7 +820,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         if mode == .audio, audioOrigin == .prepared, let ac = audioChapter {
             DriveCache.shared.evictAfterListening(novelKey: ac.novelKey, chapterPath: ac.chapterPath)
         }
-        if autoContinue, chapter?.nextPath != nil || (mode == .audio && nextAudioChapter() != nil) { return nextChapter() }
+        if autoContinue, chapter?.nextPath != nil || (mode == .audio && nextAudioChapter() != nil) {
+            chapterEndedAt = ProcessInfo.processInfo.systemUptime
+            return nextChapter()
+        }
         if mode == .audio, audioOrigin == .pc, let key = audioChapter?.novelKey { clearAudioPosition(novelKey: key) }
         audio.stop()
         set(.ended)
@@ -979,6 +988,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     private var audioDuration: Double {
         let d = timing?.duration ?? 0
         return d > 0 ? d : audio.fileDuration
+    }
+
+    private func recordChapterGap() {
+        guard let t = chapterEndedAt else { return }
+        chapterEndedAt = nil
+        chapterGapsMs.append(((ProcessInfo.processInfo.systemUptime - t) * 1000).rounded())
+        if chapterGapsMs.count > 10 { chapterGapsMs.removeFirst(chapterGapsMs.count - 10) }
     }
 
     private func resetSentenceClock() {

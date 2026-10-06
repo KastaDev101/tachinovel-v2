@@ -165,10 +165,10 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async { call.resolve(self.n.stateDict()) }
     }
 
-    /// Audio mode: jump to a chapter time (seconds).
+    /// Jump to a chapter time (seconds at 1×): exact for audio, to the sentence for speech.
     @objc func seek(_ call: CAPPluginCall) {
         let seconds = call.getDouble("seconds") ?? 0
-        onMain(call) { $0.seekAudio(toChapterTime: seconds) }
+        onMain(call) { $0.perform(.seekTo(seconds)) }
     }
 
     /// Continue a novel where reading/listening stopped: narrated audio first, else the system voice.
@@ -441,7 +441,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func nowPlaying(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             call.resolve(["info": NowPlayingCenter.shared.snapshot(), "commands": RemoteCommandHub.shared.snapshot(),
-                          "state": self.n.stateDict(), "carPlayTemplates": CarPlayFeature.templatesEnabled])
+                          "state": self.n.stateDict(), "carPlayTemplates": CarPlayFeature.templatesEnabled,
+                          "chapterGapsMs": self.n.chapterGapsMs])
         }
     }
 

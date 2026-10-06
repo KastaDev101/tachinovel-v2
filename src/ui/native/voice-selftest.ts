@@ -9,13 +9,15 @@
  *   kokoro    normal playback: Kokoro must speak (the first sentences may be Apple while the model loads),
  *   slow      Kokoro slowed down by an injected delay → the Apple voice takes over; the delay is lifted
  *             mid-chapter → Kokoro must take over again,
- *   fail      Kokoro synthesis fails → every sentence still gets spoken (Apple).
+ *   fail      Kokoro synthesis fails → every sentence still gets spoken (Apple),
+ *   car       Now Playing, remote commands, chapter changes and prepared audio (voice-selftest-car.ts).
  * Every progress event's sentence must map onto the DOM (the highlight). The findings go to native
  * (Narration.selfTestReport), which adds its own counters and writes Documents/voice-selftest.json.
  */
 import { paintRange } from './highlight.ts';
 import { Narration, type NarrationProgress, type NarrationState } from './narration.ts';
 import { domSpeechScript, rangeForSentence } from './speech-dom.ts';
+import { runCarPhase } from './voice-selftest-car.ts';
 
 const PARAGRAPHS = [
   'Chapter 12 - The Old Bridge',
@@ -126,7 +128,11 @@ export async function runVoiceSelfTest(): Promise<void> {
   phases.push(await play('fail', 240_000));
   await Narration.setVoiceLab({ inject: { delayMs: 0, fail: false } }).catch(() => undefined);
 
-  const report = { startedAt: new Date(t0).toISOString(), sentences: dom.script.items.length, phases };
+  // The car: Now Playing, remote commands, chapter changes, prepared audio.
+  state = { status: 'idle' };
+  const car = await runCarPhase(() => state).catch((err: unknown) => ({ steps: { car: { ok: false, detail: String(err) } }, gapsMs: [], warnings: [] }));
+
+  const report = { startedAt: new Date(t0).toISOString(), sentences: dom.script.items.length, phases, car };
   await Narration.selfTestReport({ json: JSON.stringify(report) }).catch((err: unknown) => console.error('self-test report failed', err));
   document.documentElement.dataset.voiceSelftest = 'done';
 }

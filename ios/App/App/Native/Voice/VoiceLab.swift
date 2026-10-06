@@ -51,6 +51,7 @@ enum VoiceLab {
                 "carPlayTemplates": CarPlayFeature.templatesEnabled,
                 "preparedBytes": DriveCache.shared.index.totalBytes,
                 "preparedChapters": DriveCache.shared.index.chapters.count,
+                "chapterGapsMs": NarrationController.shared.chapterGapsMs,
             ] as [String: Any],
         ]
         if let s = NarrationController.shared.speechEngine.snapshot {
