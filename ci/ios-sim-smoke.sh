@@ -94,9 +94,43 @@ shot 6b-webcontent-recovered $((WAIT + 12)) -tachiSmokeTab more -tachiSmokeKillW
 if [ "${SMOKE_SOURCE:-}" != "" ]; then
   shot 7-source-"$SMOKE_SOURCE" $((WAIT + 8)) -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
 fi
+# Native surfaces (docs/qa.md): document picker (Restore from Files…, Link audio folder), share sheet,
+# Listen with the system voice, mini player and car player controls, brightness and keep-awake. The web
+# side (src/ui/native/smoke.ts) taps through them; SmokeResponder.swift cancels system sheets like a user.
+native_tour() {
+  echo "--- native tour"
+  xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE" -tachiSmokeTour native
+  local i
+  for i in $(seq -w 1 24); do
+    sleep 4
+    xcrun simctl io "$UDID" screenshot "$OUT/9-native-$i.png" >/dev/null 2>&1 || true
+    if ! running; then
+      echo "::error::App is not running during the native tour (crashed?)"
+      collect_crashes
+      return 1
+    fi
+    if xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'subsystem == "app.tachinovel"' 2>/dev/null | grep -q "smoke: tour done"; then
+      break
+    fi
+  done
+  xcrun simctl spawn "$UDID" log show --last 4m --style compact --predicate 'subsystem == "app.tachinovel"' > "$OUT/native-tour-log.txt" 2>/dev/null || true
+  grep -E "smoke:" "$OUT/native-tour-log.txt" | sed -E 's/^.*smoke: /  /' || true
+  # Report, don't fail (yet): a hung popup queue shows up here; a crash already failed above.
+  grep -q "smoke: tour done" "$OUT/native-tour-log.txt" || echo "::warning::The native tour did not finish (see native-tour-log.txt and the 9-native-*.png screenshots)"
+  grep -q "smoke: skipped" "$OUT/native-tour-log.txt" && echo "::warning::Native tour steps were skipped (see native-tour-log.txt)"
+  return 0
+}
+native_tour || status=1
+
 # Stability: the app must still be alive a while after the last launch (launch tasks run ~5 s in).
 sleep 10
 if ! running; then echo "::error::App exited after the tour"; collect_crashes; status=1; fi
+# Any crash report of this build (also one the app recovered from, e.g. a relaunch) fails the smoke test.
+if find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 \( -name "App-*.ips" -o -name "App_*.ips" \) -newer "$APP/Info.plist" 2>/dev/null | grep -q .; then
+  echo "::error::Crash reports from this build (copied to the screenshots artifact)"
+  collect_crashes
+  status=1
+fi
 
 # App + core logs (os_log subsystem app.tachinovel) for debugging failures.
 xcrun simctl spawn "$UDID" log show --last 10m --style compact \
