@@ -1,0 +1,70 @@
+{
+  "timeStampBegin": "2026-10-05 00:00:00",
+  "timeStampEnd": "2026-10-05 23:59:00",
+  "crashDiagnostics": [
+    {
+      "version": "1.0.0",
+      "callStackTree": {
+        "callStackPerThread": true,
+        "callStacks": [
+          {
+            "threadAttributed": false,
+            "callStackRootFrames": [{ "binaryUUID": "00000000-0000-0000-0000-000000000001", "offsetIntoBinaryTextSegment": 4096, "sampleCount": 1, "binaryName": "libsystem_kernel.dylib", "address": 7000000000 }]
+          },
+          {
+            "threadAttributed": true,
+            "callStackRootFrames": [
+              {
+                "binaryUUID": "00000000-0000-0000-0000-0000000000AA",
+                "offsetIntoBinaryTextSegment": 6699,
+                "sampleCount": 1,
+                "binaryName": "App",
+                "address": 4295000000,
+                "subFrames": [
+                  {
+                    "binaryUUID": "00000000-0000-0000-0000-0000000000AA",
+                    "offsetIntoBinaryTextSegment": 22136,
+                    "sampleCount": 1,
+                    "binaryName": "App",
+                    "address": 4295015000,
+                    "subFrames": [{ "binaryUUID": "00000000-0000-0000-0000-0000000000BB", "offsetIntoBinaryTextSegment": 255, "sampleCount": 1, "binaryName": "UIKitCore", "address": 7100000000 }]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "diagnosticMetaData": {
+        "appVersion": "2.0.0",
+        "appBuildVersion": "57",
+        "osVersion": "iPhone OS 26.0 (23A341)",
+        "deviceType": "iPhone17,3",
+        "platformArchitecture": "arm64e",
+        "regionFormat": "US",
+        "bundleIdentifier": "com.example.synthetic",
+        "exceptionType": 1,
+        "exceptionCode": 0,
+        "signal": 11,
+        "terminationReason": "Namespace SIGNAL, Code 11 Segmentation fault: 11",
+        "virtualMemoryRegionInfo": "0 is not in any region."
+      }
+    }
+  ],
+  "hangDiagnostics": [
+    {
+      "version": "1.0.0",
+      "callStackTree": { "callStackPerThread": true, "callStacks": [{ "threadAttributed": true, "callStackRootFrames": [{ "binaryName": "JavaScriptCore", "offsetIntoBinaryTextSegment": 123456, "sampleCount": 20 }] }] },
+      "diagnosticMetaData": { "appVersion": "2.0.0", "appBuildVersion": "57", "osVersion": "iPhone OS 26.0 (23A341)", "deviceType": "iPhone17,3", "hangDuration": "2.4 sec" }
+    }
+  ],
+  "cpuExceptionDiagnostics": [
+    { "diagnosticMetaData": { "appVersion": "2.0.0", "totalCPUTime": "1.2 min", "totalSampledTime": "3 min" } }
+  ],
+  "diskWriteExceptionDiagnostics": [
+    { "diagnosticMetaData": { "appVersion": "2.0.0", "writesCaused": "1,100 MB" } }
+  ],
+  "appLaunchDiagnostics": [
+    { "diagnosticMetaData": { "appVersion": "2.0.0", "launchDuration": "21 sec" } }
+  ]
+}

@@ -109,6 +109,13 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   (v1 3a25883 parity: `BrowserFetchOptions`).
 - **Logs** use v1's `LogFile` (device log, mirrored to iCloud at most once a minute and on errors), so
   v1's Diagnostics screen (`app.logs`) works unchanged.
+- **Crash and hang reports:** `MetricDiagnostics.swift` subscribes to MetricKit and forwards each
+  MXDiagnosticPayload's JSON to the core (`diagnostics.metricPayload`, `src/core/diagnostics/metrickit.ts`).
+  The core keeps the newest 30 diagnostics under local `logs/metrickit/` and logs a one-line summary
+  (date, exception/signal or hang duration, app/iOS version, top frames), so they appear in Settings ›
+  Diagnostics "Recent problems" and in the sent/copied diagnostics. A "Share Crash & Hang Reports" button
+  on that screen (`src/ui/native/diagnostics-overlay.ts`) shares the full reports as one JSON file. Nothing
+  is uploaded.
 
 ## 4. Security model
 - **UI:** v1's strict CSP (script hash, `connect-src 'none'`, no frames/objects) plus `capacitor:` images;
