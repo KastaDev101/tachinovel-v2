@@ -55,10 +55,13 @@ collect_crashes() {
   find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 \( -name "App-*.ips" -o -name "App_*.ips" -o -name "App-*.crash" \) -newer "$APP/Info.plist"     -exec cp {} "$OUT/" \; 2>/dev/null || true
 }
 
+now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+
 shot() {
   local name="$1" wait="$2"
   shift 2
   echo "--- $name $*"
+  echo "$name $(now_ms)" >> "$OUT/launches.txt"   # "tap" time for the boot-time report
   xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE" "$@"
   sleep "$wait"
   xcrun simctl io "$UDID" screenshot "$OUT/$name.png"
@@ -68,6 +71,12 @@ shot() {
     return 1
   fi
 }
+
+# Boot timing (src/ui/native/boot-timing.ts logs "boot: …" at info level, which `log show` may not keep):
+# stream it live for the whole tour.
+xcrun simctl spawn "$UDID" log stream --level info --style compact   --predicate 'subsystem == "app.tachinovel" AND eventMessage CONTAINS "boot: library visible"' > "$OUT/boot-log.txt" 2>/dev/null &
+BOOT_STREAM=$!
+sleep 2
 
 status=0
 # Fresh install: the first WebView launch on a just-booted simulator is slow.
@@ -89,5 +98,39 @@ if ! running; then echo "::error::App exited after the tour"; collect_crashes; s
 xcrun simctl spawn "$UDID" log show --last 10m --style compact \
   --predicate "subsystem == \"app.tachinovel\" OR process == \"App\"" > "$OUT/app-log.txt" 2>/dev/null || true
 grep -E "core exception|startup failed|core boot failed|Fatal" "$OUT/app-log.txt" && echo "::warning::core errors in the log (see app-log.txt)" || true
+
+# Boot time per launch: tap (simctl launch) → WebView start → library painted (boot-times.txt + a notice).
+kill "$BOOT_STREAM" 2>/dev/null || true
+python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" <<'PY' || true
+import re, statistics, sys
+launches = [(n, int(t)) for n, t in (l.split() for l in open(sys.argv[1]) if l.strip())]
+rows = []
+for line in open(sys.argv[2], errors='replace'):
+    m = re.search(r'nav=(\d+) epoch=(\d+)', line)
+    if not m:
+        continue
+    nav, vis = int(m.group(1)), int(m.group(2))
+    before = [(n, t) for n, t in launches if t <= nav]
+    if before:
+        name, tap = before[-1]
+        rows.append((name, nav - tap, vis - nav, vis - tap))
+seen, uniq = set(), []
+for r in rows:  # one line per launch
+    if r[0] not in seen:
+        seen.add(r[0]); uniq.append(r)
+with open(sys.argv[3], 'w') as f:
+    f.write('launch                 tap->WebView  WebView->library  tap->library (ms)\n')
+    for name, a, b, c in uniq:
+        f.write(f'{name:22} {a:11} {b:16} {c:12}\n')
+print(open(sys.argv[3]).read())
+if uniq:
+    later = [r[3] for r in uniq[1:]]
+    msg = f'first launch (fresh install) {uniq[0][3]} ms'
+    if later:
+        msg += f'; later cold launches median {int(statistics.median(later))} ms (n={len(later)})'
+    print(f'::notice title=Boot time (tap -> library painted, simulator)::{msg}')
+else:
+    print('::warning::No boot timing lines captured (see boot-log.txt)')
+PY
 xcrun simctl shutdown "$UDID" || true
 exit $status
