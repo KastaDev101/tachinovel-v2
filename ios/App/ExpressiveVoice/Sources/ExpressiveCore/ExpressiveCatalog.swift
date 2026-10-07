@@ -109,7 +109,7 @@ public enum StyleMapper {
         let dots = #"(?:\.\s?\.\s?\.|…)"#
         // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
         // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
-        var out = joinBrokenWords(text).replacingOccurrences(of: #"([Hh])m{2,}"#, with: "$1m", options: .regularExpression)
+        var out = joinBrokenWords(text).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
         let rules: [(String, String)] = [
             (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
             (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
