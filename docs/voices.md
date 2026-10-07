@@ -109,6 +109,11 @@ Settings › Voices › **Narrator mode** (off by default). Each piece has its o
 - **Natural pauses:** the pause after a sentence follows its ending (? ! … : —) and its length. Quick
   exchanges of short lines are tighter, the end of a long paragraph gets more room, and a change of
   speaker always gets a pause.
+- **Phrase breaks (on):** short pauses inside a sentence, Kasta's pick ("clauses", P3) from the PC tuning
+  round (narrator repo py/tune.py, d172d45): 175 ms after commas, semicolons and dashes, about 230 ms after
+  an introductory phrase (a comma within the first five words), 105 ms before "but", "and then", "while"
+  and "because", and never a piece shorter than 12 characters (Kokoro flattens short fragments). Not in
+  sentences with lexicon phoneme overrides.
 - **Natural variation:** each sentence is read up to 3 % faster or slower. The amount comes from the
   sentence's own text, so the same sentence always sounds the same, and prepared audio stays valid.
 - **Studio sound:** a high-pass at 70 Hz, a little warmth (+1.5 dB at 180 Hz) and presence (+2 dB at 3.2 kHz),

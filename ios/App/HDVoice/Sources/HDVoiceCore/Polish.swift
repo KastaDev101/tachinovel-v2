@@ -285,14 +285,20 @@ extension PCM {
     /// The parts of one sentence read by different voices, joined: each trimmed and faded, with `gap` of
     /// silence between them.
     public static func joinParts(_ parts: [[Float]], sampleRate: Int, gap: TimeInterval) -> [Float] {
+        joinParts(parts, sampleRate: sampleRate, gaps: Array(repeating: gap, count: parts.count))
+    }
+
+    /// As above, with the silence after each part (`gaps[i]` follows part i; none after the last).
+    public static func joinParts(_ parts: [[Float]], sampleRate: Int, gaps: [TimeInterval]) -> [Float] {
         var out: [Float] = []
-        let gapFrames = silenceFrames(seconds: gap, sampleRate: sampleRate)
-        for part in parts {
+        var pending = 0
+        for (i, part) in parts.enumerated() {
             var p = trimSilence(part, sampleRate: sampleRate)
             guard !p.isEmpty else { continue }
             applyFades(&p, sampleRate: sampleRate)
-            if !out.isEmpty, gapFrames > 0 { out.append(contentsOf: repeatElement(Float(0), count: gapFrames)) }
+            if !out.isEmpty, pending > 0 { out.append(contentsOf: repeatElement(Float(0), count: pending)) }
             out.append(contentsOf: p)
+            pending = silenceFrames(seconds: i < gaps.count ? gaps[i] : 0, sampleRate: sampleRate)
         }
         return out
     }

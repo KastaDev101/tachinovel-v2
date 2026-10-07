@@ -27,9 +27,11 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
     public var polish: Bool
     /// A faint room tone instead of digital silence (with polish).
     public var roomTone: Bool
+    /// Short pauses between the phrases of a sentence: "clauses" (Kasta's pick, the default) or "off".
+    public var phraseBreaks: String
 
     public init(enabled: Bool = false, dialogueVoice: String? = nil, secondDialogueVoice: String? = nil, pacing: Bool = true, jitter: Bool = true,
-                polish: Bool = true, roomTone: Bool = false) {
+                polish: Bool = true, roomTone: Bool = false, phraseBreaks: String = "clauses") {
         self.enabled = enabled
         self.dialogueVoice = dialogueVoice
         self.secondDialogueVoice = secondDialogueVoice
@@ -37,6 +39,7 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
         self.jitter = jitter
         self.polish = polish
         self.roomTone = roomTone
+        self.phraseBreaks = phraseBreaks == "off" ? "off" : "clauses"
     }
 
     /// Tolerant decoding: missing keys take their defaults.
@@ -50,12 +53,14 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
         jitter = (try? c.decode(Bool.self, forKey: .jitter)) ?? d.jitter
         polish = (try? c.decode(Bool.self, forKey: .polish)) ?? d.polish
         roomTone = (try? c.decode(Bool.self, forKey: .roomTone)) ?? d.roomTone
+        phraseBreaks = (try? c.decode(String.self, forKey: .phraseBreaks)) == "off" ? "off" : d.phraseBreaks
     }
 
     public var usesPacing: Bool { enabled && pacing }
     public var usesJitter: Bool { enabled && jitter }
     public var usesPolish: Bool { enabled && polish }
     public var usesRoomTone: Bool { enabled && polish && roomTone }
+    public var usesPhraseBreaks: Bool { enabled && phraseBreaks != "off" }
 
     /// Every piece on, with these dialogue voices (Voice Lab "B").
     public static func all(dialogueVoice: String?, secondDialogueVoice: String? = nil, roomTone: Bool = false) -> NarratorSettings {
@@ -77,10 +82,23 @@ public struct NarratorSentence: Sendable, Equatable {
         }
     }
 
+    /// One phrase of a sentence and the silence after it (phrase breaks).
+    public struct Phrase: Sendable, Equatable {
+        public let text: String
+        public let pauseMs: Double
+
+        public init(text: String, pauseMs: Double) {
+            self.text = text
+            self.pauseMs = pauseMs
+        }
+    }
+
     public let text: String
     public let runs: [SpeechRun]?
     /// The whole sentence is dialogue.
     public let quoted: Bool
+    /// The sentence in phrases (phrase breaks), when it has more than one.
+    public let phrases: [Phrase]?
     /// A sentence that mixes speech and narration, by role (nil otherwise).
     public let parts: [Part]?
     /// 0 or 1: which speaker of an exchange.
@@ -90,7 +108,8 @@ public struct NarratorSentence: Sendable, Equatable {
     public let rate: Double?
 
     public init(text: String, runs: [SpeechRun]?, quoted: Bool = false, parts: [Part]? = nil, speaker: Int = 0, pauseMs: Double, pacedMs: Double? = nil,
-                rate: Double? = nil) {
+                rate: Double? = nil, phrases: [Phrase]? = nil) {
+        self.phrases = phrases
         self.text = text
         self.runs = runs
         self.quoted = quoted
@@ -107,11 +126,14 @@ public struct NarratorPart: Sendable, Equatable {
     public let text: String
     public let runs: [SpeechRun]?
     public let voice: String?
+    /// Silence after this part at 1.0x (nil: NarratorPlan.partGap).
+    public let pauseAfter: TimeInterval?
 
-    public init(text: String, runs: [SpeechRun]?, voice: String?) {
+    public init(text: String, runs: [SpeechRun]?, voice: String?, pauseAfter: TimeInterval? = nil) {
         self.text = text
         self.runs = runs
         self.voice = voice
+        self.pauseAfter = pauseAfter
     }
 }
 
@@ -123,14 +145,21 @@ public enum NarratorPlan {
     /// off, no dialogue voice, or a sentence without dialogue). `resolve` turns a stored choice (built-in
     /// or mix id) into the voice the engine speaks with, nil if it no longer exists.
     public static func parts(for s: NarratorSentence, settings: NarratorSettings, resolve: (String) -> String?) -> [NarratorPart]? {
-        guard settings.enabled, let first = settings.dialogueVoice.flatMap(resolve) else { return nil }
+        guard settings.enabled else { return nil }
+        guard let first = settings.dialogueVoice.flatMap(resolve) else { return phraseParts(for: s, settings: settings) }
         let second = settings.secondDialogueVoice.flatMap(resolve)
         let dialogueVoice = s.speaker == 1 ? (second ?? first) : first
         if let parts = s.parts, parts.contains(where: \.dialogue), parts.count > 1 {
             return parts.map { NarratorPart(text: $0.text, runs: $0.runs, voice: $0.dialogue ? dialogueVoice : nil) }
         }
         if s.quoted { return [NarratorPart(text: s.text, runs: s.runs, voice: dialogueVoice)] }
-        return nil
+        return phraseParts(for: s, settings: settings)
+    }
+
+    /// Phrase breaks: the sentence's phrases in the narrator's voice, each followed by its pause.
+    static func phraseParts(for s: NarratorSentence, settings: NarratorSettings) -> [NarratorPart]? {
+        guard settings.usesPhraseBreaks, s.runs == nil, let ph = s.phrases, ph.count > 1 else { return nil }
+        return ph.map { NarratorPart(text: $0.text, runs: nil, voice: nil, pauseAfter: max(0, $0.pauseMs) / 1000) }
     }
 
     /// The pause after a sentence, in seconds at 1.0×.

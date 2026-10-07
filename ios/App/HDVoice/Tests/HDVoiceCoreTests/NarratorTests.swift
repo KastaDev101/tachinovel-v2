@@ -55,6 +55,21 @@ final class NarratorTests: XCTestCase {
         XCTAssertEqual(NarratorPlan.rate(1, for: wild, settings: .all(dialogueVoice: nil)), 1.03, accuracy: 1e-6, "clamped")
     }
 
+    func testPhraseBreaksSplitNarrationIntoPhrasesWithTheirPauses() {
+        let s = NarratorSentence(text: "He waited for hours but nobody came.", runs: nil, pauseMs: 320,
+                                 phrases: [.init(text: "He waited for hours", pauseMs: 105), .init(text: "but nobody came.", pauseMs: 0)])
+        let on = NarratorSettings(enabled: true)
+        XCTAssertEqual(on.phraseBreaks, "clauses", "Kasta's pick is the default")
+        let parts = NarratorPlan.parts(for: s, settings: on) { $0 }
+        XCTAssertEqual(parts?.map(\.text), ["He waited for hours", "but nobody came."])
+        XCTAssertEqual(parts?.map(\.pauseAfter), [0.105, 0])
+        XCTAssertEqual(parts?.compactMap(\.voice), [], "the narrator's voice")
+        XCTAssertNil(NarratorPlan.parts(for: s, settings: NarratorSettings(enabled: true, phraseBreaks: "off")) { $0 })
+        XCTAssertNil(NarratorPlan.parts(for: s, settings: NarratorSettings(enabled: false)) { $0 })
+        let withRuns = NarratorSentence(text: s.text, runs: [.phonemes("x")], pauseMs: 320, phrases: s.phrases)
+        XCTAssertNil(NarratorPlan.parts(for: withRuns, settings: on) { $0 }, "phoneme runs can't be split by text")
+    }
+
     func testSettingsPersistAndDeletingAMixClearsIt() throws {
         var p = VoicePreferences()
         XCTAssertFalse(p.narrator.enabled, "off by default")

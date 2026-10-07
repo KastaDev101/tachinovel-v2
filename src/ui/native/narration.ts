@@ -171,6 +171,8 @@ export interface NarratorInfo {
   jitter: boolean;
   polish: boolean;
   roomTone: boolean;
+  /** Short pauses between phrases: 'clauses' (the default) or 'off'. */
+  phraseBreaks: 'off' | 'clauses';
 }
 
 /** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */

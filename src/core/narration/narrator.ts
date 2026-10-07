@@ -13,7 +13,9 @@
  *    what comes next (a quick exchange of short lines, a speaker change, the end of a long paragraph);
  *  - prosody jitter: `rate`, a speed factor within ±3 %, derived from the sentence's text hash, so a
  *    chapter doesn't tick along at one fixed tempo, and the same sentence always sounds the same (prepared
- *    audio and caches stay valid).
+ *    audio and caches stay valid);
+ *  - phrase breaks: `phrases`, the sentence split into phrases with a short pause after each (Kasta's pick
+ *    "clauses", P3 of the PC tuning round: the narrator repo's py/tune.py `phrases`, commit d172d45).
  */
 import { renderPhonemeRuns, renderPlain, type Piece } from '@v1tts/frontend.ts';
 
@@ -28,6 +30,44 @@ export interface SpeechPartJson {
   /** [start, end) in the block's canonical text. */
   start: number;
   end: number;
+}
+
+/** Phrase breaks (tune.py, "clauses" mode): 175 ms after , ; and —; 1.3× after an introductory phrase (a
+ * comma within the first five words); 0.6× before a clause starter; never a piece under 12 characters. */
+export const PHRASE_BREAK_MS = 175;
+export const CLAUSE_STARTERS = ['and then', 'but', 'while', 'because'] as const;
+export const MIN_PHRASE_CHARS = 12;
+
+export interface PhraseJson {
+  text: string;
+  /** Silence after this phrase (ms at 1.0×); 0 for the last one. */
+  pauseMs: number;
+}
+
+/** A sentence split into phrases with the pause after each (one phrase when nothing qualifies). */
+export function phrases(text: string, breakMs = PHRASE_BREAK_MS): PhraseJson[] {
+  const cuts: [number, number][] = []; // [index where the next phrase starts, pause ms]
+  for (const m of text.matchAll(/(?<=[,;])\s+|\s+—\s+/g)) {
+    const at = m.index;
+    const intro = (text.slice(0, at).match(/ /g) ?? []).length < 5 && text.charAt(at - 1) === ',';
+    cuts.push([at + m[0].length, breakMs * (intro ? 1.3 : 1)]);
+  }
+  for (const w of CLAUSE_STARTERS) {
+    for (const m of text.matchAll(new RegExp(`(?<=[^\\s,;—])\\s+(?=${w}\\b)`, 'gi'))) cuts.push([m.index + m[0].length, breakMs * 0.6]);
+  }
+  cuts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out: PhraseJson[] = [];
+  let start = 0;
+  for (const [at, ms] of cuts) {
+    const head = text.slice(start, at).trim();
+    const tail = text.slice(at).trim();
+    if (head.length < MIN_PHRASE_CHARS || tail.length < MIN_PHRASE_CHARS) continue;
+    out.push({ text: head, pauseMs: Math.round(ms) });
+    start = at;
+  }
+  const last = text.slice(start).trim();
+  if (last) out.push({ text: last, pauseMs: 0 });
+  return out;
 }
 
 /** Same opening quotes as the front-end (frontend.ts OPEN_QUOTES); straight quotes toggle. */

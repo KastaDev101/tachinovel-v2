@@ -29,7 +29,16 @@ const prefs = {
   defaultVoice: 'af_heart',
   novelVoices: {} as Record<string, string>,
   customVoices: [] as Mix[],
-  narrator: { enabled: false, dialogueVoice: null as string | null, secondDialogueVoice: null as string | null, pacing: true, jitter: true, polish: true, roomTone: false },
+  narrator: {
+    enabled: false,
+    dialogueVoice: null as string | null,
+    secondDialogueVoice: null as string | null,
+    pacing: true,
+    jitter: true,
+    polish: true,
+    roomTone: false,
+    phraseBreaks: 'clauses' as 'off' | 'clauses',
+  },
 };
 const voices = [
   { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm', grade: 'A', gradeRank: 13 },
@@ -237,6 +246,9 @@ describe('voice mixer (PC shell)', () => {
     await card.locator('select[data-k="dialogueVoice"]').selectOption('am_michael');
     await expect.poll(() => prefs.narrator.dialogueVoice).toBe('am_michael');
     await expect.poll(() => card.locator('select[data-k="secondDialogueVoice"]').isDisabled()).toBe(false);
+    expect(await card.locator('input[data-act="narrator-phrases"]').isChecked(), 'phrase breaks on by default').toBe(true);
+    await card.locator('input[data-act="narrator-phrases"]').click();
+    await expect.poll(() => prefs.narrator.phraseBreaks).toBe('off');
     await card.locator('input[data-k="jitter"]').click();
     await expect.poll(() => prefs.narrator.jitter).toBe(false);
     await card.locator('input[data-k="polish"]').click();

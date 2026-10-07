@@ -117,5 +117,9 @@ final class PolishTests: XCTestCase {
         let one = PCM.trimSilence(pad + voiced + pad, sampleRate: fs).count
         XCTAssertEqual(joined.count, 2 * one + PCM.silenceFrames(seconds: 0.12, sampleRate: fs))
         XCTAssertEqual(PCM.joinParts([], sampleRate: fs, gap: 0.12), [])
+        // Per-part pauses (phrase breaks): the gap after part i comes before part i + 1.
+        let three = PCM.joinParts([voiced, voiced, voiced], sampleRate: fs, gaps: [0.175, 0.105, 0])
+        let v = PCM.trimSilence(voiced, sampleRate: fs).count
+        XCTAssertEqual(three.count, 3 * v + PCM.silenceFrames(seconds: 0.175, sampleRate: fs) + PCM.silenceFrames(seconds: 0.105, sampleRate: fs))
     }
 }

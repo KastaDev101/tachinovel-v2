@@ -179,7 +179,16 @@ function defaultVoicePrefs(): {
   /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
   customVoices: { id: string; name: string; a: string; b: string; percent: number }[];
   /** Narrator mode (Settings › Voices › Narrator mode). */
-  narrator: { enabled: boolean; dialogueVoice: string | null; secondDialogueVoice: string | null; pacing: boolean; jitter: boolean; polish: boolean; roomTone: boolean };
+  narrator: {
+    enabled: boolean;
+    dialogueVoice: string | null;
+    secondDialogueVoice: string | null;
+    pacing: boolean;
+    jitter: boolean;
+    polish: boolean;
+    roomTone: boolean;
+    phraseBreaks: string;
+  };
 } {
   return {
     defaultVoice: 'af_heart',
@@ -188,7 +197,7 @@ function defaultVoicePrefs(): {
     carButtons: 'chapters',
     novelVoices: {},
     customVoices: [],
-    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false },
+    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false, phraseBreaks: 'clauses' },
   };
 }
 
@@ -540,6 +549,7 @@ export class CrawlEnv {
             const n = o.narrator as Record<string, unknown>;
             for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
             for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
+            if (n.phraseBreaks === 'off' || n.phraseBreaks === 'clauses') v.narrator.phraseBreaks = n.phraseBreaks;
           }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {

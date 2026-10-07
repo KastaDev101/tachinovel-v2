@@ -16,12 +16,14 @@
  *   role/parts dialogue in quotation marks: the whole sentence, or its quoted and narrated parts,
  *   speaker    1 on every other paragraph of an exchange (alternating dialogue voices),
  *   pacedMs    the smarter pause, when it differs from pauseMs,
- *   rate       a deterministic ±3 % speed factor (prosody jitter).
+ *   rate       a deterministic ±3 % speed factor (prosody jitter),
+ *   phrases    the sentence in phrases with a short pause after each (phrase breaks; not for sentences with
+ *              lexicon phoneme runs, which can't be split by text).
  *
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
-import { alternateSpeakers, dialogueParts, pacedPause, rateJitter, type PacedSentence, type SpeechPartJson } from './narrator.ts';
+import { alternateSpeakers, dialogueParts, pacedPause, phrases, rateJitter, type PacedSentence, type PhraseJson, type SpeechPartJson } from './narrator.ts';
 
 export interface SpeechRunJson {
   /** Text for the engine's G2P. */
@@ -52,6 +54,8 @@ export interface SpeechItem {
   pacedMs?: number;
   /** Narrator mode: prosody jitter, a speed factor in [0.97, 1.03] (absent: 1). */
   rate?: number;
+  /** Narrator mode: phrase breaks, when the sentence splits into more than one phrase. */
+  phrases?: PhraseJson[];
 }
 
 export interface SpeechScript {
@@ -99,6 +103,10 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
       const parts = dialogueParts(display, seg.start, seg.pieces, seg.quoted);
       if (parts) item.parts = parts;
       else if (seg.quoted) item.role = 'dialogue';
+      if (!item.runs) {
+        const ph = phrases(text);
+        if (ph.length > 1) item.phrases = ph;
+      }
     }
     items.push(item);
   }

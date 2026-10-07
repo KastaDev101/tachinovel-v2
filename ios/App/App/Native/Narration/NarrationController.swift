@@ -67,9 +67,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         var speaker = 0
         var pacedMs: Double? = nil
         var rateJitter: Double? = nil
+        var phrases: [NarratorSentence.Phrase]? = nil
 
         var narrator: NarratorSentence {
-            NarratorSentence(text: text, runs: runs, quoted: quoted, parts: parts, speaker: speaker, pauseMs: pauseMs, pacedMs: pacedMs, rate: rateJitter)
+            NarratorSentence(text: text, runs: runs, quoted: quoted, parts: parts, speaker: speaker, pauseMs: pauseMs, pacedMs: pacedMs, rate: rateJitter,
+                             phrases: phrases)
         }
 
         static func parseRuns(_ raw: Any?) -> [SpeechRun]? {
@@ -100,6 +102,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
                 item.speaker = (o["speaker"] as? NSNumber)?.intValue == 1 ? 1 : 0
                 item.pacedMs = (o["pacedMs"] as? NSNumber)?.doubleValue
                 item.rateJitter = (o["rate"] as? NSNumber)?.doubleValue
+                let phrases: [NarratorSentence.Phrase] = (o["phrases"] as? [Any] ?? []).compactMap { p in
+                    guard let po = p as? [String: Any], let t = po["text"] as? String else { return nil }
+                    return NarratorSentence.Phrase(text: t, pauseMs: (po["pauseMs"] as? NSNumber)?.doubleValue ?? 0)
+                }
+                item.phrases = phrases.count > 1 ? phrases : nil
                 return item
             }
             return items.isEmpty ? nil : items
