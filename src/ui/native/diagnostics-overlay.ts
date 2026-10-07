@@ -7,17 +7,19 @@
  * Like the narration overlay, the button lives outside v1's Preact tree (fixed position on <body>).
  */
 import { sharedClient } from '../capacitor-client.ts';
+import { fs } from './type.ts';
 
+// Text follows Dynamic Type (fs), so the button grows with it: min-height, not height.
 const CSS = `
-.tn-crash{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:58;height:50px;border:0;border-radius:14px;
-  display:flex;align-items:center;justify-content:center;text-align:center;background:rgba(40,40,48,.96);
-  -webkit-backdrop-filter:blur(20px) saturate(1.6);color:#a8b4ff;font:600 16px -apple-system,system-ui,sans-serif;
+.tn-crash{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:58;min-height:50px;border:0;border-radius:14px;
+  display:flex;align-items:center;justify-content:center;text-align:center;padding:10px 16px;box-sizing:border-box;background:rgba(40,40,48,.96);
+  -webkit-backdrop-filter:blur(20px) saturate(1.6);color:#a8b4ff;font:600 ${fs(16)} -apple-system,system-ui,sans-serif;line-height:1.25;
   box-shadow:0 6px 24px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent;transition:opacity .15s}
 .tn-crash:active{opacity:.6}
 .tn-crash.is-raised{bottom:calc(env(safe-area-inset-bottom) + 84px)}
 .tn-crash[hidden]{display:none}
-/* Keep the end of the Diagnostics list reachable above the button. */
-body.tn-crash-shown [data-testid="screen-diagnostics"] .screen-scroll{padding-bottom:calc(env(safe-area-inset-bottom) + 84px)}
+/* Keep the end of the Diagnostics list reachable above the button (its height is measured in render). */
+body.tn-crash-shown [data-testid="screen-diagnostics"] .screen-scroll{padding-bottom:calc(env(safe-area-inset-bottom) + 34px + var(--tn-crash-h, 50px))}
 `;
 
 /** v2 core methods are not in v1's typed BridgeMethods. */
@@ -55,6 +57,7 @@ export function installDiagnosticsOverlay(): void {
     button.textContent = label(count);
     // Above the narration mini player when it is showing.
     button.classList.toggle('is-raised', document.querySelector('.tn-player:not([hidden])') !== null);
+    if (!button.hidden) document.body.style.setProperty('--tn-crash-h', `${button.offsetHeight}px`);
   };
 
   const refresh = async (): Promise<void> => {

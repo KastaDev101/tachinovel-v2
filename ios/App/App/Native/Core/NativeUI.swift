@@ -6,6 +6,7 @@
 //
 
 import ImageIO
+import os
 import UIKit
 import UniformTypeIdentifiers
 
@@ -249,7 +250,9 @@ final class Once<T> {
 ///  - A request that arrives while another is on screen WAITS for it (UIKit refuses to present on a
 ///    controller that is already presenting or animating, and v1's Scriptable did queue them).
 ///  - Every request is answered exactly once: by the user, or with "cancelled" when it can't be shown
-///    (no window, a controller stuck animating, or UIKit silently refusing the presentation).
+///    (no window, a controller stuck animating, UIKit silently refusing the presentation, a document
+///    picker that doesn't appear within 15 s) or when a document picker went away without answering
+///    (swiped down: no delegate method is called). A picker slow to appear is not answered meanwhile.
 @MainActor
 final class PresentationQueue {
     static let shared = PresentationQueue()
@@ -260,6 +263,7 @@ final class PresentationQueue {
 
     private var jobs: [(job: Job, cancel: () -> Void)] = []
     private var busy = false
+    private let log = Logger(subsystem: "app.tachinovel", category: "ui")
 
     func enqueue(_ job: @escaping Job, cancel: @escaping () -> Void) {
         jobs.append((job, cancel))
@@ -294,11 +298,46 @@ final class PresentationQueue {
             self?.pump()
         }
         guard let presented = next.job(host, finished) else { return finished() }
+        let kind = String(describing: type(of: presented))
+        let giveUp: (String) -> Void = { [log] why in
+            log.warning("popup \(kind, privacy: .public) answered as cancelled: \(why, privacy: .public)")
+            next.cancel()
+            finished()
+        }
+        // A document picker swiped down (or whose view service quit) calls neither
+        // documentPickerWasCancelled nor didPickDocumentsAt, so its job would never finish and the queue
+        // would block every later alert, share sheet and picker. Watch it until it answers: once it has been
+        // on screen, off screen at two checks in a row (1–2 s) counts as cancelled, so a delegate callback
+        // right after a dismissal still wins. It can take seconds to appear (its view service starts first:
+        // cold start, slow device), and the 1 s check below answered it as cancelled meanwhile; the picker
+        // then still came up, and the file picked in it went nowhere. Only pickers are watched: on iOS 26 an
+        // action sheet on screen can report no presentingViewController.
+        if presented is UIDocumentPickerViewController {
+            var shown = false
+            var waited = 0
+            var goneChecks = 0
+            func watch() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    guard !done else { return }
+                    let onScreen = presented.viewIfLoaded?.window != nil
+                    if onScreen { shown = true }
+                    guard shown else {
+                        waited += 1
+                        if waited >= 15 { return giveUp("never appeared") }
+                        return watch()
+                    }
+                    let gone = presented.presentingViewController == nil && !presented.isBeingPresented && !onScreen
+                    goneChecks = gone ? goneChecks + 1 : 0
+                    if goneChecks >= 2 { return giveUp("dismissed without an answer (swiped down)") }
+                    watch()
+                }
+            }
+            return watch()
+        }
         // UIKit refuses some presentations with only a console warning: detect that and answer the caller.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             guard !done, presented.presentingViewController == nil, !presented.isBeingPresented else { return }
-            next.cancel()
-            finished()
+            giveUp("refused by UIKit")
         }
     }
 }

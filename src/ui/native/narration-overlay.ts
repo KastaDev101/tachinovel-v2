@@ -27,6 +27,7 @@ import { Narration, type NarrationProgress, type NarrationState } from './narrat
 import { chapterBody, locateReadingPoint, paragraphsOf, readerRoot } from './reader-dom.ts';
 import { domSpeechScript, rangeForSentence, type DomScript } from './speech-dom.ts';
 import { voiceLabel } from './voices-ui.ts';
+import { fs } from './type.ts';
 
 interface ChapterRef {
   pluginId: string;
@@ -44,17 +45,19 @@ const STYLE = `
 html.tn-player-on .toast-host{bottom:max(var(--toast-bottom, calc(var(--safe-bottom) + 12px)), calc(var(--tn-player-top, 0px) + 8px))}
 .tn-player{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 12px);z-index:61;display:flex;align-items:center;gap:10px;
   padding:8px 10px;border-radius:16px;background:rgba(40,40,48,.86);-webkit-backdrop-filter:blur(20px) saturate(1.6);color:#f2f2f7;
-  font:500 14px -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+  font:500 ${fs(14)} -apple-system,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}
 .tn-player .tn-title{flex:1;min-width:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;padding:4px 2px}
 .tn-player .tn-title b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tn-player .tn-title small{display:block;color:#a1a1aa;font-size:12px}
+.tn-player .tn-title small{display:block;color:#a1a1aa;font-size:${fs(12)}}
 .tn-player button.tn-ic{border:0;background:transparent;color:inherit;width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center;flex:none}
 .tn-player button.tn-ic:active{background:rgba(255,255,255,.12)}
-.tn-open-car{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:59;height:54px;border:0;border-radius:16px;
-  background:#a8b4ff;color:#15151a;font:600 17px -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35)}
-/* Room at the end of the scrolling content for the floating player / button, so nothing stays under them. */
+.tn-open-car{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:59;min-height:54px;border:0;border-radius:16px;
+  padding:12px 16px;box-sizing:border-box;line-height:1.25;
+  background:#a8b4ff;color:#15151a;font:600 ${fs(17)} -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+/* Room at the end of the scrolling content for the floating player / button, so nothing stays under them
+   (their height follows Dynamic Type: measured in render). */
 html.tn-player-on .screen-scroll>.scroll-content::after,html.tn-player-on .reader-content::after,
-html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:72px}
+html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:max(72px, calc(var(--tn-float-h, 60px) + 12px))}
 .rd-body > .tn-speaking,.rd-body .tn-speaking{background:rgba(168,180,255,.16);border-radius:6px;box-shadow:0 0 0 4px rgba(168,180,255,.16)}
 ${HIGHLIGHT_CSS}
 `;
@@ -96,6 +99,12 @@ export function playerBottom(top: Element | null, viewportHeight = window.innerH
   return edge === null ? '' : `${Math.round(viewportHeight - edge + 8)}px`;
 }
 
+/** VoiceOver label of the mini player's title button: "<novel>, <chapter>" (what is playing). */
+export function playerTitleLabel(state: Pick<NarrationState, 'novelName' | 'chapterName'>): string {
+  const parts = [state.novelName, state.chapterName].map((s) => s?.trim()).filter((s): s is string => !!s);
+  return parts.length ? parts.join(', ') : 'Open the player';
+}
+
 let openPlayer: (() => void) | null = null;
 
 /** Open the Listen player (More › Listen, the mini player). */
@@ -135,7 +144,12 @@ export function installNarrationOverlay(): void {
   player.className = 'tn-player';
   player.hidden = true;
   player.dataset.testid = 'mini-player';
-  player.innerHTML = `<button type="button" class="tn-ic tn-toggle" aria-label="Pause">${ICON_PAUSE}</button><button type="button" class="tn-title" aria-label="Open the player"><b></b><small></small></button><button type="button" class="tn-ic tn-stop" aria-label="Stop">${ICON_CLOSE}</button>`;
+  // The title button's VoiceOver label is "<novel>, <chapter>" (set in render) with "Opens the player" as
+  // its hint (aria-describedby → accessibilityHint); its visible lines are the chapter and the voice.
+  player.innerHTML =
+    `<button type="button" class="tn-ic tn-toggle" aria-label="Pause">${ICON_PAUSE}</button>` +
+    `<button type="button" class="tn-title" aria-label="Open the player" aria-describedby="tn-player-hint"><b></b><small></small></button>` +
+    `<button type="button" class="tn-ic tn-stop" aria-label="Stop">${ICON_CLOSE}</button><span id="tn-player-hint" hidden>Opens the player</span>`;
 
   const openCar = document.createElement('button');
   openCar.className = 'tn-open-car';
@@ -198,6 +212,13 @@ export function installNarrationOverlay(): void {
       titleBtn.querySelector('small') as HTMLElement,
       state.status === 'loading' ? 'Loading…' : state.status === 'error' ? (state.error ?? 'Error') : voiceLabel(state),
     );
+    set.attr(titleBtn, 'aria-label', playerTitleLabel(state));
+    // Room under scrolling content for whichever floating control shows (taller with larger text).
+    const float = !player.hidden ? player : !openCar.hidden ? openCar : null;
+    if (float) {
+      const h = `${float.offsetHeight}px`;
+      if (document.documentElement.style.getPropertyValue('--tn-float-h') !== h) document.documentElement.style.setProperty('--tn-float-h', h);
+    }
   }
 
   /** The "Listen" tool in the reader's bottom bar (re-added when v1 re-renders the bar). */
