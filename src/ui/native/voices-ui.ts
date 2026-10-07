@@ -146,6 +146,8 @@ export function normalizeNarrator(raw: unknown, isChoice: (id: unknown) => boole
     jitter: flag('jitter'),
     polish: flag('polish'),
     roomTone: flag('roomTone'),
+    phraseBreaks: r.phraseBreaks === 'off' ? 'off' : 'clauses',
+    pacingStyle: r.pacingStyle === 'natural' ? 'natural' : 'relaxed',
   };
 }
 
@@ -289,7 +291,17 @@ function choiceOptions(info: VoiceSettingsInfo, selected: string | null, none: s
   return `<option value=""${selected ? '' : ' selected'}>${esc(none)}</option>${groups.join('')}${mixes}`;
 }
 
-const NARRATOR_OFF: NarratorInfo = { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false };
+const NARRATOR_OFF: NarratorInfo = {
+  enabled: false,
+  dialogueVoice: null,
+  secondDialogueVoice: null,
+  pacing: true,
+  jitter: false,
+  polish: true,
+  roomTone: false,
+  phraseBreaks: 'clauses',
+  pacingStyle: 'relaxed',
+};
 
 /** Settings › Voices › Narrator mode. */
 function narratorCard(info: VoiceSettingsInfo): string {
@@ -301,7 +313,11 @@ function narratorCard(info: VoiceSettingsInfo): string {
        <label class="row"><div class="main"><b>Dialogue voice</b><span class="sub">Words in quotation marks (default: the narrator’s voice)</span></div><select data-act="narrator-voice" data-k="dialogueVoice" aria-label="Dialogue voice">${choiceOptions(info, n.dialogueVoice, 'Narrator’s voice')}</select></label>
        <label class="row"><div class="main"><b>Second speaker</b><span class="sub">Every other paragraph of an exchange</span></div><select data-act="narrator-voice" data-k="secondDialogueVoice" aria-label="Second speaker" ${n.dialogueVoice ? '' : 'disabled'}>${choiceOptions(info, n.secondDialogueVoice, 'Same as dialogue')}</select></label>
      </details>`;
-  const pieces = n.enabled ? `${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}${advanced}` : '';
+  const phrases = `<label class="row"><div class="main"><b>Phrase breaks</b><span class="sub">Short pauses at commas and between clauses</span></div><input type="checkbox" class="sw" data-act="narrator-phrases" ${n.phraseBreaks === 'off' ? '' : 'checked'} aria-label="Phrase breaks"></label>`;
+  const pacingStyle = `<label class="row"><div class="main"><b>Pause length</b><span class="sub">Relaxed gives sentences and paragraphs more room</span></div><select data-act="narrator-pacing-style" aria-label="Pause length" ${n.pacing ? '' : 'disabled'}><option value="relaxed"${n.pacingStyle === 'natural' ? '' : ' selected'}>Relaxed</option><option value="natural"${n.pacingStyle === 'natural' ? ' selected' : ''}>Natural</option></select></label>`;
+  const pieces = n.enabled
+    ? `${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}${pacingStyle}${phrases}${advanced}`
+    : '';
   return `<div class="card" data-testid="voices-narrator">
       ${sw('enabled', 'Narrator mode', 'Dialogue in its own voice, natural pauses, studio sound')}
       ${pieces}
@@ -455,6 +471,8 @@ export function openVoicesScreen(): void {
   p.body.addEventListener('change', (ev) => {
     const el = ev.target as HTMLInputElement;
     if (el.dataset.act === 'narrator' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.checked } }).then(load);
+    if (el.dataset.act === 'narrator-pacing-style') void Narration.setVoiceSettings({ narrator: { pacingStyle: el.value === 'natural' ? 'natural' : 'relaxed' } }).then(load);
+    if (el.dataset.act === 'narrator-phrases') void Narration.setVoiceSettings({ narrator: { phraseBreaks: el.checked ? 'clauses' : 'off' } }).then(load);
     if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(load);
     if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
     if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);

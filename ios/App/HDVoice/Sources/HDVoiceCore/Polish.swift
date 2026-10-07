@@ -225,13 +225,16 @@ public struct NarrationPolish: Sendable {
     public static let peakCeiling: Float = 0.891
     public let sampleRate: Int
     public let roomTone: Bool
+    /// The compressor's ratio (1 or less: no compressor).
+    public let compressorRatio: Double
     private var meter: LoudnessMeter
     private var tone: RoomTone?
     private var gainDB: Double?
 
-    public init(sampleRate: Int, roomTone: Bool) {
+    public init(sampleRate: Int, roomTone: Bool, compressorRatio: Double = 1.5) {
         self.sampleRate = sampleRate
         self.roomTone = roomTone
+        self.compressorRatio = compressorRatio
         meter = LoudnessMeter(sampleRate: sampleRate)
         tone = roomTone ? RoomTone(sampleRate: sampleRate) : nil
     }
@@ -257,8 +260,10 @@ public struct NarrationPolish: Sendable {
         var out = PCM.trimSilence(samples, sampleRate: sampleRate)
         if !out.isEmpty {
             Self.equalize(&out, sampleRate: sampleRate)
-            var comp = Compressor()
-            comp.process(&out, sampleRate: sampleRate)
+            if compressorRatio > 1 {
+                var comp = Compressor(ratio: compressorRatio)
+                comp.process(&out, sampleRate: sampleRate)
+            }
             meter.add(out)
             let measured = meter.integrated ?? LoudnessMeter.integrated(out, sampleRate: sampleRate)
             if let measured {
@@ -285,14 +290,20 @@ extension PCM {
     /// The parts of one sentence read by different voices, joined: each trimmed and faded, with `gap` of
     /// silence between them.
     public static func joinParts(_ parts: [[Float]], sampleRate: Int, gap: TimeInterval) -> [Float] {
+        joinParts(parts, sampleRate: sampleRate, gaps: Array(repeating: gap, count: parts.count))
+    }
+
+    /// As above, with the silence after each part (`gaps[i]` follows part i; none after the last).
+    public static func joinParts(_ parts: [[Float]], sampleRate: Int, gaps: [TimeInterval]) -> [Float] {
         var out: [Float] = []
-        let gapFrames = silenceFrames(seconds: gap, sampleRate: sampleRate)
-        for part in parts {
+        var pending = 0
+        for (i, part) in parts.enumerated() {
             var p = trimSilence(part, sampleRate: sampleRate)
             guard !p.isEmpty else { continue }
             applyFades(&p, sampleRate: sampleRate)
-            if !out.isEmpty, gapFrames > 0 { out.append(contentsOf: repeatElement(Float(0), count: gapFrames)) }
+            if !out.isEmpty, pending > 0 { out.append(contentsOf: repeatElement(Float(0), count: pending)) }
             out.append(contentsOf: p)
+            pending = silenceFrames(seconds: i < gaps.count ? gaps[i] : 0, sampleRate: sampleRate)
         }
         return out
     }

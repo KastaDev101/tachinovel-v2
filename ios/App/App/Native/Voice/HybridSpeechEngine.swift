@@ -113,7 +113,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
-        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone) : nil
+        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
         sessionStart = Date()
         firstAudioLogged = false
         currentSource = nil

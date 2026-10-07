@@ -1,7 +1,7 @@
 /** Narrator mode, script side (src/core/narration/narrator.ts, through speechScript). */
 import { describe, expect, it } from 'vitest';
 import { htmlToBlocks } from '@v1tts/frontend.ts';
-import { alternateSpeakers, dialogueParts, pacedPause, rateJitter, type PacedSentence } from '../src/core/narration/narrator.ts';
+import { alternateSpeakers, dialogueParts, PACING_PRESETS, pacedPause, rateJitter, type PacedSentence } from '../src/core/narration/narrator.ts';
 import { speechScript } from '../src/core/narration/speech-script.ts';
 
 const lex = { schemaVersion: 1 as const, entries: [{ match: 'Nephis', ipa: 'nˈɛfɪs' }] };
@@ -74,6 +74,24 @@ describe('narrator mode: pacing and jitter', () => {
     expect(at(s('x'.repeat(200) + '.'))).toBe(368); // long: 1.15×
     expect(at(s('A clause that the front-end split', { pauseMs: 160 }))).toBe(160);
     expect(pacedPause([s('He turned to her at last.'), s('“Go.”', { quoted: true })], 0)).toBe(420); // speaker change
+  });
+
+  it('relaxed preset (Kasta\'s pick): ×1.25 inside a paragraph; 1000 / 1200 / 650 ms at paragraph ends; structure unchanged', () => {
+    const next = s('And then the rest of it went on for a while.');
+    expect(pacedPause([s('Did the bridge hold up against the storm last night?'), next], 0, 'relaxed')).toBe(475); // 380 × 1.25
+    expect(pacedPause([s('The bridge held up against the storm last night.'), next], 0, 'relaxed')).toBe(400);
+    expect(pacedPause([s('He turned to her at last.'), s('“Go.”', { quoted: true })], 0, 'relaxed')).toBe(525); // 420 × 1.25
+    expect(pacedPause([s('A short one.', { pauseMs: 700 }), s('Next.', { block: 1 })], 0, 'relaxed')).toBe(1000);
+    expect(pacedPause([s('word '.repeat(100), { pauseMs: 700 }), s('Next.', { block: 1 })], 0, 'relaxed')).toBe(1200);
+    const quick = [s('“Ready?”', { pauseMs: 700, dialogue: true, quoted: true }), s('“Always.”', { block: 1, pauseMs: 700, dialogue: true, quoted: true })];
+    expect(pacedPause(quick, 0, 'relaxed')).toBe(650);
+    expect(pacedPause([s('Chapter One', { kind: 'title', pauseMs: 1300 }), s('Text.', { block: 1 })], 0, 'relaxed')).toBe(1300);
+    expect(pacedPause([s('Before the break.', { pauseMs: 1800 }), s('After.', { block: 2 })], 0, 'relaxed')).toBe(1800);
+    expect(pacedPause([s('A clause that the front-end split', { pauseMs: 160 }), next], 0, 'relaxed')).toBe(160);
+    expect(PACING_PRESETS.relaxed).toEqual({ sentenceScale: 1.25, quickExchangeMs: 650, longParagraphMs: 1200, paragraphMs: 1000 });
+    const items = script('<p>The rain fell on the old bridge.</p><p>Nobody spoke for a long while after that.</p>').items;
+    expect(items[0]?.relaxedMs).toBe(1000);
+    expect(items[0]?.pacedMs).toBeUndefined(); // natural = 700 = the front-end's pause
   });
 
   it('paragraph ends: quick exchanges are tighter, long paragraphs get more room, structure stays', () => {

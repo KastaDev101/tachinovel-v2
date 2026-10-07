@@ -287,6 +287,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "jitter": prefs.narrator.jitter,
                     "polish": prefs.narrator.polish,
                     "roomTone": prefs.narrator.roomTone,
+                    "phraseBreaks": prefs.narrator.phraseBreaks,
+                    "pacingStyle": prefs.narrator.pacingStyle,
                 ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
@@ -341,6 +343,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = narrator["jitter"] as? Bool { n.jitter = v }
                     if let v = narrator["polish"] as? Bool { n.polish = v }
                     if let v = narrator["roomTone"] as? Bool { n.roomTone = v }
+                    if let v = narrator["phraseBreaks"] as? String { n.phraseBreaks = v == "off" ? "off" : "clauses" }
+                    if let v = narrator["pacingStyle"] as? String { n.pacingStyle = v == "natural" ? "natural" : "relaxed" }
                     p.narrator = n
                 }
             }

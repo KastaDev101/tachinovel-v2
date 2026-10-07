@@ -20,6 +20,7 @@ export interface VoiceFixture {
   role?: 'dialogue';
   parts?: { role: 'narration' | 'dialogue'; text: string; runs?: SpeechRunJson[] }[];
   rate?: number;
+  phrases?: { text: string; pauseMs: number }[];
 }
 
 /** A novel's lexicon, as the user would enter it (phonemes in misaki notation). */
@@ -53,6 +54,7 @@ export function buildFixtures(): VoiceFixture[] {
       ...(item.role ? { role: item.role } : {}),
       ...(item.parts ? { parts: item.parts.map((p) => ({ role: p.role, text: p.text, ...(p.runs ? { runs: p.runs } : {}) })) } : {}),
       ...(item.rate !== undefined ? { rate: item.rate } : {}),
+      ...(item.phrases ? { phrases: item.phrases } : {}),
     };
   });
 }
