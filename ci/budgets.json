@@ -1,0 +1,13 @@
+{
+  "ipa": {
+    "baselineBytes": 94521461,
+    "maxGrowthPercent": 10,
+    "note": "Unsigned sideload IPA built by the ios-ipa job. Hard budget: a PR fails when it grows more than maxGrowthPercent over the baseline. Baseline: main after #7 (bundled Kokoro model), ios-ipa run 37542120127, build 133. Change it only on purpose: node tools/budgets.ts set-ipa <bytes>, with the reason in the PR."
+  },
+  "boot": {
+    "metric": "process->library",
+    "recordedMedianMs": 2694,
+    "warnAboveMs": 4000,
+    "note": "Simulator cold launches in the ios-compile smoke test (boot-times.txt): median of the app's own process start to library painted. Soft budget, warning only (the CI VM is noisy). Recorded from the boot report of PR #26 (5 cold launches, macos-26)."
+  }
+}

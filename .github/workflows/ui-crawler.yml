@@ -4,16 +4,18 @@
 # taps, broken back navigation and layout escapes. Known issues (tests/crawler/known-issues.json) are
 # reported but don't fail it.
 #
-# Runs on pull requests, nightly and on demand. Artifacts "ui-crawler-<scheme>": report.md (summary),
-# report.json, a screenshot per state and per failure. The `ui-crawler` job is the single status to
-# require on main; the per-scheme jobs do the work in parallel.
+# Runs on pull requests, every 2 hours on main and on demand. Artifacts "ui-crawler-<scheme>": report.md
+# (summary), report.json, a screenshot per state and per failure. The `ui-crawler` job is the single
+# status to require on main; the per-scheme jobs do the work in parallel. Scheduled runs post failures that
+# are new (not known, not reported yet) to the issue "UI crawler: new failures on main" and close it when a
+# run is clean again (tools/crawler-notify.ts).
 
 name: ui-crawler
 
 on:
   pull_request:
   schedule:
-    - cron: '17 6 * * *' # nightly, 06:17 UTC
+    - cron: '17 */2 * * *' # every 2 hours on main
   workflow_dispatch:
 
 concurrency:
@@ -67,4 +69,46 @@ jobs:
           if [ "${{ needs.crawl.result }}" != "success" ]; then
             echo "::error::The UI crawler found new failures (see the ui-crawler-<scheme> artifacts and job summaries)."
             exit 1
+          fi
+
+  notify:
+    name: report new failures (scheduled runs)
+    needs: crawl
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: New failures → tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$RUN_ID" --pattern 'ui-crawler-*' -D crawl || true
+          if ! ls crawl/*/report.json > /dev/null 2>&1; then
+            echo "::notice::No crawler reports in this run (crawl jobs failed early); nothing to report."
+            exit 0
+          fi
+          title="UI crawler: new failures on main"
+          num=$(gh issue list --state open --search "in:title \"$title\"" --json number,title             --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          : > previous.txt
+          if [ -n "$num" ]; then gh issue view "$num" --json body,comments --jq '.body, (.comments[].body)' > previous.txt; fi
+          node tools/crawler-notify.ts crawl previous.txt "$RUN_URL" > result.json
+          failures=$(node -p "require('./result.json').failures")
+          fresh=$(node -p "require('./result.json').new")
+          node -e "process.stdout.write(require('./result.json').body)" > body.md
+          echo "Failures outside known-issues.json: $failures (new: $fresh)"
+          if [ "$fresh" -gt 0 ]; then
+            if [ -n "$num" ]; then gh issue comment "$num" --body-file body.md; else gh issue create --title "$title" --body-file body.md; fi
+          elif [ "$failures" -eq 0 ] && [ -n "$num" ]; then
+            gh issue close "$num" --comment "All clear in [this run]($RUN_URL): no failures outside tests/crawler/known-issues.json."
           fi

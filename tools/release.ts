@@ -154,7 +154,7 @@ function main(argv: string[]): void {
       writeFileSync(CHANGELOG, changelog);
       for (const f of fragments) rmSync(path.join(root, f.file));
       console.log(`prepared ${next.version} (iOS ${next.marketing}${next.prerelease ? ', pre-release' : ''}): package.json, package-lock.json, project.pbxproj, CHANGELOG.md (${fragments.length} fragment(s) merged and removed)`);
-      console.log(`next: open a "Release ${next.version}" PR; after it merges, tag main: git tag -a v${next.version} -m "TachiNovel ${next.version}" && git push origin v${next.version}`);
+      console.log(`next: open a "Release ${next.version}" PR; after it merges, tag its merge commit (docs/release.md): git fetch origin && git tag -a v${next.version} -m "TachiNovel ${next.version}" <merge-commit> && git push origin v${next.version}`);
       return;
     }
     case 'verify-tag': {
