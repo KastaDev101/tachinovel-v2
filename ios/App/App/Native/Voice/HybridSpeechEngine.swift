@@ -49,6 +49,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
+    /// The render-ahead window once the narrator voice is ready (smaller while it loads).
+    private var fullAhead = 3
     /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
     private var completeness = CompletenessGuard()
     private(set) var retakes = 0
@@ -145,7 +147,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
         // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
         let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : prefs.clampedAhead
-        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: ahead))
+        fullAhead = ahead
+        // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
+        // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
+        let bridging = listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false
+        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
         s.paragraphStarts = Set(segs.indices.dropFirst().filter { !Self.sameChunk(segs[$0 - 1], segs[$0]) })
@@ -884,6 +890,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         DispatchQueue.main.async {
             guard self.scheduler != nil else { return }
             self.scheduler?.kokoro = self.kokoroState()
+            if self.expressiveUsable(), let s = self.scheduler, s.config.ahead < self.fullAhead { self.scheduler?.config.ahead = self.fullAhead }
             self.pumpRender()
             if self.waiting { self.advance() }
         }
