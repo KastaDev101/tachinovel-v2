@@ -90,13 +90,17 @@ final class ExpressiveService {
         }
         return try PocketVoice.narrator(builtInVoices: dir)
     }
-    /// The performed voice (dialogue, thoughts); a missing or invalid file only means narration reads those too.
-    lazy var pocketPerformed: PocketVoice? = {
-        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return nil }
-        do { return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.characterName) } catch {
-            self.log.error("expressive: pocket performed voice: \(error.localizedDescription, privacy: .public)")
-            return nil
+    /// The Narrator's other reads by role: performed (dialogue, thoughts) and the moods. A missing or invalid file
+    /// only means that read falls back (performed, then the Narrator).
+    lazy var pocketReads: [String: PocketVoice] = {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return [:] }
+        var out: [String: PocketVoice] = [:]
+        for (role, file) in PocketVoice.reads {
+            do { out[role] = try PocketVoice.load(builtInVoices: dir, name: file) } catch {
+                self.log.error("expressive: pocket \(role, privacy: .public) voice: \(error.localizedDescription, privacy: .public)")
+            }
         }
+        return out
     }()
     let chatterboxSlot: ChatterboxVoiceSlot?
     /// The chosen narrator voice for Chatterbox Nano: an imported ("v…") or shipped ("b…") voice's id, or
@@ -277,7 +281,7 @@ final class ExpressiveService {
                 return completion(.failure(error))
             }
         }
-        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketPerformed: id == .pocketTts ? pocketPerformed : nil) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketReads: id == .pocketTts ? pocketReads : [:]) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         if loadedID != nil { unload(reason: "switching engine") }
         loadedID = id
         synth = engine

@@ -52,8 +52,10 @@ final class PocketVoiceTests: XCTestCase {
         XCTAssertGreaterThan(voice.frames, 60, "at least ~5 s of the reference")
         XCTAssertLessThanOrEqual(voice.frames, PocketVoice.maxFrames)
         XCTAssertEqual(voice.audioPrompt.count, voice.frames * PocketVoice.embeddingDim)
-        let performed = try PocketVoice.load(builtInVoices: dir, name: PocketVoice.characterName)
-        XCTAssertGreaterThan(performed.frames, 60)
-        XCTAssertNotEqual(performed.audioPrompt, voice.audioPrompt)
+        for (role, file) in PocketVoice.reads {
+            let read = try PocketVoice.load(builtInVoices: dir, name: file)
+            XCTAssertGreaterThan(read.frames, 60, role)
+            XCTAssertNotEqual(read.audioPrompt, voice.audioPrompt, role)
+        }
     }
 }

@@ -76,6 +76,8 @@ export interface DirectorSentence {
   dialogueShare: number;
   /** The first sentence of a new scene (after a scene break, a title, a POV header, blank lines). */
   sceneStart?: boolean;
+  /** A character's thought ('…' in a chapter quoting speech with “…”): never teasing, it isn't said to anyone. */
+  thought?: boolean;
 }
 
 // ================================================================ the tables (tune here)
@@ -207,7 +209,11 @@ const TEASING_OPENER = /^(?:h+m+|mm+|oh+|ah+|my my|well well)\b/i;
 const NON_VERBAL_OPENER = /^[\s"'“‘(]*(?:h+m+|mm+|ha(?:ha)*|heh|hah|hehe)\b/i;
 
 /** Narration that is plainly tense (a few action words; deliberately short, the voice shouldn't overact). */
-const TENSE_NARRATION = /\b(?:slammed|shattered|explod(?:ed|ing)|screamed|shrieked|crashed|lunged|froze|trembl(?:ed|ing)|terror|panic(?:ked)?|blood)\b/i;
+const TENSE_NARRATION =
+  /\b(?:slammed|shattered|explod(?:ed|ing)|scream(?:ed|ing|s)?|shriek(?:ed|ing)?|crashed|lunged|froze|frozen|trembl(?:ed|ing)|terror|terrif(?:ied|ying)|panic(?:ked)?|blood|dread|doom|fear(?:ed|ful)?|afraid|horror|horrif(?:ied|ying)|shiver(?:ed|ing)?|chill(?:ed)?|uneasy|danger(?:ous)?|inescapable|menacing|desperate(?:ly)?|helpless(?:ly)?)\b/i;
+/** Sentences either side within which tense narration makes a hesitant line ("What… is… going on?") dread, not
+ * a teasing drawl. */
+const TENSE_REACH = 3;
 
 /** Function words that are never the key word. */
 const STOP_WORDS = new Set(
@@ -509,12 +515,14 @@ function punctuationMood(display: string): Mood {
   return 'calm';
 }
 
-/** The class the spoken words suggest (an order, an endearment, a teasing opener or drawl), or null. */
-function speechClass(speech: string, mood: Mood): LineClass | null {
+/** The class the spoken words suggest (an order, an endearment, a teasing opener or drawl), or null. `dread`: in a
+ * tense stretch (or a thought) a drawl, an "Ah…"/"Hmm" opener or a question is hesitation, never teasing. */
+function speechClass(speech: string, mood: Mood, dread = false): LineClass | null {
   const words = speech.replace(/^[\s"'“”‘’(]+/u, '');
   const question = /\?/.test(words);
   if (!question && IMPERATIVE.test(words)) return 'commanding';
   if (TENDER_SPEECH.test(words)) return 'tender';
+  if (dread) return null;
   const relaxed = mood === 'calm' || mood === 'playful' || mood === 'soft';
   if (relaxed && TEASING_OPENER.test(words)) return 'teasing';
   // A drawl in the middle of a line ("cute when you're… flustered"); a trailing "…" is just trailing off.
@@ -550,6 +558,8 @@ function nearestInParagraph(list: readonly DirectorSentence[], i: number, has: (
  */
 export function direct(list: readonly DirectorSentence[], opts: { emphasis?: readonly Emphasis[] } = {}): Cue[] {
   const moodTag = list.map((s) => (s.kind === 'text' ? matchMood(s.narration) : null));
+  const tenseAt = list.map((s) => s.kind === 'text' && s.dialogueShare === 0 && TENSE_NARRATION.test(s.display));
+  const tenseNear = (i: number): boolean => tenseAt.some((t, j) => t && Math.abs(j - i) <= TENSE_REACH);
   const classTag = list.map((s) => (s.kind === 'text' ? matchClass(s.narration) : null));
   const marked = opts.emphasis?.length ? alignEmphasis(list.map((s) => s.display), opts.emphasis) : [];
   const usedNv = new Set<number>(); // sentences whose attribution spent its non-verbal
@@ -578,9 +588,12 @@ export function direct(list: readonly DirectorSentence[], opts: { emphasis?: rea
     const mFrom = nearestInParagraph(list, i, (j) => !!moodTag[j]);
     const cFrom = nearestInParagraph(list, i, (j) => !!classTag[j]);
     const m = mFrom >= 0 ? moodTag[mFrom] : null;
+    const tense = tenseNear(i);
     let mood: Mood = m?.mood ?? punctuationMood(s.display);
+    // Trailing off in a tense stretch is dread, not softness ("'Ah… not good…'").
+    if (!m && tense && mood === 'soft') mood = 'tense';
     // Any spoken words can carry a class ("“Kneel!” she ordered." is mostly attribution but still an order).
-    const line: LineClass | null = (cFrom >= 0 ? classTag[cFrom] : null) ?? speechClass(s.speech ?? s.display, mood);
+    const line: LineClass | null = (cFrom >= 0 ? classTag[cFrom] : null) ?? speechClass(s.speech ?? s.display, mood, tense || !!s.thought);
     // A class sets the mood it reads in, unless a tag said how the line is spoken.
     const classMood = line ? CLASS_TABLE[line].mood : undefined;
     if (classMood && !m) mood = classMood;
@@ -855,8 +868,8 @@ export interface ChunkInput {
   quoteOpen: boolean;
   /** Nano's temperature for the sentence: a call has one, so very different lines don't share one. */
   t?: number;
-  /** Performed (dialogue, thoughts) rather than narrated: one call reads in one manner. */
-  performed?: boolean;
+  /** Which read of the narrator voice (narrator, performed, a mood): one call reads in one voice. */
+  voice?: string;
 }
 
 /**
@@ -878,7 +891,7 @@ export function planChunks(list: readonly ChunkInput[], maxChars = CHUNK_MAX_CHA
       s.kind !== 'text' ||
       prev.kind !== 'text' ||
       !continues ||
-      !!prev.performed !== !!s.performed ||
+      (prev.voice ?? 'narrator') !== (s.voice ?? 'narrator') ||
       Math.abs((prev.t ?? 0.7) - (s.t ?? 0.7)) > CHUNK_MAX_T_STEP ||
       (chars > 0 && chars + 1 + s.chars > maxChars);
     if (fresh) {

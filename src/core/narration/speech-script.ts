@@ -95,9 +95,9 @@ export interface SpeechItem {
   role?: 'dialogue';
   /** A character's thought ('…' in a chapter that quotes speech with “…”): read like dialogue, a little closer. */
   thought?: true;
-  /** Natural delivery: the narrator voice performs this sentence (mostly dialogue, or a thought) instead of
-   * narrating it; one model call never mixes the two. */
-  voice?: 'performed';
+  /** Natural delivery: which read of the narrator voice says it (absent: the calm Narrator). "performed" for
+   * dialogue and thoughts; "tense", "sad", "tender" for a mood (moodVoices); one model call never mixes two. */
+  voice?: NarratorVoice;
   /** Narrator mode: a sentence mixing quoted speech and narration, split by role. */
   parts?: SpeechPartJson[];
   /** Narrator mode: 1 = the other speaker of an exchange (absent: 0). */
@@ -142,6 +142,39 @@ export interface SpeechScriptOptions extends FrontendOptions {
 
 /** The front-end's scene-break pause (frontend.ts DEFAULT_PAUSES.scene): a new scene starts after it. */
 const SCENE_MS = 1800;
+
+export type NarratorVoice = 'performed' | 'tense' | 'sad' | 'tender';
+
+/** Narration takes a mood's voice only when the mood holds this many sentences in a row (a single tense sentence
+ * stays in the calm voice: the director's tempo and gain carry it). */
+export const MOOD_VOICE_RUN = 2;
+
+/**
+ * The read of the narrator voice per sentence (undefined = the calm Narrator). Dialogue and thoughts: performed,
+ * or the mood's voice (tense/intense → tense, sad → sad, soft/whisper → tender). Narration: tense or sad only, and
+ * only through a run of MOOD_VOICE_RUN sentences in that mood; system messages and titles stay calm.
+ */
+export function moodVoices(list: readonly { kind: string; mood: Mood; performed: boolean }[]): (NarratorVoice | undefined)[] {
+  const moodVoice = (m: Mood): NarratorVoice | undefined =>
+    m === 'tense' || m === 'intense' ? 'tense' : m === 'sad' ? 'sad' : m === 'soft' || m === 'whisper' ? 'tender' : undefined;
+  const narrationMood = (i: number): NarratorVoice | undefined => {
+    const s = list[i];
+    if (!s || s.kind !== 'text' || s.performed) return undefined;
+    const v = moodVoice(s.mood);
+    return v === 'tense' || v === 'sad' ? v : undefined;
+  };
+  return list.map((s, i) => {
+    if (s.kind !== 'text') return undefined;
+    if (s.performed) return moodVoice(s.mood) ?? 'performed';
+    const v = narrationMood(i);
+    if (!v) return undefined;
+    // The run of narration in this mood around i (dialogue in between breaks it).
+    let run = 1;
+    for (let j = i - 1; j >= 0 && narrationMood(j) === v; j--) run++;
+    for (let j = i + 1; j < list.length && narrationMood(j) === v; j++) run++;
+    return run >= MOOD_VOICE_RUN ? v : undefined;
+  });
+}
 
 /** A sentence at least this much dialogue is performed rather than narrated (“Run,” she said. → performed). */
 const PERFORMED_SHARE = 0.5;
@@ -254,6 +287,7 @@ function naturalDelivery(blocks: readonly SourceBlock[], items: SpeechItem[], me
       narration: it.parts ? it.parts.filter((p) => p.role === 'narration').map((p) => p.text).join(' ') : it.role === 'dialogue' ? '' : it.text,
       speech: it.parts ? it.parts.filter((p) => p.role === 'dialogue').map((p) => p.text).join(' ') : it.role === 'dialogue' ? it.text : '',
       dialogueShare: dialogueShare(it),
+      ...(it.thought ? { thought: true } : {}),
       sceneStart: !!prev && (prev.pauseMs >= SCENE_MS || blank >= 2 || (display.length <= 60 && POV_HEADER.test(display.trim()))),
     };
   });
@@ -321,14 +355,18 @@ function naturalDelivery(blocks: readonly SourceBlock[], items: SpeechItem[], me
     );
     if (breath) it.breath = breath;
   });
-  items.forEach((it) => {
-    if (it.kind === 'text' && (it.thought || dialogueShare(it) >= PERFORMED_SHARE)) it.voice = 'performed';
+  const voices = moodVoices(
+    items.map((it) => ({ kind: it.kind, mood: it.mood ?? 'calm', performed: it.kind === 'text' && (!!it.thought || dialogueShare(it) >= PERFORMED_SHARE) })),
+  );
+  items.forEach((it, i) => {
+    const v = voices[i];
+    if (v) it.voice = v;
     // A thought sits a little closer and quieter than speech.
     if (it.thought && it.delivery) it.delivery.g = Math.round((it.delivery.g - THOUGHT_GAIN_DB) * 10) / 10;
   });
   const chunks = planChunks(
     items.map((it, i) => ({
-      performed: it.voice === 'performed',
+      voice: it.voice ?? 'narrator',
       block: it.block,
       kind: it.kind,
       chars: (it.delivery?.say ?? it.text).length,

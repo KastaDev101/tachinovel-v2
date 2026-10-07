@@ -294,6 +294,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "listenEngine": prefs.delivery.listenEngine ?? NSNull(),
                     "natural": prefs.delivery.natural,
                     "performed": prefs.delivery.performed,
+                    "moods": prefs.delivery.moods,
                     "breaths": prefs.delivery.breaths,
                     "studioSound": prefs.delivery.studioSound,
                     "systemChime": prefs.delivery.systemChime,
@@ -365,6 +366,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     }
                     if let v = delivery["natural"] as? Bool { d.natural = v }
                     if let v = delivery["performed"] as? Bool { d.performed = v }
+                    if let v = delivery["moods"] as? Bool { d.moods = v }
                     if let v = delivery["breaths"] as? Bool { d.breaths = v }
                     if let v = delivery["studioSound"] as? Bool { d.studioSound = v }
                     if let v = delivery["systemChime"] as? Bool { d.systemChime = v }

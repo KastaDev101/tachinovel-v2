@@ -278,9 +278,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
-            // Dialogue and thoughts in the performed read of the same voice (one call is all one or the other).
-            let performed = segments[i].natural?.performed == true && VoiceSettings.shared.prefs.delivery.performed
-            var line = ExpressiveLine(text: text, role: performed ? ExpressiveLine.performedRole : "narrator")
+            // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
+            // (tense, sad, tender); the script never puts two reads in one call.
+            let n = segments[i].natural
+            let read = VoiceSettings.shared.prefs.delivery.read(n?.voice, speaks: n?.speaks ?? false)
+            var line = ExpressiveLine(text: text, role: read ?? "narrator")
             // One temperature per call: the letter-weighted mean of the director's (the script keeps calls similar).
             let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
             let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
@@ -360,7 +362,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// planChunks), or for an older web bundle without them, no paragraph-length pause between them.
     private static func sameChunk(_ a: SpeechSegment, _ b: SpeechSegment) -> Bool {
         if let x = a.natural?.chunk, let y = b.natural?.chunk { return x == y }
-        return (a.naturalPause ?? a.pauseAfter) < 0.6 && a.natural?.performed == b.natural?.performed
+        return (a.naturalPause ?? a.pauseAfter) < 0.6 && a.natural?.voice == b.natural?.voice
     }
 
     /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.

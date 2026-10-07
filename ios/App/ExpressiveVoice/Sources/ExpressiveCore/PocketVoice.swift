@@ -22,6 +22,8 @@ public struct PocketVoice: Sendable, Equatable {
     /// The same voice, performing: dialogue and thoughts (from the performed reference ref-8A2-persona).
     public static let characterName = "character"
     public static let fileExtension = "pocketvoice"
+    /// Line role → shipped file name: the Narrator voice's other reads (BuiltInVoices/pocket/<name>.pocketvoice).
+    public static let reads: [String: String] = ["performed": characterName, "tense": "tense", "sad": "sad", "tender": "tender"]
 
     public let name: String
     /// Row-major `[frames * embeddingDim]`.

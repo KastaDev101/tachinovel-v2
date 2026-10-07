@@ -216,6 +216,7 @@ export interface DeliveryInfo {
   listenEngine: 'pocket-tts' | 'chatterbox-nano' | null;
   natural: boolean;
   performed: boolean;
+  moods: boolean;
   breaths: boolean;
   studioSound: boolean;
   systemChime: boolean;

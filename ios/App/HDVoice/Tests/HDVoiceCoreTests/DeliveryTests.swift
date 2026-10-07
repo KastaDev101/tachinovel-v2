@@ -115,6 +115,20 @@ final class DeliveryTests: XCTestCase {
         XCTAssertEqual(s.chunk, 4)
         XCTAssertFalse(s.performed)
         XCTAssertEqual(NaturalSentence.parse(item: item.merging(["voice": "performed"]) { $1 })?.performed, true)
+        XCTAssertEqual(NaturalSentence.parse(item: item.merging(["voice": "tense"]) { $1 })?.voice, "tense")
+        XCTAssertNil(NaturalSentence.parse(item: item.merging(["voice": "angry"]) { $1 })?.voice, "unknown reads are dropped")
+        let d = DeliverySettings()
+        XCTAssertEqual(d.read("tense", speaks: true), "tense")
+        XCTAssertEqual(d.read("tense", speaks: false), "tense")
+        XCTAssertNil(d.read(nil, speaks: false))
+        var noMoods = d
+        noMoods.moods = false
+        XCTAssertEqual(noMoods.read("sad", speaks: true), "performed")
+        XCTAssertNil(noMoods.read("sad", speaks: false))
+        var noActing = d
+        noActing.performed = false
+        XCTAssertNil(noActing.read("performed", speaks: true))
+        XCTAssertEqual(noActing.read("tense", speaks: false), "tense", "narration moods don't need acting")
         XCTAssertTrue(s.speaks)
         XCTAssertNil(NaturalSentence.parse(item: ["text": "x"]), "a script from an older web bundle")
         XCTAssertNil(NaturalSentence.parse(item: ["delivery": ["t": 0.7], "line": "sultry"])?.line)

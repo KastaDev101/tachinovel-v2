@@ -335,6 +335,7 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   listenEngine: 'pocket-tts',
   natural: true,
   performed: true,
+  moods: true,
   breaths: true,
   studioSound: true,
   systemChime: true,
@@ -344,6 +345,7 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
 const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine'>, string, string][] = [
   ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
   ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
+  ['moods', 'Mood voices', 'Tense, sad and tender reads where the scene calls for them'],
   ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
   ['studioSound', 'Studio sound', 'Clean, warm and even'],
   ['systemChime', 'System message chime', 'A soft chime before [System] lines'],

@@ -46,9 +46,10 @@ import {
   type Cue,
   type DirectorSentence,
   type PauseSide,
+  type Mood,
 } from '../src/core/narration/delivery.ts';
 import { segmentKind } from '../src/core/narration/segment.ts';
-import { speechScript, type SpeechItem } from '../src/core/narration/speech-script.ts';
+import { moodVoices, speechScript, type SpeechItem } from '../src/core/narration/speech-script.ts';
 import { htmlEmphasis } from '../src/core/narration/text.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -176,11 +177,20 @@ describe('single quotation marks', () => {
   it('mark dialogue and thoughts as performed, a thought a little quieter, and never share a call with narration', () => {
     const s = script(`<p>“Run now, go!” she said.</p><p>He ran.</p><p>'I knew it.'</p>`);
     const [run, ran, knew] = ['Run', 'ran', 'knew'].map((t) => s.items.find((i) => i.text.includes(t)));
-    expect(run?.voice).toBe('performed');
+    expect(run?.voice).toBe('performed'); // a command reads with quiet authority (calm), not shouted
     expect(ran?.voice).toBeUndefined();
     expect(knew?.voice).toBe('performed');
     expect(run?.chunk).not.toBe(ran?.chunk);
     expect(knew?.delivery?.g ?? 0).toBeLessThan(0);
+  });
+
+  it('choose a mood voice: dialogue by its mood, narration only through a run of two', () => {
+    const n = (mood: Mood) => ({ kind: 'text', mood, performed: false });
+    const d = (mood: Mood) => ({ kind: 'text', mood, performed: true });
+    expect(moodVoices([n('calm'), n('tense'), n('calm')])).toEqual([undefined, undefined, undefined]);
+    expect(moodVoices([n('tense'), n('tense'), d('calm'), n('tense')])).toEqual(['tense', 'tense', 'performed', undefined]);
+    expect(moodVoices([d('soft'), d('sad'), d('intense'), d('playful')])).toEqual(['tender', 'sad', 'tense', 'performed']);
+    expect(moodVoices([{ kind: 'system', mood: 'system', performed: false }])).toEqual([undefined]);
   });
 
   it('carry a thought into the next paragraph only when that one closes it', () => {
