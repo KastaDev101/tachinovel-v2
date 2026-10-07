@@ -71,6 +71,29 @@ answer the car's buttons and Siri. Before a drive, a novel's **Prepare for the d
 chapters with Kokoro into local audio, so playback never waits on synthesis or the network. Details,
 settings and the on-phone car checklist: docs/car.md.
 
+## Voice mixer
+
+More › Voices › **Mix a voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
+a name. Saved mixes are listed under **Your mixes**, after the voices: in Settings › Voices (with Edit and
+Delete) and in a novel's voice picker (Listen player › Voice). So a mix can be the default voice or one
+novel's voice.
+
+- **How it blends:** each Kokoro voice is a style pack of 510 rows (one per phoneme-count bucket), each
+  128 timbre + 128 prosody values. A mix interpolates the two packs value by value, (1 − t)·A + t·B,
+  which is how Kokoro's own blended voices are made. It is computed once and cached (0.52 MB). FluidAudio
+  needs no changes: KokoroRuntime runs the chain with the blended style through FluidAudio's public
+  synthesizer.
+- **One voice string:** the app passes a mix as `af_heart+bf_emma@35` (35 % Emma), so everything that
+  takes a voice takes a mix:
+  - the speech engine;
+  - the Apple fallback, which matches the accent and gender of the voice heard most;
+  - Prepare for the drive, where editing a mix makes audio prepared with the old blend stale;
+  - Now Playing and the mini player, which show the mix's name.
+- **Kept on the phone** with the other voice settings (up to 50 mixes). Deleting a mix sends the default and
+  any novel using it back to Heart or the default.
+- **What sounds good:** two similar voices, or one voice clearly in front (20–40 % of the other). Halfway
+  between a female and a male voice, or between accents, can sound odd.
+
 ## The bundled model
 
 - **What:** FluidAudio's 7-stage Core ML build of Kokoro-82M v1.0 (fp16 + int8-palettized weights, the
@@ -111,7 +134,7 @@ Swift (`swift test --package-path ios/App/HDVoice`, the app build) needs a Mac, 
 |---|---|
 | `ios-compile + simulator smoke` | The app (with HDVoice + FluidAudio) compiles for the simulator and launches; keeps the simulator app for `voice-simulator` |
 | `ios-ipa (unsigned, for AltStore)` | Device build with the bundled model; the job summary lists the IPA size and the installed size |
-| `voice-quality (Kokoro on macOS + ASR)` | `swift test` for HDVoiceCore. Then `kokoro-check` loads the bundled model the way the app does and synthesizes the fixtures (short, long, dialogue, numbers/"Ch. 12", lexicon names) with all 28 voices (voices graded C+ and up on every fixture, the rest on two, to keep the job short). It checks: 24 kHz, no NaN/Inf, no clipping, speech-level RMS, words per minute, time to first audio, real-time factor (fails only on gross regressions), and memory released afterwards. Ends with a whisper.cpp v1.9.4 (base.en q8_0, pinned) ASR round trip on 3 sentences, WER ≤ 15% (skipped with a warning if whisper.cpp can't be built) |
+| `voice-quality (Kokoro on macOS + ASR)` | `swift test` for HDVoiceCore. Then `kokoro-check` loads the bundled model the way the app does and synthesizes the fixtures (short, long, dialogue, numbers/"Ch. 12", lexicon names) with all 28 voices (voices graded C+ and up on every fixture, the rest on two, to keep the job short) and two voice mixes (every fixture; a mix that comes out identical to one of its voices fails). It checks: 24 kHz, no NaN/Inf, no clipping, speech-level RMS, words per minute, time to first audio, real-time factor (fails only on gross regressions), and memory released afterwards. Ends with a whisper.cpp v1.9.4 (base.en q8_0, pinned) ASR round trip on 3 sentences, read by Heart and by a mix, WER ≤ 15% (skipped with a warning if whisper.cpp can't be built) |
 | `voice-simulator (Listen flow + fallback in the simulator)` | The Debug app runs `-tachiVoiceSelfTest`: a synthetic chapter through the real Listen path (script → native engine → Kokoro → progress → highlight), in three phases: normal, Kokoro slowed down (Apple must take over, and Kokoro must come back when the delay is lifted), Kokoro failing (Apple reads everything). There's no audio device on the runner, so output is rendered headless at real-time pace |
 
 Make `voice-quality` and `voice-simulator` required checks only after they have been stable for a while.

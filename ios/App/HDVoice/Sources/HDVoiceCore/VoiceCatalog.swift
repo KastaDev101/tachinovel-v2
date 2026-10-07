@@ -122,10 +122,13 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     /// Listen player: speed (0.5–2.5) and "Voice volume" (0–1.5), for every voice.
     public var speed: Double
     public var volume: Double
+    /// "Your mixes": named blends of two voices (VoiceMix.swift). `defaultVoice` and `novelVoices` may hold
+    /// their ids.
+    public var customVoices: [CustomVoice]
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
                 route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
-                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue) {
+                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = []) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
@@ -135,6 +138,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         self.carButtons = carButtons
         self.speed = SpeechSpeed.clamp(speed)
         self.volume = VoiceVolume.clamp(volume)
+        self.customVoices = customVoices
     }
 
     /// Tolerant decoding: missing keys take their defaults (settings written by older builds).
@@ -150,17 +154,19 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         carButtons = (try? c.decode(String.self, forKey: .carButtons)) ?? d.carButtons
         speed = SpeechSpeed.clamp((try? c.decode(Double.self, forKey: .speed)) ?? d.speed)
         volume = VoiceVolume.clamp((try? c.decode(Double.self, forKey: .volume)) ?? d.volume)
+        customVoices = (try? c.decode([CustomVoice].self, forKey: .customVoices)) ?? d.customVoices
     }
 
-    /// The voice for a novel: its own choice, else the global default, else Heart.
+    /// The voice a novel speaks with (its own choice, else the global default, else Heart): a built-in id,
+    /// or a mix's blend string ("af_heart+bf_emma@35"). The stored choice is `choice(forNovel:)`.
     public func voice(forNovel key: String?) -> String {
-        if let key, let v = novelVoices[key], VoiceCatalog.voice(v) != nil { return v }
-        return VoiceCatalog.voice(defaultVoice) != nil ? defaultVoice : VoiceCatalog.defaultVoiceId
+        engineVoice(choice(forNovel: key)) ?? VoiceCatalog.defaultVoiceId
     }
 
-    /// Set (or clear with nil) a novel's voice. Choosing the global default clears the override.
+    /// Set (or clear with nil) a novel's voice (a built-in id or a mix id). Choosing the global default
+    /// clears the override.
     public mutating func setVoice(_ voice: String?, forNovel key: String) {
-        if let voice, VoiceCatalog.voice(voice) != nil, voice != defaultVoice {
+        if let voice, isChoice(voice), voice != defaultVoice {
             novelVoices[key] = voice
         } else {
             novelVoices.removeValue(forKey: key)

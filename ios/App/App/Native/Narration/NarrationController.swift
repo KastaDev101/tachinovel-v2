@@ -660,7 +660,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             if audioOrigin == .prepared {
                 d["prepared"] = true
                 let id = preparedVoice ?? kokoroVoiceForCurrentNovel()
-                d["voice"] = ["kokoroVoice": id, "kokoroName": VoiceCatalog.voice(id)?.name ?? id, "source": VoiceSource.kokoro.rawValue]
+                d["voice"] = ["kokoroVoice": id, "kokoroName": VoiceSettings.shared.prefs.displayName(id), "source": VoiceSource.kokoro.rawValue]
             }
             if let i = lastSegment, let seg = timing?.segments[safe: i] {
                 d["paragraph"] = seg.block
@@ -692,7 +692,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     /// system voice standing in, and why.
     private func voiceDict() -> [String: Any] {
         let id = kokoroVoiceForCurrentNovel()
-        var v: [String: Any] = ["kokoroVoice": id, "kokoroName": VoiceCatalog.voice(id)?.name ?? id]
+        var v: [String: Any] = ["kokoroVoice": id, "kokoroName": VoiceSettings.shared.prefs.displayName(id)]
         if let speechSource { v["source"] = speechSource.rawValue }
         if speechSource == .apple {
             let apple = VoiceSettings.appleVoice(explicit: voiceIdentifier, kokoroVoice: id)

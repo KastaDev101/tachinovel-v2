@@ -156,8 +156,21 @@ export interface KokoroVoiceInfo {
   gradeRank?: number;
 }
 
+/** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */
+export interface CustomVoiceInfo {
+  /** "mix_" + 8 hex digits. */
+  id: string;
+  name: string;
+  a: string;
+  b: string;
+  /** The weight of `b`, 0–100. */
+  percent: number;
+}
+
 export interface VoiceSettingsInfo {
   voices: KokoroVoiceInfo[];
+  /** Saved mixes; `defaultVoice`, `novelVoice` and `effectiveVoice` may be one of their ids. */
+  customVoices?: CustomVoiceInfo[];
   defaultVoice: string;
   kokoroEnabled: boolean;
   usePCAudio: boolean;
@@ -248,7 +261,14 @@ export interface NarrationPlugin {
     /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
     volume?: number;
   }): Promise<void>;
-  /** ▶ a sample: a Kokoro voice id, or 'apple'. Resolves when audio starts (ms = time to first audio). */
+  /** Voice mixer: save a new mix (no id) or change one. */
+  saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;
+  /** Voice mixer: delete a mix (the default and novels using it go back to Heart / the default). */
+  deleteCustomVoice(opts: { id: string }): Promise<void>;
+  /**
+   * ▶ a sample: a Kokoro voice id, a mix id, a blend ("af_heart+bf_emma@35", the mixer's audition), or
+   * 'apple'. Resolves when audio starts (ms = time to first audio).
+   */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
   /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */

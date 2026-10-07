@@ -63,7 +63,7 @@ final class VoiceSettings {
     /// voiceId), else the best installed English voice matching the Kokoro voice's gender and accent.
     static func appleVoice(explicit identifier: String?, kokoroVoice: String) -> AVSpeechSynthesisVoice? {
         if let identifier, let v = AVSpeechSynthesisVoice(identifier: identifier) { return v }
-        if let pick = AppleVoiceRanking.pick(appleCandidates(), for: VoiceCatalog.voice(kokoroVoice)),
+        if let pick = AppleVoiceRanking.pick(appleCandidates(), for: VoiceCatalog.baseVoice(kokoroVoice)),
            let v = AVSpeechSynthesisVoice(identifier: pick.voice.identifier) { return v }
         return AVSpeechSynthesisVoice(language: "en-US")
     }
@@ -78,7 +78,7 @@ final class VoiceSettings {
 
     /// For the UI: the fallback voice and whether to show the "download a Premium voice" hint.
     static func appleSummary(kokoroVoice: String) -> [String: Any] {
-        guard let pick = AppleVoiceRanking.pick(appleCandidates(), for: VoiceCatalog.voice(kokoroVoice)) else {
+        guard let pick = AppleVoiceRanking.pick(appleCandidates(), for: VoiceCatalog.baseVoice(kokoroVoice)) else {
             return ["name": "System voice", "quality": "default", "onlyDefault": true]
         }
         return ["id": pick.voice.identifier, "name": pick.voice.name, "language": pick.voice.language,

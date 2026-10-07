@@ -193,7 +193,15 @@ export class CrawlEnv {
   narration: NarrationMockState = { status: 'idle' };
   audioLinked = true;
   /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings). */
-  voicePrefs = { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, carButtons: 'chapters', novelVoices: {} as Record<string, string> };
+  voicePrefs = {
+    defaultVoice: 'af_heart',
+    kokoroEnabled: true,
+    usePCAudio: false,
+    carButtons: 'chapters',
+    novelVoices: {} as Record<string, string>,
+    /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
+    customVoices: [] as { id: string; name: string; a: string; b: string; percent: number }[],
+  };
   /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
   drive = {
     jobs: [] as Record<string, unknown>[],
@@ -497,6 +505,7 @@ export class CrawlEnv {
           const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
           return {
             voices: KOKORO_VOICES,
+            customVoices: v.customVoices,
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
             usePCAudio: v.usePCAudio,
@@ -518,6 +527,22 @@ export class CrawlEnv {
             if (typeof novel.voice === 'string' && novel.voice !== v.defaultVoice) v.novelVoices[key] = novel.voice;
             else delete v.novelVoices[key];
           }
+          return {};
+        }
+        case 'saveCustomVoice': {
+          const v = this.voicePrefs;
+          const fields = { name: (typeof o.name === 'string' ? o.name.trim() : '') || 'Mix', a: typeof o.a === 'string' ? o.a : 'af_heart', b: typeof o.b === 'string' ? o.b : 'bf_emma', percent: Math.round(Number(o.percent ?? 50)) };
+          // Lenient: the screen never sends two equal voices (Save is disabled); an unknown id saves a new mix.
+          const old = typeof o.id === 'string' ? v.customVoices.find((m) => m.id === o.id) : undefined;
+          const mix = old ? Object.assign(old, fields) : { id: `mix_${(v.customVoices.length + 1).toString(16).padStart(8, '0')}`, ...fields };
+          if (!old) v.customVoices.push(mix);
+          return { mix };
+        }
+        case 'deleteCustomVoice': {
+          const v = this.voicePrefs;
+          v.customVoices = v.customVoices.filter((m) => m.id !== o.id);
+          if (v.defaultVoice === o.id) v.defaultVoice = 'af_heart';
+          for (const [k, id] of Object.entries(v.novelVoices)) if (id === o.id) delete v.novelVoices[k];
           return {};
         }
         case 'sampleVoice':
