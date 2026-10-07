@@ -376,7 +376,10 @@ export class Worker {
     for (const l of layout) findings.push(await this.shoot({ kind: 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
     const controls = await this.enumerate();
     for (const c of controls) {
-      if (c.obscuredBy && !c.disabled) findings.push(await this.shoot({ kind: 'obscured', severity: 'fail', state: node.sig, control: c.label, message: `"${c.label}" (${c.role}) at y=${c.rect.y} is covered by ${c.obscuredBy}`, repro }));
+      // A toast goes away by itself within seconds (and a tap dismisses it): covering something then is a
+      // warning, not a layout failure. Whether one is still up depends on timing, so it must not fail runs.
+      const transient = /data-testid=toast|\.toast/.test(c.obscuredBy ?? '');
+      if (c.obscuredBy && !c.disabled) findings.push(await this.shoot({ kind: 'obscured', severity: transient ? 'warn' : 'fail', state: node.sig, control: c.label, message: `"${c.label}" (${c.role}) at y=${c.rect.y} is covered by ${c.obscuredBy}`, repro }));
     }
     return { ok: true, info, layout, controls, findings };
   }
@@ -456,19 +459,34 @@ export class Worker {
     return out;
   }
 
-  /** After a dead tap: does a mouse click on the same control change anything? */
-  private async clickWorks(step: Step, fpBefore: string, sigBefore: string): Promise<boolean> {
+  /**
+   * After a dead tap: does the control react to five quick taps (a hidden gesture, like "tap the version
+   * five times") or to a mouse click (desktop WebKit's tap emulation)? Any effect counts: another state, a
+   * visible change, DOM changes, a core or native call, a native popup.
+   */
+  private async reactsTo(step: Step, how: 'multi-tap' | 'click', sigBefore: string): Promise<boolean> {
     const c = await this.locate(step).catch(() => null);
     if (!c) return false;
-    const coreBefore = this.env.coreCalls.length;
-    await this.page
-      .locator(`[data-qa-target="${c.qaId}"], [data-qa-id="${c.qaId}"]`)
-      .first()
-      .click({ timeout: 2000 })
-      .catch(() => undefined);
+    const env = this.env;
+    const before = { fp: await this.fingerprint(), probe: await this.probe(), core: env.coreCalls.length, plugin: env.pluginCalls.length, ui: env.nativeUi.length };
+    const target = this.page.locator(`[data-qa-target="${c.qaId}"], [data-qa-id="${c.qaId}"]`).first();
+    if (how === 'click') await target.click({ timeout: 2000 }).catch(() => undefined);
+    else {
+      for (let i = 0; i < 5; i++) {
+        await target.tap({ timeout: 2000 }).catch(() => undefined);
+        await delay(120);
+      }
+    }
     await this.settle();
-    const st = await this.st();
-    return st.key !== sigBefore || (await this.fingerprint()) !== fpBefore || this.env.coreCalls.length > coreBefore;
+    const after = await this.probe();
+    return (
+      (await this.st()).key !== sigBefore ||
+      (await this.fingerprint()) !== before.fp ||
+      after.mutations > before.probe.mutations ||
+      env.coreCalls.slice(before.core).some((m) => !PERIODIC_CORE.has(m)) ||
+      env.pluginCalls.slice(before.plugin).some((p) => !NOISE_PLUGIN.test(`${p.plugin}.${p.method}`)) ||
+      env.nativeUi.length > before.ui
+    );
   }
 
   private async cleanFingerprint(): Promise<string> {
@@ -567,11 +585,16 @@ export class Worker {
     if (effects.length === 0) {
       if (step.selected) outcome = 'noop-selected';
       else if (step.kind !== 'longpress' && step.kind !== 'gesture') {
-        // Desktop WebKit's tap emulation drops the click when pointerdown was default-prevented (v1's
-        // search ⓧ does that to keep the keyboard up); iOS WebKit still clicks (bugs.webkit.org/195839).
-        // So: does a mouse click work? Then it's a warning to confirm on the device, not a dead control.
-        const clicked = (step.kind === 'tap' || step.kind === 'toggle') && (await this.clickWorks(step, before.fp, node.key));
-        if (clicked) {
+        // A hidden multi-tap gesture (e.g. tap the version five times) is not a dead control, just a
+        // hidden one. And desktop WebKit's tap emulation drops the click when pointerdown was
+        // default-prevented (v1's search ⓧ does that to keep the keyboard up); iOS WebKit still clicks
+        // (bugs.webkit.org/195839). Either way: a warning, not a failure.
+        const tappable = step.kind === 'tap' || step.kind === 'toggle';
+        const multi = tappable && (await this.reactsTo(step, 'multi-tap', node.key));
+        const clicked = tappable && !multi && (await this.reactsTo(step, 'click', node.key));
+        if (multi) {
+          findings.push(await this.shoot({ kind: 'dead-control', severity: 'warn', state: node.sig, control: step.label, message: `one tap on "${step.label}" does nothing, five quick taps do something (a hidden gesture)`, repro }));
+        } else if (clicked) {
           findings.push(await this.shoot({ kind: 'dead-control', severity: 'warn', state: node.sig, control: step.label, message: `a touch tap on "${step.label}" did nothing but a mouse click works (WebKit tap emulation; confirm on the phone)`, repro }));
         } else {
           if (outcome === 'ok') outcome = 'dead';

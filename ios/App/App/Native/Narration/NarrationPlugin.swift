@@ -3,14 +3,16 @@
 //
 
 import AVFoundation
-import Capacitor
+@preconcurrency import Capacitor
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
 import MediaPlayer
 
+/// Capacitor calls arrive on its plugin queue; every method hops to the main thread before touching state,
+/// and the listeners it registers run on main, so the plugin is effectively main-thread confined.
 @objc(NarrationPlugin)
-public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
+public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "NarrationPlugin"
     public let jsName = "Narration"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -308,7 +310,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func setVoiceSettings(_ call: CAPPluginCall) {
         let defaultVoice = call.getString("defaultVoice")
-        let novel = call.getObject("novel")
         let usePCAudio = call.getBool("usePCAudio")
         let kokoroEnabled = call.getBool("kokoroEnabled")
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
@@ -316,6 +317,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let volume = call.getDouble("volume")
         let narrator = call.getObject("narrator")
         DispatchQueue.main.async {
+            let novel = call.getObject("novel")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }
@@ -430,8 +432,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let route = call.getString("route")
         let ahead = call.getInt("ahead")
         let reset = call.getBool("resetStats") ?? false
-        let inject = call.getObject("inject")
         DispatchQueue.main.async {
+            let inject = call.getObject("inject")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let route, KokoroRoute(rawValue: route) != nil { p.route = route }
@@ -531,8 +533,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Simulator self-test: a synthetic multi-chapter novel ({chapterPath, title, paragraphs, script, next?, prev?}).
     @objc func selfTestChapters(_ call: CAPPluginCall) {
-        let list = (call.getArray("chapters") ?? []).compactMap { $0 as? [String: Any] }
         DispatchQueue.main.async {
+            let list = (call.getArray("chapters") ?? []).compactMap { $0 as? [String: Any] }
             guard NarrationSelfTest.isActive else { return call.reject("self-test only", "UNAVAILABLE") }
             NarrationSelfTest.shared.register(chapters: list)
             call.resolve(["chapters": list.count])
@@ -550,8 +552,9 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func onMain(_ call: CAPPluginCall, _ fn: @escaping (NarrationController) -> Void) {
+        let work = MainBound(fn)
         DispatchQueue.main.async {
-            fn(self.n)
+            work.value(self.n)
             call.resolve()
         }
     }

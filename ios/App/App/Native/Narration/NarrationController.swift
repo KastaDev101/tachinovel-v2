@@ -34,7 +34,9 @@ import MediaPlayer
 import os // Logger interpolation (`privacy:`) used through CoreHost.shared.log
 import UIKit
 
-final class NarrationController: NSObject, SpeechEngineDelegate {
+/// Main-thread confined: the plugin and the remote-command hub call it on main, and the engines, the core
+/// and background work hop back to main before calling it.
+final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Sendable {
     static let shared = NarrationController()
 
     enum Status: String { case idle, loading, playing, paused, ended, error }
@@ -527,13 +529,17 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     }
 
     private func nextAudioChapter() -> AudioChapter? {
-        guard mode == .audio, audioOrigin == .pc, let ac = audioChapter, let novel = AudioLibrary.shared.novel(ac.novelKey),
+        guard mode == .audio, audioOrigin == .pc, let ac = audioChapter else { return nil }
+        let key = ac.novelKey
+        guard let novel = MainThread.run({ AudioLibrary.shared.novel(key) }),
               let i = novel.chapters.firstIndex(where: { $0.chapterPath == ac.chapterPath }) else { return nil }
         return novel.chapters[safe: i + 1]
     }
 
     private func previousAudioChapter() -> AudioChapter? {
-        guard mode == .audio, audioOrigin == .pc, let ac = audioChapter, let novel = AudioLibrary.shared.novel(ac.novelKey),
+        guard mode == .audio, audioOrigin == .pc, let ac = audioChapter else { return nil }
+        let key = ac.novelKey
+        guard let novel = MainThread.run({ AudioLibrary.shared.novel(key) }),
               let i = novel.chapters.firstIndex(where: { $0.chapterPath == ac.chapterPath }) else { return nil }
         return i > 0 ? novel.chapters[safe: i - 1] : nil
     }
@@ -1209,12 +1215,15 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     private func beginTransition() {
         guard transitionTask == .invalid else { return }
-        transitionTask = UIApplication.shared.beginBackgroundTask(withName: "narration-next-chapter") { [weak self] in self?.endTransition() }
+        transitionTask = MainThread.run {
+            UIApplication.shared.beginBackgroundTask(withName: "narration-next-chapter") { [weak self] in self?.endTransition() }
+        }
     }
 
     private func endTransition() {
         guard transitionTask != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(transitionTask)
+        let task = transitionTask
+        MainThread.run { UIApplication.shared.endBackgroundTask(task) }
         transitionTask = .invalid
     }
 }

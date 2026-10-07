@@ -17,7 +17,8 @@ import MediaPlayer
 import UIKit
 
 /// MPNowPlayingInfoCenter, published through NowPlayingSmoother so the shown time and length stay steady.
-final class NowPlayingCenter {
+/// Main-thread confined (the controller updates it on main).
+final class NowPlayingCenter: @unchecked Sendable {
     static let shared = NowPlayingCenter()
 
     private var smoother = NowPlayingSmoother()
@@ -89,7 +90,8 @@ final class NowPlayingCenter {
 
 /// Cover images for Now Playing: the reader's local covers, or https covers downloaded once into Caches
 /// (downscaled; the car shows ~600 px at most).
-final class ArtworkCache {
+/// Loads off main; its memory cache and completions are touched on main only.
+final class ArtworkCache: @unchecked Sendable {
     static let shared = ArtworkCache()
 
     private let memory = NSCache<NSString, UIImage>()
@@ -106,29 +108,30 @@ final class ArtworkCache {
     /// The image for a cover reference (local "covers/…" path or https URL); completion on main.
     func image(for cover: String, completion: @escaping (UIImage?) -> Void) {
         if let hit = memory.object(forKey: cover as NSString) { return completion(hit) }
+        let done = MainBound(completion)
         let disk = folder.appendingPathComponent("\(Self.fnv(cover)).jpg")
         let local = Self.localCoverPath(cover)
         DispatchQueue.global(qos: .utility).async {
             if let path = local ?? (FileManager.default.fileExists(atPath: disk.path) ? disk.path : nil),
                let img = UIImage(contentsOfFile: path) {
-                return self.deliver(Self.scaled(img), key: cover, completion: completion)
+                return self.deliver(Self.scaled(img), key: cover, completion: done)
             }
             guard local == nil, let url = URL(string: cover), url.scheme == "https" else {
-                return DispatchQueue.main.async { completion(nil) }
+                return DispatchQueue.main.async { done.value(nil) }
             }
             URLSession.shared.dataTask(with: url) { data, _, _ in
-                guard let data, let img = UIImage(data: data) else { return DispatchQueue.main.async { completion(nil) } }
+                guard let data, let img = UIImage(data: data) else { return DispatchQueue.main.async { done.value(nil) } }
                 let small = Self.scaled(img)
                 if let jpg = small.jpegData(compressionQuality: 0.85) { try? jpg.write(to: disk, options: .atomic) }
-                self.deliver(small, key: cover, completion: completion)
+                self.deliver(small, key: cover, completion: done)
             }.resume()
         }
     }
 
-    private func deliver(_ img: UIImage, key: String, completion: @escaping (UIImage?) -> Void) {
+    private func deliver(_ img: UIImage, key: String, completion: MainBound<(UIImage?) -> Void>) {
         DispatchQueue.main.async {
             self.memory.setObject(img, forKey: key as NSString)
-            completion(img)
+            completion.value(img)
         }
     }
 
@@ -159,7 +162,8 @@ final class ArtworkCache {
 
 /// MPRemoteCommandCenter: one target per command, all going through `handle` (which the simulator self-test
 /// also calls, since MPRemoteCommandEvents can't be created outside the system).
-final class RemoteCommandHub {
+/// Main-thread confined (MPRemoteCommandCenter delivers on main).
+final class RemoteCommandHub: @unchecked Sendable {
     static let shared = RemoteCommandHub()
 
     /// NarrationController's handler: performs the command, returns whether there was something to control.
