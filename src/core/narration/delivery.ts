@@ -855,13 +855,15 @@ export interface ChunkInput {
   quoteOpen: boolean;
   /** Nano's temperature for the sentence: a call has one, so very different lines don't share one. */
   t?: number;
+  /** Performed (dialogue, thoughts) rather than narrated: one call reads in one manner. */
+  performed?: boolean;
 }
 
 /**
  * Chunk ids for breath-group synthesis (one Nano call per chunk): a paragraph is a chunk; a quote paragraph that
  * continues the same speaker (the quotation was left open, no narration between) joins the one before; titles
  * and system messages stand alone; a chunk ends at a sentence end before it would pass maxChars, or where the
- * temperature differs by more than CHUNK_MAX_T_STEP. Native starts every Listen/seek with the first sentence alone (fast
+ * temperature differs by more than CHUNK_MAX_T_STEP, or where narration turns into performed speech or back. Native starts every Listen/seek with the first sentence alone (fast
  * start), then follows these.
  */
 export function planChunks(list: readonly ChunkInput[], maxChars = CHUNK_MAX_CHARS): number[] {
@@ -876,6 +878,7 @@ export function planChunks(list: readonly ChunkInput[], maxChars = CHUNK_MAX_CHA
       s.kind !== 'text' ||
       prev.kind !== 'text' ||
       !continues ||
+      !!prev.performed !== !!s.performed ||
       Math.abs((prev.t ?? 0.7) - (s.t ?? 0.7)) > CHUNK_MAX_T_STEP ||
       (chars > 0 && chars + 1 + s.chars > maxChars);
     if (fresh) {

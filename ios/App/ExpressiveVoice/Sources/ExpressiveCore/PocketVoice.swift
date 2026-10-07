@@ -18,8 +18,10 @@ public struct PocketVoice: Sendable, Equatable {
     public static let embeddingDim = 1024
     public static let maxFrames = 125
     public static let folder = "pocket"
-    public static let narratorFile = "narrator.pocketvoice"
-    public static let manifestFile = "narrator.json"
+    public static let narratorName = "narrator"
+    /// The same voice, performing: dialogue and thoughts (from the performed reference ref-8A2-persona).
+    public static let characterName = "character"
+    public static let fileExtension = "pocketvoice"
 
     public let name: String
     /// Row-major `[frames * embeddingDim]`.
@@ -44,13 +46,18 @@ public struct PocketVoice: Sendable, Equatable {
         }
     }
 
-    /// The shipped voice in `<builtInVoices>/pocket/`.
+    /// The shipped Narrator voice in `<builtInVoices>/pocket/`.
     public static func narrator(builtInVoices: URL) throws -> PocketVoice {
+        try load(builtInVoices: builtInVoices, name: narratorName)
+    }
+
+    /// A shipped voice: `<builtInVoices>/pocket/<name>.pocketvoice` + `<name>.json`.
+    public static func load(builtInVoices: URL, name: String) throws -> PocketVoice {
         let dir = builtInVoices.appendingPathComponent(folder, isDirectory: true)
-        let manifestURL = dir.appendingPathComponent(manifestFile)
-        let dataURL = dir.appendingPathComponent(narratorFile)
-        guard let manifest = try? Data(contentsOf: manifestURL) else { throw Problem.missing(manifestFile) }
-        guard let data = try? Data(contentsOf: dataURL) else { throw Problem.missing(narratorFile) }
+        guard let manifest = try? Data(contentsOf: dir.appendingPathComponent("\(name).json")) else { throw Problem.missing("\(name).json") }
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("\(name).\(fileExtension)")) else {
+            throw Problem.missing("\(name).\(fileExtension)")
+        }
         return try parse(manifest: manifest, data: data)
     }
 

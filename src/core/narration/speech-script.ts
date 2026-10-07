@@ -95,6 +95,9 @@ export interface SpeechItem {
   role?: 'dialogue';
   /** A character's thought ('…' in a chapter that quotes speech with “…”): read like dialogue, a little closer. */
   thought?: true;
+  /** Natural delivery: the narrator voice performs this sentence (mostly dialogue, or a thought) instead of
+   * narrating it; one model call never mixes the two. */
+  voice?: 'performed';
   /** Narrator mode: a sentence mixing quoted speech and narration, split by role. */
   parts?: SpeechPartJson[];
   /** Narrator mode: 1 = the other speaker of an exchange (absent: 0). */
@@ -139,6 +142,11 @@ export interface SpeechScriptOptions extends FrontendOptions {
 
 /** The front-end's scene-break pause (frontend.ts DEFAULT_PAUSES.scene): a new scene starts after it. */
 const SCENE_MS = 1800;
+
+/** A sentence at least this much dialogue is performed rather than narrated (“Run,” she said. → performed). */
+const PERFORMED_SHARE = 0.5;
+/** How much quieter a thought is than speech, dB. */
+const THOUGHT_GAIN_DB = 1.5;
 
 /** Letters of a sentence's dialogue parts (0…1); 1 for a sentence that is all dialogue. */
 function dialogueShare(it: SpeechItem): number {
@@ -313,8 +321,14 @@ function naturalDelivery(blocks: readonly SourceBlock[], items: SpeechItem[], me
     );
     if (breath) it.breath = breath;
   });
+  items.forEach((it) => {
+    if (it.kind === 'text' && (it.thought || dialogueShare(it) >= PERFORMED_SHARE)) it.voice = 'performed';
+    // A thought sits a little closer and quieter than speech.
+    if (it.thought && it.delivery) it.delivery.g = Math.round((it.delivery.g - THOUGHT_GAIN_DB) * 10) / 10;
+  });
   const chunks = planChunks(
     items.map((it, i) => ({
+      performed: it.voice === 'performed',
       block: it.block,
       kind: it.kind,
       chars: (it.delivery?.say ?? it.text).length,

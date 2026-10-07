@@ -262,7 +262,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
-            ExpressiveService.shared.synthesize(ExpressiveLine(text: text), engine: id) { [weak self] result in
+            // Dialogue and thoughts in the performed read of the same voice (one call is all one or the other).
+            let performed = segments[i].natural?.performed == true && VoiceSettings.shared.prefs.delivery.performed
+            let line = ExpressiveLine(text: text, role: performed ? ExpressiveLine.performedRole : "narrator")
+            ExpressiveService.shared.synthesize(line, engine: id) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     switch result {
@@ -314,7 +317,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// planChunks), or for an older web bundle without them, no paragraph-length pause between them.
     private static func sameChunk(_ a: SpeechSegment, _ b: SpeechSegment) -> Bool {
         if let x = a.natural?.chunk, let y = b.natural?.chunk { return x == y }
-        return (a.naturalPause ?? a.pauseAfter) < 0.6
+        return (a.naturalPause ?? a.pauseAfter) < 0.6 && a.natural?.performed == b.natural?.performed
     }
 
     /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.

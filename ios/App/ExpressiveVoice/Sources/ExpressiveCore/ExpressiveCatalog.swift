@@ -67,8 +67,10 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var emotion: String
     /// whisper, dramatic, sarcastic, narration (Chatterbox tags only)
     public var style: String?
-    /// narrator, male, female
+    /// narrator, male, female; "performed" = the narrator voice performing (dialogue, thoughts; Pocket TTS)
     public var role: String
+
+    public static let performedRole = "performed"
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text

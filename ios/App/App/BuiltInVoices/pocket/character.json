@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Narrator (performed)",
+  "frames": 107,
+  "embeddingDim": 1024,
+  "bytes": 438272,
+  "sha256": "fa660a845dfb1d6822923f3b3530634f7c3583fdbf5e512e676d7a0b5a3850a6",
+  "source": "ref-8A2-persona.wav, first 8.50 s"
+}

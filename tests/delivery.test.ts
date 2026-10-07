@@ -164,6 +164,16 @@ describe('single quotation marks', () => {
     expect(s.items.find((i) => i.text.includes('room'))?.role).toBeUndefined();
   });
 
+  it('mark dialogue and thoughts as performed, a thought a little quieter, and never share a call with narration', () => {
+    const s = script(`<p>“Run now, go!” she said.</p><p>He ran.</p><p>'I knew it.'</p>`);
+    const [run, ran, knew] = ['Run', 'ran', 'knew'].map((t) => s.items.find((i) => i.text.includes(t)));
+    expect(run?.voice).toBe('performed');
+    expect(ran?.voice).toBeUndefined();
+    expect(knew?.voice).toBe('performed');
+    expect(run?.chunk).not.toBe(ran?.chunk);
+    expect(knew?.delivery?.g ?? 0).toBeLessThan(0);
+  });
+
   it('carry a thought into the next paragraph only when that one closes it', () => {
     const s = script(`<p>“Hm.”</p><p>'The shell protects me.</p><p>But the others… I don't know.'</p><p>He shook his head.</p>`);
     expect([...new Set(s.items.filter((i) => i.thought).map((i) => i.block))]).toEqual([1, 2]);

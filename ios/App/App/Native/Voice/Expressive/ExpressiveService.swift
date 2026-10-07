@@ -90,6 +90,14 @@ final class ExpressiveService {
         }
         return try PocketVoice.narrator(builtInVoices: dir)
     }
+    /// The performed voice (dialogue, thoughts); a missing or invalid file only means narration reads those too.
+    lazy var pocketPerformed: PocketVoice? = {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return nil }
+        do { return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.characterName) } catch {
+            log.error("expressive: pocket performed voice: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }()
     let chatterboxSlot: ChatterboxVoiceSlot?
     /// The chosen narrator voice for Chatterbox Nano: an imported ("v…") or shipped ("b…") voice's id, or
     /// "builtin" for Chatterbox's own voice; nil = the default voice.
@@ -269,7 +277,7 @@ final class ExpressiveService {
                 return completion(.failure(error))
             }
         }
-        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketPerformed: id == .pocketTts ? pocketPerformed : nil) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         if loadedID != nil { unload(reason: "switching engine") }
         loadedID = id
         synth = engine

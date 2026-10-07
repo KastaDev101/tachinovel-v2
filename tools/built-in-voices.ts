@@ -94,42 +94,56 @@ export function checkBreaths(dir: string): string[] {
 export const POCKET_DIR = 'pocket';
 export const POCKET_VOICE = 'narrator.pocketvoice';
 export const POCKET_MANIFEST = 'narrator.json';
+const POCKET_EXT = '.pocketvoice';
 const POCKET_DIM = 1024;
 const POCKET_MAX_FRAMES = 125;
 
-/** FluidAudio's cloned-voice file: little-endian float32 [frames, 1024], ≤ 125 frames, matching its manifest. */
+/** Every <name>.pocketvoice + <name>.json pair (the Narrator, and its performed read "character"); narrator required. */
 export function checkPocketVoice(dir: string): string[] {
   const problems: string[] = [];
-  const where = (f: string) => `${POCKET_DIR}/${f}`;
-  for (const f of readdirSync(dir).sort()) {
-    if (f !== POCKET_VOICE && f !== POCKET_MANIFEST) problems.push(`${where(f)}: only ${POCKET_VOICE} and ${POCKET_MANIFEST} belong in BuiltInVoices/${POCKET_DIR}/`);
+  const files = readdirSync(dir).sort();
+  const names = new Set<string>();
+  for (const f of files) {
+    if (f.endsWith(POCKET_EXT)) names.add(f.slice(0, -POCKET_EXT.length));
+    else if (f.endsWith('.json')) names.add(f.slice(0, -'.json'.length));
+    else problems.push(`${POCKET_DIR}/${f}: only <name>${POCKET_EXT} + <name>.json pairs belong in BuiltInVoices/${POCKET_DIR}/`);
   }
-  if (!existsSync(path.join(dir, POCKET_VOICE)) || !existsSync(path.join(dir, POCKET_MANIFEST))) {
-    return [...problems, `${POCKET_DIR}/: needs ${POCKET_VOICE} and ${POCKET_MANIFEST}`];
+  if (!names.has('narrator')) problems.push(`${POCKET_DIR}/: needs ${POCKET_VOICE} and ${POCKET_MANIFEST}`);
+  for (const name of names) problems.push(...checkPocketPair(dir, name));
+  return problems;
+}
+
+function checkPocketPair(dir: string, name: string): string[] {
+  const problems: string[] = [];
+  const voiceFile = `${name}${POCKET_EXT}`;
+  const manifestFile = `${name}.json`;
+  const where = (f: string) => `${POCKET_DIR}/${f}`;
+  if (!existsSync(path.join(dir, voiceFile)) || !existsSync(path.join(dir, manifestFile))) {
+    return [`${POCKET_DIR}/: ${name} needs ${voiceFile} and ${manifestFile}`];
   }
   let m: Record<string, unknown>;
   try {
-    m = JSON.parse(readFileSync(path.join(dir, POCKET_MANIFEST), 'utf8')) as Record<string, unknown>;
+    m = JSON.parse(readFileSync(path.join(dir, manifestFile), 'utf8')) as Record<string, unknown>;
   } catch (err) {
-    return [...problems, `${where(POCKET_MANIFEST)}: ${err instanceof Error ? err.message : String(err)}`];
+    return [`${where(manifestFile)}: ${err instanceof Error ? err.message : String(err)}`];
   }
-  const data = readFileSync(path.join(dir, POCKET_VOICE));
+  const data = readFileSync(path.join(dir, voiceFile));
   const frames = m.frames;
-  if (m.schemaVersion !== 1) problems.push(`${where(POCKET_MANIFEST)}: schemaVersion must be 1`);
-  if (m.engine !== 'pocket-tts') problems.push(`${where(POCKET_MANIFEST)}: engine must be pocket-tts`);
-  if (m.embeddingDim !== POCKET_DIM) problems.push(`${where(POCKET_MANIFEST)}: embeddingDim must be ${POCKET_DIM}`);
+  if (m.schemaVersion !== 1) problems.push(`${where(manifestFile)}: schemaVersion must be 1`);
+  if (m.engine !== 'pocket-tts') problems.push(`${where(manifestFile)}: engine must be pocket-tts`);
+  if (m.embeddingDim !== POCKET_DIM) problems.push(`${where(manifestFile)}: embeddingDim must be ${POCKET_DIM}`);
   if (typeof frames !== 'number' || !Number.isInteger(frames) || frames < 1 || frames > POCKET_MAX_FRAMES) {
-    problems.push(`${where(POCKET_MANIFEST)}: frames must be 1…${POCKET_MAX_FRAMES}`);
+    problems.push(`${where(manifestFile)}: frames must be 1…${POCKET_MAX_FRAMES}`);
   } else if (m.bytes !== frames * POCKET_DIM * 4 || data.length !== m.bytes) {
-    problems.push(`${where(POCKET_VOICE)}: ${data.length} bytes, expected ${frames} × ${POCKET_DIM} float32`);
+    problems.push(`${where(voiceFile)}: ${data.length} bytes, expected ${frames} × ${POCKET_DIM} float32`);
   }
   if (typeof m.sha256 !== 'string' || createHash('sha256').update(data).digest('hex') !== m.sha256.toLowerCase()) {
-    problems.push(`${where(POCKET_VOICE)}: doesn’t match the manifest’s sha256`);
+    problems.push(`${where(voiceFile)}: doesn’t match the manifest’s sha256`);
   }
   if (data.length % 4 === 0) {
     for (let i = 0; i < data.length; i += 4) {
       if (!Number.isFinite(data.readFloatLE(i))) {
-        problems.push(`${where(POCKET_VOICE)}: value ${i / 4} isn’t a finite number`);
+        problems.push(`${where(voiceFile)}: value ${i / 4} isn’t a finite number`);
         break;
       }
     }
