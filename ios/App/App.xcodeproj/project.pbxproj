@@ -52,6 +52,7 @@
 		AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */; };
 		56C547BC5B3C81BBF0794D5A /* ExpressiveVoice in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5794005B80F8EEE8949FA3 /* ExpressiveVoice */; };
 		492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */; };
+		6890DB3EF216F2AA3A325014 /* VoiceImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F670066B4FE0D903C0BD3295 /* VoiceImport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -111,6 +112,7 @@
 		C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveSpeechEngine.swift"; sourceTree = "<group>"; };
 		0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveVoicePlugin.swift"; sourceTree = "<group>"; };
 		08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFolder.swift"; sourceTree = "<group>"; };
+		F670066B4FE0D903C0BD3295 /* VoiceImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/VoiceImport.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -207,6 +209,7 @@
 				C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */,
 				0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */,
 				08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */,
+				F670066B4FE0D903C0BD3295 /* VoiceImport.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -369,6 +372,7 @@
 				9AA347654A96C65825B49291 /* ExpressiveSpeechEngine.swift in Sources */,
 				AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */,
 				492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */,
+				6890DB3EF216F2AA3A325014 /* VoiceImport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

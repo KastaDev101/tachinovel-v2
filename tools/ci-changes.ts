@@ -11,8 +11,8 @@
  *          capacitor config, tools/build.ts, tools/v1.ts) or the UI test's own fixtures and scripts.
  *   ipa    ios-ipa: native code (ios/, not the UI test target), what goes into the device build
  *          (package*.json, capacitor config, build/IPA scripts, the voice model fetch) or the IPA budget.
- *   voice  voice-quality and voice-simulator: the voice engine (ios/App/HDVoice, Native/Voice,
- *          Native/Narration, the model lock), its UI (src/ui/native/voice*, narration*, speech*), the
+ *   voice  voice-quality and voice-simulator: the voice engine (ios/App/HDVoice, ios/App/ExpressiveVoice,
+ *          Native/Voice, Native/Narration, the model lock), its UI (src/ui/native/voice*, narration*, speech*), the
  *          narration script (src/core/narration), the model fetch and fixture scripts and their tests.
  *
  *   node tools/ci-changes.ts <base-ref>    pull request: compare <base-ref>...HEAD
@@ -69,7 +69,7 @@ export const RULES = {
   ui: [/^src\//, /^ios\//, /^vendor\//, ...BUNDLE, /^ci\/ios-ui-tests\.sh$/, /^tools\/ui-(fixtures|attachments)\.ts$/, /^tests\/fixtures\/demo-site\//],
   ipa: [/^ios\/(?!App\/AppUITests\/)/, ...BUNDLE, /^tools\/(ios-project|fetch-voices|budgets)\.ts$/, /^ci\/(ios-unsigned-ipa|ipa-size)\.sh$/, /^ci\/budgets\.json$/],
   voice: [
-    /^ios\/App\/HDVoice/,
+    /^ios\/App\/(HDVoice|ExpressiveVoice)\//,
     /^ios\/App\/App\/Native\/(Voice|Narration)\//,
     /^ios\/kokoro-models\.lock\.json$/,
     /^src\/ui\/native\/(voice|narration|speech)[^/]*\.ts$/,

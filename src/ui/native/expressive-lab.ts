@@ -3,10 +3,13 @@
  * EXPERIMENTAL expressive voices on the iPhone (docs/expressive-tts.md): download a model on demand (Wi-Fi,
  * size shown, two taps), play the same sample with it and with Kokoro (A/B), run a speed test (load, time
  * to first audio, × real time, memory, thermal), copy the report. Narration itself is unchanged.
+ * Personal flavor: "Narrator voice" — voices designed on the PC (.tnvoice), imported and chosen for
+ * Chatterbox Nano (voice-import.ts, docs/voice-import.md).
  * Native side: ExpressiveVoicePlugin.swift (ExpressiveService + ExpressiveSpeechEngine, Kokoro fallback).
  */
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { annotate, SAMPLES, type ExpressiveLine } from './expressive-samples.ts';
+import { createVoiceSection, importEventMessage } from './voice-import.ts';
 
 type Obj = Record<string, unknown>;
 
@@ -21,9 +24,20 @@ interface ExpressiveVoicePlugin {
   cancelSpeedTest(): Promise<Obj>;
   unload(): Promise<Obj>;
   resetCrashes(): Promise<Obj>;
+  importVoice(): Promise<Obj>;
+  selectVoice(o: { id: string | null }): Promise<Obj>;
+  renameVoice(o: { id: string; name: string }): Promise<Obj>;
+  deleteVoice(o: { id: string }): Promise<Obj>;
+  playVoiceSample(o: { id: string | null }): Promise<Obj>;
 }
 
-export const ExpressiveVoice = registerPlugin<ExpressiveVoicePlugin>('ExpressiveVoice');
+/** Events (kept out of the method list above, which mirrors the Swift plugin's methods). */
+interface ExpressiveVoiceEvents {
+  /** A .tnvoice opened with "Open in TachiNovel" was imported (or refused). */
+  addListener(event: 'voiceImport', fn: (e: Obj) => void): Promise<PluginListenerHandle>;
+}
+
+export const ExpressiveVoice = registerPlugin<ExpressiveVoicePlugin & ExpressiveVoiceEvents>('ExpressiveVoice');
 
 const CSS = `
 .tn-xlab{position:fixed;inset:0;z-index:93;background:#0e0e11;color:#e8e8ee;display:flex;flex-direction:column;
@@ -52,6 +66,13 @@ const CSS = `
 .tn-xlab .xtag{display:inline-block;font-size:11px;line-height:16px;vertical-align:middle;padding:0 6px;border-radius:8px;background:rgba(255,255,255,.1);margin-left:4px}
 .tn-xlab textarea{width:100%;box-sizing:border-box;min-height:110px;background:#18181d;color:inherit;border:1px solid #2a2a33;border-radius:10px;padding:8px;font:inherit}
 .tn-xlab .err{color:#ff9a9a}
+${
+  __FLAVOR__ === 'personal'
+    ? `.tn-xlab .xv-row{padding:8px 0;border-top:1px solid rgba(255,255,255,.07)}
+.tn-xlab .xv-row:first-of-type{border-top:0}
+.tn-xlab input[type=text]{flex:1;min-width:0;box-sizing:border-box;background:#0e0e11;color:inherit;border:1px solid #2a2a33;border-radius:10px;padding:8px;font:16px -apple-system,system-ui}`
+    : ''
+}
 `;
 
 function fmt(x: unknown, digits = 0, unit = ''): string {
@@ -77,9 +98,22 @@ function licenseNote(license: string): string {
 type SampleId = (typeof SAMPLES)[number]['id'] | 'custom';
 
 let open = false;
+/** Shows a message in the open lab (set while it is open). */
+let showMessage: ((text: string, error: boolean) => void) | null = null;
 
-export function openExpressiveLab(): void {
-  if (open) return;
+/** "Open in TachiNovel" results for .tnvoice files: open the lab with what happened (personal flavor, main.ts). */
+export function installVoiceImports(): void {
+  void ExpressiveVoice.addListener('voiceImport', (e) => {
+    const { message, error } = importEventMessage(e);
+    openExpressiveLab({ message, error });
+  }).catch(() => undefined);
+}
+
+export function openExpressiveLab(opts: { message?: string; error?: boolean } = {}): void {
+  if (open) {
+    if (opts.message) showMessage?.(opts.message, opts.error === true);
+    return;
+  }
   open = true;
   const style = document.createElement('style');
   style.textContent = CSS;
@@ -101,6 +135,15 @@ export function openExpressiveLab(): void {
   let messageIsError = false;
   let unavailable = false;
   let poll = 0;
+  if (opts.message) {
+    message = opts.message;
+    messageIsError = opts.error === true;
+  }
+  showMessage = (text, error) => {
+    message = text;
+    messageIsError = error;
+    render();
+  };
 
   const lines = (): ExpressiveLine[] => (sampleId === 'custom' ? annotate(customText) : (SAMPLES.find((s) => s.id === sampleId)?.lines ?? []));
 
@@ -157,6 +200,7 @@ export function openExpressiveLab(): void {
         <span>Queue ran dry</span><span>${fmt(s.underruns)}</span>
         <span>Fallbacks</span><span>${fallbacks}</span>
         <span>Throttled</span><span>${esc(str(s.throttle, 'no'))}</span>
+        ${obj(s.voice).name ? `<span>Voice</span><span>${esc(str(obj(s.voice).name))}${obj(s.voice).note ? `<div class="err">${esc(str(obj(s.voice).note))}</div>` : ''}</span>` : ''}
       </div>
       <div class="acts"><button type="button" data-act="stop">■ Stop</button></div>
       <h2>Lines</h2>
@@ -207,6 +251,7 @@ export function openExpressiveLab(): void {
         can't deliver in time. Narration is unchanged.</div>
       ${unavailable ? '<div class="card err">Experimental engines aren’t available in this build.</div>' : ''}
       ${message ? `<div class="card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}">${esc(message)}</div>` : ''}
+      ${voices?.view() ?? ''}
       ${
         crashes.disabled
           ? `<div class="card"><b>Turned off after crashing twice</b> (${esc(str(crashes.lastContext, ''))}).<div class="acts"><button type="button" data-act="reset-crashes">Turn back on</button></div></div>`
@@ -264,6 +309,43 @@ export function openExpressiveLab(): void {
       .finally(render);
   };
 
+  /** A call whose answer isn't the status itself (Import voice…, ▶ on a voice): `done` makes the message. */
+  const call = (p: Promise<Obj>, done: (r: Obj) => string): void => {
+    message = '';
+    messageIsError = false;
+    render();
+    void p
+      .then((r) => {
+        const s = obj(r.status && typeof r.status === 'object' ? r.status : r);
+        if (Array.isArray(s.engines)) st = s;
+        message = done(r);
+      })
+      .catch((err: unknown) => {
+        message = err instanceof Error ? err.message : String(err);
+        messageIsError = true;
+      })
+      .finally(render);
+  };
+
+  // Personal flavor: the narrator voice for Chatterbox Nano (built-in or imported; voice-import.ts). The store
+  // flavor's bundle compiles it out; an app without voice import sends no `voices` and the section stays hidden.
+  const voices =
+    __FLAVOR__ === 'personal'
+      ? createVoiceSection({
+          plugin: ExpressiveVoice,
+          status: () => st,
+          apply,
+          call,
+          message: (text, error) => {
+            message = text;
+            messageIsError = error;
+            render();
+          },
+          render,
+          root,
+        })
+      : null;
+
   const refresh = (): void => {
     void ExpressiveVoice.status()
       .then((s) => {
@@ -276,7 +358,9 @@ export function openExpressiveLab(): void {
       .finally(() => {
         // Don't re-render under the user's fingers while they type (a re-render on blur would also eat the
         // tap that caused the blur, e.g. Play right after pasting).
-        if (document.activeElement?.tagName !== 'TEXTAREA') render();
+        const typing = document.activeElement?.tagName;
+        // While a voice is being renamed the list stays put too (its Save button must not move).
+        if (typing !== 'TEXTAREA' && typing !== 'INPUT' && !voices?.editing()) render();
       });
   };
 
@@ -285,7 +369,9 @@ export function openExpressiveLab(): void {
   root.addEventListener('input', (ev) => {
     const el = ev.target as HTMLElement;
     if (el.dataset.actInput === 'custom') customText = (el as HTMLTextAreaElement).value;
+    voices?.input(el);
   });
+  root.addEventListener('keydown', (ev) => voices?.key(ev));
 
   root.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
@@ -293,9 +379,11 @@ export function openExpressiveLab(): void {
     const id = el.dataset.id ?? '';
     const act = el.dataset.act ?? '';
     if (act !== 'download' && act !== 'remove') armed = '';
+    if (voices?.click(act, id)) return;
     switch (act) {
       case 'close':
         open = false;
+        showMessage = null;
         window.clearInterval(poll);
         root.remove();
         style.remove();

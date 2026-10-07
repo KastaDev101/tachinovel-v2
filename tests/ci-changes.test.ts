@@ -59,6 +59,7 @@ describe('per-job gates', () => {
   it('voice code, its UI, the model fetch and their tests run the voice jobs', () => {
     for (const f of [
       'ios/App/HDVoice/Sources/HDVoiceCore/PCM.swift',
+      'ios/App/ExpressiveVoice/Sources/ExpressiveCore/VoicePack.swift',
       'ios/App/App/Native/Voice/KokoroService.swift',
       'ios/App/App/Native/Narration/NarrationController.swift',
       'ios/kokoro-models.lock.json',

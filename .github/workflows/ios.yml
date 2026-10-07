@@ -17,7 +17,8 @@
 #               DEVICE build packaged as an .ipa for
 #               sideloading with AltStore/SideStore and a free Apple ID (artifact
 #               "TachiNovel-<version>-<run>-unsigned.ipa"). No signing, no entitlements.
-#  voice-quality   macOS 26: HDVoice unit tests (swift test), then the BUNDLED Kokoro model loaded the way
+#  voice-quality   macOS 26: HDVoice and ExpressiveCore unit tests (swift test; ExpressiveCore holds the
+#               imported-voice checks), then the BUNDLED Kokoro model loaded the way
 #               the app does (kokoro-check): every offered voice x fixture sentences -> audio checks, time
 #               to first audio, real-time factor, memory; ASR round trip with whisper.cpp (WER <= 15%).
 #  voice-simulator macOS 26: the Debug app from ios-compile in the simulator with -tachiVoiceSelfTest:
@@ -361,6 +362,13 @@ jobs:
           key: hdvoice-spm-${{ runner.os }}-${{ hashFiles('ios/App/HDVoice/Package.swift') }}
       - name: HDVoice unit tests (scheduler, PCM, preferences, crash sentinel, ...)
         run: swift test --package-path ios/App/HDVoice
+      - name: Cache SwiftPM (ExpressiveVoice)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ios/App/ExpressiveVoice/.build
+          key: expressive-spm-${{ runner.os }}-${{ hashFiles('ios/App/ExpressiveVoice/Package.swift') }}
+      - name: ExpressiveCore unit tests (imported voices - .tnvoice checks, store, voice slot; chunking, pinned models)
+        run: swift test --package-path ios/App/ExpressiveVoice --filter ExpressiveCoreTests
       - name: Build kokoro-check
         run: swift build -c release --package-path ios/App/HDVoice --product kokoro-check
       - name: Kokoro check (every voice x fixtures, the app's loader)

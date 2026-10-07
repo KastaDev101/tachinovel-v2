@@ -13,6 +13,7 @@ import '@v1/ui/main.ts';
 import { HELP } from '@v1/ui/lib/help-data.ts';
 import { installAds } from './monetization/ads.ts';
 import { installDiagnosticsOverlay } from './native/diagnostics-overlay.ts';
+import { installVoiceImports } from './native/expressive-lab.ts';
 import { installCarHelp } from './native/help-car.ts';
 import { Narration } from './native/narration.ts';
 import { installNarrationOverlay } from './native/narration-overlay.ts';
@@ -28,8 +29,12 @@ installDiagnosticsOverlay();
 void installRecovery();
 installQaFolder();
 runSmokeTour();
-// Web updates: personal flavor only (compiled out of the store flavor).
-if (__FLAVOR__ === 'personal') installOtaUi();
+// Web updates and imported voices ("Open in TachiNovel" for .tnvoice files): personal flavor only (compiled out
+// of the store flavor).
+if (__FLAVOR__ === 'personal') {
+  installOtaUi();
+  installVoiceImports();
+}
 
 if (__ADS__) {
   let narrating = false;

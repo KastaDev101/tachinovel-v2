@@ -34,7 +34,7 @@ but only a few at a time, so they queue. A PR runs only the macOS jobs its files
 | ios-compile + simulator smoke | anything but docs (`docs/`, `*.md` except `THIRD_PARTY_NOTICES.md`, `changelog.d/`, PR/issue templates) and the UI crawler (`tests/crawler/`, `tools/ui-crawler.ts`, `tools/crawler-notify.ts`, its workflow) or this filter and its test |
 | ios-ui-tests | app code (`src/`, `ios/`, `vendor/`), what builds the bundle (`package*.json`, Capacitor config, `tools/build.ts`, `tools/v1.ts`), or the UI test's fixtures and scripts |
 | ios-ipa | native code (`ios/`), the bundle files above, `ci/ios-unsigned-ipa.sh`, `ci/ipa-size.sh`, the model fetch, or the IPA budget |
-| voice-quality, voice-simulator | the voice engine (`ios/App/HDVoice`, `Native/Voice`, `Native/Narration`, the model lock), its UI (`src/ui/native/voice*`, `narration*`, `speech*`), `src/core/narration`, the model fetch and fixture scripts, or their tests |
+| voice-quality, voice-simulator | the voice engine (`ios/App/HDVoice`, `ios/App/ExpressiveVoice`, `Native/Voice`, `Native/Narration`, the model lock), its UI (`src/ui/native/voice*`, `narration*`, `speech*`), `src/core/narration`, the model fetch and fixture scripts, or their tests |
 
 Changing `.github/workflows/ios.yml` runs everything. Pushes to `main`, tags and manual runs always run
 everything.
