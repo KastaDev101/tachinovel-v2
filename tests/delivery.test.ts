@@ -145,6 +145,32 @@ describe('feeding Nano (test A: whole sentences, then breath groups)', () => {
   });
 });
 
+describe('single quotation marks', () => {
+  it('are thoughts in a chapter that quotes speech with double marks; apostrophes never count', () => {
+    const s = script(`<p>“Such a fool…” the sword sighed.</p><p>'What was I thinking about?'</p><p>Sunny’s blade didn’t stop.</p><p>‘I don’t get it… damn!’</p>`);
+    const byText = (t: string) => s.items.find((i) => i.text.includes(t));
+    expect(byText('thinking')?.thought).toBe(true);
+    expect(byText('thinking')?.role).toBe('dialogue');
+    expect(byText('get it')?.thought).toBe(true);
+    expect(byText('blade')?.role).toBeUndefined();
+  });
+
+  it('are speech in a chapter without double marks (British style)', () => {
+    const s = script(`<p>‘Run, now. Go!’ she said.</p><p>‘I won’t.’</p><p>The boys’ room was empty.</p>`);
+    expect(s.items.find((i) => i.text.includes('Run'))?.role).toBe('dialogue');
+    const now = s.items.find((i) => i.text.includes('won'));
+    expect(now?.role).toBe('dialogue');
+    expect(now?.thought).toBeUndefined();
+    expect(s.items.find((i) => i.text.includes('room'))?.role).toBeUndefined();
+  });
+
+  it('carry a thought into the next paragraph only when that one closes it', () => {
+    const s = script(`<p>“Hm.”</p><p>'The shell protects me.</p><p>But the others… I don't know.'</p><p>He shook his head.</p>`);
+    expect([...new Set(s.items.filter((i) => i.thought).map((i) => i.block))]).toEqual([1, 2]);
+    expect(s.items.find((i) => i.text.includes('shook'))?.thought).toBeUndefined();
+  });
+});
+
 describe('the director: moods (test B)', () => {
   it('reads dialogue tags: whispered, snapped, laughed, sighed', () => {
     const s = script(

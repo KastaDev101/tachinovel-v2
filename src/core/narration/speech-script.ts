@@ -36,7 +36,19 @@
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
-import { alternateSpeakers, dialogueParts, pacedPause, phrases, rateJitter, type PacedSentence, type PhraseJson, type SpeechPartJson } from './narrator.ts';
+import {
+  alternateSpeakers,
+  dialogueParts,
+  pacedPause,
+  phrases,
+  quotedShare,
+  rateJitter,
+  singleQuoteSpans,
+  singleQuoteStyle,
+  type PacedSentence,
+  type PhraseJson,
+  type SpeechPartJson,
+} from './narrator.ts';
 import {
   DELIVERY_HEADER,
   deliveryParams,
@@ -81,6 +93,8 @@ export interface SpeechItem {
   pauseMs: number;
   /** Narrator mode: the whole sentence is dialogue (absent: narration, or mixed — see `parts`). */
   role?: 'dialogue';
+  /** A character's thought ('…' in a chapter that quotes speech with “…”): read like dialogue, a little closer. */
+  thought?: true;
   /** Narrator mode: a sentence mixing quoted speech and narration, split by role. */
   parts?: SpeechPartJson[];
   /** Narrator mode: 1 = the other speaker of an exchange (absent: 0). */
@@ -176,6 +190,7 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
     }
     items.push(item);
   }
+  singleQuotes(blocks, items);
   const meta: PacedSentence[] = items.map((it) => ({
     block: it.block,
     kind: it.kind,
@@ -192,6 +207,25 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
     if (rate !== 1) it.rate = rate;
   });
   return { frontendVersion: script.frontendVersion, textHash: script.textHash, items, delivery: DELIVERY_HEADER };
+}
+
+/** A sentence this much inside single quotation marks is a thought; in a chapter quoting speech with them (where
+ * the front-end doesn't split “‘Run,’ she said. ‘Now.’” at the quote), half of it makes it speech. Splitting such
+ * a sentence into parts like dialogueParts does is a later step. */
+const SINGLE_QUOTED_SHARE = { thought: 0.6, dialogue: 0.5 } as const;
+
+function singleQuotes(blocks: readonly SourceBlock[], items: SpeechItem[]): void {
+  const texts = blocks.map((b) => b.text);
+  if (!texts.some((t) => /['‘]/u.test(t))) return;
+  const spans = singleQuoteSpans(texts);
+  const style = singleQuoteStyle(texts);
+  for (const it of items) {
+    if (it.kind !== 'text' || it.role || it.parts) continue;
+    const s = spans[it.block];
+    if (!s?.length || quotedShare(texts[it.block] ?? '', it.start, it.end, s) < SINGLE_QUOTED_SHARE[style]) continue;
+    it.role = 'dialogue';
+    if (style === 'thought') it.thought = true;
+  }
 }
 
 /**
