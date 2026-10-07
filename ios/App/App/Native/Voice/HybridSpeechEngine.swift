@@ -133,7 +133,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             var audio = DeliveryAudio()
             // The recorded inhales are unit-RMS snippets; −30 dB under the speech was the approved level (round 8).
             if !pack.isEmpty { audio.breathDB = -30 }
-            let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() : pack) : nil
+            let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
             natural = NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen))
         } else {
             natural = nil
