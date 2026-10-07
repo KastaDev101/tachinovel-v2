@@ -99,6 +99,7 @@ export function installCarMode(): CarMode {
   root.className = 'tn-car';
   root.hidden = true;
   root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true'); // full screen: VoiceOver must not reach the screen behind
   root.setAttribute('aria-label', 'Car player');
   root.dataset.testid = 'car-player';
   document.body.append(root);
