@@ -182,7 +182,8 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await toast.waitFor({ state: 'visible', timeout: 3000 });
     // Measured where it settles (it slides up 24 px as it appears).
     await toast.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
-    const overlap = await shell.page.evaluate(() => {
+    // Measured until settled: the mini player may still be sliding (it follows the bars) when the toast appears.
+    const measure = () => shell.page.evaluate(() => {
       const t = document.querySelector('.toast')?.getBoundingClientRect();
       const boxes = { listen: document.querySelector('[data-testid="screen-reader"] [data-testid="reader-listen"]'), player: document.querySelector('.tn-player:not([hidden])') };
       const out: Record<string, string> = {};
@@ -198,7 +199,7 @@ describe('narration overlay over v1 screens (PC shell)', () => {
       }
       return out;
     });
-    expect(overlap).toEqual({ listen: 'clear', player: 'clear' });
+    await expect.poll(measure, { timeout: 2000 }).toEqual({ listen: 'clear', player: 'clear' });
     await toast.waitFor({ state: 'hidden', timeout: 8000 });
     await top().locator('.rd-top button[aria-label="Remove bookmark"]').click();
   });

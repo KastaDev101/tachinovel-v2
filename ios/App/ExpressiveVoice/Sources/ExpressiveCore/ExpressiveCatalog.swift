@@ -1,0 +1,201 @@
+//
+//  ExpressiveCatalog.swift — the experimental engines, what each can act on, and how a line of a novel
+//  (text + emotion + style + speaker role, see src/ui/native/expressive-samples.ts) becomes engine input.
+//
+//  Chatterbox Nano   inline tags in the text: style/emotion tags at the start ([angry], [whispering], …)
+//                    and sound events where they occur ([laugh], [sigh], [gasp], …). One built-in voice.
+//                    ≤ 9.9 s of audio per call → lines are cut into ≤ 120-character chunks.
+//  NeuTTS-2E         an emotion per call (angry, disgusted, fearful, happy, neutral, sad, surprised) and one
+//                    of four speakers (emily, paul, sophie, steven): narrator and characters get different
+//                    voices. Tags are removed from the text.
+//  Pocket TTS        plain text, one voice per call (voice prompt "alba"), streaming; no emotion control.
+//
+
+import Foundation
+
+public enum ExpressiveEngineID: String, CaseIterable, Sendable, Codable {
+    case chatterboxNano = "chatterbox-nano"
+    case neutts2e = "neutts-2e"
+    case pocketTts = "pocket-tts"
+
+    public var pinned: PinnedEngineModel? { PinnedModels.model(rawValue) }
+
+    public var title: String {
+        switch self {
+        case .chatterboxNano: return "Chatterbox Nano"
+        case .neutts2e: return "NeuTTS-2E"
+        case .pocketTts: return "Pocket TTS"
+        }
+    }
+
+    public var blurb: String {
+        switch self {
+        case .chatterboxNano: return "Resemble AI, 110M. Acts on tags: [angry], [whispering], [laugh], [sigh], [gasp]… One voice."
+        case .neutts2e: return "Neuphonic, 236M. Seven emotions, four speakers (narrator and characters get their own voice)."
+        case .pocketTts: return "Kyutai, 100M. Natural, streaming, voice cloning; no emotion control."
+        }
+    }
+
+    /// Core ML puts (part of) the model on the GPU, which iOS forbids in the background: such an engine only
+    /// renders while the app is in the foreground (the lab falls back to Kokoro on the lock screen).
+    public var usesGPU: Bool {
+        switch self {
+        case .chatterboxNano, .neutts2e: return true
+        case .pocketTts: return false
+        }
+    }
+
+    /// Longest text per synthesis call (characters); longer lines are chunked (TextChunker).
+    public var maxCharactersPerCall: Int {
+        switch self {
+        case .chatterboxNano: return 120 // ≤ 247 speech tokens ≈ 9.9 s of audio with the built-in voice
+        case .neutts2e: return 220 // 768-token prefill window incl. the speaker reference
+        case .pocketTts: return 400 // FluidAudio chunks internally as well
+        }
+    }
+
+    public var sampleRate: Int { 24_000 }
+
+    /// Chatterbox Nano and NeuTTS-2E keep their KV cache in Core ML MLState (iOS 18 / macOS 15).
+    public var needsIOS18: Bool { self != .pocketTts }
+}
+
+/// One line to speak, as the Voice Lab sends it.
+public struct ExpressiveLine: Sendable, Equatable, Codable {
+    public var text: String
+    /// neutral, happy, sad, angry, fearful, surprised, disgusted
+    public var emotion: String
+    /// whisper, dramatic, sarcastic, narration (Chatterbox tags only)
+    public var style: String?
+    /// narrator, male, female
+    public var role: String
+
+    public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
+        self.text = text
+        self.emotion = emotion
+        self.style = style
+        self.role = role
+    }
+}
+
+public enum StyleMapper {
+    /// Chatterbox Nano's sound-event tags (tokenizer added tokens); kept inline for Chatterbox, removed otherwise.
+    public static let soundTags = ["laugh", "chuckle", "sigh", "gasp", "cough", "sniff", "groan", "shush", "clear throat"]
+
+    public static let neuttsEmotions = ["angry", "disgusted", "fearful", "happy", "neutral", "sad", "surprised"]
+    public static let neuttsSpeakers = ["emily", "paul", "sophie", "steven"]
+
+    /// Text without sound tags and without the spaces they leave behind.
+    public static func plainText(_ text: String) -> String {
+        var out = text
+        for tag in soundTags {
+            out = out.replacingOccurrences(of: "[\(tag)]", with: " ", options: .caseInsensitive)
+        }
+        out = out.replacingOccurrences(of: "\\s+([,.!?;:…”’])", with: "$1", options: .regularExpression)
+        out = out.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The tag Chatterbox Nano gets in front of a line (style first, else the emotion), or nil.
+    public static func chatterboxLeadTag(_ line: ExpressiveLine) -> String? {
+        switch line.style ?? "" {
+        case "whisper": return "[whispering]"
+        case "dramatic": return "[dramatic]"
+        case "sarcastic": return "[sarcastic]"
+        case "narration": return "[narration]"
+        default: break
+        }
+        switch line.emotion {
+        case "angry": return "[angry]"
+        case "fearful": return "[fear]"
+        case "surprised": return "[surprised]"
+        case "happy": return "[happy]"
+        default: return nil // neutral, sad (carried by [sigh]/[crying] in the text if wanted), disgusted
+        }
+    }
+
+    /// Chatterbox input chunks: the lead tag in front of every chunk, sound tags left where they are.
+    public static func chatterboxChunks(_ line: ExpressiveLine, limit: Int) -> [String] {
+        let prefix = chatterboxLeadTag(line).map { "\($0) " } ?? ""
+        let room = max(20, limit - prefix.count)
+        let body = line.text.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return TextChunker.chunks(body, limit: room).map { prefix + $0 }
+    }
+
+    public static func neuttsEmotion(_ line: ExpressiveLine) -> String {
+        if neuttsEmotions.contains(line.emotion) { return line.emotion }
+        return "neutral"
+    }
+
+    /// Narrator and characters get distinct NeuTTS speakers (the narrator's can be chosen).
+    public static func neuttsSpeaker(role: String, narrator: String = "emily") -> String {
+        let n = neuttsSpeakers.contains(narrator) ? narrator : "emily"
+        switch role {
+        case "male": return n == "paul" ? "steven" : "paul"
+        case "female": return n == "sophie" ? "emily" : "sophie"
+        default: return n
+        }
+    }
+}
+
+public enum TextChunker {
+    /// Split `text` into pieces of at most `limit` characters: at sentence ends if possible, else at
+    /// ; : , or a dash, else at a space. A [tag] is never cut. Pieces are trimmed and never empty.
+    public static func chunks(_ text: String, limit: Int) -> [String] {
+        let limit = max(8, limit)
+        var rest = Array(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        var out: [String] = []
+        while rest.count > limit {
+            let cut = splitIndex(rest, limit: limit)
+            let piece = String(rest[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !piece.isEmpty { out.append(piece) }
+            rest = Array(String(rest[cut...]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let last = String(rest).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !last.isEmpty { out.append(last) }
+        return out
+    }
+
+    /// Index to cut at (exclusive end of the first piece), 1...limit.
+    static func splitIndex(_ chars: [Character], limit: Int) -> Int {
+        var inTag = [Bool](repeating: false, count: chars.count)
+        var open = false
+        for (i, c) in chars.enumerated() {
+            if c == "[" { open = true }
+            inTag[i] = open
+            if c == "]" { open = false }
+        }
+        let minPiece = limit / 3
+        func best(_ isBreak: (Int) -> Bool) -> Int? {
+            var i = min(limit, chars.count) - 1
+            while i >= minPiece {
+                if !inTag[i], isBreak(i) { return i + 1 }
+                i -= 1
+            }
+            return nil
+        }
+        let sentenceEnd: Set<Character> = [".", "!", "?", "…"]
+        let closers: Set<Character> = ["\"", "”", "’", ")"]
+        let clause: Set<Character> = [";", ":", ",", "—", "–"]
+        let atSentenceEnd: (Int) -> Bool = { k in
+            sentenceEnd.contains(chars[k]) && (k + 1 >= chars.count || chars[k + 1] == " " || closers.contains(chars[k + 1]))
+        }
+        if let end = best(atSentenceEnd) {
+            // Keep a closing quote with its sentence.
+            var j = end
+            while j < chars.count, j < limit, closers.contains(chars[j]) { j += 1 }
+            return j
+        }
+        if let cut = best({ clause.contains(chars[$0]) }) { return cut }
+        if let cut = best({ chars[$0] == " " }) { return cut }
+        // No break at all (one huge word): hard cut, outside a tag if possible.
+        var i = min(limit, chars.count)
+        while i > 1, inTag[i - 1], chars[i - 1] != "]" { i -= 1 }
+        if i <= 1, inTag[0], let close = chars.firstIndex(of: "]") {
+            // The piece starts with a tag longer than the limit: keep the tag whole (a slightly long piece).
+            return close + 1
+        }
+        return max(1, i)
+    }
+}

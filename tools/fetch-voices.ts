@@ -35,8 +35,12 @@ export const LOCK_PATH = path.join(root, 'ios', 'kokoro-models.lock.json');
 export const OUT_DIR = path.join(root, 'ios', 'App', 'App', 'KokoroModels');
 const CACHE_ROOT = path.join(root, '.cache', 'kokoro');
 
-/** Voices the app offers (docs/voices.md). af_heart ships pre-converted as ANE/af_heart.bin. */
-export const VOICES = ['af_heart', 'af_bella', 'bf_emma', 'am_michael', 'am_fenrir', 'bm_george'] as const;
+/** Voices the app offers: all 28 English ones (VoiceCatalog.swift, docs/voices.md). af_heart ships pre-converted as ANE/af_heart.bin. */
+export const VOICES = [
+  'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_alloy', 'af_nova', 'af_sky', 'af_jessica', 'af_river',
+  'am_fenrir', 'am_michael', 'am_puck', 'am_echo', 'am_eric', 'am_liam', 'am_onyx', 'am_santa', 'am_adam',
+  'bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily', 'bm_fable', 'bm_george', 'bm_lewis', 'bm_daniel',
+] as const;
 
 /** Paths (relative to the HF repo root) that make up the bundle. Directories are expanded recursively. */
 const CHAIN_BUNDLES = [
