@@ -49,6 +49,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
+    /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
+    /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
+    private var natural: NaturalFinish?
 
     private(set) var currentSource: VoiceSource?
     private(set) var lastFallback: FallbackReason?
@@ -124,6 +127,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         currentSource = nil
         lastFallback = nil
         let prefs = VoiceSettings.shared.prefs
+        let d = prefs.delivery
+        natural = listenEngine != nil && d.natural
+            ? NaturalFinish(audio: DeliveryAudio(), studioSound: d.studioSound, breaths: d.breaths ? ProceduralBreath() : nil, seed: UInt64(truncatingIfNeeded: gen))
+            : nil
         var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: prefs.clampedAhead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         scheduler = s
@@ -290,7 +297,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             scheduler?.renderDone(i, ok: true)
             if scheduler?.isReady(i) == true {
                 let frames: [Float]
-                if var p = polish, audio.sampleRate == p.sampleRate {
+                if var nf = natural, audio.sampleRate == nf.sampleRate {
+                    // Natural delivery: the clean-warm chain, rate leveling and the listener's speed (the expressive
+                    // engine has no speed of its own), the pause after and a breath inside it when the lung budget
+                    // says so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump.
+                    let seg = segments[i]
+                    let expressive = voice == listenEngine?.rawValue
+                    let line = NaturalFinish.Line(params: nil, letters: seg.kokoroText.count, pause: seg.pauseAfter,
+                                                  breath: Self.breathPoint(after: seg), seed: UInt64(truncatingIfNeeded: seg.id))
+                    let unit = NaturalFinish.Unit(samples: audio.samples, lines: [line], speed: expressive ? Double(seg.rate) : 1, expressive: expressive)
+                    frames = nf.render(unit).flatMap(\.frames)
+                    natural = nf
+                } else if var p = polish, audio.sampleRate == p.sampleRate {
                     frames = p.prepareSentence(audio.samples, pause: segments[i].pauseAfter)
                     polish = p
                 } else {
@@ -701,6 +719,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     // MARK: - Environment
+
+    /// Where a breath may go in the pause after a sentence: a paragraph's end (a long pause) or a sentence's end. The
+    /// lung budget (BreathPlanner) decides whether one actually goes there; it never adds time.
+    private static func breathPoint(after seg: SpeechSegment) -> BreathPoint? {
+        if seg.pauseAfter >= 0.6 { return .paragraph }
+        if seg.pauseAfter >= 0.3 { return .sentence }
+        return nil
+    }
 
     /// The expressive engine can render the next sentence right now.
     private func expressiveUsable() -> Bool {
