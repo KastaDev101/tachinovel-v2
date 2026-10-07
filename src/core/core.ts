@@ -21,6 +21,7 @@ import { emptyLexiconStore, lexiconsFor, paragraphMapper, speechScript, type Lex
 import { narrationScript, type NarrationParagraph } from './narration/text.ts';
 import { createNativePlatform, type NativePlatform } from './platform.ts';
 import { createGatedLoader, jsPluginsAllowed } from './sources/gate.ts';
+import { type CheckResult, Ota } from './ota/ota.ts';
 
 /** v2-only methods (not in v1's BridgeMethods). Same envelope format. */
 export interface V2Methods {
@@ -62,6 +63,10 @@ export interface V2Methods {
   'diagnostics.clearReports': { args: void; result: { removed: number } };
   /** Where the synced store lives, for v2's wording (src/ui/native/v2-text.ts). */
   'v2.storage': { args: void; result: { kind: StorageKind } };
+  /** Web updates (personal flavor; ota/ota.ts): what runs, what is staged for the next launch. */
+  'ota.status': { args: void; result: ReturnType<Ota['status']> | null };
+  /** Check now (force skips the 6-hour pacing); stages a newer signed bundle for the next launch. */
+  'ota.check': { args: { force?: boolean } | undefined; result: CheckResult };
 }
 
 /** iCloud (entitled builds), the app's Documents folder (free sideload, shown in Files), or device-only. */
@@ -124,6 +129,19 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     flushLogs: () => platform.flushLogs({ mirror: false }),
   });
   app.attachEvents((event, payload) => host.emit(event, JSON.stringify(payload ?? null)));
+
+  // Web updates: personal flavor only; the store flavor compiles all of it out (App Store rules).
+  const ota =
+    __FLAVOR__ === 'personal' ? new Ota(host, platform, { flavor: __FLAVOR__, version: __BUILD_VERSION__, builtAt: __BUILD_TIME__, now: Date.now() }) : null;
+  if (ota) {
+    try {
+      ota.reconcile();
+    } catch (err) {
+      platform.log('warn', `Web update state: ${errorMessage(err)}`);
+    }
+    // A quiet check once the app has settled (paced to every 6 h; a launch for background work skips it).
+    if (host.info.launchReason === 'ui') host.timers.set(20_000, () => void ota.check({ now: Date.now() }));
+  }
 
   const v1 = app.handlers as unknown as Record<string, AnyHandler>;
 
@@ -210,6 +228,7 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       const check = v1['library.checkUpdates'] as (a: unknown) => Promise<{ newChapters: number }>;
       const timedOut = platform.sleep(budget).then(() => null);
       const result = await Promise.race([check({}).catch(() => null), timedOut]);
+      if (ota) await Promise.race([ota.check({ now: Date.now() }), platform.sleep(5000)]);
       await app.flush();
       return result ? { newChapters: result.newChapters, checked: true } : { newChapters: 0, checked: false };
     },
@@ -248,6 +267,11 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       const kind: StorageKind = synced.isSynced ? 'icloud' : synced.root === local.root ? 'device' : 'documents';
       return Promise.resolve({ kind });
     },
+    'ota.status': () => Promise.resolve(ota ? ota.status() : null),
+    'ota.check': (args) =>
+      ota
+        ? ota.check({ force: args?.force === true, now: Date.now() })
+        : Promise.resolve({ status: 'not-configured' as const, message: 'Web updates are not part of this build.' }),
   };
   const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>) };
 
@@ -264,7 +288,10 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     try {
       const result = await fn(env.args as never);
       // The UI booted from the new free-sideload layout: its old copies may go at the next launch.
-      if (env.method === 'app.boot') platform.layout?.confirm();
+      if (env.method === 'app.boot') {
+        platform.layout?.confirm();
+        ota?.confirmBoot(Date.now());
+      }
       return respond(id, result);
     } catch (err) {
       return fail(id, err);

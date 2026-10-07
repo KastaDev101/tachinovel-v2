@@ -5,7 +5,8 @@
  *  - state():      where the app is (modal / top screen / sub-tab), as a stable signature
  *  - enumerate():  every visible interactive element of the active region, tagged data-qa-id
  *  - fingerprint(): a cheap hash of what's visible (text, control states, scroll positions)
- *  - layout():     horizontal escapes, content hidden behind the tab bar, controls under the safe areas
+ *  - layout():     horizontal escapes, content hidden behind the tab bar, controls under the safe areas,
+ *                  full-screen dialogs that aren't aria-modal
  */
 
 export interface RuntimeConfig {
@@ -66,7 +67,8 @@ export interface ControlInfo {
 }
 
 export interface LayoutIssue {
-  kind: 'h-overflow' | 'escape' | 'behind-fixed' | 'safe-area';
+  /** not-modal: a dialog covers the screen without aria-modal, so VoiceOver still reaches what's behind it. */
+  kind: 'h-overflow' | 'escape' | 'behind-fixed' | 'safe-area' | 'not-modal';
   detail: string;
 }
 
@@ -493,6 +495,11 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
     const se = document.scrollingElement ?? document.documentElement;
     if (se.scrollWidth > innerWidth + 1) issues.push({ kind: 'h-overflow', detail: `page is ${se.scrollWidth}px wide in a ${innerWidth}px viewport` });
     const roots = activeRoots();
+    const m = modalRoot();
+    if (m?.getAttribute('role') === 'dialog' && m.getAttribute('aria-modal') !== 'true') {
+      const r = m.getBoundingClientRect();
+      if (r.width * r.height >= innerWidth * innerHeight * 0.8) issues.push({ kind: 'not-modal', detail: `${describe(m)} covers the screen without aria-modal="true": VoiceOver still reads and taps the screen behind it` });
+    }
     const seen = new Set<string>();
     for (const root of roots) {
       for (const el of root.querySelectorAll('*')) {

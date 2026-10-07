@@ -97,6 +97,7 @@ export function openVoiceLab(): void {
   root.className = 'tn-lab';
   root.dataset.testid = 'voice-lab';
   root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true'); // full screen: VoiceOver must not reach the screen behind
   root.setAttribute('aria-label', 'Voice Lab');
   root.innerHTML = '<div class="hd"><h1>Voice Lab</h1><button type="button" data-act="close">Close</button></div><div class="body"></div>';
   document.body.append(root);

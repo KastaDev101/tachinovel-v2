@@ -28,6 +28,8 @@ class MainViewController: CAPBridgeViewController {
             recovery = wrapper
             webView.navigationDelegate = wrapper
         }
+        bridge?.registerPluginInstance(DiagFolderPlugin())
+        DiagnosticsFolder.shared.start(webView: webView)
         view.backgroundColor = UIColor(red: 0x1b / 255, green: 0x1b / 255, blue: 0x1f / 255, alpha: 1)
         #if DEBUG
         installSmokeHook()
@@ -57,6 +59,19 @@ class MainViewController: CAPBridgeViewController {
         webView?.configuration.userContentController.addUserScript(script)
     }
     #endif
+
+    /// A staged web update (WebBundle.swift) replaces the app's own web assets for this launch.
+    override open func instanceDescriptor() -> InstanceDescriptor {
+        let descriptor = super.instanceDescriptor()
+        if WebBundle.current.id != nil { descriptor.appLocation = WebBundle.current.root }
+        return descriptor
+    }
+
+    /// Shake → "Report a Problem" when the phone QA folder is linked (DiagnosticsFolder.swift).
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        if motion == .motionShake { DiagnosticsFolder.shared.reportFromShake() }
+        super.motionEnded(motion, with: event)
+    }
 
     override open func router() -> Router {
         TachiRouter()
