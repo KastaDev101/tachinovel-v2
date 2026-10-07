@@ -47,6 +47,19 @@ download: pick it from Files in the install step below.
 Install: AltStore › **My Apps** › **+** (top left) → pick the `.ipa` in Files. The first install takes
 ~30 s. The app appears on the home screen as "TachiNovel".
 
+**Updates from AltStore (once):** AltStore › **Sources** › **+** → paste
+`https://github.com/KastaDev101/tachinovel-v2/releases/download/altstore-source/apps.json` → Add.
+Every release (each `v*` tag) rewrites that file, so new builds show up in AltStore as **Update** on
+TachiNovel; tap it. AltStore installs through AltServer on the PC:
+
+- **With the USB cable** (AltServer running): works now.
+- **Over Wi-Fi**: AltServer finds the phone with Apple's **Bonjour** service, which isn't installed on
+  this PC yet (it comes with iTunes from apple.com, or as "Bonjour Print Services for Windows"). Until
+  then, plug the phone in to update, or use AltServer's tray menu › **Sideload .ipa** with a downloaded
+  IPA (hold Shift while clicking "Install AltStore" if that item isn't shown).
+
+The source only lists releases, not every CI build; option B above still works for in-between builds.
+
 The IPA is the **sideload variant**: it has no entitlements a free account can't sign (iCloud, CarPlay,
 push, App Groups, Associated Domains). What that means while you test:
 

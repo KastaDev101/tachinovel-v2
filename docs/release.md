@@ -79,6 +79,13 @@ The repository is public, so releases and their IPAs are public. The IPA is the 
 (repository variable `FLAVOR` overrides it), unsigned, with no entitlements: AltStore/SideStore re-sign
 it on the phone ([how-to-test-tonight.md](how-to-test-tonight.md)).
 
+**AltStore source.** After publishing, the workflow writes `apps.json` (AltStore's source format,
+`tools/altstore-source.ts`) with this release's IPA as the newest version (bundle id, version, build,
+minimum iOS and privacy strings read from the IPA's own Info.plist; `downloadURL` = this release's
+versioned asset) and uploads it to the rolling release **`altstore-source`** (created on first use, not
+a pre-release, never deleted; the file is replaced with `--clobber`). Stable URL for AltStore:
+`https://github.com/KastaDev101/tachinovel-v2/releases/download/altstore-source/apps.json`.
+
 ## Verifying a download
 
 ```sh
