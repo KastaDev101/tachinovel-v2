@@ -315,9 +315,9 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
         let speed = call.getDouble("speed")
         let volume = call.getDouble("volume")
-        let narrator = call.getObject("narrator")
         DispatchQueue.main.async {
             let novel = call.getObject("novel")
+            let narrator = call.getObject("narrator")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }

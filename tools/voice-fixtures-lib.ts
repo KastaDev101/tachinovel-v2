@@ -16,6 +16,10 @@ export interface VoiceFixture {
   runs?: SpeechRunJson[];
   /** Part of the ASR round trip (word error rate) — sentences without numbers or invented names. */
   asr?: boolean;
+  /** Narrator mode (speech-script.ts): all dialogue, or its parts by role; the jitter factor. */
+  role?: 'dialogue';
+  parts?: { role: 'narration' | 'dialogue'; text: string; runs?: SpeechRunJson[] }[];
+  rate?: number;
 }
 
 /** A novel's lexicon, as the user would enter it (phonemes in misaki notation). */
@@ -40,6 +44,15 @@ export function buildFixtures(): VoiceFixture[] {
     const script = speechScript([{ text: s.text, tag: 'p' }], { lexicons: [FIXTURE_LEXICON] });
     if (script.items.length !== 1) throw new Error(`fixture ${s.id} must be one sentence, got ${script.items.length}`);
     const item = script.items[0] as (typeof script.items)[number];
-    return { id: s.id, label: s.label, text: item.text, ...(item.runs ? { runs: item.runs } : {}), ...(s.asr ? { asr: true } : {}) };
+    return {
+      id: s.id,
+      label: s.label,
+      text: item.text,
+      ...(item.runs ? { runs: item.runs } : {}),
+      ...(s.asr ? { asr: true } : {}),
+      ...(item.role ? { role: item.role } : {}),
+      ...(item.parts ? { parts: item.parts.map((p) => ({ role: p.role, text: p.text, ...(p.runs ? { runs: p.runs } : {}) })) } : {}),
+      ...(item.rate !== undefined ? { rate: item.rate } : {}),
+    };
   });
 }

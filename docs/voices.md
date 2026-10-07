@@ -94,6 +94,36 @@ novel's voice.
 - **What sounds good:** two similar voices, or one voice clearly in front (20–40 % of the other). Halfway
   between a female and a male voice, or between accents, can sound odd.
 
+## Narrator mode
+
+Settings › Voices › **Narrator mode** (off by default). Each piece has its own switch, and **▶ Without /
+▶ With** reads a short test passage both ways. The Voice Lab has the same A/B with the switches.
+
+- **Dialogue voice:** words in quotation marks are read in another voice (a voice or a mix). A sentence
+  that mixes speech and narration ("“Run,” she said.") is read in parts with a short gap between them.
+  The script marks each sentence (src/core/narration/narrator.ts, on v1's front-end), so resume points and
+  highlighting don't change.
+- **Second speaker (optional):** every other paragraph of an exchange uses a second dialogue voice. Novels
+  usually start a new paragraph for each speaker, so this is right most of the time, not always.
+- **Natural pauses:** the pause after a sentence follows its ending (? ! … : —) and its length. Quick
+  exchanges of short lines are tighter, the end of a long paragraph gets more room, and a change of
+  speaker always gets a pause.
+- **Natural variation:** each sentence is read up to 3 % faster or slower. The amount comes from the
+  sentence's own text, so the same sentence always sounds the same, and prepared audio stays valid.
+- **Studio sound:** a high-pass at 70 Hz, a little warmth (+1.5 dB at 180 Hz) and presence (+2 dB at 3.2 kHz),
+  and softer sibilants (−2.5 dB at 7 kHz), then a gentle 2:1 compressor. Loudness is brought toward
+  −16 LUFS (ITU-R BS.1770 gated loudness measured over the chapter, so a whispered line stays quieter),
+  with peaks kept at or below −1 dBFS. This is HDVoiceCore Polish.swift, on Kokoro's samples before they
+  play. The Apple fallback voice isn't polished.
+- **Room tone (with studio sound):** a faint pink-noise bed at −58 dBFS instead of digital silence.
+- **Prepare for the drive** renders with the same plan and polish, and files the audio under the voice plus
+  the narrator settings. Turning narrator mode on or changing it therefore re-prepares chapters instead of
+  playing audio made without it.
+- **CI (voice-quality):** kokoro-check reads the ASR sentences in narrator mode (Heart narrates, Michael
+  speaks the dialogue, with jitter and polish). It checks peaks and loudness, and the ASR round trip holds
+  those files to 5 % WER or less. HDVoiceCore tests cover the loudness meter against the BS.1770
+  reference (a 997 Hz sine at 0 dBFS reads −3.01 LUFS), the filters, the compressor and the plan.
+
 ## The bundled model
 
 - **What:** FluidAudio's 7-stage Core ML build of Kokoro-82M v1.0 (fp16 + int8-palettized weights, the

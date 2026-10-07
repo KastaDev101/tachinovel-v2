@@ -36,6 +36,9 @@ export function wordErrorRate(reference: string, hypothesis: string): number {
   return (prev[h.length] ?? 0) / r.length;
 }
 
+/** Narrator mode's WER limit (kokoro-check writes its audio as "narrator--<id>.wav"). */
+export const NARRATOR_MAX_WER = 0.05;
+
 if (import.meta.main) {
   const [fixturesPath, dir, maxArg] = process.argv.slice(2);
   if (!fixturesPath || !dir) {
@@ -62,7 +65,8 @@ if (import.meta.main) {
       const wer = wordErrorRate(s.text, heard);
       checked++;
       const line = `${base}: WER ${(wer * 100).toFixed(1)}%\n  spoken: ${s.text}\n  heard:  ${heard}`;
-      if (wer > maxWer) {
+      // Narrator mode is held to a stricter bar (dialogue voice, jitter and polish must not cost words).
+      if (wer > (prefix === 'narrator' ? Math.min(maxWer, NARRATOR_MAX_WER) : maxWer)) {
         failed++;
         console.log(`::error::ASR ${line}`);
       } else {

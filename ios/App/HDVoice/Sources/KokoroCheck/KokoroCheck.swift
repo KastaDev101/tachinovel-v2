@@ -9,9 +9,11 @@
 //    - duration within a plausible speaking rate (words per minute),
 //    - time to first audio and real-time factor (logged; fails only on gross regressions),
 //    - memory released after the model is dropped,
-//    - a mix sounds like neither of its two voices alone (the blend reached the model).
-//  Writes report.json and WAVs (af_heart, and "mix--" for the first mix, for the ASR round trip in
-//  ci/voice-asr.ts).
+//    - a mix sounds like neither of its two voices alone (the blend reached the model),
+//    - narrator mode (Narrator.swift + Polish.swift) on the ASR sentences: quoted parts in a dialogue voice,
+//      jitter and polish; peaks ≤ −1 dBFS and loudness near −16 LUFS.
+//  Writes report.json and WAVs (af_heart; "mix--" for the first mix; "narrator--" for narrator mode, held
+//  to ≤ 5 % WER) for the ASR round trip in ci/voice-asr.ts.
 //
 //  Usage: swift run -c release kokoro-check --models <dir> --fixtures <json> --out <dir> [--route ane-cpu]
 //
@@ -26,12 +28,38 @@ struct Fixture: Decodable {
         let t: String?
         let p: String?
     }
+    struct Part: Decodable {
+        let role: String
+        let text: String
+        let runs: [Run]?
+    }
     let id: String
     let label: String
     let text: String
     let runs: [Run]?
     let asr: Bool?
+    let role: String?
+    let parts: [Part]?
+    let rate: Double?
+
+    static func speechRuns(_ runs: [Run]?) -> [SpeechRun]? {
+        let out: [SpeechRun]? = runs?.compactMap { r in
+            if let p = r.p { return SpeechRun.phonemes(p) }
+            if let t = r.t { return SpeechRun.text(t) }
+            return nil
+        }
+        return out?.isEmpty == false ? out : nil
+    }
+
+    var narrator: NarratorSentence {
+        NarratorSentence(text: text, runs: Fixture.speechRuns(runs), quoted: role == "dialogue",
+                         parts: parts.map { $0.map { NarratorSentence.Part(dialogue: $0.role == "dialogue", text: $0.text, runs: Fixture.speechRuns($0.runs)) } },
+                         pauseMs: 320, rate: rate)
+    }
 }
+
+/// Narrator mode as checked in CI: Heart narrates, Michael speaks the dialogue.
+let checkedNarrator = NarratorSettings.all(dialogueVoice: "am_michael")
 
 /// Voice mixes checked like a voice, on every fixture (blend strings, VoiceMix.swift). The first also goes
 /// through the ASR round trip.
@@ -154,6 +182,33 @@ struct KokoroCheck {
                              "synthMs": audio.synthMs, "x": x, "clipped": clipped, "nonFinite": nonFinite])
                 print(String(format: "%-11@ %-10@ %5.2f s  rms %.3f  %3.0f wpm  synth %5.0f ms  %5.1f× RT", voice, f.id, seconds, rms, wpm, audio.synthMs, x))
             }
+        }
+
+        // Narrator mode on the ASR sentences, through the same plan and polish as the app.
+        var polish = NarrationPolish(sampleRate: 24_000, roomTone: false)
+        for f in fixtures where f.asr == true {
+            let s = f.narrator
+            let speed = NarratorPlan.rate(1, for: s, settings: checkedNarrator)
+            let parts = NarratorPlan.parts(for: s, settings: checkedNarrator) { VoiceCatalog.voice($0) != nil ? $0 : nil }
+                ?? [NarratorPart(text: f.text, runs: Fixture.speechRuns(f.runs), voice: nil)]
+            var pieces: [[Float]] = []
+            do {
+                for p in parts {
+                    pieces.append(try await runtime.synthesize(text: p.text, runs: p.runs, voice: p.voice ?? VoiceCatalog.defaultVoiceId, speed: speed).samples)
+                }
+            } catch {
+                problems.append("narrator/\(f.id): synthesis failed: \(error.localizedDescription)")
+                continue
+            }
+            let joined = PCM.joinParts(pieces, sampleRate: 24_000, gap: NarratorPlan.partGap)
+            let audioOut = polish.prepareSentence(joined, pause: 0.3)
+            let peak = PCM.peak(audioOut)
+            let lufs = LoudnessMeter.integrated(audioOut, sampleRate: 24_000)
+            if peak > NarrationPolish.peakCeiling + 0.01 { problems.append("narrator/\(f.id): peak \(peak) above −1 dBFS") }
+            if audioOut.contains(where: { !$0.isFinite }) { problems.append("narrator/\(f.id): NaN/Inf samples") }
+            print(String(format: "narrator    %-10@ %d part(s)  peak %.2f  %.1f LUFS", f.id, parts.count, peak, lufs ?? -99))
+            rows.append(["voice": "narrator", "id": f.id, "parts": parts.count, "peak": Double(peak), "lufs": lufs ?? -99])
+            try WAV.pcm16(audioOut, sampleRate: 24_000).write(to: out.appendingPathComponent("narrator--\(f.id).wav"))
         }
 
         // A mix must not come out as one of its voices (the blended style reached the chain).

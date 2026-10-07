@@ -6,7 +6,9 @@
  *  - the mix is listed under "Your mixes", can be the default voice, and is offered for one novel (Listen
  *    player › Voice, without Edit there);
  *  - Edit keeps the mix's id; the same voice twice can't be saved; Delete needs a second tap and sends
- *    the default back to Heart.
+ *    the default back to Heart;
+ *  - Narrator mode: its switches and dialogue voice are saved, and ▶ Without / ▶ With play the test passage
+ *    with narrator mode off / on.
  */
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -23,7 +25,12 @@ interface Mix {
   b: string;
   percent: number;
 }
-const prefs = { defaultVoice: 'af_heart', novelVoices: {} as Record<string, string>, customVoices: [] as Mix[] };
+const prefs = {
+  defaultVoice: 'af_heart',
+  novelVoices: {} as Record<string, string>,
+  customVoices: [] as Mix[],
+  narrator: { enabled: false, dialogueVoice: null as string | null, secondDialogueVoice: null as string | null, pacing: true, jitter: true, polish: true, roomTone: false },
+};
 const voices = [
   { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm', grade: 'A', gradeRank: 13 },
   { id: 'af_bella', name: 'Bella', language: 'en-US', gender: 'female', blurb: 'bright', grade: 'A-', gradeRank: 12 },
@@ -43,6 +50,7 @@ describe('voice mixer (PC shell)', () => {
       return {
         voices,
         customVoices: prefs.customVoices.map((m) => ({ ...m })),
+        narrator: { ...prefs.narrator },
         defaultVoice: prefs.defaultVoice,
         kokoroEnabled: true,
         usePCAudio: false,
@@ -52,8 +60,9 @@ describe('voice mixer (PC shell)', () => {
       };
     });
     shell.pluginReplies.set('Narration.setVoiceSettings', (o) => {
-      const a = o as { defaultVoice?: string; novel?: { pluginId: string; novelPath: string; voice: string | null } };
+      const a = o as { defaultVoice?: string; novel?: { pluginId: string; novelPath: string; voice: string | null }; narrator?: Partial<typeof prefs.narrator> };
       if (a.defaultVoice) prefs.defaultVoice = a.defaultVoice;
+      if (a.narrator) Object.assign(prefs.narrator, a.narrator);
       if (a.novel) {
         const key = `${a.novel.pluginId}:${a.novel.novelPath}`;
         if (a.novel.voice && a.novel.voice !== prefs.defaultVoice) prefs.novelVoices[key] = a.novel.voice;
@@ -77,6 +86,7 @@ describe('voice mixer (PC shell)', () => {
       return {};
     });
     shell.pluginReplies.set('Narration.sampleVoice', () => ({ ms: 120, source: 'kokoro' }));
+    shell.pluginReplies.set('Narration.play', () => ({}));
     await shell.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     await shell.page.getByTestId('onboarding-skip').click();
     await shell.page.getByTestId('tab-more').click();
@@ -209,5 +219,30 @@ describe('voice mixer (PC shell)', () => {
     await expect.poll(() => screen().locator('.row[data-voice="mix_00000001"]').count(), { timeout: 5000 }).toBe(0);
     expect(prefs.defaultVoice).toBe('af_heart');
     await expect.poll(() => screen().locator('.row[data-voice="af_heart"] .check').textContent()).toBe('✓');
+  });
+
+  it('narrator mode: switches and the dialogue voice are saved; ▶ Without / ▶ With compare on the test passage', async () => {
+    const card = screen().locator('[data-testid="voices-narrator"]');
+    await card.waitFor({ timeout: 5000 });
+    expect(await card.locator('select').count(), 'pieces hidden while off').toBe(0);
+    await card.locator('input[data-k="enabled"]').click();
+    await expect.poll(() => prefs.narrator.enabled).toBe(true);
+    await card.locator('select[data-k="dialogueVoice"]').waitFor({ timeout: 5000 });
+    expect(await card.locator('select[data-k="secondDialogueVoice"]').isDisabled(), 'no second speaker without a dialogue voice').toBe(true);
+    await card.locator('select[data-k="dialogueVoice"]').selectOption('am_michael');
+    await expect.poll(() => prefs.narrator.dialogueVoice).toBe('am_michael');
+    await expect.poll(() => card.locator('select[data-k="secondDialogueVoice"]').isDisabled()).toBe(false);
+    await card.locator('input[data-k="jitter"]').click();
+    await expect.poll(() => prefs.narrator.jitter).toBe(false);
+    await card.locator('input[data-k="polish"]').click();
+    await expect.poll(() => prefs.narrator.polish).toBe(false);
+    await expect.poll(() => card.locator('input[data-k="roomTone"]').isDisabled(), { message: 'room tone needs studio sound' }).toBe(true);
+    await card.locator('[data-act="narrator-ab"][data-v="off"]').click();
+    await expect.poll(() => calls('play').at(-1)).toMatchObject({ narrator: 'off', pluginId: 'voice-lab', engine: 'speech' });
+    await card.locator('[data-act="narrator-ab"][data-v="on"]').click();
+    await expect.poll(() => calls('play').at(-1)).toMatchObject({ narrator: 'on' });
+    // Back to "Narrator's voice".
+    await card.locator('select[data-k="dialogueVoice"]').selectOption('');
+    await expect.poll(() => prefs.narrator.dialogueVoice).toBeNull();
   });
 });

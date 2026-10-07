@@ -201,6 +201,8 @@ export class CrawlEnv {
     novelVoices: {} as Record<string, string>,
     /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
     customVoices: [] as { id: string; name: string; a: string; b: string; percent: number }[],
+    /** Narrator mode (Settings › Voices › Narrator mode). */
+    narrator: { enabled: false, dialogueVoice: null as string | null, secondDialogueVoice: null as string | null, pacing: true, jitter: true, polish: true, roomTone: false },
   };
   /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
   drive = {
@@ -506,6 +508,7 @@ export class CrawlEnv {
           return {
             voices: KOKORO_VOICES,
             customVoices: v.customVoices,
+            narrator: { ...v.narrator },
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
             usePCAudio: v.usePCAudio,
@@ -521,6 +524,11 @@ export class CrawlEnv {
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
           if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
           if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
+          if (o.narrator && typeof o.narrator === 'object') {
+            const n = o.narrator as Record<string, unknown>;
+            for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
+            for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
+          }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
             const key = `${novel.pluginId}:${novel.novelPath}`;
