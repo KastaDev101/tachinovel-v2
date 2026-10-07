@@ -151,7 +151,9 @@ Every tab, pushed screen and settings page that is reachable without a real netw
 (categories, select mode, sort/filter/display), Updates, Browse (sources, extensions, languages, genres,
 Latest, For You, source pages and filters), History, More and all its pages, novel page (chapter filter,
 jump, categories, migrate), reader (bars, find, chapter list, appearance, auto-scroll), Listen in the Car
-and the car player, global search, genre search, Reading Insights, Migrate, Text Cleanup, Diagnostics.
+and the car player, Voices (voice picker, pronunciations), global search, genre search, Reading Insights,
+Migrate, Text Cleanup, Diagnostics. v2's full-screen overlays (car player, Voices panels) are crawled as
+modal states like v1's sheets.
 
 Found and fixed (v2):
 
