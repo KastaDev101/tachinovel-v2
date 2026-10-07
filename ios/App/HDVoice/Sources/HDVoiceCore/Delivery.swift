@@ -112,6 +112,10 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         unit = (try? c.decode(String.self, forKey: .unit)) == Self.sentences ? Self.sentences : Self.chunks
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit
+    }
+
     /// listenEngine is written even when nil (Kokoro chosen), so a missing key always means "the default".
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)

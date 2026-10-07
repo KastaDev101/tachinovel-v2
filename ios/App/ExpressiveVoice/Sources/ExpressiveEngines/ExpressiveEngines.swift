@@ -191,14 +191,17 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         let t0 = Date()
         var samples: [Float] = []
         var first: Double?
-        let text = StyleMapper.plainText(line.text)
-        let stream: AsyncThrowingStream<PocketTtsSynthesizer.AudioFrame, Error>
+        // A session per call: the voice prefill (~125 tokens) runs once instead of once per ~50-token text chunk, and
+        // the Mimi decoder state carries across chunks (no seams inside a paragraph).
+        let session: PocketTtsSession
         if let voiceData {
-            stream = try await manager.synthesizeStreaming(text: text, voiceData: voiceData)
+            session = try await manager.makeSession(voiceData: voiceData, seed: seed)
         } else {
-            stream = try await manager.synthesizeStreaming(text: text)
+            session = try await manager.makeSession(seed: seed)
         }
-        for try await frame in stream {
+        session.enqueue(StyleMapper.plainText(line.text))
+        session.finish()
+        for try await frame in session.frames {
             if first == nil { first = elapsedMs(since: t0) }
             samples.append(contentsOf: frame.samples)
         }

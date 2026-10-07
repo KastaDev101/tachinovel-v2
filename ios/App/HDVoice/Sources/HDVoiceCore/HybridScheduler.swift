@@ -52,13 +52,19 @@ public struct HybridScheduler: Sendable {
         public var dryGrace: TimeInterval
         /// This many failed renders in a row make Kokoro unavailable for the session.
         public var maxConsecutiveFailures: Int
+        /// At a paragraph start (`paragraphStarts`), wait up to this long instead: a longer pause between
+        /// paragraphs sounds natural, a switch to the Apple voice doesn't (Kasta, 2026-10-07: "rather a 2 second
+        /// pause than the Apple voice").
+        public var paragraphGrace: TimeInterval
 
-        public init(ahead: Int = 3, returnAhead: Int = 2, startGrace: TimeInterval = 2.5, dryGrace: TimeInterval = 0.25, maxConsecutiveFailures: Int = 3) {
+        public init(ahead: Int = 3, returnAhead: Int = 2, startGrace: TimeInterval = 2.5, dryGrace: TimeInterval = 0.25, maxConsecutiveFailures: Int = 3,
+                    paragraphGrace: TimeInterval = 2) {
             self.ahead = max(1, ahead)
             self.returnAhead = max(1, returnAhead)
             self.startGrace = max(0, startGrace)
             self.dryGrace = max(0, dryGrace)
             self.maxConsecutiveFailures = max(1, maxConsecutiveFailures)
+            self.paragraphGrace = max(0, paragraphGrace)
         }
     }
 
@@ -113,6 +119,8 @@ public struct HybridScheduler: Sendable {
     /// The render in flight (only one at a time).
     public private(set) var rendering: Int?
     private var waitStart: TimeInterval?
+    /// Segments that start a paragraph: the voice may wait up to `paragraphGrace` for them.
+    public var paragraphStarts: Set<Int> = []
     /// Something has been handed to a voice in this session.
     public private(set) var started = false
     private var consecutiveFailures = 0
@@ -294,7 +302,7 @@ public struct HybridScheduler: Sendable {
     }
 
     private mutating func waitRemaining(now: TimeInterval) -> TimeInterval? {
-        let grace = started ? config.dryGrace : config.startGrace
+        let grace = started ? (paragraphStarts.contains(cursor) ? max(config.dryGrace, config.paragraphGrace) : config.dryGrace) : config.startGrace
         if waitStart == nil { waitStart = now }
         let remaining = grace - (now - (waitStart ?? now))
         return remaining > 0.001 ? remaining : nil

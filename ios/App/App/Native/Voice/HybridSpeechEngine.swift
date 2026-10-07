@@ -143,6 +143,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : prefs.clampedAhead
         var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: ahead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
+        // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
+        s.paragraphStarts = Set(segs.indices.dropFirst().filter { !Self.sameChunk(segs[$0 - 1], segs[$0]) })
         scheduler = s
         if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
         if let id = listenEngine, ExpressiveService.supported(id), ExpressiveService.shared.isInstalled(id), !ExpressiveService.shared.crashDisabled {
