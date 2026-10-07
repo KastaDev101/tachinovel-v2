@@ -34,6 +34,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     var kokoroVoice = VoiceCatalog.defaultVoiceId
     /// A system voice the user picked explicitly (Narration.setOptions voiceId), else automatic.
     var explicitAppleVoice: String?
+    /// The next chapter's first sentences: once this chapter is fully rendered, Kokoro renders these into
+    /// its warm cache, so the chapter change starts with Kokoro at once (NarrationController sets them).
+    var lookahead: [SpeechSegment] = []
+    private var prewarming = false
 
     private(set) var currentSource: VoiceSource?
     private(set) var lastFallback: FallbackReason?
@@ -99,6 +103,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func enqueue(_ segs: [SpeechSegment]) {
         stop()
         gen += 1
+        lookahead = []
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -210,12 +215,23 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     // MARK: - Kokoro
 
     private func pumpRender() {
-        guard !paused, let i = scheduler?.nextRender() else { return }
+        guard !paused else { return }
+        guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let seg = segments[i]
         let g = gen
         let voice = kokoroVoice
         KokoroService.shared.synthesize(text: seg.kokoroText, runs: seg.runs, voice: voice, speed: seg.rate) { [weak self] result in
             self?.rendered(i, gen: g, voice: voice, result: result)
+        }
+    }
+
+    private func prewarmLookahead() {
+        guard !prewarming, !lookahead.isEmpty, let s = scheduler, s.allRendered, !s.throttled, kokoroState() == .ready else { return }
+        let seg = lookahead.removeFirst()
+        prewarming = true
+        KokoroService.shared.prewarm(text: seg.kokoroText, runs: seg.runs, voice: kokoroVoice, speed: seg.rate) { [weak self] in
+            self?.prewarming = false
+            self?.prewarmLookahead()
         }
     }
 
@@ -325,11 +341,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             self.log.error("voice: the Apple voice gave no audio buffers; speaking it directly")
             self.synth.stopSpeaking(at: .immediate)
             self.appleRender = nil
+            // `u` already went to write(_:): AVSpeechSynthesizer throws (and the app terminates) if the same
+            // utterance is enqueued twice, so speak a fresh copy; late callbacks for `u` no longer match.
+            let again = Self.freshCopy(of: u)
+            self.appleUtterance = again
             if self.manualOutput {
-                u.postUtteranceDelay = pause
-                self.speakAppleManually(i, utterance: u)
+                again.postUtteranceDelay = pause
+                self.speakAppleManually(i, utterance: again)
             } else {
-                self.speakAppleDirectly(i, utterance: u)
+                self.speakAppleDirectly(i, utterance: again)
             }
         }
         synth.write(u) { [weak self] buffer in
@@ -350,6 +370,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 self.scheduleApple(converted, render: render, index: i)
             }
         }
+    }
+
+    /// A new utterance with the same text and settings (an utterance can be enqueued only once).
+    private static func freshCopy(of u: AVSpeechUtterance) -> AVSpeechUtterance {
+        let c = AVSpeechUtterance(attributedString: u.attributedSpeechString)
+        c.voice = u.voice
+        c.rate = u.rate
+        c.pitchMultiplier = u.pitchMultiplier
+        c.volume = u.volume
+        c.preUtteranceDelay = u.preUtteranceDelay
+        c.postUtteranceDelay = u.postUtteranceDelay
+        return c
     }
 
     private func scheduleApple(_ buf: AVAudioPCMBuffer, render: AppleRender, index i: Int) {

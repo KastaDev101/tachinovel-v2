@@ -3,8 +3,9 @@
  *
  *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the six Kokoro
  *    voices with ▶ samples and the default one, the Apple voice that stands in when Kokoro can't keep up
- *    (with the "download a Premium voice" hint), Kokoro on/off, pronunciations, and Advanced › "Use PC
- *    audio when available" (off by default; the PC narrator is sidelined).
+ *    (with the "download a Premium voice" hint), Kokoro on/off, pronunciations, In the car (what the car's
+ *    side buttons do, prepared audio storage), and Advanced › "Use PC audio when available" (off by
+ *    default; the PC narrator is sidelined).
  *  - The voice picker for one novel (from the Listen player): its own voice or the default.
  *  - The pronunciation editor (global, or one novel): word → respelling and/or Kokoro phonemes, the same
  *    lexicon format the PC narrator uses (v1 frontend.ts), so a narrator lexicon can be pasted in.
@@ -13,8 +14,9 @@
  */
 import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } from '@v1tts/frontend.ts';
 import { callCore } from '../capacitor-client.ts';
+import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
-import { Narration, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
+import { Narration, type CarButtons, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
 import { fs } from './type.ts';
 
 const CSS = `
@@ -50,6 +52,10 @@ const CSS = `
 .tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:max(16px,${fs(16)}) -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
 .tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:${fs(13)}}
 .tn-v .del{color:#ff8a8a;width:36px;height:36px;flex:none}
+.tn-v .chips{display:flex;gap:8px;flex:1}
+.tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
+.tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
+.tn-v .link{color:#a8b4ff;padding:6px 0;flex:none}
 .tn-v .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%);background:rgba(40,40,48,.95);color:#fff;padding:10px 16px;border-radius:12px;font-size:${fs(14)};z-index:95;max-width:86%}
 `;
 
@@ -68,7 +74,7 @@ function changed(): void {
 
 export const SAMPLE_TEXT = 'The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath.';
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 }
 
@@ -91,7 +97,8 @@ export function toast(msg: string): void {
 }
 
 /** Subtitle for the mini player / Listen player: which voice is speaking. */
-export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>): string {
+export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status' | 'prepared'>): string {
+  if (s.engine === 'audio' && s.prepared) return `Kokoro · ${s.voice?.kokoroName ?? 'prepared'} · prepared`;
   return describeVoice(s);
 }
 
@@ -109,6 +116,7 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     defaultVoice: typeof r.defaultVoice === 'string' && voices.some((v) => v.id === r.defaultVoice) ? r.defaultVoice : first.id,
     kokoroEnabled: r.kokoroEnabled !== false,
     usePCAudio: r.usePCAudio === true,
+    carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
     speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
     volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
@@ -139,7 +147,7 @@ export function closeVoicePanels(): void {
 }
 
 /** A full-screen panel (slides in from the right). */
-function panel(title: string, testId: string): { root: HTMLElement; body: HTMLElement; close: () => void; setTitle: (t: string) => void } {
+export function panel(title: string, testId: string): { root: HTMLElement; body: HTMLElement; close: () => void; setTitle: (t: string) => void } {
   ensureStyle();
   const root = document.createElement('div');
   root.className = 'tn-v';
@@ -199,6 +207,11 @@ function voiceRows(info: VoiceSettingsInfo, selected: string): string {
     .join('');
 }
 
+function carChip(current: CarButtons | undefined, value: CarButtons, label: string): string {
+  const on = (current ?? 'chapters') === value;
+  return `<button type="button" class="chip${on ? ' is-selected' : ''}" data-act="car-buttons" data-v="${value}" aria-pressed="${on}">${label}</button>`;
+}
+
 function appleCard(info: VoiceSettingsInfo): string {
   const a = info.apple;
   const hint = a.onlyDefault
@@ -242,9 +255,22 @@ export function openVoicesScreen(): void {
       <p class="note">A novel’s own list: Listen player › Voice › Pronunciations.</p>
       <div class="sec">Kokoro</div>
       <div class="card"><label class="row"><div class="main"><b>Kokoro on device</b><span class="sub">Off: always use the Apple voice</span></div><input type="checkbox" class="sw" data-act="kokoro" ${info.kokoroEnabled ? 'checked' : ''} aria-label="Kokoro on device"></label></div>
+      <div class="sec">In the car</div>
+      <div class="card" data-testid="voices-car">
+        <div class="row"><div class="main"><b>Car buttons</b><span class="sub">The two side buttons in CarPlay, on the lock screen, headphones and the steering wheel</span></div></div>
+        <div class="row"><div class="chips" role="group" aria-label="Car buttons">${carChip(info.carButtons, 'chapters', 'Chapters')}${carChip(info.carButtons, 'skip15', '15 seconds')}</div></div>
+        <div class="row"><div class="main"><b>Prepared audio</b><span class="sub" data-drive-total>…</span></div><button type="button" class="link" data-act="drive-clear">Remove all</button></div>
+      </div>
+      <p class="note">CarPlay shows TachiNovel in its Now Playing screen (Siri: “pause”, “resume”, “next”). To listen without waiting on the voice or the internet, open a novel and tap Prepare for the drive.</p>
       <div class="sec">Advanced</div>
       <div class="card"><label class="row"><div class="main"><b>Use PC audio when available</b><span class="sub">Chapters narrated on the PC (“TachiNovel Audio” folder) play instead of Kokoro</span></div><input type="checkbox" class="sw" data-act="pcaudio" ${info.usePCAudio ? 'checked' : ''} aria-label="Use PC audio when available"></label>
       ${info.usePCAudio ? '<button type="button" class="row" data-act="folder"><div class="main"><b>Audio folder</b><span class="sub" data-folder>…</span></div><span aria-hidden="true">›</span></button>' : ''}</div>`;
+    void Narration.driveStatus()
+      .then((s) => {
+        const el = p.body.querySelector('[data-drive-total]');
+        if (el) el.textContent = storageLine(normalizeDriveStatus(s));
+      })
+      .catch(() => undefined);
     if (info.usePCAudio) {
       void Narration.audioFolder()
         .then((f) => {
@@ -277,6 +303,19 @@ export function openVoicesScreen(): void {
         return;
       case 'kokoro-on':
         void Narration.setVoiceSettings({ kokoroEnabled: true }).then(load);
+        return;
+      case 'car-buttons': {
+        const v: CarButtons = el.dataset.v === 'skip15' ? 'skip15' : 'chapters';
+        void Narration.setVoiceSettings({ carButtons: v }).then(load);
+        return;
+      }
+      case 'drive-clear':
+        void Narration.clearDrive()
+          .then(() => {
+            toast('Prepared audio removed');
+            render();
+          })
+          .catch(() => undefined);
         return;
       case 'folder':
         void Narration.pickAudioFolder().then(load);

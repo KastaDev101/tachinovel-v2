@@ -7,6 +7,7 @@ import Capacitor
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
+import MediaPlayer
 
 @objc(NarrationPlugin)
 public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -37,14 +38,29 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voicePlacement", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "prepareDrive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelDrive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "driveStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearDrive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nowPlaying", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "remoteCommand", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selfTestChapters", returnType: CAPPluginReturnPromise),
     ]
 
     private var n: NarrationController { NarrationController.shared }
+
+    private var driveObservers: [NSObjectProtocol] = []
 
     override public func load() {
         DispatchQueue.main.async {
             self.n.onState = { [weak self] s in self?.notifyListeners("state", data: s) }
             self.n.onProgress = { [weak self] p in self?.notifyListeners("progress", data: p) }
+            // "Prepare for the drive" progress and storage (all novels; the UI filters).
+            for name in [DrivePrep.changed, DriveCache.changed] {
+                self.driveObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    self?.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil))
+                })
+            }
         }
     }
 
@@ -149,10 +165,10 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async { call.resolve(self.n.stateDict()) }
     }
 
-    /// Audio mode: jump to a chapter time (seconds).
+    /// Jump to a chapter time (seconds at 1×): exact for audio, to the sentence for speech.
     @objc func seek(_ call: CAPPluginCall) {
         let seconds = call.getDouble("seconds") ?? 0
-        onMain(call) { $0.seekAudio(toChapterTime: seconds) }
+        onMain(call) { $0.perform(.seekTo(seconds)) }
     }
 
     /// Continue a novel where reading/listening stopped: narrated audio first, else the system voice.
@@ -248,6 +264,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 "defaultVoice": prefs.voice(forNovel: nil),
                 "kokoroEnabled": prefs.kokoroEnabled,
                 "usePCAudio": prefs.usePCAudio,
+                "carButtons": prefs.carButtonsChoice.rawValue,
                 "speed": prefs.speed,
                 "volume": prefs.volume,
                 "speedPresets": SpeechSpeed.presets,
@@ -276,11 +293,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let novel = call.getObject("novel")
         let usePCAudio = call.getBool("usePCAudio")
         let kokoroEnabled = call.getBool("kokoroEnabled")
+        let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
         let speed = call.getDouble("speed")
         let volume = call.getDouble("volume")
         DispatchQueue.main.async {
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
+                if let carButtons { p.carButtons = carButtons.rawValue }
                 if let speed { p.speed = SpeechSpeed.clamp(speed) }
                 if let volume { p.volume = VoiceVolume.clamp(volume) }
                 if let defaultVoice, VoiceCatalog.voice(defaultVoice) != nil { p.defaultVoice = defaultVoice }
@@ -378,6 +397,81 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                      "error": p.error ?? NSNull(), "summary": p.summary] as [String: Any]
                 }])
             }
+        }
+    }
+
+    // MARK: In the car
+
+    /// "Prepare for the drive": render the next `chapters` chapters with Kokoro into local audio.
+    @objc func prepareDrive(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath") else {
+            return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
+        }
+        let name = call.getString("novelName") ?? ""
+        let cover = call.getString("coverUrl")
+        let count = call.getInt("chapters") ?? 3
+        let when = DrivePrepWhen(rawValue: call.getString("when") ?? "") ?? .chargingOrWifi
+        let start = call.getString("startChapterPath")
+        DispatchQueue.main.async {
+            DrivePrep.shared.request(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, count: count, when: when, startChapterPath: start)
+            call.resolve(DrivePrep.shared.status(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)))
+        }
+    }
+
+    @objc func cancelDrive(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath") else {
+            return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
+        }
+        DispatchQueue.main.async {
+            DrivePrep.shared.cancel(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath))
+            call.resolve()
+        }
+    }
+
+    /// Requests, progress and prepared chapters: one novel (pluginId + novelPath) or all.
+    @objc func driveStatus(_ call: CAPPluginCall) {
+        let key = call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
+        DispatchQueue.main.async { call.resolve(DrivePrep.shared.status(novelKey: key)) }
+    }
+
+    /// Delete prepared audio (one novel, or all) and stop its request.
+    @objc func clearDrive(_ call: CAPPluginCall) {
+        let key = call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
+        DispatchQueue.main.async {
+            if let key { DrivePrep.shared.cancel(novelKey: key) } else { DrivePrep.shared.jobs.forEach { DrivePrep.shared.cancel(novelKey: $0.novelKey) } }
+            DriveCache.shared.remove(novelKey: key)
+            call.resolve(DrivePrep.shared.status(novelKey: key))
+        }
+    }
+
+    /// What the lock screen and the car show now, and which remote commands are offered.
+    @objc func nowPlaying(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["info": NowPlayingCenter.shared.snapshot(), "commands": RemoteCommandHub.shared.snapshot(),
+                          "state": self.n.stateDict(), "carPlayTemplates": CarPlayFeature.templatesEnabled,
+                          "chapterGapsMs": self.n.chapterGapsMs])
+        }
+    }
+
+    /// Simulator self-test: send a remote command through the same handler MPRemoteCommandCenter calls.
+    @objc func remoteCommand(_ call: CAPPluginCall) {
+        guard NarrationSelfTest.isActive else { return call.reject("self-test only", "UNAVAILABLE") }
+        guard let command = RemoteCommand.named(call.getString("command") ?? "", value: call.getDouble("value")) else {
+            return call.reject("unknown command", "INVALID_ARGS")
+        }
+        DispatchQueue.main.async {
+            let status = RemoteCommandHub.shared.handle(command)
+            call.resolve(["handled": status == .success])
+        }
+    }
+
+    /// Simulator self-test: a synthetic multi-chapter novel ({chapterPath, title, paragraphs, script, next?, prev?}).
+    @objc func selfTestChapters(_ call: CAPPluginCall) {
+        let list = (call.getArray("chapters") ?? []).compactMap { $0 as? [String: Any] }
+        DispatchQueue.main.async {
+            guard NarrationSelfTest.isActive else { return call.reject("self-test only", "UNAVAILABLE") }
+            NarrationSelfTest.shared.register(chapters: list)
+            call.resolve(["chapters": list.count])
         }
     }
 

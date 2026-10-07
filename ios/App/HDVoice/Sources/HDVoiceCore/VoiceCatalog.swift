@@ -59,18 +59,22 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     public var route: String
     /// Sentences rendered ahead (2–3).
     public var ahead: Int
+    /// In the car › "Car buttons" (CarButtons raw value): chapters (default) or 15-second skips.
+    public var carButtons: String
     /// Listen player: speed (0.5–2.5) and "Voice volume" (0–1.5), for every voice.
     public var speed: Double
     public var volume: Double
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
-                route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue) {
+                route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
+                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
         self.usePCAudio = usePCAudio
         self.route = route
         self.ahead = ahead
+        self.carButtons = carButtons
         self.speed = SpeechSpeed.clamp(speed)
         self.volume = VoiceVolume.clamp(volume)
     }
@@ -85,6 +89,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         usePCAudio = (try? c.decode(Bool.self, forKey: .usePCAudio)) ?? d.usePCAudio
         route = (try? c.decode(String.self, forKey: .route)) ?? d.route
         ahead = (try? c.decode(Int.self, forKey: .ahead)) ?? d.ahead
+        carButtons = (try? c.decode(String.self, forKey: .carButtons)) ?? d.carButtons
         speed = SpeechSpeed.clamp((try? c.decode(Double.self, forKey: .speed)) ?? d.speed)
         volume = VoiceVolume.clamp((try? c.decode(Double.self, forKey: .volume)) ?? d.volume)
     }
@@ -105,6 +110,8 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     }
 
     public var clampedAhead: Int { min(3, max(2, ahead)) }
+
+    public var carButtonsChoice: CarButtons { CarButtons(rawValue: carButtons) ?? .chapters }
 }
 
 /// Where the Kokoro stages run. All routes keep Metal (GPU) out unless they say so: iOS doesn't allow GPU

@@ -139,6 +139,11 @@ export function installCarMode(): CarMode {
 
   const active = (): boolean => state.status === 'playing' || state.status === 'paused' || state.status === 'loading';
 
+  /** The chapter's length: exact for audio, estimated for speech (refined as sentences are spoken). */
+  function durLabel(): string {
+    return `${state.engine === 'audio' ? '' : '≈ '}${fmt(state.duration)}`;
+  }
+
   function nowHtml(): string {
     if (!active()) return `<div class="now"><div class="t1">Nothing playing</div><div class="t2">Pick a novel below to continue where you stopped.</div></div>`;
     const pos = state.position;
@@ -149,7 +154,7 @@ export function installCarMode(): CarMode {
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
       <span class="eng">${engine}${state.status === 'loading' ? ' · loading…' : ''}</span>
-      ${state.engine === 'audio' ? `<div class="bar" data-act="seek"><div><i data-fill style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span data-pos>${fmt(pos)}</span><span data-dur>${fmt(dur)}</span></div>` : ''}
+      ${dur ? `<div class="bar" data-act="seek"><div><i data-fill style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span data-pos>${fmt(pos)}</span><span data-dur>${durLabel()}</span></div>` : ''}
       <div class="ctl">
         <button type="button" data-act="back" aria-label="Back 15 seconds">${ICON.back15}</button>
         <button type="button" class="pp" data-act="toggle" aria-label="${state.status === 'playing' ? 'Pause' : 'Play'}">${state.status === 'playing' ? ICON.pause : ICON.play}</button>
@@ -254,7 +259,7 @@ export function installCarMode(): CarMode {
       const posEl = p.now.querySelector('[data-pos]');
       if (posEl && posEl.textContent !== fmt(pos)) posEl.textContent = fmt(pos);
       const durEl = p.now.querySelector('[data-dur]');
-      if (durEl && durEl.textContent !== fmt(dur)) durEl.textContent = fmt(dur);
+      if (durEl && durEl.textContent !== durLabel()) durEl.textContent = durLabel();
     }
     // Built once per opening; afterwards only updated in place (a rebuild would detach a slider mid-drag,
     // and iOS then never delivers its change: the speed slider "did nothing" on the phone).

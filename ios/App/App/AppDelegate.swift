@@ -19,6 +19,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         MetricDiagnostics.shared.start()
         // Bundled Kokoro voice: crash check from the last run, memory-pressure handling, one-time warm-up.
         KokoroService.shared.start()
+        // "Prepare for the drive": the background task must be registered before launch finishes; pending
+        // requests resume a moment after the first paint.
+        DrivePrep.register()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { DrivePrep.shared.start() }
         BackgroundRefresh.register()
         BackgroundRefresh.requestProvisionalNotifications()
         // With scenes, UIKit never calls applicationDidEnterBackground(_:); the app-level notification
@@ -51,8 +55,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         if connectingSceneSession.role == .carTemplateApplication {
-            let config = UISceneConfiguration(name: "CarPlay", sessionRole: connectingSceneSession.role)
-            config.delegateClass = CarPlaySceneDelegate.self
+            // The templates app needs Apple's CarPlay audio entitlement and the TNCarPlayTemplates flag;
+            // without them CarPlay shows narration in its own Now Playing screen only.
+            let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+            if CarPlayFeature.templatesEnabled { config.delegateClass = CarPlaySceneDelegate.self }
             return config
         }
         let config = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)

@@ -145,6 +145,10 @@ public struct HybridScheduler: Sendable {
 
     // MARK: - Rendering
 
+    /// Every sentence has been rendered or taken: Kokoro is free until the next chapter (which it can then
+    /// start rendering ahead).
+    public var allRendered: Bool { rendering == nil && !slots.contains(.pending) }
+
     /// The next segment to render, marked as rendering; nil when nothing should be rendered now.
     public mutating func nextRender() -> Int? {
         guard kokoro == .ready, !throttled, !paused, rendering == nil, cursor < count else { return nil }

@@ -90,6 +90,11 @@ Apple voices as the fallback.
 | 9 | More › **Listen in the Car** › **Open the player** › Continue reading aloud › the novel | Listening resumes at that paragraph; with the Apple voice the ↺15/15↻ buttons step a paragraph back/forward; the speed buttons work |
 | 10 | Bluetooth or the car | Steering-wheel next/previous and play/pause work; after a call or Siri it resumes only if it was playing |
 
+**In the car** (with the car-audio PR): docs/car.md has a 10-minute car checklist. In short, CarPlay's
+Now Playing shows chapter, novel, cover and time; More › Voices › In the car › Car buttons switches the
+side buttons between chapters and 15 seconds; and a novel's **Prepare for the drive** makes the next
+chapters play offline.
+
 If something fails: More › About › Diagnostics › **Copy Full Diagnostics**, and paste it to Claude. The
 full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot helps for anything visual.
 
@@ -111,4 +116,7 @@ unless you already have narrated files.
 - No iCloud sync between v1 (Scriptable) and v2: they are separate apps; move data with backups.
 - Store purchases (Pro) don't load outside the App Store; everything stays in the free tier.
 - Listening needs the chapter text: network, the read-ahead cache or a downloaded chapter. For a drive
-  without signal, download the next chapters first (novel page › download).
+  without signal, use the novel's **Prepare for the drive** (car-audio PR), or download the next chapters
+  first (novel page › download).
+- No TachiNovel icon on the CarPlay screen (that needs Apple's CarPlay audio entitlement); it plays
+  through CarPlay's Now Playing screen instead (docs/car.md).

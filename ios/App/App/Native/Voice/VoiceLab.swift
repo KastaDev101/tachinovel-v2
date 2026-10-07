@@ -45,6 +45,14 @@ enum VoiceLab {
             "placement": k.lastPlacement.map { ["stage": $0.stage, "configured": $0.configured, "ane": $0.neuralEngine, "cpu": $0.cpu, "gpu": $0.gpu,
                                                 "error": $0.error ?? NSNull(), "summary": $0.summary] as [String: Any] },
             "routes": KokoroRoute.allCases.map { ["id": $0.rawValue, "title": $0.title, "gpu": $0.usesGPU] as [String: Any] },
+            "car": [
+                "nowPlaying": NowPlayingCenter.shared.snapshot(),
+                "commands": RemoteCommandHub.shared.snapshot(),
+                "carPlayTemplates": CarPlayFeature.templatesEnabled,
+                "preparedBytes": DriveCache.shared.index.totalBytes,
+                "preparedChapters": DriveCache.shared.index.chapters.count,
+                "chapterGapsMs": NarrationController.shared.chapterGapsMs,
+            ] as [String: Any],
         ]
         if let s = NarrationController.shared.speechEngine.snapshot {
             d["session"] = [
@@ -147,6 +155,9 @@ final class NarrationSelfTest {
     }
 
     private let lock = NSLock()
+    /// A synthetic novel for the car phase (chapterPath → the narration.chapterText answer), registered by
+    /// voice-selftest.ts; NarrationController and DrivePrep read it instead of asking the core.
+    private var chapters: [String: [String: Any]] = [:]
     private var renderedFrames: Int = 0
     private var audibleFrames: Int = 0
     private var maxRMS: Float = 0
@@ -164,6 +175,21 @@ final class NarrationSelfTest {
         maxRMS = max(maxRMS, rms)
         lock.unlock()
     }
+
+    /// Register the synthetic novel (self-test mode only; main thread).
+    func register(chapters list: [[String: Any]]) {
+        guard Self.isActive else { return }
+        chapters = [:]
+        for c in list {
+            guard let path = c["chapterPath"] as? String else { continue }
+            chapters[path] = c
+        }
+    }
+
+    var hasChapters: Bool { !chapters.isEmpty }
+
+    /// A registered chapter in the narration.chapterText shape, or nil.
+    func chapterText(_ chapterPath: String) -> [String: Any]? { chapters[chapterPath] }
 
     /// The UI side's findings + native counters → Documents/voice-selftest.json.
     func writeReport(_ uiJson: String) -> URL? {

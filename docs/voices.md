@@ -64,6 +64,13 @@ right away on a memory warning. Compute placement (`KokoroRoute`): the RNN/atten
 doesn't allow GPU work in the background and narration must keep rendering on the lock screen. The Voice
 Lab can switch to FluidAudio's GPU placement for a foreground-only speed comparison.
 
+## In the car
+
+Kokoro, the Apple fallback, prepared chapters and PC audio all show in CarPlay's Now Playing screen and
+answer the car's buttons and Siri. Before a drive, a novel's **Prepare for the drive** renders the next
+chapters with Kokoro into local audio, so playback never waits on synthesis or the network. Details,
+settings and the on-phone car checklist: docs/car.md.
+
 ## The bundled model
 
 - **What:** FluidAudio's 7-stage Core ML build of Kokoro-82M v1.0 (fp16 + int8-palettized weights, the
