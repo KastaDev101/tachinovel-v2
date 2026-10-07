@@ -176,6 +176,10 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
     private let voiceData: PocketTtsVoiceData?
     private let performedData: PocketTtsVoiceData?
 
+    /// CPU + Neural Engine for every transformer stage, CPU for the Mimi decoder (FluidAudio's own choice there).
+    public static let backgroundSafeUnits = PocketTtsComputeUnits(conditioner: .cpuAndNeuralEngine, flowLM: .cpuAndNeuralEngine,
+                                                                  flowDecoder: .cpuAndNeuralEngine, mimiDecoder: .cpuOnly)
+
     public init(voice: PocketVoice? = nil, performed: PocketVoice? = nil) {
         voiceData = voice.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
         performedData = performed.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
@@ -184,7 +188,9 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
     public func load() async throws -> Double {
         if manager != nil { return 0 }
         let t0 = Date()
-        let m = PocketTtsManager(placement: .ane)
+        // No stage on the GPU: iOS refuses GPU work in the background, and Pocket is the voice that reads with the
+        // screen locked and in CarPlay. FluidAudio's defaults leave cond_prefill and flow_decoder_fused on `.all`.
+        let m = PocketTtsManager(placement: .ane, computeUnits: Self.backgroundSafeUnits)
         try await m.initialize()
         manager = m
         return elapsedMs(since: t0)
