@@ -170,6 +170,10 @@ interface NarrationMockState {
   duration?: number;
 }
 
+function defaultVoicePrefs(): { defaultVoice: string; kokoroEnabled: boolean; usePCAudio: boolean; novelVoices: Record<string, string> } {
+  return { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, novelVoices: {} };
+}
+
 export class CrawlEnv {
   readonly web: FakeWeb;
   readonly opts: EnvOptions;
@@ -192,8 +196,8 @@ export class CrawlEnv {
   readonly answers: number[] = [];
   narration: NarrationMockState = { status: 'idle' };
   audioLinked = true;
-  /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings). */
-  voicePrefs = { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, novelVoices: {} as Record<string, string> };
+  /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings); native state: reset per launch. */
+  voicePrefs = defaultVoicePrefs();
 
   constructor(opts: EnvOptions) {
     this.opts = opts;
@@ -537,6 +541,7 @@ export class CrawlEnv {
     this.listeners.clear();
     this.narration = { status: 'idle' };
     this.audioLinked = true;
+    this.voicePrefs = defaultVoicePrefs();
     this.answers.length = 0;
     const core = this.newCore();
     // Every store root of the seeded install (local/, icloud/, documents/, …).
