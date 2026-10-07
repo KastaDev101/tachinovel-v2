@@ -22,6 +22,7 @@
 
 @preconcurrency import AVFoundation
 import ExpressiveCore
+import ExpressiveEngines
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
