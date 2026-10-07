@@ -50,6 +50,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     /// A line for hearing a voice that came without a preview.
     static let voiceSampleLine = "The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath."
 
+    /// The plugin lives as long as the bridge; the observer holds it weakly.
     private var importObserver: NSObjectProtocol?
 
     override public func load() {
@@ -61,10 +62,6 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             }
             self?.notifyListeners("voiceImport", data: data, retainUntilConsumed: true)
         }
-    }
-
-    deinit {
-        if let importObserver { NotificationCenter.default.removeObserver(importObserver) }
     }
 
     private static func status() -> [String: Any] {

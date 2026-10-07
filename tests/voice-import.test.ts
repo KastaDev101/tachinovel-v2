@@ -203,7 +203,8 @@ describe('wiring', () => {
   it('listens for opened files only in the personal flavor', () => {
     const main = read('src/ui/main.ts');
     expect(main).toMatch(/if \(__FLAVOR__ === 'personal'\) \{[^}]*installVoiceImports\(\);/);
-    expect(read('src/ui/native/expressive-lab.ts')).toContain("if (__FLAVOR__ !== 'personal') return '';");
+    // The section exists only in the personal flavor (the store flavor's bundle drops voice-import.ts).
+    expect(read('src/ui/native/expressive-lab.ts')).toMatch(/const voices =\s+__FLAVOR__ === 'personal'\s+\? createVoiceSection\(/);
   });
 
   it('pins the voice layout to the built-in Chatterbox Nano voice (tables/voice-default.safetensors)', () => {
