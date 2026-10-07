@@ -9,11 +9,12 @@
  * SHA-256 and size, signed with Ed25519 over the canonical JSON). The release workflow uploads both to
  * the rolling release "ota".
  */
-import { createHash, createPrivateKey, sign } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { NATIVE_LEVEL } from '../src/core/ota/native-level.ts';
 import { canonicalJson, type Manifest, MANIFEST_FORMAT, PACK_FORMAT } from '../src/core/ota/ota.ts';
+import { OTA_PUBLIC_KEY } from '../src/core/ota/public-key.ts';
 
 export function packWww(www: string): { text: string; files: number } {
   const files: Record<string, string> = {};
@@ -34,6 +35,16 @@ export function signManifest(unsigned: Omit<Manifest, 'signature'>, privateKeyPe
   const key = createPrivateKey(privateKeyPem);
   const signature = sign(null, Buffer.from(canonicalJson(unsigned), 'utf8'), key).toString('base64');
   return { ...unsigned, signature };
+}
+
+/** Whether `manifest` verifies with the public key the app ships: a wrong OTA_SIGNING_KEY secret fails the
+ *  release here instead of publishing manifests every phone rejects. */
+export function verifiesWithAppKey(manifest: Manifest, publicKeyBase64: string = OTA_PUBLIC_KEY): boolean {
+  if (!publicKeyBase64) return false;
+  const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(publicKeyBase64, 'base64')]);
+  const { signature, ...unsigned } = manifest;
+  const key = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+  return verify(null, Buffer.from(canonicalJson(unsigned), 'utf8'), key, Buffer.from(signature, 'base64'));
 }
 
 export function buildUpdate(opts: { www: string; version: string; build: string; baseUrl: string; notes?: string; privateKeyPem: string }): { manifest: Manifest; pack: string; packName: string } {
@@ -81,6 +92,10 @@ if (import.meta.main) {
     ...(notesFile ? { notes: readFileSync(notesFile, 'utf8') } : {}),
     privateKeyPem: key,
   });
+  if (!verifiesWithAppKey(manifest)) {
+    console.error('::error::The signed manifest does not verify with src/core/ota/public-key.ts: OTA_SIGNING_KEY is not its private key.');
+    process.exit(1);
+  }
   const out = need('out');
   mkdirSync(out, { recursive: true });
   writeFileSync(path.join(out, packName), pack);

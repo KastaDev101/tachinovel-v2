@@ -104,7 +104,7 @@ If a staged bundle fails to answer the UI's `app.boot` within 30 s on two launch
 falls back to the bundle inside the IPA by itself and never takes that update again. The store flavor
 has none of this (the code is compiled out; the Swift loader is inert without the personal build info).
 
-**One-time setup (owner):**
+**Key setup (owner; done 2026-10-07, repeat only to replace the key):**
 
 1. On your PC, outside the repository: `node tools/ota-keygen.ts --out=<a private folder>`. It writes the
    private key `tachinovel-ota-signing-key.pem` and prints the public key.
@@ -112,8 +112,10 @@ has none of this (the code is compiled out; the Swift loader is inert without th
 3. In a pull request, set `OTA_PUBLIC_KEY` in `src/core/ota/public-key.ts` to the printed public key.
 4. Keep the .pem in a password manager and delete the file. Anyone with it can push code to the app.
 
-Until the public key is in a build, the app reports "not set up" and never downloads anything; until the
-secret exists, releases skip the web update step.
+Without a public key in the build, the app reports "not set up" and never downloads anything; without the
+secret, releases skip the web update step. If the secret doesn't match the public key, the release fails
+at that step (`tools/ota-pack.ts` verifies its own signature) instead of publishing an update phones reject.
+A new key reaches phones only with a new IPA: an installed app trusts the key it was built with.
 
 ## Verifying a download
 

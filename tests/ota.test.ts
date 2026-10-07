@@ -12,7 +12,7 @@ import type { NativeHost } from '../src/core/native-api.ts';
 import { NATIVE_LEVEL } from '../src/core/ota/native-level.ts';
 import { BOOT_DEADLINE_MS, type Manifest, MANIFEST_URL, Ota, PACK_FORMAT } from '../src/core/ota/ota.ts';
 import { generate } from '../tools/ota-keygen.ts';
-import { buildUpdate, signManifest } from '../tools/ota-pack.ts';
+import { buildUpdate, signManifest, verifiesWithAppKey } from '../tools/ota-pack.ts';
 
 const tmp = mkdtempSync(path.join(tmpdir(), 'tn2-ota-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -204,6 +204,13 @@ describe('web updates: health and rollback', () => {
 });
 
 describe('web updates: native level', () => {
+  it('the release refuses a signing key that does not match the app key', () => {
+    const { manifest } = update('keycheck', '2026-10-06T13:00:00.000Z');
+    expect(verifiesWithAppKey(manifest, key.publicRawBase64)).toBe(true);
+    expect(verifiesWithAppKey(manifest, otherKey.publicRawBase64)).toBe(false);
+    expect(verifiesWithAppKey(manifest, '')).toBe(false);
+  });
+
   it('Swift and the web bundle agree on the native level', () => {
     const swift = readFileSync(path.resolve(import.meta.dirname, '..', 'ios', 'App', 'App', 'Native', 'Core', 'WebBundle.swift'), 'utf8');
     expect(Number(/static let nativeLevel = (\d+)/.exec(swift)?.[1])).toBe(NATIVE_LEVEL);

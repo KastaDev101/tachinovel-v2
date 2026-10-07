@@ -36,7 +36,7 @@ describe('App Update row (personal flavor)', () => {
     const row = top().getByTestId('about-ota');
     await expect.poll(() => row.textContent(), { timeout: 5000 }).toContain(version);
     await row.click();
-    // No public key in test builds: the core answers "not configured", the row shows the version again.
+    // Whatever the check answers (no update, or an error without network), the row shows the running version.
     await expect.poll(() => row.textContent(), { timeout: 5000 }).toContain(version);
     expect(shell.pageErrors).toEqual([]);
   });
