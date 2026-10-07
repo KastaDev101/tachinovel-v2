@@ -67,8 +67,18 @@ final class AppUITests: XCTestCase {
             try tapTab("More", until: element(label: "Backup & Restore"))
             checkControlsLabeled("More")
             try tap(element(label: "Backup & Restore"), "\"Backup & Restore\"", until: backupRow)
-            try tap(backupRow, "the sample backup", timeout: 30, until: app.buttons["Restore…"])
-            try tapNative("Restore…", until: element(label: "Merge"))
+            // A tap that lands while the action sheet is still animating can close it without choosing Restore…
+            // (CI, 2026-10-07): reopen it from the backup row rather than waiting for a sheet that's gone.
+            var merged = false
+            for attempt in 1...3 where !merged {
+                try tap(backupRow, "the sample backup", timeout: 30, until: app.buttons["Restore…"])
+                if try waitForNative("Restore…", timeout: 20) {
+                    try tapOnce(nativeButton("Restore…"), "native button \"Restore…\"", timeout: 5)
+                    merged = try appears(element(label: "Merge"), timeout: 15)
+                }
+                if !merged { print("UITEST-RETRY restore sheet: attempt \(attempt) didn't reach Merge") }
+            }
+            if !merged { try tapNative("Restore…", until: element(label: "Merge")) }
             shot("02-restore-sheet")
             try tap(element(label: "Merge"), "\"Merge\"")
             // The backup lists the demo source: confirm reinstalling it from its site. (When the step runs

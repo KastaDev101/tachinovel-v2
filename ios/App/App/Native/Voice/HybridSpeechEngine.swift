@@ -597,7 +597,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// which sounds far closer (Kasta's drive: the Apple voice was the abrupt part). Not when Kokoro itself is
     /// what's missing, and not under thermal pressure (Kokoro would only add heat).
     private func kokoroCanStandIn(_ reason: FallbackReason) -> Bool {
-        guard listenEngine != nil, reason == .queueDry || reason == .segmentFailed else { return false }
+        // Only while the narrator voice is the one rendering: when Kokoro itself renders (the narrator voice isn't
+        // installed or is still loading), a late sentence is Kokoro's own, and asking Kokoro again only waits longer.
+        guard expressiveUsable(), reason == .queueDry || reason == .segmentFailed else { return false }
         let k = KokoroService.shared
         return k.usable && k.status == .ready && !k.crashDisabled
     }
