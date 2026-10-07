@@ -9,6 +9,27 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.5] - 2026-10-07
+
+### Added
+
+- Mood voices: the Narrator voice also has tense, sad and tender reads, chosen from the scene's mood (dialogue and
+  thoughts line by line, narration only when a mood holds for two sentences or more). Settings › Voices › Narrator
+  voice › Mood voices.
+
+### Changed
+
+- When the narrator voice runs late or fails a sentence, Kokoro reads it instead of the Apple voice.
+- The director hears dread: a wider set of tense words, and a hesitant line ("What… is… going on?") in a tense
+  stretch or a thought is no longer read as teasing.
+- AI scene reading: Apple's on-device model (iOS 26, Apple Intelligence) reads ahead and picks each sentence's
+  mood in context; the rules cover the rest. Settings › Voices › Narrator voice › AI scene reading. Voice Lab ›
+  Test scene reading scores both on the phone.
+- Scene reading rules: tension carries through fight narration, suspense cues, mocking and taunts performed, orders
+  in a fight urgent; mood reads keep a lower temperature so tense never sounds excited.
+- Faster: the next sentence synthesizes while the last one's audio is finished (off the main thread); Kokoro on its
+  own renders 8 sentences ahead so it doesn't run dry with the screen locked.
+
 ## [2.0.0-alpha.4] - 2026-10-07
 
 ### Added
@@ -326,7 +347,8 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...HEAD
+[2.0.0-alpha.5]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
 [2.0.0-alpha.4]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...v2.0.0-alpha.4
 [2.0.0-alpha.3]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
 [2.0.0-alpha.2]: https://github.com/KastaDev101/tachinovel-v2/releases/tag/v2.0.0-alpha.2
