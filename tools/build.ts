@@ -36,7 +36,9 @@ const UI_TARGET = ['es2022', 'safari17'];
 const CORE_TARGET = ['es2022', 'safari17'];
 
 const BUDGETS_KB: Record<string, number> = {
-  'index.html': 700,
+  // 700 → 720 (2026-10-07, voice-import): main was at 697 KB (personal flavor) and imported voices add 7.5 KB to
+  // the personal flavor only (the store flavor compiles them out). Raise on purpose, with the reason in the PR.
+  'index.html': 720,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,

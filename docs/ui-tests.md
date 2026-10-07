@@ -15,6 +15,23 @@ in the app's accessibility tree (buttons, links, switches, sliders, tabs, text f
 VoiceOver label. The findings of all screens are reported together at the end, with the accessibility
 tree attached. `tests/shell/a11y.shell.ts` checks the same on the PC for every PR and names the element.
 
+A second test, `testSystemSheetsAndListenControls` (runs after the first, which restores the sample
+backup it uses), taps the native-only surfaces for real (see also docs/qa.md):
+
+6. More › Backup & Restore › **Restore from Files…** › the system document picker's **Cancel**; then the
+   picker again, **swiped down** (UIKit calls no delegate method then): the next native popup (the backup's
+   action sheet) must still appear, then it is dismissed (iOS 26 shows it as a menu without Cancel: a tap
+   outside);
+7. novel page › **Share** › the share sheet closed (its **Close**, or a tap outside: iOS 26 shows it as a
+   popover without one);
+8. reader › **Appearance**: the **Brightness** slider and **Keep screen awake** (native calls);
+9. **Listen from here** › mini player **Pause** / **Play** › the reader's **Player** › car player
+   **1.25×**, **Play**, **Pause**, **Back 15 seconds**, **Forward 15 seconds**, **Next chapter** (while
+   narration is still on: the demo's chapter 3 is locked), **Close** › mini player **Stop**; the app must
+   still be running.
+
+The job also fails when the app left a crash report (`App-*.ips`) during the run.
+
 Screenshots of each step are the artifact **`ui-test-screenshots`** (`01-library-first-launch.png` …
 `08-listening.png`, plus a screen recording). On a failure the job also keeps **`ui-test-logs`**: the
 xcodebuild log, the fixture site's request log and the `.xcresult` bundle; the screenshots then include

@@ -511,6 +511,13 @@ final class ExpressiveLabPlayer: SpeechEngineDelegate {
         if let f = engine.firstAudio {
             out["firstAudio"] = ["ms": ExpressiveService.r1(f.ms), "source": f.source, "includedLoad": f.includedLoad] as [String: Any]
         }
+        if engine.primary == .chatterboxNano {
+            // Which voice Chatterbox Nano speaks with (imported or built-in), and why not the chosen one if it fell back.
+            let svc = ExpressiveService.shared
+            let loaded = svc.loadedID == .chatterboxNano && svc.loadState(.chatterboxNano) == .ready
+            let using = loaded ? (svc.loadedVoiceUsed ?? ExpressiveService.builtInVoice) : (svc.sampleVoice ?? svc.selectedVoice ?? svc.defaultVoice)
+            out["voice"] = ["id": using, "name": svc.voiceName(using), "loaded": loaded, "note": svc.voiceNote ?? NSNull()] as [String: Any]
+        }
         return out
     }
 }

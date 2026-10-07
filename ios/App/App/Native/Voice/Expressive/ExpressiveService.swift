@@ -12,6 +12,11 @@
 //    × real time per line, memory and thermal state.
 //  Narration (NarrationController) never uses these engines; the Voice Lab plays them through
 //  ExpressiveSpeechEngine, which falls back to Kokoro whenever an expressive engine can't keep up.
+//  - Imported voices (personal flavor; docs/voice-import.md): .tnvoice files made on the PC are checked
+//    (ExpressiveCore VoicePack) and kept in Application Support/TachiNovel/voices (ImportedVoiceStore). The
+//    chosen narrator voice is what Chatterbox Nano loads instead of its built-in voice (ChatterboxVoiceSlot);
+//    a missing or invalid file at load time falls back to the built-in voice and says so (`voiceNote`).
+//    Kokoro and Apple voice settings are separate and never touched.
 //
 
 import ExpressiveCore
@@ -74,13 +79,56 @@ final class ExpressiveService {
     private var speedTask: Task<Void, Never>?
     private let log = Logger(subsystem: "app.tachinovel", category: "voice-expressive")
 
+    // Imported voices (Chatterbox Nano only for now; VoicePackEngine.all lists what can be imported).
+    let voices: ImportedVoiceStore
+    /// Voices that ship in the app (BuiltInVoices/), checked on first use; one of them can be the default.
+    let bundled = BundledVoices(directory: Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil))
+    let chatterboxSlot: ChatterboxVoiceSlot?
+    /// The chosen narrator voice for Chatterbox Nano: an imported ("v…") or shipped ("b…") voice's id, or
+    /// "builtin" for Chatterbox's own voice; nil = the default voice.
+    private(set) var selectedVoice: String?
+    /// The Voice Lab's ▶ on one voice: load with this voice instead of the narrator voice.
+    var sampleVoice: String?
+    /// What the loaded Chatterbox Nano was asked for and what it really uses ("builtin" or an id).
+    private(set) var loadedVoiceRequest: String?
+    private(set) var loadedVoiceUsed: String?
+    private var loggedBundleProblems = false
+    private var loadingVoiceRequest: String?
+    private var loadGeneration = 0
+    /// Why the last load fell back to the built-in voice (shown in the Voice Lab), nil when it didn't.
+    private(set) var voiceNote: String?
+    private(set) var voiceList: [ImportedVoice] = []
+    static let builtInVoice = "builtin"
+    /// One Chatterbox load at a time: the voice slot is shared (install → load → restore).
+    static let slotGate = AsyncGate()
+
+    /// Voice import is part of the personal flavor only (the embedded web bundle says which flavor this is).
+    static let voiceImportEnabled: Bool = {
+        let url = WebBundle.embeddedRoot.appendingPathComponent("build-info.json")
+        guard let data = try? Data(contentsOf: url), let info = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        return info["flavor"] as? String == "personal"
+    }()
+
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice-expressive", isDirectory: true))
         self.sentinel = sentinel
         let crashed = sentinel.checkAtLaunch()
-        store = (try? ExpressiveEngines.modelsRoot()).map { ModelStore(root: $0) }
+        let modelStore = (try? ExpressiveEngines.modelsRoot()).map { ModelStore(root: $0) }
+        store = modelStore
+        let voiceStore = ImportedVoiceStore(root: support.appendingPathComponent("TachiNovel/voices", isDirectory: true))
+        voices = voiceStore
+        chatterboxSlot = modelStore.flatMap { s in ExpressiveEngineID.chatterboxNano.pinned.flatMap { ChatterboxVoiceSlot(model: $0, store: s) } }
+        selectedVoice = voiceStore.selection(engine: VoicePackEngine.chatterboxNano.id)
+        voiceList = voiceStore.list(engine: VoicePackEngine.chatterboxNano.id)
+        // A crash in the middle of a load can leave an imported voice in the model's slot: put the built-in one
+        // back before anything loads (hashing a 0.6 MB file).
+        do {
+            try chatterboxSlot?.restorePinned()
+        } catch {
+            log.error("expressive: voice slot: \(error.localizedDescription, privacy: .public)")
+        }
         if crashed {
             let context = sentinel.current.lastContext ?? ""
             log.error("expressive: the previous run crashed inside an experimental engine (\(context, privacy: .public))")
@@ -169,13 +217,37 @@ final class ExpressiveService {
 
     // MARK: - Load / unload
 
-    /// Load `id` (unloading any other engine first). Completion on main.
+    /// The voice Chatterbox Nano should load now ("builtin" or an imported voice's id); nil for other engines.
+    private func voiceRequest(for id: ExpressiveEngineID) -> String? {
+        guard id == .chatterboxNano else { return nil }
+        return sampleVoice ?? selectedVoice ?? defaultVoice
+    }
+
+    /// The narrator voice when none is chosen: the shipped default voice if there is a valid one, else
+    /// Chatterbox Nano's own voice. (The first call checks the shipped voices.)
+    var defaultVoice: String {
+        let id = bundled.defaultID(engine: VoicePackEngine.chatterboxNano.id) ?? Self.builtInVoice
+        if !loggedBundleProblems {
+            loggedBundleProblems = true
+            for p in bundled.problems { log.error("expressive: shipped voice: \(p, privacy: .public)") }
+        }
+        return id
+    }
+
+    /// Load `id` (unloading any other engine first) with the voice it should use. Completion on main.
     func ensureLoaded(_ id: ExpressiveEngineID, completion: @escaping (Result<Void, Error>) -> Void) {
         cancelIdleRelease()
-        if loadedID == id, loadState(id) == .ready, synth != nil { return completion(.success(())) }
+        let request = voiceRequest(for: id)
+        if loadedID == id, loadState(id) == .ready, synth != nil {
+            if request == loadedVoiceRequest { return completion(.success(())) }
+            unload(reason: "switching voice")
+        }
         if loadedID == id, loadState(id) == .loading {
-            loadWaiters.append(completion)
-            return
+            if request == loadingVoiceRequest {
+                loadWaiters.append(completion)
+                return
+            }
+            unload(reason: "switching voice")
         }
         guard !crashDisabled else { return completion(.failure(ExpressiveError.disabled)) }
         guard Self.supported(id) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
@@ -185,25 +257,45 @@ final class ExpressiveService {
         loadedID = id
         synth = engine
         loadStates[id] = .loading
+        loadingVoiceRequest = request
+        loadGeneration += 1
+        let generation = loadGeneration
         loadWaiters.append(completion)
         let cold = !loadedThisLaunch.contains(id)
         let sentinel = self.sentinel
-        let context = "load \(id.rawValue) \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        let voiceTag = request.map { " voice " + $0 } ?? ""
+        let context = "load \(id.rawValue)\(voiceTag) \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        let slot = id == .chatterboxNano ? chatterboxSlot : nil
+        let sources = VoiceSources(imported: voices, bundled: bundled, fallback: id == .chatterboxNano ? defaultVoice : Self.builtInVoice)
         ExpressiveEngines.setOfflineMode(true)
         Task.detached(priority: .userInitiated) { [weak self] in
             sentinel.begin(context)
-            let result: Result<Double, Error>
-            do { result = .success(try await engine.load()) } catch { result = .failure(error) }
+            let outcome: VoiceLoadOutcome
+            if let slot, let request {
+                outcome = await Self.loadChatterbox(engine, slot: slot, sources: sources, request: request)
+            } else {
+                do { outcome = VoiceLoadOutcome(result: .success(try await engine.load()), used: Self.builtInVoice, note: nil) } catch {
+                    outcome = VoiceLoadOutcome(result: .failure(error), used: Self.builtInVoice, note: nil)
+                }
+            }
+            let result = outcome.result
             sentinel.end(success: (try? result.get()) != nil)
             DispatchQueue.main.async {
-                guard let self, self.loadedID == id else { return }
+                guard let self, self.loadedID == id, self.loadGeneration == generation else { return }
                 let waiters = self.loadWaiters
                 self.loadWaiters = []
+                self.loadingVoiceRequest = nil
                 switch result {
                 case .success(let ms):
                     self.loadStates[id] = .ready
                     self.lastLoad[id] = (ms: ms, cold: cold)
                     self.loadedThisLaunch.insert(id)
+                    if id == .chatterboxNano {
+                        self.loadedVoiceRequest = request
+                        self.loadedVoiceUsed = outcome.used
+                        self.voiceNote = outcome.note
+                        if let note = outcome.note { self.log.error("expressive: \(note, privacy: .public)") }
+                    }
                     waiters.forEach { $0(.success(())) }
                 case .failure(let error):
                     self.loadStates[id] = .failed(error.localizedDescription)
@@ -216,6 +308,194 @@ final class ExpressiveService {
         }
     }
 
+    struct VoiceLoadOutcome: Sendable {
+        let result: Result<Double, Error>
+        /// The voice actually loaded ("builtin" or an id).
+        let used: String
+        /// Why the requested voice wasn't used (said in the Voice Lab), nil when it was.
+        let note: String?
+    }
+
+    /// Where a voice's data comes from: imported ("v…") or shipped with the app ("b…"); "builtin" is the model's own.
+    struct VoiceSources: Sendable {
+        let imported: ImportedVoiceStore
+        let bundled: BundledVoices
+        /// Tried when the requested voice can't be used (the default voice), before Chatterbox's own voice.
+        let fallback: String
+
+        func data(_ id: String) throws -> Data {
+            let engine = VoicePackEngine.chatterboxNano
+            if BundledVoices.isBundledID(id) {
+                let contents = try bundled.contents(id)
+                guard contents.manifest.engine == engine else { throw VoicePackError.notFound(id) }
+                return contents.conditioning
+            }
+            return try imported.conditioning(id, engine: engine.id)
+        }
+
+        func name(_ id: String) -> String? {
+            if id == ExpressiveService.builtInVoice { return ExpressiveService.engineVoiceName }
+            if BundledVoices.isBundledID(id) { return bundled.entry(id)?.name }
+            return imported.voice(id, engine: VoicePackEngine.chatterboxNano.id)?.name
+        }
+    }
+
+    static let engineVoiceName = "Original Chatterbox voice"
+
+    /// Chatterbox Nano with `request` in its voice slot, one load at a time. If that voice is missing, fails the
+    /// checks again or doesn't load, the default voice is tried, then Chatterbox's own; the outcome says why.
+    private static func loadChatterbox(_ engine: any ExpressiveSynthesizer, slot: ChatterboxVoiceSlot, sources: VoiceSources,
+                                       request: String) async -> VoiceLoadOutcome {
+        await slotGate.acquire()
+        let outcome = await loadChatterboxLocked(engine, slot: slot, sources: sources, request: request)
+        await slotGate.release()
+        return outcome
+    }
+
+    private static func loadChatterboxLocked(_ engine: any ExpressiveSynthesizer, slot: ChatterboxVoiceSlot, sources: VoiceSources,
+                                             request: String) async -> VoiceLoadOutcome {
+        var candidates = [request]
+        if !candidates.contains(sources.fallback) { candidates.append(sources.fallback) }
+        if !candidates.contains(builtInVoice) { candidates.append(builtInVoice) }
+        var note: String?
+        var lastError: Error = ExpressiveEngineError.notLoaded
+        for candidate in candidates {
+            do {
+                let ms: Double
+                if candidate == builtInVoice {
+                    try slot.restorePinned()
+                    ms = try await engine.load()
+                } else {
+                    try slot.install(try sources.data(candidate))
+                    do {
+                        ms = try await engine.load()
+                    } catch {
+                        try? slot.restorePinned()
+                        await engine.unload()
+                        throw error
+                    }
+                    try? slot.restorePinned()
+                }
+                let reason = note.map { "\($0) Using “\(sources.name(candidate) ?? "another voice")” instead." }
+                return VoiceLoadOutcome(result: .success(ms), used: candidate, note: reason)
+            } catch {
+                lastError = error
+                if note == nil {
+                    let shown = sources.name(candidate).map { "“\($0)”" } ?? "your narrator voice"
+                    note = "Couldn’t use \(shown): \(error.localizedDescription)"
+                }
+            }
+        }
+        return VoiceLoadOutcome(result: .failure(lastError), used: builtInVoice, note: note)
+    }
+
+    // MARK: - Imported and shipped voices
+
+    /// Check and keep a .tnvoice file (off the main thread). Completion on main.
+    func importVoice(from url: URL, sourceName: String, completion: @escaping (Result<(voice: ImportedVoice, replaced: Bool), Error>) -> Void) {
+        let voices = self.voices
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result: Result<(voice: ImportedVoice, replaced: Bool), Error>
+            do {
+                let contents = try VoicePack.read(fileAt: url)
+                result = .success(try voices.add(contents, sourceFile: sourceName))
+            } catch {
+                result = .failure(error)
+            }
+            DispatchQueue.main.async {
+                self.refreshVoices()
+                if case .success(let r) = result {
+                    self.log.info("expressive: imported voice \(r.voice.id, privacy: .public)")
+                    // Re-importing the loaded voice: load it again next time (the file may have changed).
+                    if r.voice.id == self.loadedVoiceRequest { self.unload(reason: "voice re-imported") }
+                }
+                completion(result)
+            }
+        }
+    }
+
+    func refreshVoices() {
+        voiceList = voices.list(engine: VoicePackEngine.chatterboxNano.id)
+        selectedVoice = voices.selection(engine: VoicePackEngine.chatterboxNano.id)
+    }
+
+    /// Shipped voices for Chatterbox Nano (checked on the first call).
+    var shippedVoices: [BundledVoices.Entry] { bundled.entries(engine: VoicePackEngine.chatterboxNano.id) }
+
+    /// Is `id` a voice that can be chosen right now: "builtin", a shipped voice or an imported one?
+    func voiceExists(_ id: String) -> Bool {
+        id == Self.builtInVoice || shippedVoices.contains { $0.id == id } || voiceList.contains { $0.id == id }
+    }
+
+    /// The narrator voice for Chatterbox Nano (nil = the default voice). Survives restarts (selection.json).
+    func selectVoice(_ id: String?) throws {
+        if let id, !voiceExists(id) { throw VoicePackError.notFound(id) }
+        try voices.setSelection(id, engine: VoicePackEngine.chatterboxNano.id)
+        refreshVoices()
+        voiceNote = nil
+        if loadedID == .chatterboxNano, loadedVoiceRequest != (id ?? defaultVoice) { unload(reason: "narrator voice changed") }
+    }
+
+    @discardableResult
+    func renameVoice(_ id: String, to name: String) throws -> ImportedVoice {
+        let voice = try voices.rename(id, engine: VoicePackEngine.chatterboxNano.id, to: name)
+        refreshVoices()
+        return voice
+    }
+
+    func deleteVoice(_ id: String) throws {
+        if loadedID == .chatterboxNano, loadedVoiceRequest == id || loadingVoiceRequest == id { unload(reason: "voice deleted") }
+        if sampleVoice == id { sampleVoice = nil }
+        try voices.delete(id, engine: VoicePackEngine.chatterboxNano.id)
+        refreshVoices()
+    }
+
+    /// An imported voice's preview file.
+    func previewURL(_ id: String) -> URL? {
+        voices.previewURL(id, engine: VoicePackEngine.chatterboxNano.id)
+    }
+
+    /// A shipped voice's preview (read from the app and checked again).
+    func shippedPreview(_ id: String) -> Data? {
+        guard BundledVoices.isBundledID(id) else { return nil }
+        return try? bundled.contents(id).preview
+    }
+
+    func voiceName(_ id: String?) -> String {
+        guard let id else { return voiceName(defaultVoice) }
+        if id == Self.builtInVoice { return Self.engineVoiceName }
+        if let shipped = shippedVoices.first(where: { $0.id == id }) { return shipped.name }
+        return voiceList.first { $0.id == id }?.name ?? "Unknown voice"
+    }
+
+    static func voiceJSON(_ v: ImportedVoice) -> [String: Any] {
+        [
+            "id": v.id, "name": v.name, "engine": v.engine, "createdAt": v.createdAt, "importedAt": v.importedAt, "bytes": v.bytes,
+            "hasPreview": v.hasPreview, "madeFor": v.madeFor ?? NSNull(), "sourceFile": v.sourceFile ?? NSNull(), "bundled": false,
+        ]
+    }
+
+    static func shippedJSON(_ e: BundledVoices.Entry) -> [String: Any] {
+        ["id": e.id, "name": e.name, "engine": e.engine, "createdAt": e.createdAt, "hasPreview": e.hasPreview, "bundled": true, "isDefault": e.isDefault]
+    }
+
+    /// The Voice Lab's "Narrator voice" block: shipped voices (default first), then imported ones.
+    func voicesSnapshot() -> [String: Any] {
+        let shipped = shippedVoices
+        let loaded: Any = loadedID == .chatterboxNano && loadState(.chatterboxNano) == .ready ? (loadedVoiceUsed ?? Self.builtInVoice) as Any : NSNull() as Any
+        return [
+            "engine": VoicePackEngine.chatterboxNano.id,
+            "engineTitle": VoicePackEngine.chatterboxNano.title,
+            "importEnabled": Self.voiceImportEnabled,
+            "default": defaultVoice,
+            "selected": selectedVoice ?? NSNull(),
+            "selectedMissing": selectedVoice.map { !voiceExists($0) } ?? false,
+            "loaded": loaded,
+            "note": voiceNote ?? NSNull(),
+            "list": shipped.map(Self.shippedJSON) + voiceList.map(Self.voiceJSON),
+        ]
+    }
+
     func unload(reason: String) {
         guard let id = loadedID else { return }
         log.info("expressive: unloading \(id.rawValue, privacy: .public) (\(reason, privacy: .public))")
@@ -223,6 +503,9 @@ final class ExpressiveService {
         synth = nil
         loadedID = nil
         loadStates[id] = .unloaded
+        loadingVoiceRequest = nil
+        loadedVoiceRequest = nil
+        loadedVoiceUsed = nil
         let waiters = loadWaiters
         loadWaiters = []
         waiters.forEach { $0(.failure(ExpressiveError.released(reason))) }
@@ -381,6 +664,7 @@ final class ExpressiveService {
                 "os": ProcessInfo.processInfo.operatingSystemVersionString,
             ] as [String: Any],
             "kokoro": KokoroService.shared.statusText,
+            "voices": voicesSnapshot(),
         ]
         if let t = speedTest {
             let sorted = t.xs.sorted()

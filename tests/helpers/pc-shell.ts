@@ -73,7 +73,7 @@ export interface PcShell {
   readonly consoleErrors: string[];
   /** Push a plugin event to the page's listeners, like CAPPlugin.notifyListeners. */
   emitPluginEvent(plugin: string, event: string, data: Record<string, unknown>): void;
-  /** Canned answers for non-Core plugin methods (default: {}). */
+  /** Canned answers for non-Core plugin methods (default: {}); a canned function that throws rejects the call. */
   readonly pluginReplies: Map<string, (options: Record<string, unknown>) => unknown>;
   close(): Promise<void>;
 }
@@ -153,7 +153,18 @@ export async function startPcShell(opts: {
     }
     pluginCalls.push({ pluginId: msg.pluginId, methodName: msg.methodName, options: msg.options });
     const canned = pluginReplies.get(`${msg.pluginId}.${msg.methodName}`);
-    if (canned) return reply(true, canned(msg.options));
+    if (canned) {
+      // A canned reply that throws is a rejected call, like CAPPluginCall.reject(message, code).
+      let data: unknown;
+      try {
+        data = canned(msg.options);
+      } catch (err) {
+        const code = err && typeof err === 'object' && 'code' in err && typeof err.code === 'string' ? err.code : 'ERROR';
+        fromNative({ callbackId: msg.callbackId, pluginId: msg.pluginId, methodName: msg.methodName, success: false, error: { message: err instanceof Error ? err.message : String(err), code } });
+        return;
+      }
+      return reply(true, data);
+    }
     if (msg.pluginId === 'Narration' && msg.methodName === 'state') return reply(true, { status: 'idle' });
     if (msg.pluginId === 'Narration' && msg.methodName === 'audioTiming') return reply(true, { hasAudio: false, json: null });
     if (msg.pluginId === 'Store' && msg.methodName === 'entitlements') return reply(true, { pro: false, source: null });

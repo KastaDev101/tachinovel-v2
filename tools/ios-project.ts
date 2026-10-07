@@ -7,6 +7,8 @@
  *   - PrivacyInfo.xcprivacy (Resources phase), App.entitlements (CODE_SIGN_ENTITLEMENTS)
  *   - KokoroModels/ as a folder reference in the Resources phase: the bundled Kokoro voice model, fetched
  *     (pinned + checksummed) by tools/fetch-voices.ts at build time, never committed
+ *   - BuiltInVoices/ as a folder reference in the Resources phase: Chatterbox Nano voices that ship in the app
+ *     (.tnvoice files + voices.json, committed; tools/built-in-voices.ts, docs/voice-import.md)
  *   - the local Swift package ios/App/HDVoice (products HDVoiceCore, HDVoiceKokoro; it pins FluidAudio)
  *   - the local Swift package ios/App/ExpressiveVoice (product ExpressiveVoice: the EXPERIMENTAL expressive
  *     engines of the Voice Lab, models downloaded on demand; same FluidAudio pin)
@@ -130,6 +132,13 @@ function addVoicePackage(text: string, appGroup: string, resources: string): str
   t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${modelsBuild} /* KokoroModels in Resources */ = {isa = PBXBuildFile; fileRef = ${modelsRef} /* KokoroModels */; };\n`]);
   t = addToList(t, appGroup, 'children', [`\t\t\t\t${modelsRef} /* KokoroModels */,\n`]);
   t = addToList(t, resources, 'files', [`\t\t\t\t${modelsBuild} /* KokoroModels in Resources */,\n`]);
+  // Voices that ship in the app (committed .tnvoice files + voices.json; tools/built-in-voices.ts).
+  const voicesRef = oid('file:BuiltInVoices');
+  const voicesBuild = oid('build:BuiltInVoices');
+  t = insertIntoSection(t, 'PBXFileReference', [`\t\t${voicesRef} /* BuiltInVoices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = BuiltInVoices; sourceTree = "<group>"; };\n`]);
+  t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${voicesBuild} /* BuiltInVoices in Resources */ = {isa = PBXBuildFile; fileRef = ${voicesRef} /* BuiltInVoices */; };\n`]);
+  t = addToList(t, appGroup, 'children', [`\t\t\t\t${voicesRef} /* BuiltInVoices */,\n`]);
+  t = addToList(t, resources, 'files', [`\t\t\t\t${voicesBuild} /* BuiltInVoices in Resources */,\n`]);
   t = addLocalPackage(t, 'HDVoice', VOICE_PRODUCTS);
   return addLocalPackage(t, 'ExpressiveVoice', EXPRESSIVE_PRODUCTS);
 }
