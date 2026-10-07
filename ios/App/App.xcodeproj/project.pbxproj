@@ -42,6 +42,7 @@
 		B39966270AA09334B4F8E5D4 /* HDVoiceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */; };
 		766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */; };
 		87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */; };
+		EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F88FB48C4F7B70FABE254E /* WebBundle.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -92,6 +93,7 @@
 		92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSettings.swift"; sourceTree = "<group>"; };
 		D7F3C92A13EB7D44431F05E9 /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };
 		A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/WebContentRecovery.swift"; sourceTree = "<group>"; };
+		82F88FB48C4F7B70FABE254E /* WebBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/WebBundle.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -178,6 +180,7 @@
 				CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */,
 				92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */,
 				A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */,
+				82F88FB48C4F7B70FABE254E /* WebBundle.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -329,6 +332,7 @@
 				35FE6311BE4C8C43152A2014 /* VoiceLab.swift in Sources */,
 				7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */,
 				87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */,
+				EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
