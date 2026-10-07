@@ -8,7 +8,9 @@
  *   www/core/app/plugins/*.js          built-in plugins (personal flavor ONLY) + app/manifest.json
  *   www/build-info.json
  *
- * Usage: node tools/build.ts [--flavor=personal|store] [--ads] [--dev]
+ * Usage: node tools/build.ts [--flavor=personal|store] [--ads] [--dev] [--preview]
+ *   --preview: an integration preview build (.github/workflows/preview.yml); its version reads
+ *   "preview <commit>" in About and Diagnostics, and it never takes web updates.
  *   default flavor: personal. --ads only valid with store. V1_ROOT=../tachinovel to use live v1 code.
  */
 import * as esbuild from 'esbuild';
@@ -29,6 +31,8 @@ export interface BuildOptions {
   ads: boolean;
   dev: boolean;
   outDir: string;
+  /** Integration preview build: version "preview <commit>" (see the usage note). */
+  preview?: boolean;
 }
 
 /** Same targets for UI and core: iOS 17 is the deployment target (ios/App, docs/architecture.md). */
@@ -68,7 +72,7 @@ export function buildInfo(opts: BuildOptions): BuildInfo {
   const vendoredNote = path.join(v1, 'VENDORED.md');
   if (existsSync(vendoredNote)) v1Hash = /commit:\s*([0-9a-f]{7,40})/i.exec(readFileSync(vendoredNote, 'utf8'))?.[1]?.slice(0, 7) ?? 'vendored';
   else v1Hash = git(v1, 'rev-parse --short HEAD') + (git(v1, 'status --porcelain') ? '-dirty' : '');
-  return { version: pkg.version, hash, time: new Date().toISOString(), flavor: opts.flavor, ads: opts.ads, v1: { root: path.relative(root, v1) || '.', hash: v1Hash } };
+  return { version: opts.preview ? `preview ${hash}` : pkg.version, hash, time: new Date().toISOString(), flavor: opts.flavor, ads: opts.ads, v1: { root: path.relative(root, v1) || '.', hash: v1Hash } };
 }
 
 function defines(info: BuildInfo, dev: boolean): Record<string, string> {
@@ -217,7 +221,7 @@ export function parseArgs(argv: string[]): BuildOptions {
   const ads = argv.includes('--ads');
   if (ads && flavorArg !== 'store') throw new Error('--ads is only valid with --flavor=store');
   const outArg = argv.find((a) => a.startsWith('--out='))?.slice('--out='.length);
-  return { flavor: flavorArg, ads, dev: argv.includes('--dev'), outDir: outArg ? path.resolve(root, outArg) : path.join(root, 'www') };
+  return { flavor: flavorArg, ads, dev: argv.includes('--dev'), preview: argv.includes('--preview'), outDir: outArg ? path.resolve(root, outArg) : path.join(root, 'www') };
 }
 
 /**

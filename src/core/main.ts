@@ -11,7 +11,10 @@ import { errorMessage } from '@v1/script/lib/errors.ts';
 import type { NativeHost } from './native-api.ts';
 import { startCore } from './core.ts';
 
-const BUILD = `${__BUILD_VERSION__}+${__BUILD_HASH__} (${__FLAVOR__})`;
+/** A preview build's version already names its commit ("preview <commit>", tools/build.ts --preview). */
+const BUILD = __BUILD_VERSION__.startsWith('preview ')
+  ? `${__BUILD_VERSION__} (${__FLAVOR__})`
+  : `${__BUILD_VERSION__}+${__BUILD_HASH__} (${__FLAVOR__})`;
 
 function takeHost(): NativeHost {
   const g = globalThis as { __native?: NativeHost };

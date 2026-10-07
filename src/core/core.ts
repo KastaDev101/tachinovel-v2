@@ -130,9 +130,10 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
   });
   app.attachEvents((event, payload) => host.emit(event, JSON.stringify(payload ?? null)));
 
-  // Web updates: personal flavor only; the store flavor compiles all of it out (App Store rules).
+  // Web updates: personal flavor only; the store flavor compiles all of it out (App Store rules). A preview
+  // build (tools/build.ts --preview) never takes one: a release's bundle would replace the preview's code.
   const ota =
-    __FLAVOR__ === 'personal' ? new Ota(host, platform, { flavor: __FLAVOR__, version: __BUILD_VERSION__, builtAt: __BUILD_TIME__, now: Date.now() }) : null;
+    __FLAVOR__ === 'personal' && !__BUILD_VERSION__.startsWith('preview ') ? new Ota(host, platform, { flavor: __FLAVOR__, version: __BUILD_VERSION__, builtAt: __BUILD_TIME__, now: Date.now() }) : null;
   if (ota) {
     try {
       ota.reconcile();

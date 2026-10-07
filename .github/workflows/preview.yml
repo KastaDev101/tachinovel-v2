@@ -1,0 +1,73 @@
+# Integration preview: an unsigned sideload IPA of the branch `integration-preview` (main + open PR branches
+# merged together for a phone test before their checks finish). This workflow exists only on that branch;
+# the branch is re-created from main whenever a combined build is wanted, and never merged.
+#
+# One macOS job: personal-flavor web build with --preview (About › Version reads "preview <commit>", no web
+# updates), the pinned Kokoro model as in ios.yml's ios-ipa, unsigned device build → artifact
+# TachiNovel-preview-<run>-unsigned.ipa. No tests here: the PRs' own checks still run in the normal lane.
+name: preview
+
+on:
+  push:
+    branches: [integration-preview]
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preview-ipa:
+    name: preview IPA (unsigned, for AltStore)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Web build first, on a clean checkout, so the version names the commit without "-dirty".
+      - run: node tools/build.ts --flavor=personal --preview
+      - name: Cache the Kokoro model download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/kokoro
+          key: kokoro-${{ hashFiles('ios/kokoro-models.lock.json') }}
+      - name: Bundled Kokoro model (pinned, checksummed)
+        run: node tools/fetch-voices.ts
+      - run: npx cap sync ios
+      - name: Unsigned device build → .ipa
+        id: ipa
+        run: bash ci/ios-unsigned-ipa.sh build/ipa
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          IPA_NAME: TachiNovel-preview-${{ github.run_number }}-unsigned.ipa
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ steps.ipa.outputs.ipa }}
+          archive: false
+          retention-days: 14
+      - name: Summary
+        env:
+          IPA: ${{ steps.ipa.outputs.ipa }}
+        run: |
+          {
+            echo "### Integration preview ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER})"
+            echo
+            echo "\`$(basename "$IPA")\`: $(du -h "$IPA" | cut -f1), SHA-256 \`$(shasum -a 256 "$IPA" | cut -d' ' -f1)\`"
+            echo
+            echo "In the app: More › About shows \"Version preview $(git rev-parse --short HEAD)\"."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the build log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xcodebuild-preview-log
+          path: build/ipa/xcodebuild-device.log
+          if-no-files-found: ignore
+          retention-days: 7
