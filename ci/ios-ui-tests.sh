@@ -101,6 +101,24 @@ if [ -d "$OUT/AppUITests.xcresult" ]; then
     || echo "::warning::could not export attachments from the result bundle"
   node tools/ui-attachments.ts "$OUT/screenshots" || true
 fi
+
+# --- What the test had to work around (docs/ui-tests.md "Flakiness"), and why the page went away if it did ---
+# WebKit logs the WebContent process's end in the app's own process (crash, memory limit, …): the full log
+# goes with ui-test-logs (on failure), the relevant lines with the screenshots (always uploaded).
+xcrun simctl spawn "$UDID" log show --last 30m --style compact \
+  --predicate '(process == "App" AND (subsystem BEGINSWITH "com.apple.WebKit" OR subsystem == "app.tachinovel")) OR process BEGINSWITH "com.apple.WebKit.WebContent"' \
+  > "$OUT/app-webkit.log" 2>/dev/null || true
+grep -oE "UITEST-(WEB-RECOVERED|WEB-BLANK|RETRY).*" "$OUT/xcodebuild-ui.log" | sort -u > "$OUT/workarounds.txt" || true
+while IFS= read -r line; do
+  echo "::warning title=UI test workaround::$line"
+done < "$OUT/workarounds.txt"
+if grep -q "UITEST-WEB" "$OUT/workarounds.txt"; then
+  grep -iE "WebProcessProxy|processDidTerminate|didClose|terminat|crash|jetsam|memory limit|reload" "$OUT/app-webkit.log" \
+    | tail -60 > "$OUT/screenshots/webcontent-events.txt" || true
+  find "$HOME/Library/Logs/DiagnosticReports" -name '*WebContent*' -newer "$OUT/sample-backup.json" -exec cp {} "$OUT/screenshots/" \; 2>/dev/null || true
+  echo "--- WebContent events (also in the ui-test-screenshots artifact) ---"
+  cat "$OUT/screenshots/webcontent-events.txt" || true
+fi
 echo "--- fixture site requests ---"
 tail -40 "$OUT/fixture-site.log" || true
 exit $STATUS
