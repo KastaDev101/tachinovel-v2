@@ -121,4 +121,12 @@ if grep -q "UITEST-WEB" "$OUT/workarounds.txt"; then
 fi
 echo "--- fixture site requests ---"
 tail -40 "$OUT/fixture-site.log" || true
+# A crash of the app under test (also one XCUITest recovered from) fails the job; the reports go with the
+# screenshots artifact.
+CRASHES=$(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 \( -name "App-*.ips" -o -name "App_*.ips" \) -newer "$OUT/sample-backup.json" 2>/dev/null || true)
+if [ -n "$CRASHES" ]; then
+  echo "::error::The app crashed during the UI tests (crash reports in the ui-test-screenshots artifact)"
+  echo "$CRASHES" | while read -r f; do cp "$f" "$OUT/screenshots/" 2>/dev/null || true; done
+  STATUS=1
+fi
 exit $STATUS
