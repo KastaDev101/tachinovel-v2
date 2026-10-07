@@ -193,7 +193,8 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
         let linked = folderURL
         PresentationQueue.shared.enqueue({ host, finished in
             let message = linked.map { "Logs, crash reports and problem reports go to “\($0.lastPathComponent)”." }
-                ?? "Pick a folder, for example iCloud Drive › TachiNovel-Builds › diagnostics. The app log, crash reports and problem reports are copied there every few minutes."
+                ?? "Pick a folder, for example iCloud Drive › TachiNovel-Builds › diagnostics. "
+                + "The app log, crash reports and problem reports are copied there every few minutes."
             let sheet = UIAlertController(title: "Diagnostics Folder", message: message, preferredStyle: .actionSheet)
             func after(_ action: @escaping () -> Void) -> (UIAlertAction) -> Void {
                 { _ in
@@ -269,7 +270,8 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
             CoreHost.shared.request("app.background") { @Sendable _, _ in
                 DiagnosticsFiles.queue.async {
                     do {
-                        try DiagnosticsFiles.mirror(root: root, local: local, extras: ["trail.json": trailData, "status.json": statusData, "voice-lab.json": labData])
+                        let extras = ["trail.json": trailData, "status.json": statusData, "voice-lab.json": labData]
+                        try DiagnosticsFiles.mirror(root: root, local: local, extras: extras)
                     } catch {
                         log.error("Diagnostics folder: \(error.localizedDescription, privacy: .public)")
                     }
@@ -317,7 +319,10 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
         }
         let shot = screenshot
         PresentationQueue.shared.enqueue({ host, finished in
-            let alert = UIAlertController(title: "Report a Problem", message: "What happened? A screenshot, the recent log and the current screen are saved with it.", preferredStyle: .alert)
+            let alert = UIAlertController(
+                title: "Report a Problem",
+                message: "What happened? A screenshot, the recent log and the current screen are saved with it.",
+                preferredStyle: .alert)
             alert.addTextField { field in
                 field.placeholder = "Describe the problem"
                 field.autocapitalizationType = .sentences
