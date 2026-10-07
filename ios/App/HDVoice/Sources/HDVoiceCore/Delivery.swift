@@ -53,7 +53,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     }
 
     /// 2: Pocket TTS became the default Listen engine (version 1 only knew Chatterbox Nano, and saved it as the default).
-    public static let currentVersion = 2
+    /// 3: the AI director ("rules+ai", on-device, where available) became the default (older versions saved "rules").
+    public static let currentVersion = 3
     public static let pocketTts = "pocket-tts"
     public static let chatterboxNano = "chatterbox-nano"
     /// The expressive engines Listen can read chapters with.
@@ -89,7 +90,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     public var systemChime: Bool
     public var systemTone: Bool
 
-    public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
+    public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rulesAI, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true, moods: Bool = true,
                 systemChime: Bool = true, systemTone: Bool = true) {
         version = Self.currentVersion
@@ -126,7 +127,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
             }
         }
         natural = (try? c.decode(Bool.self, forKey: .natural)) ?? d.natural
-        director = (try? c.decode(String.self, forKey: .director)) == Self.rulesAI ? Self.rulesAI : Self.rules
+        let savedDirector = try? c.decode(String.self, forKey: .director)
+        director = savedDirector == Self.rulesAI || savedDirector == nil || saved < 3 ? Self.rulesAI : Self.rules
         breaths = (try? c.decode(Bool.self, forKey: .breaths)) ?? d.breaths
         studioSound = (try? c.decode(Bool.self, forKey: .studioSound)) ?? d.studioSound
         sounds = (try? c.decode(Bool.self, forKey: .sounds)) ?? d.sounds

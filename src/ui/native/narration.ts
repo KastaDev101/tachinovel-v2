@@ -217,6 +217,9 @@ export interface DeliveryInfo {
   natural: boolean;
   performed: boolean;
   moods: boolean;
+  /** The on-device AI director reads the scene (iOS 26 with Apple Intelligence); off = keyword rules only. */
+  sceneAI: boolean;
+  sceneAIAvailable?: boolean;
   breaths: boolean;
   studioSound: boolean;
   systemChime: boolean;
@@ -311,6 +314,8 @@ export interface NarrationPlugin {
    */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
+  /** Voice Lab › Test scene reading: the on-device AI director's moods for these sentences (null when unavailable). */
+  readScene(opts: { sentences: { text: string; kind: 'narration' | 'spoken' | 'system' }[] }): Promise<{ available: boolean; reason?: string; moods: string[] | null; ms: number }>;
   /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
   voiceLab(): Promise<Record<string, unknown>>;
   setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;

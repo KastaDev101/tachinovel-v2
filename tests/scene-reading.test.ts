@@ -1,32 +1,30 @@
 /**
  * Scene reading: which read of the narrator voice the director picks per sentence (calm, performed, tense, sad,
- * tender), against hand labels for two original scenes (tests/fixtures/scene-reading; each sentence lists every
+ * tender), against hand labels for original scenes (src/core/narration/scene-tests.ts; each sentence lists every
  * read that would be acceptable). Kasta asked for at least 95 % (2026-10-07).
  */
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { htmlToBlocks } from '@v1tts/frontend.ts';
+import { modelVoices, SCENE_TESTS, sceneScore } from '../src/core/narration/scene-tests.ts';
 import { speechScript } from '../src/core/narration/speech-script.ts';
 
-const dir = path.join(import.meta.dirname, 'fixtures', 'scene-reading');
-const labels = JSON.parse(readFileSync(path.join(dir, 'labels.json'), 'utf8')) as Record<string, string[]>;
-const CODE: Record<string, string> = { narrator: 'n', performed: 'p', tense: 't', sad: 's', tender: 'd' };
-
-function reads(name: string): { text: string; read: string }[] {
-  const paras = readFileSync(path.join(dir, `${name}.txt`), 'utf8').split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-  const html = paras.map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join('');
-  return speechScript(htmlToBlocks(html)).items.map((i) => ({ text: i.text, read: CODE[i.voice ?? 'narrator'] ?? '?' }));
-}
+const script = (paras: readonly string[]) =>
+  speechScript(htmlToBlocks(paras.map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join(''))).items;
 
 describe('scene reading', () => {
-  for (const name of ['merrow', 'lighthouse']) {
-    it(`${name}: at least 95 % of the sentences get an acceptable read`, () => {
-      const got = reads(name);
-      const want = labels[name] ?? [];
-      expect(got).toHaveLength(want.length);
-      const misses = got.filter((g, k) => !(want[k] ?? '').includes(g.read)).map((g) => `${g.read}: ${g.text}`);
-      expect(1 - misses.length / got.length, misses.join('\n')).toBeGreaterThanOrEqual(0.95);
+  for (const t of SCENE_TESTS) {
+    it(`${t.name}: at least 95 % of the sentences get an acceptable read (rules)`, () => {
+      const items = script(t.paragraphs);
+      expect(items).toHaveLength(t.labels.length);
+      const s = sceneScore(items.map((i) => i.voice), t.labels);
+      expect(s.ok / s.total, s.misses.map((k) => `${items[k]?.voice ?? 'narrator'}: ${items[k]?.text}`).join('\n')).toBeGreaterThanOrEqual(0.95);
     });
   }
+
+  it('maps the on-device model’s moods like native does', () => {
+    const items = [{ voice: undefined }, { voice: undefined }, { voice: 'performed' as const }, { voice: undefined }, { voice: undefined }];
+    const kinds = ['narration', 'narration', 'spoken', 'narration', 'system'] as const;
+    expect(modelVoices(items, kinds, ['tense', 'tense', 'playful', 'sad', 'tense'])).toEqual(['tense', 'tense', 'performed', undefined, undefined]);
+    expect(modelVoices(items, kinds, ['calm'])).toEqual([undefined, undefined, 'performed', undefined, undefined]);
+  });
 });

@@ -50,6 +50,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
+    /// The AI director (SceneReader): moods the on-device model gave for sentences ahead, the next sentence to send,
+    /// and whether a window is being read.
+    private var sceneMoods: [Int: String] = [:]
+    private var sceneNext = 0
+    private var sceneBusy = false
+    static let sceneWindow = 10
+    static let sceneContext = 3
+
     /// The render-ahead window once the narrator voice is ready (smaller while it loads).
     private var fullAhead = 3
     /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
@@ -171,6 +179,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func stop() {
         gen += 1
         standIn = nil
+        sceneMoods = [:]
+        sceneNext = 0
+        sceneBusy = false
         cancelWait()
         waiting = false
         if let s = scheduler { lastScheduler = s }
@@ -267,6 +278,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     private func pumpRender() {
         guard !paused else { return }
+        pumpScene()
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
@@ -280,9 +292,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
             // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
             // (tense, sad, tender); the script never puts two reads in one call.
-            let n = segments[i].natural
-            let read = VoiceSettings.shared.prefs.delivery.read(n?.voice, speaks: n?.speaks ?? false)
-            var line = ExpressiveLine(text: text, role: read ?? "narrator")
+            var line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
             // One temperature per call: the letter-weighted mean of the director's (the script keeps calls similar).
             let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
             let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
@@ -335,6 +345,48 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
     }
 
+    /// The read of the narrator voice for sentence i (nil = the calm Narrator): the AI director's when it has read
+    /// the sentence, else the script's; then the settings (Act out dialogue, Mood voices).
+    private func read(for i: Int) -> String? {
+        guard segments.indices.contains(i) else { return nil }
+        let d = VoiceSettings.shared.prefs.delivery
+        let n = segments[i].natural
+        var voice = n?.voice
+        if d.usesAI {
+            let speaks = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.speaks == true }
+            let system = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.system == true }
+            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system) { voice = r }
+        }
+        return d.read(voice, speaks: n?.speaks ?? false)
+    }
+
+    /// Ask the on-device model to read the next window of sentences, up to about two windows ahead of the one playing
+    /// (renders happen there). Never waits: a sentence rendered before its answer keeps the script's read.
+    private func pumpScene() {
+        guard listenEngine != nil, natural != nil, VoiceSettings.shared.prefs.delivery.usesAI, !sceneBusy,
+              sceneNext < segments.count, SceneReader.shared.available else { return }
+        let playing = scheduler?.playing ?? 0
+        guard sceneNext <= playing + 2 * Self.sceneWindow + 12 else { return }
+        let start = sceneNext
+        let end = min(segments.count, start + Self.sceneWindow)
+        let context = segments[max(0, start - Self.sceneContext)..<start].map(sceneSentence)
+        let window = segments[start..<end].map(sceneSentence)
+        sceneBusy = true
+        let g = gen
+        SceneReader.shared.read(context: context, window: window) { [weak self] moods in
+            guard let self, g == self.gen else { return }
+            self.sceneBusy = false
+            if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }
+            self.sceneNext = end
+            self.pumpScene()
+        }
+    }
+
+    private func sceneSentence(_ s: SpeechSegment) -> SceneReader.Sentence {
+        let kind: SceneReader.Sentence.Kind = s.natural?.system == true ? .system : s.natural?.speaks == true ? .spoken : .narration
+        return SceneReader.Sentence(text: s.kokoroText, kind: kind)
+    }
+
     /// The text a voice reads: the director's shaped text for the expressive voice, the sentence for Kokoro.
     private static func readText(_ seg: SpeechSegment, expressive: Bool) -> String {
         expressive ? (seg.natural?.params.say ?? seg.kokoroText) : seg.kokoroText
@@ -348,7 +400,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         var out = [i]
         var length = Self.readText(segments[i], expressive: true).count
         var j = i
-        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]) {
+        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]), read(for: j) == read(for: j + 1) {
             let next = Self.readText(segments[j + 1], expressive: true).count
             guard length + 1 + next <= limit else { break }
             length += 1 + next

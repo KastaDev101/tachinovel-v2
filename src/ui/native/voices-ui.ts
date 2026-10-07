@@ -336,16 +336,18 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   natural: true,
   performed: true,
   moods: true,
+  sceneAI: true,
   breaths: true,
   studioSound: true,
   systemChime: true,
   systemTone: true,
 };
 
-const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine'>, string, string][] = [
+const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable'>, string, string][] = [
   ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
   ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
   ['moods', 'Mood voices', 'Tense, sad and tender reads where the scene calls for them'],
+  ['sceneAI', 'AI scene reading', 'Apple’s on-device model reads each scene (iOS 26, Apple Intelligence)'],
   ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
   ['studioSound', 'Studio sound', 'Clean, warm and even'],
   ['systemChime', 'System message chime', 'A soft chime before [System] lines'],

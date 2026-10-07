@@ -5,7 +5,8 @@
  * model load (cold/warm), memory, thermal state and fallbacks to the Apple voice. "Copy report" puts it
  * all on the clipboard as JSON.
  */
-import type { SourceBlock } from '@v1tts/frontend.ts';
+import { htmlToBlocks, type SourceBlock } from '@v1tts/frontend.ts';
+import { modelVoices, SCENE_TESTS, sceneKinds, sceneScore } from '../../core/narration/scene-tests.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
 import { openExpressiveLab } from './expressive-lab.ts';
 import { Narration, type NarratorInfo } from './narration.ts';
@@ -87,6 +88,30 @@ const obj = (x: unknown): Obj => (x && typeof x === 'object' ? (x as Obj) : {});
 
 let open = false;
 
+/** Voice Lab › Test scene reading: the rules and the on-device AI director against the labelled test scenes. */
+async function sceneReadingTest(): Promise<string> {
+  let rules = 0;
+  let ai = 0;
+  let total = 0;
+  let ms = 0;
+  let note = '';
+  for (const t of SCENE_TESTS) {
+    const items = speechScript(htmlToBlocks(t.paragraphs.map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join(''))).items;
+    const kinds = sceneKinds(items);
+    rules += sceneScore(items.map((i) => i.voice), t.labels).ok;
+    total += items.length;
+    const r = await Narration.readScene({ sentences: items.map((i, k) => ({ text: i.text, kind: kinds[k] ?? 'narration' })) }).catch(() => null);
+    if (!r?.moods) {
+      note = r?.reason ?? 'not available';
+      continue;
+    }
+    ms += r.ms;
+    ai += sceneScore(modelVoices(items, kinds, r.moods), t.labels).ok;
+  }
+  const pct = (n: number): string => `${Math.round((1000 * n) / Math.max(1, total)) / 10} %`;
+  return `Rules ${pct(rules)} · AI ${note ? `— (${note})` : `${pct(ai)} in ${(ms / 1000).toFixed(1)} s`} · ${total} sentences`;
+}
+
 export function openVoiceLab(): void {
   if (open) return;
   open = true;
@@ -103,6 +128,7 @@ export function openVoiceLab(): void {
   document.body.append(root);
   const body = root.querySelector('.body') as HTMLElement;
   let lab: Obj = {};
+  let sceneResult = 'not run yet';
   let poll = 0;
   let nar: NarratorInfo | null = null;
   let dialogueName = '';
@@ -214,6 +240,9 @@ export function openVoiceLab(): void {
         <button type="button" data-act="reset">Reset numbers</button>
         <button type="button" data-act="copy">Copy report</button>
       </div>
+      <h2>Scene reading</h2>
+      <div class="kv" data-testid="lab-scene"><span>Accuracy</span><span>${esc(sceneResult)}</span></div>
+      <div class="acts"><button type="button" data-act="scene-test">Test scene reading</button></div>
       <h2>Experimental</h2>
       <div class="acts"><button type="button" data-act="expressive">Experimental engines (expressive voices) ›</button></div>`;
   };
@@ -253,6 +282,14 @@ export function openVoiceLab(): void {
         return;
       case 'expressive':
         openExpressiveLab();
+        return;
+      case 'scene-test':
+        sceneResult = 'Reading the test scenes…';
+        render();
+        void sceneReadingTest().then((r) => {
+          sceneResult = r;
+          render();
+        });
         return;
       case 'test':
         void playTestPassage();

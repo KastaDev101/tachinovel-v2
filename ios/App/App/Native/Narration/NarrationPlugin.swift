@@ -34,6 +34,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "audioTiming", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "readScene", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sampleVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopSample", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveCustomVoice", returnType: CAPPluginReturnPromise),
@@ -295,6 +296,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "natural": prefs.delivery.natural,
                     "performed": prefs.delivery.performed,
                     "moods": prefs.delivery.moods,
+                    "sceneAI": prefs.delivery.director == DeliverySettings.rulesAI,
+                    "sceneAIAvailable": SceneReader.shared.available,
                     "breaths": prefs.delivery.breaths,
                     "studioSound": prefs.delivery.studioSound,
                     "systemChime": prefs.delivery.systemChime,
@@ -317,6 +320,38 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 out["effectiveVoice"] = prefs.choice(forNovel: key)
             }
             call.resolve(out)
+        }
+    }
+
+    /// Voice Lab › Test scene reading: the on-device AI director over `sentences` ({text, kind}), in the windows
+    /// playback uses. Resolves {available, reason?, moods: [String] | null, ms}.
+    @objc func readScene(_ call: CAPPluginCall) {
+        let sentences: [SceneReader.Sentence] = (call.getArray("sentences") ?? []).compactMap { v in
+            guard let o = v as? JSObject, let text = o["text"] as? String else { return nil }
+            return SceneReader.Sentence(text: text, kind: SceneReader.Sentence.Kind(rawValue: o["kind"] as? String ?? "") ?? .narration)
+        }
+        DispatchQueue.main.async {
+            let reader = SceneReader.shared
+            guard reader.available else {
+                return call.resolve(["available": false, "reason": reader.unavailableReason ?? "unavailable", "moods": NSNull(), "ms": 0])
+            }
+            let t0 = Date()
+            var moods: [String] = []
+            func next(_ start: Int) {
+                guard start < sentences.count else {
+                    return call.resolve(["available": true, "moods": moods, "ms": Date().timeIntervalSince(t0) * 1000])
+                }
+                let end = min(sentences.count, start + HybridSpeechEngine.sceneWindow)
+                let context = Array(sentences[max(0, start - HybridSpeechEngine.sceneContext)..<start])
+                reader.read(context: context, window: Array(sentences[start..<end])) { got in
+                    guard let got else {
+                        return call.resolve(["available": true, "reason": "the model gave no answer", "moods": NSNull(), "ms": Date().timeIntervalSince(t0) * 1000])
+                    }
+                    moods += got
+                    next(end)
+                }
+            }
+            next(0)
         }
     }
 
@@ -367,6 +402,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = delivery["natural"] as? Bool { d.natural = v }
                     if let v = delivery["performed"] as? Bool { d.performed = v }
                     if let v = delivery["moods"] as? Bool { d.moods = v }
+                    if let v = delivery["sceneAI"] as? Bool { d.director = v ? DeliverySettings.rulesAI : DeliverySettings.rules }
                     if let v = delivery["breaths"] as? Bool { d.breaths = v }
                     if let v = delivery["studioSound"] as? Bool { d.studioSound = v }
                     if let v = delivery["systemChime"] as? Bool { d.systemChime = v }

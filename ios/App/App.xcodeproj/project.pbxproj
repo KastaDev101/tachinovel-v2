@@ -54,6 +54,7 @@
 		492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */; };
 		6890DB3EF216F2AA3A325014 /* VoiceImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F670066B4FE0D903C0BD3295 /* VoiceImport.swift */; };
 		D1540B823A8AD187E8276550 /* BuiltInVoices in Resources */ = {isa = PBXBuildFile; fileRef = 8E67B33F3B1C7A4BBED404C1 /* BuiltInVoices */; };
+		954A9335276DD2E8A9723180 /* SceneReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -115,6 +116,7 @@
 		08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFolder.swift"; sourceTree = "<group>"; };
 		F670066B4FE0D903C0BD3295 /* VoiceImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/VoiceImport.swift"; sourceTree = "<group>"; };
 		8E67B33F3B1C7A4BBED404C1 /* BuiltInVoices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = BuiltInVoices; sourceTree = "<group>"; };
+		DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/SceneReader.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -213,6 +215,7 @@
 				0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */,
 				08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */,
 				F670066B4FE0D903C0BD3295 /* VoiceImport.swift */,
+				DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -377,6 +380,7 @@
 				AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */,
 				492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */,
 				6890DB3EF216F2AA3A325014 /* VoiceImport.swift in Sources */,
+				954A9335276DD2E8A9723180 /* SceneReader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
