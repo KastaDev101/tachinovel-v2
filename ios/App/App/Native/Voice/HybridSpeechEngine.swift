@@ -21,6 +21,7 @@
 //
 
 @preconcurrency import AVFoundation
+import ExpressiveCore
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
@@ -44,6 +45,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// its warm cache, so the chapter change starts with Kokoro at once (NarrationController sets them).
     var lookahead: [SpeechSegment] = []
     private var prewarming = false
+    /// Listen › the expressive engine that reads chapters (DeliverySettings.listenEngine; Chatterbox Nano = the
+    /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
+    /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
+    var listenEngine: ExpressiveEngineID?
 
     private(set) var currentSource: VoiceSource?
     private(set) var lastFallback: FallbackReason?
@@ -123,6 +128,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         scheduler = s
         if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
+        if let id = listenEngine, ExpressiveService.supported(id), ExpressiveService.shared.isInstalled(id), !ExpressiveService.shared.crashDisabled {
+            ExpressiveService.shared.ensureLoaded(id) { [weak self] _ in self?.kokoroStatusChanged() }
+        }
         pumpRender()
         advance()
     }
@@ -180,6 +188,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     // MARK: - Decisions
 
     private func kokoroState() -> HybridScheduler.KokoroState {
+        if expressiveUsable() { return .ready }
         let k = KokoroService.shared
         guard k.isBundled else { return .unavailable }
         guard VoiceSettings.shared.prefs.kokoroEnabled else { return .disabled }
@@ -224,8 +233,31 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func pumpRender() {
         guard !paused else { return }
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
-        let seg = segments[i]
         let g = gen
+        if let id = listenEngine, expressiveUsable() {
+            let text = StyleMapper.plainText(segments[i].kokoroText)
+            ExpressiveService.shared.synthesize(ExpressiveLine(text: text), engine: id) { [weak self] result in
+                self?.onMain {
+                    guard let self, g == self.gen, self.scheduler != nil else { return }
+                    switch result {
+                    case .success(let a) where a.sampleRate == 24_000 && !a.samples.isEmpty:
+                        self.rendered(i, gen: g, voice: id.rawValue, result: .success(KokoroAudio(samples: a.samples, sampleRate: a.sampleRate, synthMs: a.synthMs)))
+                    case .success:
+                        self.log.error("voice: \(id.rawValue, privacy: .public) gave unusable audio for sentence \(i); Kokoro renders it")
+                        self.renderWithKokoro(i, gen: g)
+                    case .failure(let error):
+                        self.log.error("voice: \(id.rawValue, privacy: .public) failed on sentence \(i): \(error.localizedDescription, privacy: .public); Kokoro renders it")
+                        self.renderWithKokoro(i, gen: g)
+                    }
+                }
+            }
+            return
+        }
+        renderWithKokoro(i, gen: g)
+    }
+
+    private func renderWithKokoro(_ i: Int, gen g: Int) {
+        let seg = segments[i]
         let voice = kokoroVoice
         if let parts = seg.parts {
             KokoroService.shared.synthesize(parts: parts, voice: voice, speed: seg.rate) { [weak self] result in
@@ -239,7 +271,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     private func prewarmLookahead() {
-        guard !prewarming, !lookahead.isEmpty, let s = scheduler, s.allRendered, !s.throttled, kokoroState() == .ready else { return }
+        guard !prewarming, !lookahead.isEmpty, !expressiveUsable(), let s = scheduler, s.allRendered, !s.throttled, kokoroState() == .ready else { return }
         let seg = lookahead.removeFirst()
         // A sentence in parts is rendered when its turn comes (the warm cache holds whole sentences).
         if seg.parts != nil { return prewarmLookahead() }
@@ -669,6 +701,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     // MARK: - Environment
+
+    /// The expressive engine can render the next sentence right now.
+    private func expressiveUsable() -> Bool {
+        guard let id = listenEngine else { return false }
+        let svc = ExpressiveService.shared
+        guard !svc.crashDisabled, ExpressiveService.supported(id), svc.isInstalled(id), svc.loadState(id) == .ready, svc.loadedID == id else { return false }
+        if id.usesGPU, UIApplication.shared.applicationState != .active { return false }
+        return !ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
+    }
 
     @objc private func kokoroStatusChanged() {
         DispatchQueue.main.async {

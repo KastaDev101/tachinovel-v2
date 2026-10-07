@@ -51,7 +51,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     public static let sentences = "sentences"
 
     public var version: Int
-    /// Listen reads chapters with this expressive engine when it is downloaded; nil = Kokoro (the default).
+    /// Listen reads chapters with this expressive engine when it is downloaded (Chatterbox Nano, the built-in
+    /// "Narrator" voice, by default); nil = Kokoro. Kokoro still reads any sentence the expressive engine can't.
     public var listenEngine: String?
     /// Natural delivery: the director, context pauses, the clean chain, breaths.
     public var natural: Bool
@@ -66,7 +67,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// "chunks" (a paragraph per model call, the default) or "sentences" (one call per sentence: the fallback).
     public var unit: String
 
-    public init(listenEngine: String? = nil, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
+    public init(listenEngine: String? = DeliverySettings.chatterboxNano, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks) {
         version = Self.currentVersion
         self.listenEngine = listenEngine == Self.chatterboxNano ? listenEngine : nil

@@ -51,7 +51,7 @@ final class DeliveryTests: XCTestCase {
 
     func testSettingsDefaultsAndTolerantDecoding() throws {
         let d = DeliverySettings()
-        XCTAssertNil(d.listenEngine, "Kokoro keeps reading chapters by default")
+        XCTAssertEqual(d.listenEngine, DeliverySettings.chatterboxNano, "the Narrator voice reads chapters by default (once downloaded)")
         XCTAssertTrue(d.natural)
         XCTAssertEqual(d.director, DeliverySettings.rules)
         XCTAssertTrue(d.breaths)
