@@ -96,7 +96,7 @@ novel's voice.
 
 ## Narrator mode
 
-Settings › Voices › **Narrator mode** (off by default). Each piece has its own switch, and **▶ Without /
+Settings › Voices › **Narrator mode** (on by default, with Kasta's picks from the PC tuning rounds: one narrator voice, relaxed pauses, phrase breaks, light studio sound at 1.5:1, no variation, no room tone). Each piece has its own switch, and **▶ Without /
 ▶ With** reads a short test passage both ways. The Voice Lab has the same A/B with the switches.
 
 - **Dialogue voice (Advanced, off by default: one narrator voice reads the whole story):** words in quotation
@@ -106,9 +106,16 @@ Settings › Voices › **Narrator mode** (off by default). Each piece has its o
   highlighting don't change.
 - **Second speaker (optional):** every other paragraph of an exchange uses a second dialogue voice. Novels
   usually start a new paragraph for each speaker, so this is right most of the time, not always.
-- **Natural pauses:** the pause after a sentence follows its ending (? ! … : —) and its length. Quick
+- **Natural pauses (Pause length: Relaxed by default, or Natural):** Relaxed stretches pauses inside a
+  paragraph ×1.25 and uses 1000 ms at paragraph ends (1200 ms after a long paragraph, 650 ms in a quick
+  exchange); titles and scene breaks are unchanged. The pause after a sentence follows its ending (? ! … : —) and its length. Quick
   exchanges of short lines are tighter, the end of a long paragraph gets more room, and a change of
   speaker always gets a pause.
+- **Phrase breaks (on):** short pauses inside a sentence, Kasta's pick ("clauses", P3) from the PC tuning
+  round (narrator repo py/tune.py, d172d45): 175 ms after commas, semicolons and dashes, about 230 ms after
+  an introductory phrase (a comma within the first five words), 105 ms before "but", "and then", "while"
+  and "because", and never a piece shorter than 12 characters (Kokoro flattens short fragments). Not in
+  sentences with lexicon phoneme overrides.
 - **Natural variation:** each sentence is read up to 3 % faster or slower. The amount comes from the
   sentence's own text, so the same sentence always sounds the same, and prepared audio stays valid.
 - **Studio sound:** a high-pass at 70 Hz, a little warmth (+1.5 dB at 180 Hz) and presence (+2 dB at 3.2 kHz),

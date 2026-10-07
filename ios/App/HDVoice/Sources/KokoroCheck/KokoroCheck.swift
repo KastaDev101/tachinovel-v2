@@ -41,6 +41,11 @@ struct Fixture: Decodable {
     let role: String?
     let parts: [Part]?
     let rate: Double?
+    struct Phrase: Decodable {
+        let text: String
+        let pauseMs: Double
+    }
+    let phrases: [Phrase]?
 
     static func speechRuns(_ runs: [Run]?) -> [SpeechRun]? {
         let out: [SpeechRun]? = runs?.compactMap { r in
@@ -54,7 +59,7 @@ struct Fixture: Decodable {
     var narrator: NarratorSentence {
         NarratorSentence(text: text, runs: Fixture.speechRuns(runs), quoted: role == "dialogue",
                          parts: parts.map { $0.map { NarratorSentence.Part(dialogue: $0.role == "dialogue", text: $0.text, runs: Fixture.speechRuns($0.runs)) } },
-                         pauseMs: 320, rate: rate)
+                         pauseMs: 320, rate: rate, phrases: phrases?.map { NarratorSentence.Phrase(text: $0.text, pauseMs: $0.pauseMs) })
     }
 }
 
@@ -185,7 +190,7 @@ struct KokoroCheck {
         }
 
         // Narrator mode on the ASR sentences, through the same plan and polish as the app.
-        var polish = NarrationPolish(sampleRate: 24_000, roomTone: false)
+        var polish = NarrationPolish(sampleRate: 24_000, roomTone: false, compressorRatio: checkedNarrator.compressorRatio)
         for f in fixtures where f.asr == true {
             let s = f.narrator
             let speed = NarratorPlan.rate(1, for: s, settings: checkedNarrator)
@@ -200,7 +205,7 @@ struct KokoroCheck {
                 problems.append("narrator/\(f.id): synthesis failed: \(error.localizedDescription)")
                 continue
             }
-            let joined = PCM.joinParts(pieces, sampleRate: 24_000, gap: NarratorPlan.partGap)
+            let joined = PCM.joinParts(pieces, sampleRate: 24_000, gaps: parts.map { ($0.pauseAfter ?? NarratorPlan.partGap) / Double(speed) })
             let audioOut = polish.prepareSentence(joined, pause: 0.3)
             let peak = PCM.peak(audioOut)
             let lufs = LoudnessMeter.integrated(audioOut, sampleRate: 24_000)

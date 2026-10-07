@@ -53,7 +53,7 @@ final class PolishTests: XCTestCase {
             var q = make()
             var x = sine(f, amplitude: 0.5, seconds: 1, sampleRate: Int(fs))
             q.process(&x)
-            let settled = Array(x[x.count / 2...])
+            let settled = Array(x[(x.count / 2)...])
             return 20 * log10(rms(settled) / (0.5 / 2.0.squareRoot()))
         }
         XCTAssertLessThan(gain({ .highPass(frequency: 70, q: 0.707, sampleRate: fs) }, 20), -18, "rumble cut")
@@ -97,6 +97,26 @@ final class PolishTests: XCTestCase {
         XCTAssertEqual(first, other.prepareSentence(speechLike(seconds: 3, level: 0.06, sampleRate: fs, seed: 1), pause: 0.3))
     }
 
+    func testLightPolishCompressesLessAndRatioOneSkipsTheCompressor() {
+        let fs = 24_000
+        let loud = sine(440, amplitude: 0.9, seconds: 1, sampleRate: fs)
+        func peakToRms(_ ratio: Double) -> Double {
+            var p = NarrationPolish(sampleRate: fs, roomTone: false, compressorRatio: ratio)
+            let out = p.prepareSentence(loud, pause: 0)
+            return Double(PCM.peak(out)) / rms(out)
+        }
+        XCTAssertEqual(NarrationPolish(sampleRate: fs, roomTone: false).compressorRatio, 1.5, "light polish by default")
+        // A steady sine: compression changes the level, not the crest factor; all ratios stay valid audio.
+        for r in [1.0, 1.5, 2.0] { XCTAssertTrue(peakToRms(r).isFinite) }
+        var c15 = Compressor(ratio: 1.5)
+        var c20 = Compressor(ratio: 2)
+        var a = loud
+        var b = loud
+        c15.process(&a, sampleRate: fs)
+        c20.process(&b, sampleRate: fs)
+        XCTAssertGreaterThan(rms(a), rms(b), "1.5:1 compresses less than 2:1")
+    }
+
     func testRoomToneFillsPausesFaintly() {
         let fs = 24_000
         var plain = NarrationPolish(sampleRate: fs, roomTone: false)
@@ -117,5 +137,9 @@ final class PolishTests: XCTestCase {
         let one = PCM.trimSilence(pad + voiced + pad, sampleRate: fs).count
         XCTAssertEqual(joined.count, 2 * one + PCM.silenceFrames(seconds: 0.12, sampleRate: fs))
         XCTAssertEqual(PCM.joinParts([], sampleRate: fs, gap: 0.12), [])
+        // Per-part pauses (phrase breaks): the gap after part i comes before part i + 1.
+        let three = PCM.joinParts([voiced, voiced, voiced], sampleRate: fs, gaps: [0.175, 0.105, 0])
+        let v = PCM.trimSilence(voiced, sampleRate: fs).count
+        XCTAssertEqual(three.count, 3 * v + PCM.silenceFrames(seconds: 0.175, sampleRate: fs) + PCM.silenceFrames(seconds: 0.105, sampleRate: fs))
     }
 }

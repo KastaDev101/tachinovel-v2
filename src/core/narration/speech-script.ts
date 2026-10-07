@@ -15,13 +15,16 @@
  * Narrator mode (narrator.ts; native uses each only when its switch is on):
  *   role/parts dialogue in quotation marks: the whole sentence, or its quoted and narrated parts,
  *   speaker    1 on every other paragraph of an exchange (alternating dialogue voices),
- *   pacedMs    the smarter pause, when it differs from pauseMs,
- *   rate       a deterministic ±3 % speed factor (prosody jitter).
+ *   pacedMs    the smarter pause ("natural" preset), when it differs from pauseMs,
+ *   relaxedMs  the same with the "relaxed" preset (the default), when it differs from pauseMs,
+ *   rate       a deterministic ±3 % speed factor (prosody jitter),
+ *   phrases    the sentence in phrases with a short pause after each (phrase breaks; not for sentences with
+ *              lexicon phoneme runs, which can't be split by text).
  *
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
-import { alternateSpeakers, dialogueParts, pacedPause, rateJitter, type PacedSentence, type SpeechPartJson } from './narrator.ts';
+import { alternateSpeakers, dialogueParts, pacedPause, phrases, rateJitter, type PacedSentence, type PhraseJson, type SpeechPartJson } from './narrator.ts';
 
 export interface SpeechRunJson {
   /** Text for the engine's G2P. */
@@ -50,8 +53,12 @@ export interface SpeechItem {
   speaker?: 1;
   /** Narrator mode: the smarter pause (ms at 1.0×), when it differs from pauseMs. */
   pacedMs?: number;
+  /** Narrator mode: the smarter pause with the "relaxed" preset (the default), when it differs from pauseMs. */
+  relaxedMs?: number;
   /** Narrator mode: prosody jitter, a speed factor in [0.97, 1.03] (absent: 1). */
   rate?: number;
+  /** Narrator mode: phrase breaks, when the sentence splits into more than one phrase. */
+  phrases?: PhraseJson[];
 }
 
 export interface SpeechScript {
@@ -99,6 +106,10 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
       const parts = dialogueParts(display, seg.start, seg.pieces, seg.quoted);
       if (parts) item.parts = parts;
       else if (seg.quoted) item.role = 'dialogue';
+      if (!item.runs) {
+        const ph = phrases(text);
+        if (ph.length > 1) item.phrases = ph;
+      }
     }
     items.push(item);
   }
@@ -114,6 +125,8 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
   items.forEach((it, i) => {
     const paced = pacedPause(meta, i);
     if (paced !== it.pauseMs) it.pacedMs = paced;
+    const relaxed = pacedPause(meta, i, 'relaxed');
+    if (relaxed !== it.pauseMs) it.relaxedMs = relaxed;
     if (speakers[i] === 1 && meta[i]?.dialogue) it.speaker = 1;
     const rate = rateJitter(it.hash);
     if (rate !== 1) it.rate = rate;

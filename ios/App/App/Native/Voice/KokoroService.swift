@@ -255,8 +255,8 @@ final class KokoroService: @unchecked Sendable {
         var sampleRate = 24_000
         func step(_ i: Int) {
             guard i < parts.count else {
-                let gap = NarratorPlan.partGap / Double(max(0.5, speed))
-                let joined = PCM.joinParts(collected, sampleRate: sampleRate, gap: gap)
+                let gaps = parts.map { ($0.pauseAfter ?? NarratorPlan.partGap) / Double(max(0.5, speed)) }
+                let joined = PCM.joinParts(collected, sampleRate: sampleRate, gaps: gaps)
                 return completion(.success(KokoroAudio(samples: joined, sampleRate: sampleRate, synthMs: synthMs)))
             }
             let part = parts[i]
