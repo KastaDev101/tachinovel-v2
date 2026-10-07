@@ -343,11 +343,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             self.log.error("voice: the Apple voice gave no audio buffers; speaking it directly")
             self.synth.stopSpeaking(at: .immediate)
             self.appleRender = nil
+            // `u` already went to write(_:): AVSpeechSynthesizer throws (and the app terminates) if the same
+            // utterance is enqueued twice, so speak a fresh copy; late callbacks for `u` no longer match.
+            let again = Self.freshCopy(of: u)
+            self.appleUtterance = again
             if self.manualOutput {
-                u.postUtteranceDelay = pause
-                self.speakAppleManually(i, utterance: u)
+                again.postUtteranceDelay = pause
+                self.speakAppleManually(i, utterance: again)
             } else {
-                self.speakAppleDirectly(i, utterance: u)
+                self.speakAppleDirectly(i, utterance: again)
             }
         }
         synth.write(u) { [weak self] buffer in
@@ -368,6 +372,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 self.scheduleApple(converted, render: render, index: i)
             }
         }
+    }
+
+    /// A new utterance with the same text and settings (an utterance can be enqueued only once).
+    private static func freshCopy(of u: AVSpeechUtterance) -> AVSpeechUtterance {
+        let c = AVSpeechUtterance(attributedString: u.attributedSpeechString)
+        c.voice = u.voice
+        c.rate = u.rate
+        c.pitchMultiplier = u.pitchMultiplier
+        c.volume = u.volume
+        c.preUtteranceDelay = u.preUtteranceDelay
+        c.postUtteranceDelay = u.postUtteranceDelay
+        return c
     }
 
     private func scheduleApple(_ buf: AVAudioPCMBuffer, render: AppleRender, index i: Int) {

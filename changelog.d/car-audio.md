@@ -30,3 +30,5 @@
 
 - Continuing a different novel from CarPlay or the Listen player no longer shows the previous novel's
   cover in Now Playing.
+- A crash when the Apple voice stood in and was slow to start: the sentence was handed to the system
+  synthesizer a second time, which iOS doesn't allow (found by the simulator voice self-test).
