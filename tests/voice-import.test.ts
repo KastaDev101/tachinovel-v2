@@ -45,6 +45,18 @@ const raw = {
 };
 const ui = (over: Partial<VoicesUiState> = {}): VoicesUiState => ({ armed: '', renaming: '', renameDraft: '', ...over });
 
+/** Visible text of an HTML fragment: everything outside <...> (test helper, not a sanitizer). */
+function textOutsideTags(html: string): string {
+  let out = '';
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === '<') inTag = true;
+    else if (ch === '>') inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+}
+
 describe('normalizeVoices', () => {
   it('reads what native sends: shipped voices (one the default), imported ones, the choice', () => {
     const info = normalizeVoices(raw);
@@ -144,7 +156,7 @@ describe('the Narrator voice section', () => {
     const html = voicesSection(sectionInfo, ui({ renaming: A, renameDraft: 'Mommy', armed: `voice-delete:${B}` }));
     for (const m of html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)) {
       const tag = m[0];
-      const label = /aria-label="([^"]+)"/.exec(tag)?.[1] ?? (m[1] ?? '').replace(/<[^>]+>/g, '').trim();
+      const label = /aria-label="([^"]+)"/.exec(tag)?.[1] ?? textOutsideTags(m[1] ?? '').trim();
       expect(label, tag).not.toBe('');
       expect(tag).toContain('type="button"');
     }
