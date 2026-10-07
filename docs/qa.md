@@ -73,6 +73,7 @@ launch of the seeded app followed by the state's path, and records what happened
 | Back | the nav bar Back button doesn't leave the screen, or the screen it lands on is blank or broken |
 | Layout | the page scrolls sideways, an element sticks out of the screen unclipped, the end of a tab's content stays behind the tab bar, a fixed control sits under the status bar or on the home indicator, or a fixed control is covered by another element |
 | Core | a core call answers `ok:false` (warning: some are expected answers) |
+| Accessibility | a dialog covers the screen without `aria-modal="true"` (VoiceOver would still read and tap the screen behind it) |
 
 Native prompts are answered "cancel" first; each of their options then becomes its own control
 ("More actions › Mark All as Read"), up to three prompts deep. Repeated list items are sampled (two
@@ -138,13 +139,18 @@ Every tab, pushed screen and settings page that is reachable without a real netw
 (categories, select mode, sort/filter/display), Updates, Browse (sources, extensions, languages, genres,
 Latest, For You, source pages and filters), History, More and all its pages, novel page (chapter filter,
 jump, categories, migrate), reader (bars, find, chapter list, appearance, auto-scroll), Listen in the Car
-and the car player, global search, genre search, Reading Insights, Migrate, Text Cleanup, Diagnostics.
+and the car player, Voices (voice picker, pronunciations), global search, genre search, Reading Insights,
+Migrate, Text Cleanup, Diagnostics. v2's full-screen overlays (car player, Voices panels) are crawled as
+modal states like v1's sheets.
 
 Found and fixed (v2):
 
 - The mini player covered the tab bar (no tab could be tapped while listening), the reader's bottom bar
   and the Resume button; "Open the player" hid the last rows of Listen in the Car — #13.
 - The car player rebuilt itself every second: its list jumped back to the top and taps could be lost — #16.
+- The car player, the Voices panels and Voice Lab covered the screen without `aria-modal`, so VoiceOver
+  could still reach the screen behind them (and the crawler didn't see the Voices panels as screens of their
+  own: their controls were never tried) — fixed with the accessibility check.
 
 Open (vendored v1 UI, reported for a fix in the v1 repo; listed in `known-issues.json` where they fail):
 

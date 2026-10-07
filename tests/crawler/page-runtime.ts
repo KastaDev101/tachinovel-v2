@@ -5,7 +5,8 @@
  *  - state():      where the app is (modal / top screen / sub-tab), as a stable signature
  *  - enumerate():  every visible interactive element of the active region, tagged data-qa-id
  *  - fingerprint(): a cheap hash of what's visible (text, control states, scroll positions)
- *  - layout():     horizontal escapes, content hidden behind the tab bar, controls under the safe areas
+ *  - layout():     horizontal escapes, content hidden behind the tab bar, controls under the safe areas,
+ *                  full-screen dialogs that aren't aria-modal
  */
 
 export interface RuntimeConfig {
@@ -66,7 +67,8 @@ export interface ControlInfo {
 }
 
 export interface LayoutIssue {
-  kind: 'h-overflow' | 'escape' | 'behind-fixed' | 'safe-area';
+  /** not-modal: a dialog covers the screen without aria-modal, so VoiceOver still reaches what's behind it. */
+  kind: 'h-overflow' | 'escape' | 'behind-fixed' | 'safe-area' | 'not-modal';
   detail: string;
 }
 
@@ -129,12 +131,16 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
     return null;
   }
 
-  /** Topmost modal: the car player, the last open sheet/dialog. */
+  /** v2's full-screen overlays (car player, Voices panels, Voice Lab): found by class, aria-modal or not. */
+  const V2_OVERLAY = '.tn-car, .tn-v, .tn-lab';
+
+  /** Topmost modal: the last open one in document order (v2's overlays are appended to <body> when they
+   *  open, a Voices panel opened from the car player comes after it), else the last open sheet/dialog. */
   function modalRoot(): Element | null {
-    const car = document.querySelector('.tn-car.is-open:not([hidden])');
-    if (car) return car;
-    const dialogs = [...document.querySelectorAll('[aria-modal="true"]')].filter((d) => visible(d) && !d.classList.contains('is-closing'));
-    const d = dialogs[dialogs.length - 1];
+    const open = [...document.querySelectorAll(`${V2_OVERLAY}, [aria-modal="true"]`)].filter((d) =>
+      d.matches('.tn-car, .tn-v') ? d.classList.contains('is-open') && !d.hasAttribute('hidden') : visible(d) && !d.classList.contains('is-closing'),
+    );
+    const d = open[open.length - 1];
     if (!d) return null;
     return d.closest('.rtips') ?? d;
   }
@@ -481,6 +487,11 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
     const se = document.scrollingElement ?? document.documentElement;
     if (se.scrollWidth > innerWidth + 1) issues.push({ kind: 'h-overflow', detail: `page is ${se.scrollWidth}px wide in a ${innerWidth}px viewport` });
     const roots = activeRoots();
+    const m = modalRoot();
+    if (m?.getAttribute('role') === 'dialog' && m.getAttribute('aria-modal') !== 'true') {
+      const r = m.getBoundingClientRect();
+      if (r.width * r.height >= innerWidth * innerHeight * 0.8) issues.push({ kind: 'not-modal', detail: `${describe(m)} covers the screen without aria-modal="true": VoiceOver still reads and taps the screen behind it` });
+    }
     const seen = new Set<string>();
     for (const root of roots) {
       for (const el of root.querySelectorAll('*')) {

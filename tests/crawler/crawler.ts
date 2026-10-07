@@ -54,6 +54,7 @@ export type FindingKind =
   | 'timeout'
   | 'back-nav'
   | 'layout'
+  | 'a11y'
   | 'unreachable'
   | 'harness';
 
@@ -363,17 +364,24 @@ export class Worker {
 
   /** First visit of a state: screenshot, layout checks, controls. */
   async visit(node: StateNode): Promise<VisitResult> {
-    const launched = await this.launch(node.path);
+    let launched = await this.launch(node.path);
     const findings = [...launched.findings];
-    if (!launched.ok) return { ok: false, layout: [], controls: [], findings };
-    const info = await this.st();
+    let info = launched.ok ? await this.st() : null;
+    // A replay that misses (a tap lost to an animation, a list still loading) gets one more fresh launch
+    // before the state counts as unreachable and its controls go untried.
+    if (!launched.ok || info?.key !== node.key) {
+      launched = await this.launch(node.path);
+      findings.push(...launched.findings);
+      info = launched.ok ? await this.st() : null;
+    }
+    if (!launched.ok || !info) return { ok: false, layout: [], controls: [], findings };
     if (info.key !== node.key) return { ok: false, info, layout: [], controls: [], findings };
     if (node.screenshot) await this.page.screenshot({ path: path.join(this.opts.outDir, node.screenshot), scale: 'css' }).catch(() => undefined);
     const repro = node.path.map(stepLabel);
     if (info.crash) findings.push(await this.shoot({ kind: 'crash', severity: 'fail', state: node.sig, message: info.crash, repro }));
     if (info.errorState) findings.push(await this.shoot({ kind: 'error-state', severity: 'fail', state: node.sig, message: info.errorState, repro }));
     const layout = await this.page.evaluate(() => (window.__qaCrawl as NonNullable<Window['__qaCrawl']>).layout());
-    for (const l of layout) findings.push(await this.shoot({ kind: 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
+    for (const l of layout) findings.push(await this.shoot({ kind: l.kind === 'not-modal' ? 'a11y' : 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
     const controls = await this.enumerate();
     for (const c of controls) {
       if (c.obscuredBy && !c.disabled) findings.push(await this.shoot({ kind: 'obscured', severity: 'fail', state: node.sig, control: c.label, message: `"${c.label}" (${c.role}) at y=${c.rect.y} is covered by ${c.obscuredBy}`, repro }));
@@ -622,9 +630,12 @@ export class Worker {
       } else break; // same screen, another sub-state (inner tab, reader bars): nothing to go back to
       await this.settle();
       const next = await this.st();
-      const step = [...repro, how === 'Back' ? 'tap Back' : how];
+      const step = [...repro, how === 'Back' || how === 'panel Back' ? 'tap Back' : how];
       if (how === 'Back' && next.stack.length >= cur.stack.length) {
         out.push(await this.shoot({ kind: 'back-nav', severity: 'fail', state: cur.sig, control: 'Back', message: `the Back button did not leave ${cur.stack[cur.stack.length - 1]}`, repro: step }));
+      }
+      if (how === 'panel Back' && next.modal === cur.modal) {
+        out.push(await this.shoot({ kind: 'back-nav', severity: 'fail', state: cur.sig, control: 'Back', message: `the Back button did not close ${cur.modal}`, repro: step }));
       }
       if (next.crash || (next.errorState && next.errorState !== node.info.errorState)) {
         out.push(await this.shoot({ kind: 'back-nav', severity: 'fail', state: next.sig, control: how, message: `after going back: ${next.crash ?? next.errorState}`, repro: step }));
@@ -642,6 +653,12 @@ export class Worker {
     if (modal === 'car-player') {
       await this.page.locator('.tn-car [data-act="close"]').tap({ timeout: 2000 }).catch(() => undefined);
       return 'close the car player';
+    }
+    // v2's Voices panels and Voice Lab: their own Back/Close button.
+    const panel = this.page.locator('.tn-v.is-open > .hd [data-act="close"], .tn-lab > .hd [data-act="close"]').last();
+    if ((await panel.count()) > 0) {
+      await panel.tap({ timeout: 2000 }).catch(() => undefined);
+      return 'panel Back';
     }
     const close = this.page.locator('[aria-modal="true"]:not(.is-closing) [data-testid="sheet-close"]').last();
     if ((await close.count()) > 0 && (await close.isVisible().catch(() => false))) {
