@@ -20,14 +20,16 @@
 //  real-time pace.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
 import os
 import UIKit
 
-final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDelegate {
+/// Main-thread confined: NarrationController drives it on main; audio, synthesizer and Kokoro callbacks hop
+/// to main before touching its state.
+final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     weak var delegate: SpeechEngineDelegate?
 
     /// Per chapter (NarrationController sets these before enqueue).
@@ -283,7 +285,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         queued.append(i)
         // Real output: when the sentence has actually been heard. Headless (manual rendering): when it was rendered.
         player.scheduleBuffer(buf, completionCallbackType: manualOutput ? .dataRendered : .dataPlayedBack) { [weak self] _ in
-            DispatchQueue.main.async { self?.kokoroFinished(i, gen: g, epoch: e) }
+            DispatchQueue.main.async { [weak self] in self?.kokoroFinished(i, gen: g, epoch: e) }
         }
     }
 
@@ -352,7 +354,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             guard let pcm = buffer as? AVAudioPCMBuffer else { return }
             let converted = pcm.frameLength > 0 ? render.convert(pcm) : nil
             let ended = pcm.frameLength == 0
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, g == self.gen, u === self.appleUtterance, render === self.appleRender else { return }
                 if ended {
                     guard !render.ended else { return }
@@ -373,7 +375,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let e = epoch
         render.pending += 1
         player.scheduleBuffer(buf, completionCallbackType: manualOutput ? .dataRendered : .dataPlayedBack) { [weak self] _ in
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, g == self.gen, e == self.epoch, render === self.appleRender else { return }
                 render.pending -= 1
                 if render.pending == 0, render.ended, let u = self.appleUtterance { self.appleFinished(u) }
@@ -431,7 +433,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     // AVSpeechSynthesizerDelegate: delivered on main in practice; hop if not (state is main-thread only).
     private func onMain(_ fn: @escaping () -> Void) {
-        if Thread.isMainThread { fn() } else { DispatchQueue.main.async(execute: fn) }
+        if Thread.isMainThread { return fn() }
+        let work = MainBound(fn)
+        DispatchQueue.main.async { work.value() }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
@@ -611,7 +615,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         synth.write(u) { [weak self] buffer in
             let frames = (buffer as? AVAudioPCMBuffer)?.frameLength ?? 0
             let rate = buffer.format.sampleRate
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, g == self.gen, u === self.appleUtterance else { return }
                 if frames > 0 {
                     if collector.seconds == 0 { self.began(i, .apple) }
@@ -654,7 +658,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 /// One Apple sentence rendered into the graph: converts the synthesizer's buffers (whatever its voice's
 /// format) to the graph's 24 kHz mono, and counts what is still queued. `convert` runs on the synthesizer's
 /// thread, one buffer at a time; the counters are main-thread only.
-private final class AppleRender {
+private final class AppleRender: @unchecked Sendable {
     let output: AVAudioFormat
     private var converter: AVAudioConverter?
     var pending = 0
@@ -674,14 +678,15 @@ private final class AppleRender {
         let ratio = output.sampleRate / max(1, input.format.sampleRate)
         let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio + 1024)
         guard let out = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else { return nil }
-        var fed = false
+        // The input block runs synchronously inside convert (this thread): one buffer, then "no data now".
+        let fed = Box(false)
         var error: NSError?
         let status = converter.convert(to: out, error: &error) { _, inputStatus in
-            if fed {
+            if fed.value {
                 inputStatus.pointee = .noDataNow
                 return nil
             }
-            fed = true
+            fed.value = true
             inputStatus.pointee = .haveData
             return input
         }
@@ -690,7 +695,7 @@ private final class AppleRender {
 }
 
 /// Accumulates the rendered length of a headless Apple utterance (main thread).
-private final class RenderedDuration {
+private final class RenderedDuration: @unchecked Sendable {
     var seconds: Double = 0
     var done = false
 }

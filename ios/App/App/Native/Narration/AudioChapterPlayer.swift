@@ -15,7 +15,8 @@ import AVFoundation
 import Foundation
 import HDVoiceCore
 
-final class AudioChapterPlayer {
+/// Main-thread confined: the controller drives it on main; audio callbacks hop to main.
+final class AudioChapterPlayer: @unchecked Sendable {
     private var engine = AVAudioEngine()
     private var node = AVAudioPlayerNode()
     private var pitch = AVAudioUnitTimePitch()
@@ -118,7 +119,8 @@ final class AudioChapterPlayer {
         }
         schedule(from: seconds)
         if wasPlaying { start() }
-        DispatchQueue.main.async { completion?() }
+        let done = MainBound(completion)
+        DispatchQueue.main.async { done.value?() }
     }
 
     func stop() {
@@ -169,7 +171,7 @@ final class AudioChapterPlayer {
         guard count > 0 else { return }
         node.scheduleSegment(file, startingFrame: frame, frameCount: count, at: nil,
                              completionCallbackType: manual ? .dataRendered : .dataPlayedBack) { [weak self] _ in
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, t == self.token, self.playing else { return }
                 self.heldTime = self.fileDuration
                 self.playing = false

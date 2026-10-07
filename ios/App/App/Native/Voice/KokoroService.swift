@@ -20,7 +20,9 @@ import HDVoiceKokoro
 import os
 import UIKit
 
-final class KokoroService {
+/// Main-thread confined: its state is read and changed on main; Kokoro runs in detached tasks that report
+/// back on main.
+final class KokoroService: @unchecked Sendable {
     static let shared = KokoroService()
     static let statusChanged = Notification.Name("tachinovel.kokoroStatusChanged")
 
@@ -111,6 +113,7 @@ final class KokoroService {
         let wasLoading = status == .loading
         status = .loading
         let route = self.route
+        let done = MainBound(completion)
         Task.detached(priority: .userInitiated) {
             let failure: String?
             do {
@@ -133,7 +136,7 @@ final class KokoroService {
                     }
                     self.status = .ready
                 }
-                completion?(self.status)
+                done.value?(self.status)
             }
         }
     }
@@ -238,7 +241,8 @@ final class KokoroService {
         let key = Self.warmKey(text: text, runs: runs, voice: voice, speed: speed)
         if let hit = warm.removeValue(forKey: key) {
             warmOrder.removeAll { $0 == key }
-            return DispatchQueue.main.async { completion(.success(hit)) }
+            let done = MainBound(completion)
+            return DispatchQueue.main.async { done.value(.success(hit)) }
         }
         render(text: text, runs: runs, voice: voice, speed: speed, completion: completion)
     }
@@ -247,6 +251,7 @@ final class KokoroService {
         guard let runtime else { return completion(.failure(KokoroRuntimeError.notLoaded)) }
         let sentinel = self.sentinel
         let context = "\(voice) \(route.rawValue) \(text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        let done = MainBound(completion)
         Task.detached(priority: .userInitiated) {
             sentinel.begin(context)
             let result: Result<KokoroAudio, Error>
@@ -254,7 +259,7 @@ final class KokoroService {
             if case .success = result { sentinel.end(success: true) } else { sentinel.end(success: false) }
             DispatchQueue.main.async {
                 if case .success = result { self.backoff.reset() }
-                completion(result)
+                done.value(result)
             }
         }
     }
@@ -311,11 +316,12 @@ final class KokoroService {
     func analyzePlacement(completion: @escaping ([StagePlacement]) -> Void) {
         guard let dir = modelsDirectory else { return completion([]) }
         let route = self.route
+        let done = MainBound(completion)
         Task.detached(priority: .utility) {
             let result = await KokoroPlacement.analyze(modelsDirectory: dir, route: route)
             DispatchQueue.main.async {
                 self.lastPlacement = result
-                completion(result)
+                done.value(result)
             }
         }
     }

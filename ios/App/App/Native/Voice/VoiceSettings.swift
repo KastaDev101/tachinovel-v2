@@ -9,7 +9,8 @@ import AVFoundation
 import Foundation
 import HDVoiceCore
 
-final class VoiceSettings {
+/// Main-thread confined: read and changed on main (the plugin and the engines hop there first).
+final class VoiceSettings: @unchecked Sendable {
     static let shared = VoiceSettings()
     static let changed = Notification.Name("tachinovel.voiceSettingsChanged")
 
