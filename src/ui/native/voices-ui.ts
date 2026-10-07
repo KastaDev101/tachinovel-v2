@@ -53,8 +53,8 @@ const CSS = `
 .tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:max(16px,${fs(16)}) -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
 .tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:${fs(13)}}
 .tn-v .del{color:#ff8a8a;width:36px;height:36px;flex:none}
-.tn-v .sub-sec{color:#a1a1aa;font-size:13px;margin:12px 4px 6px}
-.tn-v .grade{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;background:rgba(168,180,255,.16);color:#c7cdff;font-size:12px;font-weight:600;vertical-align:1px}
+.tn-v .sub-sec{color:#a1a1aa;font-size:${fs(13)};margin:12px 4px 6px}
+.tn-v .grade{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;background:rgba(168,180,255,.16);color:#c7cdff;font-size:${fs(12)};font-weight:600;vertical-align:1px}
 .tn-v .chips{display:flex;gap:8px;flex:1}
 .tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
 .tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
