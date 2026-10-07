@@ -212,7 +212,7 @@ const NON_VERBAL_OPENER = /^[\s"'“‘(]*(?:h+m+|mm+|ha(?:ha)*|heh|hah|hehe)\b/
 
 /** Narration that is plainly tense (a few action words; deliberately short, the voice shouldn't overact). */
 const TENSE_NARRATION =
-  /\b(?:slammed|shattered|explod(?:ed|ing)|scream(?:ed|ing|s)?|shriek(?:ed|ing)?|crashed|lunged|froze|frozen|trembl(?:ed|ing)|terror|terrif(?:ied|ying)|panic(?:ked)?|blood|dread|doom|fear(?:ed|ful)?|afraid|horror|horrif(?:ied|ying)|shiver(?:ed|ing)?|chill(?:ed)?|uneasy|danger(?:ous)?|inescapable|menacing|desperate(?:ly)?|helpless(?:ly)?|struck|slash(?:ed|ing)?|stabb(?:ed|ing)|flames|ablaze|shaking|frighten(?:ed|ing)|dodg(?:e|ed|ing)|ducked|impal(?:ed|ing)|bleed(?:ing)?|too (?:fast|late|many)|hopeless(?:ly)?|struggl(?:ed|ing|es)|stopped breathing|held (?:his|her|their|my) breath|heart (?:pounded|pounding|raced|racing|hammered|hammering|thudded)|backed (?:away|down|off|up)|crept|creeping|footsteps|dragging|stand(?:ing)? on end|something (?:moved|pale|dark|shifted))\b/i;
+  /\b(?:slammed|shattered|explod(?:ed|ing)|scream(?:ed|ing|s)?|shriek(?:ed|ing)?|crashed|lunged|froze|frozen|trembl(?:ed|ing)|terror|terrif(?:ied|ying)|panic(?:ked)?|blood|dread|doom|fear(?:ed|ful)?|afraid|horror|horrif(?:ied|ying)|shiver(?:ed|ing)?|chill(?:ed)?|uneasy|danger(?:ous)?|inescapable|menacing|desperate(?:ly)?|helpless(?:ly)?|struck|slash(?:ed|ing)?|stabb(?:ed|ing)|flames|ablaze|shaking|frighten(?:ed|ing)|dodg(?:e|ed|ing)|ducked|impal(?:ed|ing)|bleed(?:ing)?|too (?:fast|late|many)|hopeless(?:ly)?|struggl(?:ed|ing|es)|crashing|thunder(?:ed|ing|ous)?|roar(?:ed|ing)?|stopped breathing|held (?:his|her|their|my) breath|heart (?:pounded|pounding|raced|racing|hammered|hammering|thudded)|backed (?:away|down|off|up)|crept|creeping|footsteps|dragging|stand(?:ing)? on end|something (?:moved|pale|dark|shifted))\b/i;
 /** Narration that settles even in a fight ("Luckily, …", "eerily beautiful", "grown somewhat confident"): calm. */
 const CALM_NARRATION = /\b(?:luckily|fortunately|confident(?:ly)?|beautiful|steady|steadily|manageable|calm(?:ly)?|peace(?:ful)?|relie(?:f|ved)|comfort(?:ing|ed)?|good partner|safe(?:ly)?|smiled|going well|grew still|disappeared|empty|emptiness|silen(?:ce|t|tly))\b/i;
 /** A thought or line that trails off is tense only when it says something alarming ("Curse it…", "not good…");
@@ -712,7 +712,8 @@ export function smoothScenes(cues: readonly Cue[], list: readonly Pick<DirectorS
       let near = 0;
       for (let j = Math.max(0, i - TENSE_REACH); j <= Math.min(cues.length - 1, i + TENSE_REACH); j++) {
         const v = cues[j];
-        if (v && scene[j] === scene[i] && (v.mood === 'tense' || v.mood === 'intense')) near++;
+        // Only narration carries a scene's tension: a shouted complaint ("Damn Imperials!") isn't danger.
+        if (v && !v.dialogue && scene[j] === scene[i] && (v.mood === 'tense' || v.mood === 'intense')) near++;
       }
       if (near >= 2 && (mood === 'calm' || mood === 'tense')) mood = 'tense';
     }
