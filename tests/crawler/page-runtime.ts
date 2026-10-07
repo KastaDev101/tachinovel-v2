@@ -129,12 +129,16 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
     return null;
   }
 
-  /** Topmost modal: the car player, the last open sheet/dialog. */
+  /** v2's full-screen overlays (car player, Voices panels, Voice Lab): found by class, aria-modal or not. */
+  const V2_OVERLAY = '.tn-car, .tn-v, .tn-lab';
+
+  /** Topmost modal: the last open one in document order (v2's overlays are appended to <body> when they
+   *  open, a Voices panel opened from the car player comes after it), else the last open sheet/dialog. */
   function modalRoot(): Element | null {
-    const car = document.querySelector('.tn-car.is-open:not([hidden])');
-    if (car) return car;
-    const dialogs = [...document.querySelectorAll('[aria-modal="true"]')].filter((d) => visible(d) && !d.classList.contains('is-closing'));
-    const d = dialogs[dialogs.length - 1];
+    const open = [...document.querySelectorAll(`${V2_OVERLAY}, [aria-modal="true"]`)].filter((d) =>
+      d.matches('.tn-car, .tn-v') ? d.classList.contains('is-open') && !d.hasAttribute('hidden') : visible(d) && !d.classList.contains('is-closing'),
+    );
+    const d = open[open.length - 1];
     if (!d) return null;
     return d.closest('.rtips') ?? d;
   }
