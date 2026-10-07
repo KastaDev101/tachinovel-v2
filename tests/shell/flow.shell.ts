@@ -69,7 +69,7 @@ describe('v1 UI in the v2 shell (PC)', () => {
     expect(boot?.splash).toBeGreaterThanOrEqual(boot?.content ?? Infinity);
     await expect
       .poll(() => shell.core.logs.find((l) => l.line.includes('boot: library visible'))?.line ?? '', { timeout: 5000 })
-      .toMatch(/boot: library visible \+\d+ms after WebView start, app\.boot call \+\d+ms, launch screen hidden \+\d+ms; nav=\d+ epoch=\d+$/);
+      .toMatch(/boot: library visible \+\d+ms after WebView start, html \+\d+ms, dom ready \+\d+ms, app\.boot call \+\d+ms, launch screen hidden \+\d+ms; nav=\d+ epoch=\d+$/);
   });
 
   it('browses the declarative source and opens a novel', async () => {

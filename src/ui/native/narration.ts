@@ -99,6 +99,8 @@ export interface NarrationState {
   pluginId?: string;
   novelPath?: string;
   chapterPath?: string;
+  /** The novel's title (the mini player's VoiceOver label). */
+  novelName?: string;
   chapterName?: string;
   paragraph?: number;
   sentence?: number;

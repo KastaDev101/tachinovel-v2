@@ -60,7 +60,12 @@ export interface V2Methods {
   /** Share every stored report as one JSON file through the share sheet (nothing is uploaded). */
   'diagnostics.shareReports': { args: void; result: { shared: number } };
   'diagnostics.clearReports': { args: void; result: { removed: number } };
+  /** Where the synced store lives, for v2's wording (src/ui/native/v2-text.ts). */
+  'v2.storage': { args: void; result: { kind: StorageKind } };
 }
+
+/** iCloud (entitled builds), the app's Documents folder (free sideload, shown in Files), or device-only. */
+export type StorageKind = 'icloud' | 'documents' | 'device';
 
 export interface V2Info {
   flavor: 'personal' | 'store';
@@ -238,6 +243,11 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       return { shared: reports.length };
     },
     'diagnostics.clearReports': () => Promise.resolve({ removed: clearReports(platform.local) }),
+    'v2.storage': () => {
+      const { synced, local } = platform;
+      const kind: StorageKind = synced.isSynced ? 'icloud' : synced.root === local.root ? 'device' : 'documents';
+      return Promise.resolve({ kind });
+    },
   };
   const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>) };
 

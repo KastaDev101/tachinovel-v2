@@ -8,6 +8,7 @@
 import type { SourceBlock } from '@v1tts/frontend.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
 import { Narration, type NarratorInfo } from './narration.ts';
+import { fs } from './type.ts';
 
 /** Synthetic chapter for "Speak test paragraph" (and the simulator self-test): no novel, no progress. */
 export const LAB_PLUGIN = 'voice-lab';
@@ -53,21 +54,21 @@ export const NARRATOR_PIECES = [
 
 const CSS = `
 .tn-lab{position:fixed;inset:0;z-index:92;background:#0e0e11;color:#e8e8ee;display:flex;flex-direction:column;
-  padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));font:14px -apple-system,system-ui}
+  padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));font:${fs(14)} -apple-system,system-ui}
 .tn-lab button{font:inherit;color:inherit;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:9px 12px;-webkit-tap-highlight-color:transparent}
 .tn-lab button.on{background:#a8b4ff;color:#15151a}
-.tn-lab .hd{display:flex;align-items:center;gap:8px;height:50px}
-.tn-lab .hd h1{flex:1;font-size:19px;margin:0}
+.tn-lab .hd{display:flex;align-items:center;gap:8px;min-height:50px}
+.tn-lab .hd h1{flex:1;font-size:${fs(19)};margin:0}
 .tn-lab .body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:20px}
-.tn-lab h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#9a9aa6;margin:16px 2px 6px}
+.tn-lab h2{font-size:${fs(12)};text-transform:uppercase;letter-spacing:.05em;color:#9a9aa6;margin:16px 2px 6px}
 .tn-lab .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;background:#18181d;border-radius:12px;padding:10px 12px}
 .tn-lab .kv span:nth-child(odd){color:#9a9aa6}
 .tn-lab .kv span:nth-child(even){font-variant-numeric:tabular-nums;word-break:break-word}
-.tn-lab table{width:100%;border-collapse:collapse;background:#18181d;border-radius:12px;font-variant-numeric:tabular-nums;font-size:13px}
+.tn-lab table{width:100%;border-collapse:collapse;background:#18181d;border-radius:12px;font-variant-numeric:tabular-nums;font-size:${fs(13)}}
 .tn-lab td,.tn-lab th{padding:5px 6px;text-align:right}
 .tn-lab th{color:#9a9aa6;font-weight:500}
 .tn-lab .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.tn-lab .big{font-size:26px;font-weight:600}
+.tn-lab .big{font-size:${fs(26)};font-weight:600}
 `;
 
 function fmt(x: unknown, digits = 0, unit = ''): string {

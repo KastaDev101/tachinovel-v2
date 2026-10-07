@@ -170,6 +170,28 @@ interface NarrationMockState {
   duration?: number;
 }
 
+function defaultVoicePrefs(): {
+  defaultVoice: string;
+  kokoroEnabled: boolean;
+  usePCAudio: boolean;
+  carButtons: string;
+  novelVoices: Record<string, string>;
+  /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
+  customVoices: { id: string; name: string; a: string; b: string; percent: number }[];
+  /** Narrator mode (Settings › Voices › Narrator mode). */
+  narrator: { enabled: boolean; dialogueVoice: string | null; secondDialogueVoice: string | null; pacing: boolean; jitter: boolean; polish: boolean; roomTone: boolean };
+} {
+  return {
+    defaultVoice: 'af_heart',
+    kokoroEnabled: true,
+    usePCAudio: false,
+    carButtons: 'chapters',
+    novelVoices: {},
+    customVoices: [],
+    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false },
+  };
+}
+
 export class CrawlEnv {
   readonly web: FakeWeb;
   readonly opts: EnvOptions;
@@ -192,18 +214,8 @@ export class CrawlEnv {
   readonly answers: number[] = [];
   narration: NarrationMockState = { status: 'idle' };
   audioLinked = true;
-  /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings). */
-  voicePrefs = {
-    defaultVoice: 'af_heart',
-    kokoroEnabled: true,
-    usePCAudio: false,
-    carButtons: 'chapters',
-    novelVoices: {} as Record<string, string>,
-    /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
-    customVoices: [] as { id: string; name: string; a: string; b: string; percent: number }[],
-    /** Narrator mode (Settings › Voices › Narrator mode). */
-    narrator: { enabled: false, dialogueVoice: null as string | null, secondDialogueVoice: null as string | null, pacing: true, jitter: true, polish: true, roomTone: false },
-  };
+  /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings); native state: reset per launch. */
+  voicePrefs = defaultVoicePrefs();
   /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
   drive = {
     jobs: [] as Record<string, unknown>[],
@@ -624,6 +636,7 @@ export class CrawlEnv {
     this.listeners.clear();
     this.narration = { status: 'idle' };
     this.audioLinked = true;
+    this.voicePrefs = defaultVoicePrefs();
     this.answers.length = 0;
     const core = this.newCore();
     // Every store root of the seeded install (local/, icloud/, documents/, …).

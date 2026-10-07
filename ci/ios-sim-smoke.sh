@@ -94,9 +94,62 @@ shot 6b-webcontent-recovered $((WAIT + 12)) -tachiSmokeTab more -tachiSmokeKillW
 if [ "${SMOKE_SOURCE:-}" != "" ]; then
   shot 7-source-"$SMOKE_SOURCE" $((WAIT + 8)) -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
 fi
+# Native surfaces (docs/qa.md): document picker (Restore from Files…, Link audio folder), share sheet,
+# Listen with the system voice, mini player and car player controls, brightness and keep-awake. The web
+# side (src/ui/native/smoke.ts) taps through them; SmokeResponder.swift cancels system sheets like a user.
+native_tour() {
+  echo "--- native tour"
+  xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE" -tachiSmokeTour native
+  local i
+  for i in $(seq -w 1 24); do
+    sleep 4
+    xcrun simctl io "$UDID" screenshot "$OUT/9-native-$i.png" >/dev/null 2>&1 || true
+    if ! running; then
+      echo "::error::App is not running during the native tour (crashed?)"
+      collect_crashes
+      return 1
+    fi
+    if xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'subsystem == "app.tachinovel"' 2>/dev/null | grep -q "smoke: tour done"; then
+      break
+    fi
+  done
+  xcrun simctl spawn "$UDID" log show --last 4m --style compact --predicate 'subsystem == "app.tachinovel"' > "$OUT/native-tour-log.txt" 2>/dev/null || true
+  grep -E "smoke:" "$OUT/native-tour-log.txt" | sed -E 's/^.*smoke: /  /' || true
+  # Report, don't fail (yet): a hung tour shows up here; a crash already failed above.
+  grep -q "smoke: tour done" "$OUT/native-tour-log.txt" || echo "::warning::The native tour did not finish (see native-tour-log.txt and the 9-native-*.png screenshots)"
+  grep -q "smoke: skipped" "$OUT/native-tour-log.txt" && echo "::warning::Native tour steps were skipped (see native-tour-log.txt)"
+  # Regression: the first document picker is swiped away (no delegate call); the request must be answered
+  # and the popup queue must not stay stuck, so the share sheet later must appear (needs the network).
+  if grep -q "skipped waiting for Restore from Files" "$OUT/native-tour-log.txt"; then
+    echo "::error::A swiped-away document picker was never answered (Restore from Files… stayed busy)"
+    return 1
+  fi
+  # The first picker's request must be answered after the picker went away, not while it was still coming
+  # up (its view service starts slowly): a file picked in it then went nowhere.
+  answered=$(grep -n "smoke: Restore from Files… answered" "$OUT/native-tour-log.txt" | head -1 | cut -d: -f1)
+  swiped=$(grep -n "native swipe away document picker" "$OUT/native-tour-log.txt" | head -1 | cut -d: -f1)
+  if [ -n "$answered" ] && { [ -z "$swiped" ] || [ "$answered" -lt "$swiped" ]; }; then
+    echo "::error::The document picker was answered as cancelled while it was still on screen (a file picked in it would go nowhere)"
+    grep -E "answered as cancelled" "$OUT/native-tour-log.txt" || true
+    return 1
+  fi
+  if grep -q "smoke: Share (share sheet)" "$OUT/native-tour-log.txt" && ! grep -q "native on screen: UIActivityViewController" "$OUT/native-tour-log.txt"; then
+    echo "::error::The share sheet never appeared after a document picker was swiped away (native popup queue stuck)"
+    return 1
+  fi
+  return 0
+}
+native_tour || status=1
+
 # Stability: the app must still be alive a while after the last launch (launch tasks run ~5 s in).
 sleep 10
 if ! running; then echo "::error::App exited after the tour"; collect_crashes; status=1; fi
+# Any crash report of this build (also one the app recovered from, e.g. a relaunch) fails the smoke test.
+if find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 \( -name "App-*.ips" -o -name "App_*.ips" \) -newer "$APP/Info.plist" 2>/dev/null | grep -q .; then
+  echo "::error::Crash reports from this build (copied to the screenshots artifact)"
+  collect_crashes
+  status=1
+fi
 
 # App + core logs (os_log subsystem app.tachinovel) for debugging failures.
 xcrun simctl spawn "$UDID" log show --last 10m --style compact \
@@ -107,36 +160,77 @@ if ! grep -q "recovery: the web view was restarted" "$OUT/app-log.txt"; then
   status=1
 fi
 
-# Boot time per launch: tap (simctl launch) → WebView start → library painted (boot-times.txt + a notice).
+# Boot time per launch: tap (simctl launch) → process start → WebView → app.boot call → library painted
+# (boot-times.txt + a run notice).
 kill "$BOOT_STREAM" 2>/dev/null || true
-python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" <<'PY' || true
+python3 - "$OUT/launches.txt" "$OUT/boot-log.txt" "$OUT/boot-times.txt" "$OUT/app-log.txt" <<'PY' || true
 import re, statistics, sys
+from datetime import datetime, timezone
+# Boot time per launch (src/ui/native/boot-timing.ts logs one "boot: ..." line per launch). The "tap" is the
+# moment the script ran `simctl launch` (includes simctl's own overhead, ~1-3 s on CI); process start is the
+# app's first log line, so "process->library" is the app's own cold-start time.
 launches = [(n, int(t)) for n, t in (l.split() for l in open(sys.argv[1]) if l.strip())]
-rows = []
+TS = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\s+\S+\s+App\[(\d+):')
+def naive_ms(stamp):
+    # The log's wall-clock stamps are in the host's local zone; read them as UTC and correct by `offset`.
+    return int(datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone.utc).timestamp() * 1000)
+start = {}
+try:
+    for line in open(sys.argv[4], errors='replace'):
+        m = TS.match(line)
+        if m and m.group(2) not in start:
+            start[m.group(2)] = naive_ms(m.group(1))
+except OSError:
+    pass
+def ms(label, line):
+    m = re.search(label + r' \+(\d+)ms', line)
+    return int(m.group(1)) if m else None
+# Local-zone offset: each boot line has the log's local stamp and the core's own UTC stamp (ISO, "...Z").
+offset = 0
+for line in open(sys.argv[2], errors='replace'):
+    m, iso = TS.match(line), re.search(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z', line)
+    if m and iso:
+        utc = int(datetime.strptime(iso.group(1), '%Y-%m-%dT%H:%M:%S.%f').replace(tzinfo=timezone.utc).timestamp() * 1000)
+        offset = round((utc - naive_ms(m.group(1))) / 900_000) * 900_000  # zones are whole quarter hours
+        break
+start = {pid: t + offset for pid, t in start.items()}
+rows = {}
 for line in open(sys.argv[2], errors='replace'):
     m = re.search(r'nav=(\d+) epoch=(\d+)', line)
     if not m:
         continue
     nav, vis = int(m.group(1)), int(m.group(2))
     before = [(n, t) for n, t in launches if t <= nav]
-    if before:
-        name, tap = before[-1]
-        rows.append((name, nav - tap, vis - nav, vis - tap))
-seen, uniq = set(), []
-for r in rows:  # one line per launch
-    if r[0] not in seen:
-        seen.add(r[0]); uniq.append(r)
+    if not before or before[-1][0] in rows:
+        continue
+    name, tap = before[-1]
+    pid = re.search(r'App\[(\d+):', line)
+    proc = start.get(pid.group(1)) if pid else None
+    rows[name] = dict(tap=tap, proc=proc, nav=nav, vis=vis, html=ms('html', line), dom=ms('dom ready', line), boot=ms('app.boot call', line), lib=vis - nav)
+def d(a, b):
+    return '-' if a is None or b is None else str(b - a)
+# The UI is one inline-script page: its script runs while the HTML is parsed, so the app.boot call comes
+# about when the HTML is in (html / dom ready stay in the boot line for reference).
+cols = ['launch', 'tap->process', 'process->WebView', 'WebView->app.boot', 'app.boot->library', 'process->library', 'tap->library']
 with open(sys.argv[3], 'w') as f:
-    f.write('launch                 tap->WebView  WebView->library  tap->library (ms)\n')
-    for name, a, b, c in uniq:
-        f.write(f'{name:22} {a:11} {b:16} {c:12}\n')
+    f.write('  '.join(f'{c:>17}' if i else f'{c:22}' for i, c in enumerate(cols)) + '  (ms)\n')
+    for name, _ in launches:
+        r = rows.get(name)
+        if not r:
+            f.write(f'{name:22}  no boot line (library not painted within 20 s of the page starting?)\n')
+            continue
+        vals = [d(r['tap'], r['proc']), d(r['proc'], r['nav']), d(0, r['boot']), d(r['boot'], r['lib']), d(r['proc'], r['vis']), d(r['tap'], r['vis'])]
+        f.write(f'{name:22}' + ''.join(f'  {v:>17}' for v in vals) + '\n')
 print(open(sys.argv[3]).read())
-if uniq:
-    later = [r[3] for r in uniq[1:]]
-    msg = f'first launch (fresh install) {uniq[0][3]} ms'
-    if later:
-        msg += f'; later cold launches median {int(statistics.median(later))} ms (n={len(later)})'
-    print(f'::notice title=Boot time (tap -> library painted, simulator)::{msg}')
+done = [rows[n] for n, _ in launches if n in rows]
+own = [r['vis'] - r['proc'] for r in done if r['proc'] is not None]
+if own:
+    first = launches[0][0] if launches else ''
+    fresh = rows.get(first)
+    msg = f'process->library median {int(statistics.median(own))} ms, best {min(own)} ms (n={len(own)})'
+    msg += f'; fresh install ({first}): ' + (f'tap->library {fresh["vis"] - fresh["tap"]} ms' if fresh else 'no boot line')
+    # Workflow-command properties escape ',' and ':' (%2C, %3A); the message only escapes '%' and newlines.
+    print(f'::notice title=Boot time (simulator%2C cold launches)::{msg.replace("%", "%25")}')
 else:
     print('::warning::No boot timing lines captured (see boot-log.txt)')
 PY
