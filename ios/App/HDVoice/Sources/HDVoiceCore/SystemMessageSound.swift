@@ -43,7 +43,7 @@ public enum SystemMessageSound {
         var voice = x
         if tone { interfaceTone(&voice, sampleRate: fs) }
         guard useChime else { return voice }
-        let level = rms(x) * 0.5 * 2.0.squareRoot()
+        let level = rms(x) * 0.5 * Float(2).squareRoot()
         return chime(sampleRate: fs).map { $0 * level } + [Float](repeating: 0, count: Int(chimeGap * Double(fs))) + voice
     }
 

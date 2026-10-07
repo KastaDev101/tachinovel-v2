@@ -94,7 +94,7 @@ final class ExpressiveService {
     lazy var pocketPerformed: PocketVoice? = {
         guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return nil }
         do { return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.characterName) } catch {
-            log.error("expressive: pocket performed voice: \(error.localizedDescription, privacy: .public)")
+            self.log.error("expressive: pocket performed voice: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }()
