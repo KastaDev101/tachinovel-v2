@@ -51,6 +51,7 @@
 		9AA347654A96C65825B49291 /* ExpressiveSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */; };
 		AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */; };
 		56C547BC5B3C81BBF0794D5A /* ExpressiveVoice in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5794005B80F8EEE8949FA3 /* ExpressiveVoice */; };
+		492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,6 +110,7 @@
 		7EDE257A742849D01FAA618A /* ExpressiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveService.swift"; sourceTree = "<group>"; };
 		C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveSpeechEngine.swift"; sourceTree = "<group>"; };
 		0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveVoicePlugin.swift"; sourceTree = "<group>"; };
+		08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFolder.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -204,6 +206,7 @@
 				7EDE257A742849D01FAA618A /* ExpressiveService.swift */,
 				C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */,
 				0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */,
+				08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -365,6 +368,7 @@
 				818DAEB97B80825C0A49A2BE /* ExpressiveService.swift in Sources */,
 				9AA347654A96C65825B49291 /* ExpressiveSpeechEngine.swift in Sources */,
 				AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */,
+				492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
