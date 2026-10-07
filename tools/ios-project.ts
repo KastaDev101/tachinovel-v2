@@ -8,6 +8,8 @@
  *   - KokoroModels/ as a folder reference in the Resources phase: the bundled Kokoro voice model, fetched
  *     (pinned + checksummed) by tools/fetch-voices.ts at build time, never committed
  *   - the local Swift package ios/App/HDVoice (products HDVoiceCore, HDVoiceKokoro; it pins FluidAudio)
+ *   - the local Swift package ios/App/ExpressiveVoice (product ExpressiveVoice: the EXPERIMENTAL expressive
+ *     engines of the Voice Lab, models downloaded on demand; same FluidAudio pin)
  *   - IPHONEOS_DEPLOYMENT_TARGET 17.0 (Personal Voice, StoreKit 2 APIs used, safari17 JS target)
  *
  * Usage: node tools/ios-project.ts [--check]   (--check: exit 1 if the project is out of date)
@@ -117,30 +119,38 @@ export function updateProject(text: string, files: string[]): string {
 
 /** Local package HDVoice (+ its two library products) and the bundled KokoroModels folder. */
 export const VOICE_PRODUCTS = ['HDVoiceCore', 'HDVoiceKokoro'] as const;
+/** Local package ExpressiveVoice: the EXPERIMENTAL expressive engines (Voice Lab only, models downloaded on demand). */
+export const EXPRESSIVE_PRODUCTS = ['ExpressiveVoice'] as const;
 
 function addVoicePackage(text: string, appGroup: string, resources: string): string {
   let t = text;
-  const target = findId(t, /\t\t([0-9A-F]{24}) \/\* App \*\/ = \{\n\t\t\tisa = PBXNativeTarget;/, 'App target');
-  const project = findId(t, /\t\t([0-9A-F]{24}) \/\* Project object \*\/ = \{/, 'project object');
-  const frameworks = findId(t, /\t\t([0-9A-F]{24}) \/\* Frameworks \*\/ = \{\n\t\t\tisa = PBXFrameworksBuildPhase;/, 'Frameworks phase');
-
   const modelsRef = oid('file:KokoroModels');
   const modelsBuild = oid('build:KokoroModels');
   t = insertIntoSection(t, 'PBXFileReference', [`\t\t${modelsRef} /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };\n`]);
   t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${modelsBuild} /* KokoroModels in Resources */ = {isa = PBXBuildFile; fileRef = ${modelsRef} /* KokoroModels */; };\n`]);
   t = addToList(t, appGroup, 'children', [`\t\t\t\t${modelsRef} /* KokoroModels */,\n`]);
   t = addToList(t, resources, 'files', [`\t\t\t\t${modelsBuild} /* KokoroModels in Resources */,\n`]);
+  t = addLocalPackage(t, 'HDVoice', VOICE_PRODUCTS);
+  return addLocalPackage(t, 'ExpressiveVoice', EXPRESSIVE_PRODUCTS);
+}
 
-  const pkg = oid('package:HDVoice');
+/** A local Swift package next to App.xcodeproj (ios/App/<name>), its library products linked into the app target. */
+function addLocalPackage(text: string, name: string, products: readonly string[]): string {
+  let t = text;
+  const target = findId(t, /\t\t([0-9A-F]{24}) \/\* App \*\/ = \{\n\t\t\tisa = PBXNativeTarget;/, 'App target');
+  const project = findId(t, /\t\t([0-9A-F]{24}) \/\* Project object \*\/ = \{/, 'project object');
+  const frameworks = findId(t, /\t\t([0-9A-F]{24}) \/\* Frameworks \*\/ = \{\n\t\t\tisa = PBXFrameworksBuildPhase;/, 'Frameworks phase');
+  const pkg = oid(`package:${name}`);
+  const ref = `XCLocalSwiftPackageReference "${name}"`;
   t = insertIntoSection(t, 'XCLocalSwiftPackageReference', [
-    `\t\t${pkg} /* XCLocalSwiftPackageReference "HDVoice" */ = {\n\t\t\tisa = XCLocalSwiftPackageReference;\n\t\t\trelativePath = HDVoice;\n\t\t};\n`,
+    `\t\t${pkg} /* ${ref} */ = {\n\t\t\tisa = XCLocalSwiftPackageReference;\n\t\t\trelativePath = ${name};\n\t\t};\n`,
   ]);
-  t = addToList(t, project, 'packageReferences', [`\t\t\t\t${pkg} /* XCLocalSwiftPackageReference "HDVoice" */,\n`]);
-  for (const product of VOICE_PRODUCTS) {
+  t = addToList(t, project, 'packageReferences', [`\t\t\t\t${pkg} /* ${ref} */,\n`]);
+  for (const product of products) {
     const dep = oid(`product:${product}`);
     const build = oid(`build:product:${product}`);
     t = insertIntoSection(t, 'XCSwiftPackageProductDependency', [
-      `\t\t${dep} /* ${product} */ = {\n\t\t\tisa = XCSwiftPackageProductDependency;\n\t\t\tpackage = ${pkg} /* XCLocalSwiftPackageReference "HDVoice" */;\n\t\t\tproductName = ${product};\n\t\t};\n`,
+      `\t\t${dep} /* ${product} */ = {\n\t\t\tisa = XCSwiftPackageProductDependency;\n\t\t\tpackage = ${pkg} /* ${ref} */;\n\t\t\tproductName = ${product};\n\t\t};\n`,
     ]);
     t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${build} /* ${product} in Frameworks */ = {isa = PBXBuildFile; productRef = ${dep} /* ${product} */; };\n`]);
     t = addToList(t, target, 'packageProductDependencies', [`\t\t\t\t${dep} /* ${product} */,\n`]);
