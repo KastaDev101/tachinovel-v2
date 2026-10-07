@@ -12,12 +12,14 @@
 import { type App, createApp } from '@v1/script/app.ts';
 import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
-import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
+import type { BackupInfo, BackupPreview, MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
 import { deepLinkProblem } from './deep-link.ts';
 import { clearReports, type DiagnosticSummary, exportReports, listReports, recordPayload } from './diagnostics/metrickit.ts';
 import type { NativeHost } from './native-api.ts';
 import { htmlToBlocks, validateLexicon, type Lexicon } from '@v1tts/frontend.ts';
-import { emptyLexiconStore, lexiconsFor, paragraphMapper, speechScript, type LexiconStore, type SpeechScript } from './narration/speech-script.ts';
+import { loadLexiconStore, narrationBackup, readNarrationBackup, restoreLexicons, saveLexiconStore, textPrepOf, type NarrationBackup } from './narration/lexicon-store.ts';
+import { normalizeTextPrep, type TextPrepPrefs } from './narration/prep/prefs.ts';
+import { lexiconsFor, paragraphMapper, speechScript, type SpeechScript } from './narration/speech-script.ts';
 import { narrationScript, type NarrationParagraph } from './narration/text.ts';
 import { createNativePlatform, type NativePlatform } from './platform.ts';
 import { createGatedLoader, jsPluginsAllowed } from './sources/gate.ts';
@@ -36,9 +38,13 @@ export interface V2Methods {
     result: { chapterPath: string; title: string; paragraphs: NarrationParagraph[]; script: SpeechScript; next?: ChapterMeta; prev?: ChapterMeta };
   };
   /** Pronunciation lexicons (Settings › Voices › Pronunciations): the global one, and a novel's own. */
-  'narration.lexicon.get': { args: { novelKey?: string }; result: { global: Lexicon; novel: Lexicon | null } };
+  'narration.lexicon.get': { args: { novelKey?: string }; result: { global: Lexicon; novel: Lexicon | null; prep: TextPrepPrefs } };
   /** Replace the global lexicon (no novelKey) or a novel's. Validated like the PC narrator's lexicons. */
   'narration.lexicon.set': { args: { novelKey?: string; lexicon: Lexicon }; result: { entries: number } };
+  /** Novels with their own pronunciation list (Settings › Voices › Pronunciations), with library names. */
+  'narration.lexicon.list': { args: void; result: { global: number; novels: { novelKey: string; name: string; entries: number }[] } };
+  /** Text prep settings (Settings › Voices › Pronunciations › Reading): change some, get all back. */
+  'narration.prep.set': { args: Partial<TextPrepPrefs>; result: TextPrepPrefs };
   /**
    * Where narration should resume for a novel (CarPlay "Continue listening", lock-screen resume): the
    * last chapter read and its saved paragraph; if that chapter was finished, the start of the next one.
@@ -89,9 +95,6 @@ export interface Core {
 }
 
 type AnyHandler = (args: never) => Promise<unknown>;
-
-/** Pronunciation lexicons (synced store). */
-const LEXICON_FILE = 'narration-lexicons.json';
 
 /** A chapter counts as finished for resume purposes from this scroll/listen fraction on. */
 const FINISHED_AT = 0.98;
@@ -145,21 +148,7 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
 
   const v1 = app.handlers as unknown as Record<string, AnyHandler>;
 
-  async function loadLexicons(): Promise<LexiconStore> {
-    const text = await platform.synced.readText(LEXICON_FILE).catch(() => null);
-    if (!text) return emptyLexiconStore();
-    try {
-      const s = JSON.parse(text) as Partial<LexiconStore>;
-      const base = emptyLexiconStore();
-      return {
-        schemaVersion: 1,
-        global: s.global && validateLexicon(s.global).length === 0 ? s.global : base.global,
-        novels: Object.fromEntries(Object.entries(s.novels ?? {}).filter(([, l]) => validateLexicon(l).length === 0)),
-      };
-    } catch {
-      return emptyLexiconStore();
-    }
-  }
+  const loadLexicons = (): ReturnType<typeof loadLexiconStore> => loadLexiconStore(platform.synced);
   const v2: { [K in keyof V2Methods]: (args: V2Methods[K]['args']) => Promise<V2Methods[K]['result']> } = {
     'v2.info': () =>
       Promise.resolve({
@@ -175,12 +164,13 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       const ch = await get({ pluginId: args.pluginId, novelPath: args.novelPath, chapterPath: args.chapterPath });
       const paragraphs = narrationScript(ch.html, ch.title);
       const blocks = htmlToBlocks(ch.html);
-      const lexicons = lexiconsFor(await loadLexicons(), novelKeyString({ pluginId: args.pluginId, path: args.novelPath }));
+      const store = await loadLexicons();
+      const lexicons = lexiconsFor(store, novelKeyString({ pluginId: args.pluginId, path: args.novelPath }));
       return {
         chapterPath: ch.chapterPath,
         title: ch.title,
         paragraphs,
-        script: speechScript(blocks, { title: ch.title, lexicons, paragraphOf: paragraphMapper(blocks, paragraphs.map((p) => p.text)) }),
+        script: speechScript(blocks, { title: ch.title, lexicons, ...textPrepOf(store), paragraphOf: paragraphMapper(blocks, paragraphs.map((p) => p.text)) }),
         ...(ch.next ? { next: ch.next } : {}),
         ...(ch.prev ? { prev: ch.prev } : {}),
       };
@@ -188,7 +178,7 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     'narration.lexicon.get': async (args) => {
       const store = await loadLexicons();
       const key = typeof args?.novelKey === 'string' ? args.novelKey : undefined;
-      return { global: store.global, novel: key ? (store.novels[key] ?? null) : null };
+      return { global: store.global, novel: key ? (store.novels[key] ?? null) : null, prep: textPrepOf(store) };
     },
     'narration.lexicon.set': async (args) => {
       const problems = validateLexicon(args?.lexicon);
@@ -201,8 +191,22 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       } else {
         store.global = lexicon;
       }
-      await platform.synced.writeText(LEXICON_FILE, JSON.stringify(store));
+      await saveLexiconStore(platform.synced, store);
       return { entries: lexicon.entries.length };
+    },
+    'narration.lexicon.list': async () => {
+      const store = await loadLexicons();
+      const novels = Object.entries(store.novels)
+        .filter(([, l]) => l.entries.length > 0)
+        .map(([novelKey, l]) => ({ novelKey, name: app.services.library.get(novelKey)?.name ?? novelKey.slice(novelKey.indexOf(':') + 1), entries: l.entries.length }))
+        .sort((x, y) => x.name.localeCompare(y.name));
+      return { global: store.global.entries.length, novels };
+    },
+    'narration.prep.set': async (args) => {
+      const store = await loadLexicons();
+      store.prep = normalizeTextPrep({ ...textPrepOf(store), ...(args && typeof args === 'object' ? args : {}) });
+      await saveLexiconStore(platform.synced, store);
+      return store.prep;
     },
     'narration.resumePoint': async (args) => {
       if (!args || typeof args.pluginId !== 'string' || typeof args.novelPath !== 'string') {
@@ -273,7 +277,53 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
         ? ota.check({ force: args?.force === true, now: Date.now() })
         : Promise.resolve({ status: 'not-configured' as const, message: 'Web updates are not part of this build.' }),
   };
-  const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>) };
+  // Backups carry the pronunciation lists and text prep settings (narration/lexicon-store.ts): v1 writes and
+  // restores the rest of the file; the core adds and restores its `narration` section around v1's handlers.
+  let lastPicked: string | null = null;
+  const pickFile = platform.native.pickFile.bind(platform.native);
+  platform.native.pickFile = async (types) => (lastPicked = await pickFile(types));
+  const readPicked = async (abs: string): Promise<string | null> => {
+    const norm = (x: string): string => x.replace(/\\/g, '/').replace(/\/+$/, '');
+    for (const store of [platform.local, platform.synced]) {
+      const root = norm(store.root);
+      if (norm(abs).startsWith(`${root}/`)) return store.readText(norm(abs).slice(root.length + 1)).catch(() => null);
+    }
+    return null;
+  };
+  /** Narration sections of backups picked for a preview, by importId (restored with it). */
+  const pickedNarration = new Map<string, NarrationBackup | null>();
+  const backups: Record<string, AnyHandler> = {
+    'backup.create': async () => {
+      const info = await (v1['backup.create'] as () => Promise<BackupInfo>)();
+      const section = narrationBackup(await loadLexicons());
+      const rel = `backups/${info.fileName}`;
+      const text = section ? await platform.synced.readText(rel) : null;
+      if (!section || !text) return info;
+      const out = JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), narration: section });
+      await platform.synced.writeText(rel, out);
+      return { ...info, bytes: out.length };
+    },
+    'backup.preview': async (args: { fileName?: string }) => {
+      lastPicked = null;
+      const preview = await (v1['backup.preview'] as (a: unknown) => Promise<BackupPreview>)(args);
+      if (preview.importId && lastPicked) pickedNarration.set(preview.importId, readNarrationBackup(await readPicked(lastPicked)));
+      return preview;
+    },
+    'backup.restore': async (args: { fileName?: string; importId?: string; mode: 'merge' | 'replace' }) => {
+      const fromPreview = args?.importId !== undefined ? pickedNarration.get(args.importId) : undefined;
+      if (args?.importId !== undefined) pickedNarration.delete(args.importId);
+      lastPicked = null;
+      const result = await (v1['backup.restore'] as (a: unknown) => Promise<{ novels: number; sources: number }>)(args);
+      let section = fromPreview ?? null;
+      if (args?.importId === undefined) {
+        const text = typeof args?.fileName === 'string' ? await platform.synced.readText(`backups/${args.fileName}`) : lastPicked ? await readPicked(lastPicked) : null;
+        section = readNarrationBackup(text);
+      }
+      if (section) await saveLexiconStore(platform.synced, restoreLexicons(await loadLexicons(), section, args.mode === 'replace' ? 'replace' : 'merge'));
+      return result;
+    },
+  };
+  const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>), ...backups };
 
   async function handle(requestJson: string): Promise<string> {
     let env: RequestEnvelope;

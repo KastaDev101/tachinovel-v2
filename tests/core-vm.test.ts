@@ -148,7 +148,7 @@ describe.each(['store', 'personal'] as const)('core.js in a bare JS context (%s 
     const args = { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1' };
     type Script = { items: { text: string; paragraph: number; runs?: { t?: string; p?: string }[]; pauseMs: number; kind: string }[] };
     const before = await core.call<{ script: Script }>('narration.chapterText', args);
-    expect(before.script.items[0]).toMatchObject({ text: 'Chapter 1. Nightmare Begins.', kind: 'title', paragraph: 0 });
+    expect(before.script.items[0]).toMatchObject({ text: 'Chapter one. Nightmare Begins.', kind: 'title', paragraph: 0 });
     expect(before.script.items.some((i) => i.text.includes('Mister Smith'))).toBe(true);
     expect(before.script.items.some((i) => i.runs)).toBe(false);
     await expect(core.call('narration.lexicon.set', { novelKey: 'demo-library:novel/alpha', lexicon: { schemaVersion: 1, entries: [{ match: 'Aspirant', ipa: 'ɐspˈIɹᵊnt' }] } })).resolves.toEqual({ entries: 1 });
