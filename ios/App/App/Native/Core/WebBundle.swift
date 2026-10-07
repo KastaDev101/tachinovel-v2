@@ -16,7 +16,7 @@ import Foundation
 
 final class WebBundle: Sendable {
     /// Must equal NATIVE_LEVEL in src/core/ota/native-level.ts (tests/ota.test.ts checks).
-    static let nativeLevel = 1
+    static let nativeLevel = 2
     static let maxAttempts = 2
     static let current = WebBundle.decide()
 

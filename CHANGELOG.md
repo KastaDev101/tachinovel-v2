@@ -19,6 +19,12 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ### Changed
 
+- Settings › Voices is built around the Narrator: who reads chapters (Narrator or Kokoro, one tap; a download row
+  until the Narrator voice is installed), Narrator settings, Kokoro's three backup voices (Heart, Bella, Nicole)
+  with every voice and the mixer one tap further, and the experimental models under Advanced › Voice models. The
+  Listen player's Voice panel has the same choice at the top.
+- Web updates from this release on need this IPA (native level 2).
+
 - When the narrator voice runs late or fails a sentence, Kokoro reads it instead of the Apple voice.
 - The director hears dread: a wider set of tense words, and a hesitant line ("What… is… going on?") in a tense
   stretch or a thought is no longer read as teasing.

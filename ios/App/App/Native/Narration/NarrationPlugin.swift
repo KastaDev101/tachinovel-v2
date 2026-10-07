@@ -3,6 +3,7 @@
 //
 
 import AVFoundation
+import ExpressiveCore
 @preconcurrency import Capacitor
 import Foundation
 import HDVoiceCore
@@ -298,6 +299,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "moods": prefs.delivery.moods,
                     "sceneAI": prefs.delivery.director == DeliverySettings.rulesAI,
                     "sceneAIAvailable": SceneReader.shared.available,
+                    "pocketInstalled": ExpressiveService.shared.isInstalled(.pocketTts),
                     "breaths": prefs.delivery.breaths,
                     "studioSound": prefs.delivery.studioSound,
                     "systemChime": prefs.delivery.systemChime,

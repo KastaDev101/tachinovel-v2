@@ -40,7 +40,9 @@ const BUDGETS_KB: Record<string, number> = {
   // the personal flavor only (the store flavor compiles them out). Raise on purpose, with the reason in the PR.
   // 720 → 740 (2026-10-07, natural-delivery): the Voice Lab samples run the delivery director in the UI
   // (src/core/narration/delivery.ts, ~8 KB) so they sound like Listen; the settings screen for it comes next.
-  'index.html': 740,
+  // 740 → 760 (2026-10-07, narrator-moods): Settings › Voices rebuilt around the Narrator (who reads, its settings,
+  // Kokoro's three backups, sub-pages) plus the Voice Lab scene-reading test; Kasta asked for the cleanup.
+  'index.html': 760,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,

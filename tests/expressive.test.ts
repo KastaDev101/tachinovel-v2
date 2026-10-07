@@ -204,7 +204,7 @@ describe('wiring', () => {
     expect(lab).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
-    expect(voices).toContain('Expressive voices (experimental)');
+    expect(voices).toContain('Voice models'); // Settings › Voices › Advanced (the narrator-first cleanup)
     for (const f of ['src/ui/native/v1-hooks.ts', 'src/ui/native/narration-overlay.ts']) {
       expect(read(f), f).not.toContain('expressive-lab');
     }

@@ -220,6 +220,8 @@ export interface DeliveryInfo {
   /** The on-device AI director reads the scene (iOS 26 with Apple Intelligence); off = keyword rules only. */
   sceneAI: boolean;
   sceneAIAvailable?: boolean;
+  /** The Narrator voice's model (Pocket TTS) is downloaded. */
+  pocketInstalled?: boolean;
   breaths: boolean;
   studioSound: boolean;
   systemChime: boolean;

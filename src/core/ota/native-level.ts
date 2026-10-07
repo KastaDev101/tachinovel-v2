@@ -4,4 +4,4 @@
  * together with WebBundle.nativeLevel in ios/App/App/Native/Core/WebBundle.swift (a test checks they match):
  * a web update built for another level is never applied (src/core/ota/ota.ts, WebBundle.swift).
  */
-export const NATIVE_LEVEL = 1;
+export const NATIVE_LEVEL = 2;
