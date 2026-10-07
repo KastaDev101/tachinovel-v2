@@ -54,6 +54,7 @@ export type FindingKind =
   | 'timeout'
   | 'back-nav'
   | 'layout'
+  | 'a11y'
   | 'unreachable'
   | 'harness';
 
@@ -380,7 +381,7 @@ export class Worker {
     if (info.crash) findings.push(await this.shoot({ kind: 'crash', severity: 'fail', state: node.sig, message: info.crash, repro }));
     if (info.errorState) findings.push(await this.shoot({ kind: 'error-state', severity: 'fail', state: node.sig, message: info.errorState, repro }));
     const layout = await this.page.evaluate(() => (window.__qaCrawl as NonNullable<Window['__qaCrawl']>).layout());
-    for (const l of layout) findings.push(await this.shoot({ kind: 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
+    for (const l of layout) findings.push(await this.shoot({ kind: l.kind === 'not-modal' ? 'a11y' : 'layout', severity: l.kind === 'safe-area' ? 'warn' : 'fail', state: node.sig, message: `${l.kind}: ${l.detail}`, repro }));
     const controls = await this.enumerate();
     for (const c of controls) {
       // A toast goes away by itself within seconds (and a tap dismisses it): covering something then is a
