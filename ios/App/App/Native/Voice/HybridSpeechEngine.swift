@@ -55,6 +55,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
     private var completeness = CompletenessGuard()
     private(set) var retakes = 0
+    /// The sentence Kokoro is rendering in place of a late narrator-voice render, and how often that happened.
+    private var standIn: Int?
+    private(set) var standIns = 0
     /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
     /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
     private var natural: NaturalFinish?
@@ -167,6 +170,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     func stop() {
         gen += 1
+        standIn = nil
         cancelWait()
         waiting = false
         if let s = scheduler { lastScheduler = s }
@@ -232,7 +236,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// Nothing is audible: pick the voice for the next sentence.
     private func advance() {
-        guard scheduler != nil, !paused, queued.isEmpty, appleSegment == nil else { return }
+        guard scheduler != nil, !paused, queued.isEmpty, appleSegment == nil, standIn == nil else { return }
         cancelWait()
         guard let d = scheduler?.decide(now: Date().timeIntervalSince1970) else { return }
         switch d {
@@ -241,6 +245,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             playKokoro(i)
         case .apple(let i, let reason):
             waiting = false
+            if kokoroCanStandIn(reason) { return standInWithKokoro(i, reason: reason) }
             speakApple(i, reason: reason, restart: false)
         case .wait(let t):
             waiting = true
@@ -513,6 +518,48 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             advance()
         }
         pumpRender()
+    }
+
+    // MARK: - Kokoro standing in for the narrator voice
+
+    /// The narrator voice (Pocket TTS) is late or failed a sentence: Kokoro reads it instead of the Apple voice,
+    /// which sounds far closer (Kasta's drive: the Apple voice was the abrupt part). Not when Kokoro itself is
+    /// what's missing, and not under thermal pressure (Kokoro would only add heat).
+    private func kokoroCanStandIn(_ reason: FallbackReason) -> Bool {
+        guard listenEngine != nil, reason == .queueDry || reason == .segmentFailed else { return false }
+        let k = KokoroService.shared
+        return k.usable && k.status == .ready && !k.crashDisabled
+    }
+
+    /// One sentence by Kokoro, rendered now, through the same chain and pause as the narrator voice; the scheduler
+    /// still counts it as a fallback, so the narrator voice returns once it is a couple of sentences ahead again.
+    private func standInWithKokoro(_ i: Int, reason: FallbackReason) {
+        let g = gen
+        let seg = segments[i]
+        standIn = i
+        lastFallback = reason
+        standIns += 1
+        KokoroService.shared.synthesize(text: seg.kokoroText, runs: seg.runs, voice: kokoroVoice, speed: seg.rate) { [weak self] result in
+            self?.onMain {
+                guard let self, g == self.gen, self.standIn == i, self.scheduler != nil else { return }
+                self.standIn = nil
+                guard case .success(let audio) = result else { return self.speakApple(i, reason: reason, restart: false) }
+                let frames: [Float]
+                if var nf = self.natural, audio.sampleRate == nf.sampleRate {
+                    frames = nf.render(NaturalFinish.Unit(samples: audio.samples, lines: [self.naturalLine(i, expressive: false)], speed: 1, expressive: false))
+                        .flatMap(\.frames)
+                    self.natural = nf
+                } else {
+                    frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: seg.pauseAfter, loudness: &self.loudness)
+                }
+                guard let buf = self.makeBuffer(frames), self.startOutput() else { return self.speakApple(i, reason: reason, restart: false) }
+                self.buffers[i] = buf
+                self.schedule(i)
+                // Paused meanwhile: it waits in the player, and resume() starts it.
+                if !self.paused, !self.player.isPlaying { self.player.play() }
+                self.began(i, .kokoro)
+            }
+        }
     }
 
     // MARK: - Apple voice
