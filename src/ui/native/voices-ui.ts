@@ -152,6 +152,7 @@ export function panel(title: string, testId: string): { root: HTMLElement; body:
   const root = document.createElement('div');
   root.className = 'tn-v';
   root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true'); // full screen: VoiceOver must not reach the screen behind
   root.setAttribute('aria-label', title);
   root.dataset.testid = testId;
   root.innerHTML = `<div class="hd"><button type="button" class="x" data-act="close" aria-label="Back">${ICON.back}</button><h1></h1></div><div class="body"></div>`;
