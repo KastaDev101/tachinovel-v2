@@ -5,7 +5,8 @@
  *
  * Usage: node tools/expressive-fixtures.ts <out.json>
  */
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { plainText, SAMPLES, type ExpressiveLine } from '../src/ui/native/expressive-samples.ts';
 
 export interface FixtureLine extends ExpressiveLine {
@@ -29,6 +30,7 @@ if (import.meta.main) {
     process.exit(2);
   }
   const fixtures = buildExpressiveFixtures();
+  mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   writeFileSync(out, `${JSON.stringify(fixtures, null, 2)}\n`);
   console.log(`${fixtures.lines.length} lines → ${out}`);
 }
