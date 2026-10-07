@@ -167,7 +167,7 @@ async function reader(): Promise<void> {
     await sleep(500);
     await closeSheets();
   }
-  if (!(await tap('[data-testid="listen-button"]', 'Listen (system voice)', 8000))) return;
+  if (!(await tap('[data-testid="reader-listen"]', 'Listen (system voice)', 8000))) return;
   await sleep(3000);
   await tap('[data-testid="mini-player"] .tn-toggle', 'mini player pause');
   await tap('[data-testid="mini-player"] .tn-toggle', 'mini player resume');
