@@ -112,7 +112,9 @@
   position: relative;
   max-width: 720px;
   margin: 0 auto;
-  padding: calc(var(--safe-top) + 28px) 0 calc(var(--safe-bottom) + 48px);
+  /* Bottom: room for the bottom bar (its measured height) so the last line, a locked chapter's note
+     or "Check for new chapters" can be scrolled above it while the bars are shown. */
+  padding: calc(var(--safe-top) + 28px) 0 calc(var(--rd-bottom-h, calc(var(--safe-bottom) + 132px)) + 16px);
 }
 
 .rd-chapter {
