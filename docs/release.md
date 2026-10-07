@@ -35,12 +35,15 @@ redesign), **minor** for new features, **patch** for fixes only.
    project, merges the `changelog.d/` fragments into "Unreleased" (and deletes them), and moves it into
    `## [2.0.0-alpha.2] - <today>` with compare links. Review the diff,
    run `npm run check`, and open a PR titled `Release 2.0.0-alpha.2`.
-3. After the coordinator merges it, tag the merge commit on `main` and push the tag:
+3. After the coordinator merges it, tag the release PR's merge commit and push the tag:
    ```sh
    git fetch origin
-   git tag -a v2.0.0-alpha.2 -m "TachiNovel 2.0.0-alpha.2" origin/main
+   sha=$(gh pr view <release-pr-number> --json mergeCommit --jq .mergeCommit.oid)
+   git tag -a v2.0.0-alpha.2 -m "TachiNovel 2.0.0-alpha.2" "$sha"
    git push origin v2.0.0-alpha.2
    ```
+   (`origin/main` instead of `"$sha"` is fine when nothing else merged after it; otherwise a later PR's
+   changelog fragment would ship without being in these notes.)
 4. The `release` workflow ([.github/workflows/release.yml](../.github/workflows/release.yml)) then:
    - **verify** (Ubuntu, ~1 min): the tagged commit is on `main`; the tag equals `v` + the package
      version; the Xcode project is in sync; CHANGELOG has notes for the version. Any mismatch stops the
@@ -53,6 +56,24 @@ redesign), **minor** for new features, **patch** for fixes only.
      two files attached. Versions with a suffix are marked pre-release.
 5. The `ios` workflow runs on the same tag (web checks, simulator smoke test; TestFlight upload once the
    App Store Connect secrets exist). Check it is green too.
+
+### Dry run (before tagging)
+
+Rehearse a release from `main` without committing, tagging or publishing anything:
+
+```sh
+gh workflow run release.yml --ref main -f version=2.0.0-alpha.2
+gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+The run applies `node tools/release.ts prepare <version>` on the runners only (verify and build), so the
+notes are the pending fragments merged exactly as the release PR will merge them, and the IPA carries the
+new version. **publish** then creates a **draft** release `v<version>-dryrun-<run id>` on the commit
+(drafts create no tag and only maintainers can see them), checks that both files are attached and that
+a suffixed version is a pre-release, writes the result and the full notes to the run summary, and deletes
+the draft. No attestation is made. It costs one macOS build (~10 min), so run it once before a release,
+not per PR. Locally, `tests/release.test.ts` runs the same `prepare` → `verify-tag` steps on a copy of
+the tree.
 
 The repository is public, so releases and their IPAs are public. The IPA is the **personal** flavor
 (repository variable `FLAVOR` overrides it), unsigned, with no entitlements: AltStore/SideStore re-sign
@@ -75,6 +96,7 @@ The attestation proves the file was built by this repository's release workflow 
 | verify: "not on main" | Only tag commits that have been merged into `main` |
 | verify: "no CHANGELOG section" | Run step 2; a tag without notes is refused |
 | build failed (flaky runner, Xcode) | Re-run the failed jobs from the Actions page; nothing was published yet |
+| A dry run left a `-dryrun-` draft (cancelled mid-publish) | Delete the draft on the Releases page; drafts have no tag |
 | A published release is bad | Mark it as a pre-release or delete it on GitHub (and the tag), fix on `main`, release a new patch version. Never re-use a version number |
 
 ## Later: App Store builds
