@@ -1,6 +1,6 @@
 {
   "name": "tachinovel-v2",
-  "version": "2.0.0-alpha.3",
+  "version": "2.0.0-alpha.4",
   "private": true,
   "description": "TachiNovel v2: native iOS shell (Capacitor) around the v1 UI and script core. Evaluation scaffold, not released.",
   "license": "UNLICENSED",
