@@ -124,6 +124,15 @@ native_tour() {
     echo "::error::A swiped-away document picker was never answered (Restore from Files… stayed busy)"
     return 1
   fi
+  # The first picker's request must be answered after the picker went away, not while it was still coming
+  # up (its view service starts slowly): a file picked in it then went nowhere.
+  answered=$(grep -n "smoke: Restore from Files… answered" "$OUT/native-tour-log.txt" | head -1 | cut -d: -f1)
+  swiped=$(grep -n "native swipe away document picker" "$OUT/native-tour-log.txt" | head -1 | cut -d: -f1)
+  if [ -n "$answered" ] && { [ -z "$swiped" ] || [ "$answered" -lt "$swiped" ]; }; then
+    echo "::error::The document picker was answered as cancelled while it was still on screen (a file picked in it would go nowhere)"
+    grep -E "answered as cancelled" "$OUT/native-tour-log.txt" || true
+    return 1
+  fi
   if grep -q "smoke: Share (share sheet)" "$OUT/native-tour-log.txt" && ! grep -q "native on screen: UIActivityViewController" "$OUT/native-tour-log.txt"; then
     echo "::error::The share sheet never appeared after a document picker was swiped away (native popup queue stuck)"
     return 1

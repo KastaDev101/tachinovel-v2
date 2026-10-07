@@ -117,7 +117,8 @@ screenshots of each tab, `-tachiSmokeTour native` runs `src/ui/native/smoke.ts`,
 Nobody can tap system sheets in CI, so `SmokeResponder.swift` (Debug builds only) answers them two
 seconds after they appear: the first document picker like a swipe down (`dismiss` only), the others like
 Cancel (`dismiss` + `documentPickerWasCancelled`), the share sheet with `dismiss` + its completion handler.
-The job fails if the swiped picker's request is never answered or the share sheet doesn't appear after it. Each step logs
+The job fails if the swiped picker's request is never answered, is answered before the picker went away
+(while it was still coming up), or the share sheet doesn't appear after it. Each step logs
 `smoke: …` through the core (os_log subsystem `app.tachinovel`); the job prints those lines, saves
 `native-tour-log.txt` and a screenshot every 4 s (`9-native-NN.png`), fails if the app stops running or
 leaves a crash report, and warns if the tour didn't reach `smoke: tour done` or skipped steps (step 3 needs

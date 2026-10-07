@@ -83,8 +83,10 @@ async function closeSheets(): Promise<void> {
 const NATIVE_SHEET_MS = 7000;
 
 /** Wait until `selector` is visible again (the UI is back after a native sheet), up to `timeoutMs`. */
-async function backTo(selector: string, what: string, timeoutMs: number): Promise<void> {
-  if (!(await waitFor(selector, timeoutMs))) log(`skipped waiting for ${what} (not back after ${timeoutMs} ms)`);
+async function backTo(selector: string, what: string, timeoutMs: number): Promise<boolean> {
+  if (await waitFor(selector, timeoutMs)) return true;
+  log(`skipped waiting for ${what} (not back after ${timeoutMs} ms)`);
+  return false;
 }
 
 async function nativeTour(): Promise<void> {
@@ -99,8 +101,9 @@ async function nativeTour(): Promise<void> {
     for (const how of ['swiped away', 'cancelled']) {
       if (await tap('button[data-testid="backup-restore-files"]', `Restore from Files… (document picker, ${how})`, 20_000)) {
         await sleep(1500);
-        // The row reads "Reading Backup…" until the picker answered.
-        await backTo('button[data-testid="backup-restore-files"]', 'Restore from Files…', 20_000);
+        // Until the picker answered, the row reads "Reading Backup…" (not a button). ci/ios-sim-smoke.sh
+        // checks the first answer comes after SmokeResponder swiped the picker away, not while it was up.
+        if (await backTo('button[data-testid="backup-restore-files"]', 'Restore from Files…', 20_000)) log('Restore from Files… answered');
         await sleep(800);
       }
     }
