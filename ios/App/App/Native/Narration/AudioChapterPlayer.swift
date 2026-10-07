@@ -60,7 +60,10 @@ final class AudioChapterPlayer: @unchecked Sendable {
     private var sampleRate: Double { file?.processingFormat.sampleRate ?? 44_100 }
 
     var currentTime: Double {
-        guard playing, let t = node.lastRenderTime, let pt = node.playerTime(forNodeTime: t) else { return heldTime }
+        // Right after the engine starts, lastRenderTime can exist without a valid sample or host time, and
+        // playerTime(forNodeTime:) then raises an exception that terminates the app (voice-simulator, #41).
+        guard playing, engine.isRunning, let t = node.lastRenderTime, t.isSampleTimeValid || t.isHostTimeValid,
+              let pt = node.playerTime(forNodeTime: t), pt.isSampleTimeValid else { return heldTime }
         let s = Double(startFrame + pt.sampleTime) / sampleRate
         return s.isFinite ? max(0, s) : heldTime
     }
