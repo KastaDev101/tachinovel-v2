@@ -36,8 +36,9 @@ class MainViewController: CAPBridgeViewController {
     }
 
     #if DEBUG
-    /// CI simulator smoke tour (ci/ios-sim-smoke.sh): `-tachiSmokeTab browse [-tachiSmokeSource id]` launch
-    /// arguments (NSArgumentDomain) → `window.__TACHI_SMOKE__`, read by src/ui/native/smoke.ts. Debug only.
+    /// CI simulator smoke tour (ci/ios-sim-smoke.sh): `-tachiSmokeTab browse [-tachiSmokeSource id]` or
+    /// `-tachiSmokeTour native` launch arguments (NSArgumentDomain) → `window.__TACHI_SMOKE__`, read by
+    /// src/ui/native/smoke.ts. The native tour also starts SmokeResponder (cancels system sheets). Debug only.
     private func installSmokeHook() {
         let defaults = UserDefaults.standard
         var config: [String: String] = [:]
@@ -45,6 +46,10 @@ class MainViewController: CAPBridgeViewController {
         if let source = defaults.string(forKey: "tachiSmokeSource") { config["source"] = source }
         // Voice self-test (ci/ios-voice-selftest.sh): src/ui/native/voice-selftest.ts plays a synthetic chapter.
         if defaults.bool(forKey: "tachiVoiceSelfTest") { config["voiceSelfTest"] = "1" }
+        if let tour = defaults.string(forKey: "tachiSmokeTour") {
+            config["tour"] = tour
+            SmokeResponder.shared.start()
+        }
         guard !config.isEmpty,
               let data = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: data, encoding: .utf8) else { return }
