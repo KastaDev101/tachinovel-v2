@@ -50,6 +50,10 @@ final class StyleMapperTests: XCTestCase {
         XCTAssertEqual(StyleMapper.pocketText("“…what? Ah! Hm… W-wait…?”"), "“what? Ah! Hm, W-wait?”")
         XCTAssertEqual(StyleMapper.pocketText("Well. . . maybe."), "Well, maybe.")
         XCTAssertEqual(StyleMapper.pocketText("He paused, …, then went on."), "He paused, then went on.")
+        XCTAssertEqual(StyleMapper.pocketText("'Damna... tion...'"), "'Damnation.'")
+        XCTAssertEqual(StyleMapper.pocketText("It's imposs… ible!"), "It's impossible!")
+        XCTAssertEqual(StyleMapper.pocketText("What... is... going on?"), "What, is, going on?")
+        XCTAssertEqual(StyleMapper.pocketText("Ah... not good..."), "Ah, not good.")
     }
 
     func testPlainTextRemovesSoundTags() {

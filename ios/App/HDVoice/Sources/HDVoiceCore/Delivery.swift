@@ -74,9 +74,13 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     public var unit: String
     /// Dialogue and thoughts in the performed read of the same narrator voice (Pocket TTS); off = all narrated.
     public var performed: Bool
+    /// LitRPG system messages: an interface chime before them, and the voice in an interface tone.
+    public var systemChime: Bool
+    public var systemTone: Bool
 
     public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
-                sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true) {
+                sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true,
+                systemChime: Bool = true, systemTone: Bool = true) {
         version = Self.currentVersion
         self.listenEngine = listenEngine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
         self.natural = natural
@@ -86,6 +90,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         self.sounds = sounds
         self.unit = unit == Self.sentences ? Self.sentences : Self.chunks
         self.performed = performed
+        self.systemChime = systemChime
+        self.systemTone = systemTone
     }
 
     /// Tolerant decoding: missing or unknown values take their defaults.
@@ -114,10 +120,12 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         sounds = (try? c.decode(Bool.self, forKey: .sounds)) ?? d.sounds
         unit = (try? c.decode(String.self, forKey: .unit)) == Self.sentences ? Self.sentences : Self.chunks
         performed = (try? c.decode(Bool.self, forKey: .performed)) ?? d.performed
+        systemChime = (try? c.decode(Bool.self, forKey: .systemChime)) ?? d.systemChime
+        systemTone = (try? c.decode(Bool.self, forKey: .systemTone)) ?? d.systemTone
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed
+        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed, systemChime, systemTone
     }
 
     /// listenEngine is written even when nil (Kokoro chosen), so a missing key always means "the default".
@@ -132,6 +140,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         try c.encode(sounds, forKey: .sounds)
         try c.encode(unit, forKey: .unit)
         try c.encode(performed, forKey: .performed)
+        try c.encode(systemChime, forKey: .systemChime)
+        try c.encode(systemTone, forKey: .systemTone)
     }
 
     public var usesAI: Bool { natural && director == Self.rulesAI }
@@ -217,9 +227,11 @@ public struct NaturalSentence: Sendable, Equatable {
     public var chunk: Int?
     /// Dialogue or a thought: the narrator voice performs it (Pocket TTS: the performed voice prompt).
     public var performed: Bool
+    /// A LitRPG system message (the script's kind "system").
+    public var system: Bool
 
     public init(params: DeliveryParams = .neutral, mood: DeliveryMood = .calm, line: String? = nil, breath: BreathPoint? = nil, speaks: Bool = false, chunk: Int? = nil,
-                performed: Bool = false) {
+                performed: Bool = false, system: Bool = false) {
         self.params = params
         self.mood = mood
         self.line = line
@@ -227,6 +239,7 @@ public struct NaturalSentence: Sendable, Equatable {
         self.speaks = speaks
         self.chunk = chunk
         self.performed = performed
+        self.system = system
     }
 
     static func validLine(_ raw: Any?) -> String? {
@@ -240,7 +253,8 @@ public struct NaturalSentence: Sendable, Equatable {
         let parts = o["parts"] as? [Any] ?? []
         let speaks = (o["role"] as? String) == "dialogue" || parts.contains { (($0 as? [String: Any])?["role"] as? String) == "dialogue" }
         return NaturalSentence(params: params, mood: mood, line: validLine(o["line"]), breath: (o["breath"] as? String).flatMap(BreathPoint.init(rawValue:)),
-                               speaks: speaks, chunk: (o["chunk"] as? NSNumber)?.intValue, performed: (o["voice"] as? String) == "performed")
+                               speaks: speaks, chunk: (o["chunk"] as? NSNumber)?.intValue, performed: (o["voice"] as? String) == "performed",
+                               system: (o["kind"] as? String) == "system")
     }
 
     /// From a Voice Lab line's `natural` object (delivery.ts LineDelivery).

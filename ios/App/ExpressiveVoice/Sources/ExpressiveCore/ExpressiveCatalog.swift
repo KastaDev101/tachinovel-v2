@@ -71,6 +71,8 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var role: String
 
     public static let performedRole = "performed"
+    /// Sampling temperature for engines that take one per call (Pocket TTS); nil = the engine's default.
+    public var temperature: Float?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
@@ -105,7 +107,7 @@ public enum StyleMapper {
     /// ellipsis the director marked (350–450 ms).
     public static func pocketText(_ text: String) -> String {
         let dots = #"(?:\.\s?\.\s?\.|…)"#
-        var out = text
+        var out = joinBrokenWords(text)
         let rules: [(String, String)] = [
             (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
             (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
@@ -120,6 +122,28 @@ public enum StyleMapper {
             out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Word endings that, after a trailing-off "…", finish the word before it ("Damna… tion" → "Damnation"); a
+    /// real word after one stays apart ("bite… often", "Gods… help").
+    static let brokenWordEndings: Set<String> = [
+        "tion", "tions", "sion", "sions", "ation", "ible", "able", "ably", "ibly", "ment", "ments", "ness", "less", "ful",
+        "ous", "ious", "ive", "ity", "ally", "ing", "ings", "ed", "er", "ers", "est", "ly", "al", "ial", "ian", "ance",
+        "ence", "ant", "ent", "ism", "ist", "ize", "ise", "ted", "ble", "tic", "ty", "ry", "ny", "cy",
+    ]
+
+    /// "Damna… tion" → "Damnation", "imposs... ible" → "impossible": a word broken by a trailing-off "…" is read
+    /// whole (the director's ellipsis stretch still lengthens the moment).
+    static func joinBrokenWords(_ text: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(\p{L}{2,})(?:\.\s?\.\s?\.|…)\s*(\p{Ll}{1,5})(?=[^\p{L}]|$)"#) else { return text }
+        var out = text
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let whole = Range(m.range, in: out), let head = Range(m.range(at: 1), in: out), let tail = Range(m.range(at: 2), in: out) else { continue }
+            let fragment = String(out[tail])
+            guard brokenWordEndings.contains(fragment) else { continue }
+            out.replaceSubrange(whole, with: String(out[head]) + fragment)
+        }
+        return out
     }
 
     /// The tag Chatterbox Nano gets in front of a line (style first, else the emotion), or nil.

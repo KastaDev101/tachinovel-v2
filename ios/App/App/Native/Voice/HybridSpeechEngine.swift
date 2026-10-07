@@ -49,6 +49,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
+    /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
+    private var completeness = CompletenessGuard()
+    private(set) var retakes = 0
     /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
     /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
     private var natural: NaturalFinish?
@@ -134,7 +137,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             // The recorded inhales are unit-RMS snippets; −30 dB under the speech was the approved level (round 8).
             if !pack.isEmpty { audio.breathDB = -30 }
             let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
-            natural = NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen))
+            natural = NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
+                                    tilt: listenEngine == .pocketTts ? .pocketTts : nil)
         } else {
             natural = nil
         }
@@ -264,8 +268,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
             // Dialogue and thoughts in the performed read of the same voice (one call is all one or the other).
             let performed = segments[i].natural?.performed == true && VoiceSettings.shared.prefs.delivery.performed
-            let line = ExpressiveLine(text: text, role: performed ? ExpressiveLine.performedRole : "narrator")
-            ExpressiveService.shared.synthesize(line, engine: id) { [weak self] result in
+            var line = ExpressiveLine(text: text, role: performed ? ExpressiveLine.performedRole : "narrator")
+            // One temperature per call: the letter-weighted mean of the director's (the script keeps calls similar).
+            let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
+            let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
+            line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
+            let syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
+            synthesizeExpressive(line, id: id, syllables: syllables, retry: true) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     switch result {
@@ -288,6 +297,28 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             return
         }
         renderWithKokoro(i, gen: g)
+    }
+
+    /// One expressive render, checked for words dropped at the end (CompletenessGuard): a take that looks cut short
+    /// is rendered once more and the longer of the two is kept.
+    private func synthesizeExpressive(_ line: ExpressiveLine, id: ExpressiveEngineID, syllables: Int, retry: Bool,
+                                      completion: @escaping (Result<ExpressiveAudio, Error>) -> Void) {
+        ExpressiveService.shared.synthesize(line, engine: id) { [weak self] result in
+            self?.onMain {
+                guard let self, case .success(let a) = result else { return completion(result) }
+                let per = CompletenessGuard.perSyllable(a.samples, sampleRate: a.sampleRate, syllables: syllables)
+                guard retry, id == .pocketTts, self.completeness.isShort(per) else {
+                    self.completeness.accept(per)
+                    return completion(result)
+                }
+                self.retakes += 1
+                self.log.error("voice: \(id.rawValue, privacy: .public) render looks cut short (\(per ?? 0, format: .fixed(precision: 3)) s/syllable); one retake")
+                self.synthesizeExpressive(line, id: id, syllables: syllables, retry: false) { second in
+                    if case .success(let b) = second, b.samples.count > a.samples.count { return completion(second) }
+                    completion(result)
+                }
+            }
+        }
     }
 
     /// The text a voice reads: the director's shaped text for the expressive voice, the sentence for Kokoro.
@@ -353,9 +384,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// the context pause and breath place for every sentence of the session.
     private func naturalLine(_ i: Int, expressive: Bool) -> NaturalFinish.Line {
         let seg = segments[i]
+        let system = seg.natural?.system == true
+        let d = VoiceSettings.shared.prefs.delivery
         return NaturalFinish.Line(params: expressive ? seg.natural?.params : nil, letters: Self.readText(seg, expressive: expressive).count,
                                   pause: seg.naturalPause ?? seg.pauseAfter, breath: seg.natural?.breath ?? Self.breathPoint(after: seg),
-                                  seed: UInt64(truncatingIfNeeded: seg.id))
+                                  seed: UInt64(truncatingIfNeeded: seg.id), systemChime: system && d.systemChime, systemTone: system && d.systemTone)
     }
 
     private func renderWithKokoro(_ i: Int, gen g: Int) {

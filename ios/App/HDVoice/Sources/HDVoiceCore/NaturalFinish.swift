@@ -80,13 +80,19 @@ public struct NaturalFinish: Sendable {
         public var pause: Double
         public var breath: BreathPoint?
         public var seed: UInt64
+        /// A LitRPG system message: the interface chime before it and/or the interface tone on it (SystemMessageSound).
+        public var systemChime: Bool
+        public var systemTone: Bool
 
-        public init(params: DeliveryParams?, letters: Int, pause: Double, breath: BreathPoint? = nil, seed: UInt64 = 0) {
+        public init(params: DeliveryParams?, letters: Int, pause: Double, breath: BreathPoint? = nil, seed: UInt64 = 0,
+                    systemChime: Bool = false, systemTone: Bool = false) {
             self.params = params
             self.letters = max(1, letters)
             self.pause = pause
             self.breath = breath
             self.seed = seed
+            self.systemChime = systemChime
+            self.systemTone = systemTone
         }
     }
 
@@ -146,7 +152,12 @@ public struct NaturalFinish: Sendable {
     public private(set) var breathsSkipped = 0
     public private(set) var lastReport = Report()
 
-    public init(audio: DeliveryAudio, studioSound: Bool, breaths: (any BreathSource)?, sampleRate: Int = 24_000, seed: UInt64 = 1) {
+    /// The expressive engine's own tonal correction (VoiceTilt.pocketTts), before the shared chain.
+    public var tilt: VoiceTilt?
+
+    public init(audio: DeliveryAudio, studioSound: Bool, breaths: (any BreathSource)?, sampleRate: Int = 24_000, seed: UInt64 = 1,
+                tilt: VoiceTilt? = nil) {
+        self.tilt = tilt
         self.sampleRate = sampleRate
         self.audio = audio
         var chain = studioSound ? StudioSoundParams.cleanWarm : StudioSoundParams.levelOnly
@@ -195,6 +206,7 @@ public struct NaturalFinish: Sendable {
             report.ellipsesPadded = SpeechShape.padEllipses(&speech, sampleRate: sampleRate, ellipses: ellipses, target: target)
         }
         if !speech.isEmpty {
+            if u.expressive, studio.fizz != nil, let tilt { tilt.apply(&speech, sampleRate: sampleRate) }
             NarrationPolish.equalize(&speech, sampleRate: sampleRate)
             StudioSound.process(&speech, params: studio, sampleRate: sampleRate)
         }
@@ -224,6 +236,9 @@ public struct NaturalFinish: Sendable {
             if peak > Self.peakCeiling { for i in p.indices { p[i] *= Self.peakCeiling / peak } }
             // Fades where the piece meets silence: the unit's own edges always; inner cuts only when they sit in a pause.
             PCM.applyEqualPowerFades(&p, sampleRate: sampleRate, seconds: audio.fade, start: k == 0 || timing.confident, end: k == lines.count - 1 || timing.confident)
+            if line.systemChime || line.systemTone {
+                p = SystemMessageSound.apply(p, sampleRate: sampleRate, chime: line.systemChime, tone: line.systemTone)
+            }
             if let nv = u.nonVerbals[k], perLine || k == 0 {
                 p = NonVerbalSplice.splice(nv, before: p, sampleRate: sampleRate, gap: random.uniform(audio.nonVerbalGap) / speed, fade: audio.nonVerbalFade,
                                            relativeDB: audio.nonVerbalDB)

@@ -199,10 +199,12 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         // the Mimi decoder state carries across chunks (no seams inside a paragraph).
         let session: PocketTtsSession
         let voice = line.role == ExpressiveLine.performedRole ? (performedData ?? voiceData) : voiceData
+        // The director's temperature (calm narration 0.7 … playful 0.85), kept inside Pocket's stable range.
+        let temperature = min(0.85, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
         if let voice {
-            session = try await manager.makeSession(voiceData: voice, seed: seed)
+            session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         } else {
-            session = try await manager.makeSession(seed: seed)
+            session = try await manager.makeSession(temperature: temperature, seed: seed)
         }
         session.enqueue(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
         session.finish()

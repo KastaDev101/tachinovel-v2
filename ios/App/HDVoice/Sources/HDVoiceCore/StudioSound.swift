@@ -130,6 +130,39 @@ extension Biquad {
         return Biquad(b0: a * ((a + 1) - (a - 1) * c + s) / a0, b1: 2 * a * ((a - 1) - (a + 1) * c) / a0, b2: a * ((a + 1) - (a - 1) * c - s) / a0,
                       a1: -2 * ((a - 1) + (a + 1) * c) / a0, a2: ((a + 1) + (a - 1) * c - s) / a0)
     }
+
+    /// RBJ cookbook high shelf.
+    public static func highShelf(frequency f: Double, q: Double, gainDB: Double, sampleRate fs: Double) -> Biquad {
+        let a = pow(10, gainDB / 40)
+        let w = 2 * Double.pi * min(f, fs * 0.49) / fs
+        let c = cos(w)
+        let alpha = sin(w) / (2 * q)
+        let s = 2 * a.squareRoot() * alpha
+        let a0 = (a + 1) - (a - 1) * c + s
+        return Biquad(b0: a * ((a + 1) + (a - 1) * c + s) / a0, b1: -2 * a * ((a - 1) + (a + 1) * c) / a0, b2: a * ((a + 1) + (a - 1) * c - s) / a0,
+                      a1: 2 * ((a - 1) - (a + 1) * c) / a0, a2: ((a + 1) - (a - 1) * c - s) / a0)
+    }
+}
+
+/// An engine's own tonal correction before the shared chain. Pocket TTS (Mimi codec) measured against the approved
+/// round-8 clip (voiced frames, share of 60 Hz–12 kHz, 2026-10-07): 2–4.5 kHz 7 dB low, 9–12 kHz 8 dB high; the
+/// chain already brings 4.5–9 kHz to target. +3.5 dB at 3 kHz and −4 dB above 9 kHz put air on target and close
+/// most of the presence gap without harshness.
+public struct VoiceTilt: Sendable, Equatable {
+    public var presenceDB: Double
+    public var presenceHz: Double
+    public var airDB: Double
+    public var airHz: Double
+
+    public static let pocketTts = VoiceTilt(presenceDB: 3.5, presenceHz: 3000, airDB: -4, airHz: 9000)
+
+    public func apply(_ x: inout [Float], sampleRate: Int) {
+        let fs = Double(sampleRate)
+        var p = Biquad.peaking(frequency: presenceHz, q: 0.8, gainDB: presenceDB, sampleRate: fs)
+        var h = Biquad.highShelf(frequency: airHz, q: 0.707, gainDB: airDB, sampleRate: fs)
+        p.process(&x)
+        h.process(&x)
+    }
 }
 
 /// One-pole power follower (separate attack and release), in dB.

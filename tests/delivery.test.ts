@@ -145,6 +145,15 @@ describe('feeding Nano (test A: whole sentences, then breath groups)', () => {
   });
 });
 
+describe('LitRPG system messages', () => {
+  it('reach native as kind "system" with natural delivery (the interface chime and tone)', () => {
+    const s = script(`<p>Sunny pulled the blade free.</p><p>[You have slain a Nightmare Creature.]</p>`);
+    const sys = s.items.find((i) => i.kind === 'system');
+    expect(sys?.text).toContain('slain');
+    expect(sys?.delivery).toBeDefined();
+  });
+});
+
 describe('single quotation marks', () => {
   it('are thoughts in a chapter that quotes speech with double marks; apostrophes never count', () => {
     const s = script(`<p>“Such a fool…” the sword sighed.</p><p>'What was I thinking about?'</p><p>Sunny’s blade didn’t stop.</p><p>‘I don’t get it… damn!’</p>`);
