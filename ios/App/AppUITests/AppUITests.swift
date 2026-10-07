@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 //
 //  AppUITests.swift — end-to-end UI test on the iOS Simulator (run by ci/ios-ui-tests.sh, job
 //  "ios-ui-tests"): first launch → onboarding → restore the synthetic sample backup from Settings ›
