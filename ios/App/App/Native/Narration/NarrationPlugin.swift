@@ -259,7 +259,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
             let k = KokoroService.shared
             var out: [String: Any] = [
                 "voices": VoiceCatalog.voices.map { v in
-                    ["id": v.id, "name": v.name, "language": v.language, "gender": v.gender.rawValue, "blurb": v.blurb] as [String: Any]
+                    ["id": v.id, "name": v.name, "language": v.language, "gender": v.gender.rawValue, "blurb": v.blurb,
+                     "grade": v.grade, "gradeRank": v.gradeRank] as [String: Any]
                 },
                 "defaultVoice": prefs.voice(forNovel: nil),
                 "kokoroEnabled": prefs.kokoroEnabled,

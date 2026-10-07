@@ -96,8 +96,13 @@ struct KokoroCheck {
         for p in placement { print("placement: \(p.summary)") }
 
         var firstAudioMs: Double?
-        for voice in VoiceCatalog.ids {
-            for f in fixtures {
+        // Every bundled voice is checked; the well-graded ones (C+ and up) on every fixture, the rest on two
+        // (enough to catch a broken or silent voice pack) so the job stays a few minutes with 28 voices.
+        let fullRank = VoiceCatalog.gradeRank("C+")
+        for v in VoiceCatalog.voices {
+            let voice = v.id
+            let mine = v.gradeRank >= fullRank ? fixtures : fixtures.filter { $0.id == "plain" || $0.id == "names" }
+            for f in mine {
                 let runs: [SpeechRun]? = f.runs?.compactMap { r in
                     if let p = r.p { return SpeechRun.phonemes(p) }
                     if let t = r.t { return SpeechRun.text(t) }

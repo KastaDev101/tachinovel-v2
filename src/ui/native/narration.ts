@@ -151,6 +151,9 @@ export interface KokoroVoiceInfo {
   language: string;
   gender: 'female' | 'male';
   blurb: string;
+  /** Kokoro's own grade for the voice (A best … F), and its rank (higher is better). */
+  grade?: string;
+  gradeRank?: number;
 }
 
 export interface VoiceSettingsInfo {

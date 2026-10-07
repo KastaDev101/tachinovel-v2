@@ -1,11 +1,11 @@
 /**
  * Voices UI (v2 additions over the unchanged v1 UI):
  *
- *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the six Kokoro
- *    voices with ▶ samples and the default one, the Apple voice that stands in when Kokoro can't keep up
- *    (with the "download a Premium voice" hint), Kokoro on/off, pronunciations, In the car (what the car's
- *    side buttons do, prepared audio storage), and Advanced › "Use PC audio when available" (off by
- *    default; the PC narrator is sidelined).
+ *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the 28 Kokoro
+ *    voices, grouped by accent and gender with the best graded first, with ▶ samples and the default one;
+ *    the Apple voice that stands in when Kokoro can't keep up (with the "download a Premium voice" hint);
+ *    Kokoro on/off, pronunciations, In the car (what the car's side buttons do, prepared audio storage),
+ *    and Advanced › "Use PC audio when available" (off by default; the PC narrator is sidelined).
  *  - The voice picker for one novel (from the Listen player): its own voice or the default.
  *  - The pronunciation editor (global, or one novel): word → respelling and/or Kokoro phonemes, the same
  *    lexicon format the PC narrator uses (v1 frontend.ts), so a narrator lexicon can be pasted in.
@@ -16,6 +16,7 @@ import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } fr
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
+import { groupVoices } from './voice-groups.ts';
 import { Narration, type CarButtons, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
 
 const CSS = `
@@ -51,6 +52,8 @@ const CSS = `
 .tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:16px -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
 .tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
 .tn-v .del{color:#ff8a8a;width:36px;height:36px;flex:none}
+.tn-v .sub-sec{color:#a1a1aa;font-size:13px;margin:12px 4px 6px}
+.tn-v .grade{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;background:rgba(168,180,255,.16);color:#c7cdff;font-size:12px;font-weight:600;vertical-align:1px}
 .tn-v .chips{display:flex;gap:8px;flex:1}
 .tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
 .tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
@@ -134,7 +137,7 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
 const UNAVAILABLE = '<p class="note">Voices aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>';
 
 function describe(v: KokoroVoiceInfo): string {
-  return `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender} · ${v.blurb}`;
+  return v.blurb || (v.grade ? `Kokoro grade ${v.grade}` : `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender}`);
 }
 
 /** Close functions of the open panels (Settings › Voices, a novel's voice picker, the pronunciation editor). */
@@ -194,15 +197,19 @@ async function sample(btn: HTMLButtonElement, voice: string, text = SAMPLE_TEXT,
   }
 }
 
-function voiceRows(info: VoiceSettingsInfo, selected: string): string {
-  return info.voices
-    .map(
-      (v) => `<div class="row" data-voice="${esc(v.id)}">
+function voiceRow(v: KokoroVoiceInfo, selected: string): string {
+  const grade = v.grade ? `<span class="grade" title="Kokoro's grade for this voice">${esc(v.grade)}</span>` : '';
+  return `<div class="row" data-voice="${esc(v.id)}">
         <button type="button" class="play" data-act="sample" data-voice="${esc(v.id)}" aria-label="Play a sample of ${esc(v.name)}">${ICON.play}</button>
-        <button type="button" class="main" data-act="pick" data-voice="${esc(v.id)}" style="text-align:left;padding:0"><b>${esc(v.name)}</b><span class="sub">${esc(describe(v))}</span></button>
+        <button type="button" class="main" data-act="pick" data-voice="${esc(v.id)}" style="text-align:left;padding:0"><b>${esc(v.name)}${grade}</b><span class="sub">${esc(describe(v))}</span></button>
         <span class="check" aria-hidden="true">${v.id === selected ? '✓' : ''}</span>
-      </div>`,
-    )
+      </div>`;
+}
+
+/** The voices grouped by accent and gender, best-graded first: a sub-header and a card per group. */
+function voiceRows(info: VoiceSettingsInfo, selected: string): string {
+  return groupVoices(info.voices)
+    .map((g) => `<div class="sub-sec" data-group="${esc(g.key)}">${esc(g.label)}</div><div class="card">${g.voices.map((v) => voiceRow(v, selected)).join('')}</div>`)
     .join('');
 }
 
@@ -245,7 +252,7 @@ export function openVoicesScreen(): void {
            <p class="note">iOS 26.4 and later have a known Core ML crash that can hit Kokoro (FluidAudio #844). This build carries FluidAudio’s fix for it (0.17), not yet proven on an iPhone. If Kokoro still crashes twice in a row, the app switches to the Apple voice by itself and says so here.</p>`;
     p.body.innerHTML = `
       <div class="sec">Voice</div>
-      <div class="card">${voiceRows(info, info.defaultVoice)}</div>
+      ${voiceRows(info, info.defaultVoice)}
       ${status}
       <div class="sec">Fallback</div>
       ${appleCard(info)}
@@ -345,7 +352,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     const own = info.novelVoice ?? null;
     p.body.innerHTML = `
       <div class="sec">Voice for this novel</div>
-      <div class="card">${voiceRows(info, info.effectiveVoice ?? info.defaultVoice)}</div>
+      ${voiceRows(info, info.effectiveVoice ?? info.defaultVoice)}
       <p class="note">${own ? 'This novel has its own voice.' : `Using the default voice (${esc(info.voices.find((v) => v.id === info?.defaultVoice)?.name ?? '')}).`}</p>
       ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
       <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>

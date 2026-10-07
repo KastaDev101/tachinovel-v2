@@ -3,7 +3,7 @@
 //
 //  The model ships inside the app (tools/fetch-voices.ts → KokoroModels/, a folder reference in Copy
 //  Bundle Resources): FluidAudio's 7-stage Core ML chain (fp16 + int8-palettized "ANE" build), the
-//  English G2P, the Misaki lexicon and the six offered voices, pre-converted. Nothing is downloaded:
+//  English G2P, the Misaki lexicon and all 28 English voices, pre-converted. Nothing is downloaded:
 //  `ModelHub.offlineMode` is switched on, so a missing file is an error, never a silent 100 MB download.
 //
 //  Layout (models directory = KokoroAneManager's `directory`):
@@ -124,7 +124,10 @@ public actor KokoroRuntime {
             try KokoroRuntime.linkSharedAssets(from: dir)
             let t0 = Date()
             let m = KokoroAneManager(variant: .english, defaultVoice: VoiceCatalog.defaultVoiceId, directory: dir, computeUnits: route.computeUnits)
-            try await m.initialize(preloadVoices: Set(VoiceCatalog.ids))
+            // Only the default voice is read now; the others load on first use (0.52 MB from the bundle, a
+            // few ms), so 28 voices don't hold 14.6 MB of RAM while one is speaking. missingFiles has
+            // already checked that every voice is there.
+            try await m.initialize()
             await self.didLoad(m, ms: Date().timeIntervalSince(t0) * 1000, first: first)
         }
         loading = task
