@@ -29,10 +29,10 @@ public enum SceneMood {
         let r = moodRead(mood)
         if speaks(i) { return .some(r ?? "performed") }
         guard let r, r == "tense" || r == "sad" else { return .some(nil) }
-        let agrees = { (j: Int) -> Bool in
+        let agrees = [i - 1, i + 1].contains { j in
             guard let m = moods[j], !speaks(j), !system(j) else { return false }
             return moodRead(m) == r
         }
-        return .some(agrees(i - 1) || agrees(i + 1) ? r : nil)
+        return .some(agrees ? r : nil)
     }
 }
