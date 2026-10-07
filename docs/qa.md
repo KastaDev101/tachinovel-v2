@@ -1,6 +1,7 @@
 # QA: the click-everything crawler and the native smoke tour
 
-Two automated "user tests" check that every button works, on every pull request and every night:
+Two automated "user tests" check that every button works, on every pull request (and the crawler every
+2 hours on main):
 
 | | Where | What it taps | Catches |
 |---|---|---|---|
@@ -81,6 +82,14 @@ terminates. Several workers (own WebKit and core each) run the controls of a BFS
 results are merged in a fixed order. A control that left the app unchanged lets the next control of the
 same state reuse the page; a failure seen on a reused page is re-checked from a fresh launch, so every
 reported failure's repro is "launch → path → control".
+
+### Every 2 hours on main
+
+The workflow also runs on a schedule (every 2 hours, on `main`). Its last job, `report new failures`,
+posts failures that are **new** — not in `known-issues.json` and not already reported — as a comment on the
+issue "UI crawler: new failures on main" (opened on the first one), with the repro steps and a link to the
+run's screenshots; a clean run closes the issue (`tools/crawler-notify.ts`). Fix the failure or, if it can't
+be fixed in this repo, add it to `known-issues.json`.
 
 ### Known issues
 
