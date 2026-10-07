@@ -154,7 +154,7 @@ export const MOOD_VOICE_RUN = 2;
  * or the mood's voice (tense/intense → tense, sad → sad, soft/whisper → tender). Narration: tense or sad only, and
  * only through a run of MOOD_VOICE_RUN sentences in that mood; system messages and titles stay calm.
  */
-export function moodVoices(list: readonly { kind: string; mood: Mood; performed: boolean }[]): (NarratorVoice | undefined)[] {
+export function moodVoices(list: readonly { kind: string; mood: Mood; performed: boolean; line?: string }[]): (NarratorVoice | undefined)[] {
   const moodVoice = (m: Mood): NarratorVoice | undefined =>
     m === 'tense' || m === 'intense' ? 'tense' : m === 'sad' ? 'sad' : m === 'soft' || m === 'whisper' ? 'tender' : undefined;
   const narrationMood = (i: number): NarratorVoice | undefined => {
@@ -165,7 +165,8 @@ export function moodVoices(list: readonly { kind: string; mood: Mood; performed:
   };
   return list.map((s, i) => {
     if (s.kind !== 'text') return undefined;
-    if (s.performed) return moodVoice(s.mood) ?? 'performed';
+    // Teasing and mocking is performed whatever its mood (a gloating whisper isn't tender).
+    if (s.performed) return s.line === 'teasing' ? 'performed' : (moodVoice(s.mood) ?? 'performed');
     const v = narrationMood(i);
     if (!v) return undefined;
     // The run of narration in this mood around i (dialogue in between breaks it).
@@ -175,6 +176,10 @@ export function moodVoices(list: readonly { kind: string; mood: Mood; performed:
     return run >= MOOD_VOICE_RUN ? v : undefined;
   });
 }
+
+/** A sentence that opens with dialogue is performed from this share on ("“I'm so sorry,” Tessa whispered, kneeling
+ * beside him."): narrators carry the character's read through a short attribution. */
+const OPENS_SPOKEN_SHARE = 0.08;
 
 /** A sentence at least this much dialogue is performed rather than narrated (“Run,” she said. → performed). */
 const PERFORMED_SHARE = 0.5;
@@ -356,7 +361,12 @@ function naturalDelivery(blocks: readonly SourceBlock[], items: SpeechItem[], me
     if (breath) it.breath = breath;
   });
   const voices = moodVoices(
-    items.map((it) => ({ kind: it.kind, mood: it.mood ?? 'calm', performed: it.kind === 'text' && (!!it.thought || dialogueShare(it) >= PERFORMED_SHARE) })),
+    items.map((it) => ({
+      kind: it.kind,
+      mood: it.mood ?? 'calm',
+      line: it.line,
+      performed: it.kind === 'text' && (!!it.thought || dialogueShare(it) >= PERFORMED_SHARE || (it.parts?.[0]?.role === 'dialogue' && dialogueShare(it) >= OPENS_SPOKEN_SHARE)),
+    })),
   );
   items.forEach((it, i) => {
     const v = voices[i];

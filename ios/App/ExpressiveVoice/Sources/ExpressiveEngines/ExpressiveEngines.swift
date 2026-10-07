@@ -209,7 +209,10 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         // A mood read missing → the performed read for a role other than narration → the Narrator.
         let voice = readData[line.role] ?? (line.role == "narrator" ? nil : readData[ExpressiveLine.performedRole]) ?? voiceData
         // The director's temperature (calm narration 0.7 … playful 0.85), kept inside Pocket's stable range.
-        let temperature = min(0.85, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
+        // A mood read (tense, sad, tender) already carries its emotion in the voice prompt; a high temperature on top
+        // made a tense fight line sound excited (Kasta, 2026-10-07), so those stay at 0.7 or below.
+        let ceiling: Float = readData[line.role] != nil && line.role != ExpressiveLine.performedRole ? 0.7 : 0.85
+        let temperature = min(ceiling, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
         if let voice {
             session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         } else {
