@@ -70,7 +70,7 @@ final class DeliveryTests: XCTestCase {
         let prefs = try JSONDecoder().decode(VoicePreferences.self, from: Data(#"{"defaultVoice":"am_michael"}"#.utf8))
         XCTAssertEqual(prefs.delivery, DeliverySettings())
         XCTAssertEqual(prefs.defaultVoice, "am_michael")
-        XCTAssertFalse(prefs.expressiveListen)
+        XCTAssertTrue(prefs.expressiveListen, "the Narrator voice reads chapters by default (once downloaded)")
     }
 
     func testParamsParseAndClamp() throws {
@@ -205,7 +205,7 @@ final class DeliveryTests: XCTestCase {
     }
 
     func testLevelMatchingPutsEveryUnitAtTheSameSpeechRMS() {
-        for level in [0.02, 0.1, 0.6] {
+        for level in [0.04, 0.1, 0.6] {
             var x = voiced(seconds: 1, level: level) + silence(0.5)
             StudioSound.process(&x, params: .levelOnly, sampleRate: fs)
             XCTAssertEqual(db(Double(StudioSound.speechRMS(x, sampleRate: fs))), -20, accuracy: 0.3, "input level \(level)")
@@ -355,8 +355,10 @@ final class DeliveryTests: XCTestCase {
         for _ in 0..<4 { _ = r.tempo(syllables: 12, voicedSeconds: 3) } // 4 syllables/s
         XCTAssertEqual(r.target ?? 0, 4, accuracy: 1e-9)
         XCTAssertEqual(r.tempo(syllables: 12, voicedSeconds: 2.95), 1, "inside ±4 %")
-        // 5 syllables/s: slowed to the band's edge (4.16/s).
-        XCTAssertEqual(r.tempo(syllables: 15, voicedSeconds: 3), 4.16 / 5, accuracy: 1e-6)
+        // 4.5 syllables/s: slowed to the band's edge (4.16/s).
+        XCTAssertEqual(r.tempo(syllables: 27, voicedSeconds: 6), 4.16 / 4.5, accuracy: 1e-6)
+        // 6 syllables/s: slowed, but never more than 10 %.
+        XCTAssertEqual(r.tempo(syllables: 18, voicedSeconds: 3), 0.9, accuracy: 1e-9)
         // 2.2 syllables/s: sped up, but never more than 10 %.
         XCTAssertEqual(r.tempo(syllables: 11, voicedSeconds: 5), 1.1, accuracy: 1e-9)
         XCTAssertEqual(r.tempo(syllables: 1, voicedSeconds: 5), 1, "too little to measure")

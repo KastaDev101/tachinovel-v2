@@ -22,8 +22,8 @@ public struct StudioSoundParams: Sendable, Equatable {
         public var speechRmsDB = -20.0
         /// Frames within this many dB of the loudest one count as speech.
         public var withinDB = 35.0
-        /// Gain limits, dB.
-        public var maxBoostDB = 18.0
+        /// Gain limits, dB (a quiet render around −44 dBFS still reaches the target; a near-silent one isn't blown up).
+        public var maxBoostDB = 24.0
         public var maxCutDB = 18.0
 
         public init(speechRmsDB: Double = -20) {
@@ -228,20 +228,26 @@ public enum StudioSound {
         }
     }
 
-    /// Split-band de-esser: only the band above `split` is turned down while it is over the threshold.
+    /// Split-band de-esser on a Linkwitz-Riley crossover (LR4 at `split`): the two bands stay in phase and sum back to the
+    /// input (an all-pass), so turning the high band down by g never removes more than g. (A plain high-pass band added
+    /// back with x + (g − 1)·band is out of phase with x and removed only ~1 dB of a loud 7 kHz hiss.) Only the high band
+    /// is turned down, only while it is over the threshold.
     static func deEss(_ x: inout [Float], _ p: StudioSoundParams.DeEsser, sampleRate: Int) {
         let fs = Double(sampleRate)
         guard p.split < fs / 2 else { return }
-        var hp = Biquad.highPass(frequency: p.split, q: 0.707, sampleRate: fs)
+        var lowA = Biquad.lowPass(frequency: p.split, q: 0.707, sampleRate: fs)
+        var lowB = lowA
+        var highA = Biquad.highPass(frequency: p.split, q: 0.707, sampleRate: fs)
+        var highB = highA
         var env = EnvelopeFollower(attack: p.attack, release: p.release, sampleRate: sampleRate)
         let slope = 1 - 1 / max(1, p.ratio)
         for i in x.indices {
             let s = Double(x[i])
-            let high = hp.process(s)
+            let low = lowB.process(lowA.process(s))
+            let high = highB.process(highA.process(s))
             let over = env.level(high) - p.thresholdDB
-            guard over > 0 else { continue }
-            let reduction = min(p.maxReductionDB, over * slope)
-            x[i] = Float(s + (pow(10, -reduction / 20) - 1) * high)
+            let reduction = over > 0 ? min(p.maxReductionDB, over * slope) : 0
+            x[i] = Float(low + pow(10, -reduction / 20) * high)
         }
     }
 

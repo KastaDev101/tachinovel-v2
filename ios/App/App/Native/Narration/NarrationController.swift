@@ -70,6 +70,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         var rateJitter: Double? = nil
         var phrases: [NarratorSentence.Phrase]? = nil
         var relaxedMs: Double? = nil
+        /// Natural delivery (src/core/narration/delivery.ts): the director's controls, mood, line class and breath place;
+        /// the natural pause after it. Used only when the expressive narrator reads.
+        var natural: NaturalSentence? = nil
+        var naturalMs: Double? = nil
 
         var narrator: NarratorSentence {
             NarratorSentence(text: text, runs: runs, quoted: quoted, parts: parts, speaker: speaker, pauseMs: pauseMs, pacedMs: pacedMs, rate: rateJitter,
@@ -105,6 +109,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
                 item.pacedMs = (o["pacedMs"] as? NSNumber)?.doubleValue
                 item.rateJitter = (o["rate"] as? NSNumber)?.doubleValue
                 item.relaxedMs = (o["relaxedMs"] as? NSNumber)?.doubleValue
+                item.natural = NaturalSentence.parse(item: o)
+                item.naturalMs = (o["naturalMs"] as? NSNumber)?.doubleValue
                 let phrases: [NarratorSentence.Phrase] = (o["phrases"] as? [Any] ?? []).compactMap { p in
                     guard let po = p as? [String: Any], let t = po["text"] as? String else { return nil }
                     return NarratorSentence.Phrase(text: t, pauseMs: (po["pauseMs"] as? NSNumber)?.doubleValue ?? 0)
@@ -170,6 +176,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         if let s {
             let prefs = VoiceSettings.shared.prefs
             seg.parts = NarratorPlan.parts(for: s, settings: narrator) { prefs.engineVoice($0) }
+        }
+        if let sc = it.segment, let n = sc.natural {
+            seg.natural = n
+            let ms = sc.naturalMs ?? sc.relaxedMs ?? sc.pauseMs
+            seg.naturalPause = max(0, min(5, ms / 1000)) / speed
         }
         return seg
     }

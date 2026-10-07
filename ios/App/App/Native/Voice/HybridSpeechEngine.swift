@@ -128,9 +128,16 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         lastFallback = nil
         let prefs = VoiceSettings.shared.prefs
         let d = prefs.delivery
-        natural = listenEngine != nil && d.natural
-            ? NaturalFinish(audio: DeliveryAudio(), studioSound: d.studioSound, breaths: d.breaths ? ProceduralBreath() : nil, seed: UInt64(truncatingIfNeeded: gen))
-            : nil
+        if listenEngine != nil, d.natural {
+            let pack = Self.breathPack
+            var audio = DeliveryAudio()
+            // The recorded inhales are unit-RMS snippets; −30 dB under the speech was the approved level (round 8).
+            if !pack.isEmpty { audio.breathDB = -30 }
+            let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() : pack) : nil
+            natural = NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen))
+        } else {
+            natural = nil
+        }
         var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: prefs.clampedAhead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         scheduler = s
@@ -242,7 +249,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
-            let text = StyleMapper.plainText(segments[i].kokoroText)
+            // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
+            let text = StyleMapper.plainText(segments[i].natural?.params.say ?? segments[i].kokoroText)
             ExpressiveService.shared.synthesize(ExpressiveLine(text: text), engine: id) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
@@ -303,8 +311,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     // says so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump.
                     let seg = segments[i]
                     let expressive = voice == listenEngine?.rawValue
-                    let line = NaturalFinish.Line(params: nil, letters: seg.kokoroText.count, pause: seg.pauseAfter,
-                                                  breath: Self.breathPoint(after: seg), seed: UInt64(truncatingIfNeeded: seg.id))
+                    // The director's per-line controls (contrast, emphasis, gain, tempo) only for the expressive voice;
+                    // its context pause and breath place for every sentence of the session.
+                    let pause = seg.naturalPause ?? seg.pauseAfter
+                    let read = expressive ? (seg.natural?.params.say ?? seg.kokoroText) : seg.kokoroText
+                    let line = NaturalFinish.Line(params: expressive ? seg.natural?.params : nil, letters: read.count, pause: pause,
+                                                  breath: seg.natural?.breath ?? Self.breathPoint(after: seg), seed: UInt64(truncatingIfNeeded: seg.id))
                     let unit = NaturalFinish.Unit(samples: audio.samples, lines: [line], speed: expressive ? Double(seg.rate) : 1, expressive: expressive)
                     frames = nf.render(unit).flatMap(\.frames)
                     natural = nf
@@ -719,6 +731,23 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     // MARK: - Environment
+
+    /// Recorded inhales that ship in the app (BuiltInVoices/breaths/*.wav: 24 kHz mono float, unit RMS, the owner's own
+    /// recording cut by the round-8 breath-pack tool), loaded once. Empty: procedural breaths instead.
+    private static let breathPack: SnippetBreaths = {
+        var out: [[Float]] = []
+        if let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil)?.appendingPathComponent("breaths"),
+           let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
+            for name in names.sorted() where name.lowercased().hasSuffix(".wav") {
+                guard let file = try? AVAudioFile(forReading: dir.appendingPathComponent(name)),
+                      file.processingFormat.sampleRate == 24_000, file.processingFormat.channelCount == 1, file.length > 0, file.length < 48_000,
+                      let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+                      (try? file.read(into: buf)) != nil, let ch = buf.floatChannelData?[0] else { continue }
+                out.append(Array(UnsafeBufferPointer(start: ch, count: Int(buf.frameLength))))
+            }
+        }
+        return SnippetBreaths(snippets: out, sampleRate: 24_000)
+    }()
 
     /// Where a breath may go in the pause after a sentence: a paragraph's end (a long pause) or a sentence's end. The
     /// lung budget (BreathPlanner) decides whether one actually goes there; it never adds time.
