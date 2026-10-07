@@ -136,9 +136,9 @@ describe('VoiceOver names on the main screens (PC shell)', () => {
     await audit('novel');
     await top().getByTestId('resume').click();
     await waitStack(4);
-    await page.locator('.tn-listen').waitFor({ state: 'visible', timeout: 15_000 });
+    await top().getByTestId('reader-listen').waitFor({ state: 'visible', timeout: 15_000 });
     await audit('reader');
-    await page.locator('.tn-listen').click();
+    await top().getByTestId('reader-listen').click();
     shell.emitPluginEvent('Narration', 'state', { status: 'playing', chapterPath: 'novel/alpha/1', novelName: 'Alpha Story', chapterName: 'Chapter 1', paragraph: 0 });
     await page.getByTestId('mini-player').waitFor({ state: 'visible', timeout: 5000 });
     await audit('reader with the mini player');

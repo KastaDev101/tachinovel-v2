@@ -57,7 +57,7 @@ html.tn-player-on .toast-host{bottom:max(var(--toast-bottom, calc(var(--safe-bot
 /* Room at the end of the scrolling content for the floating player / button, so nothing stays under them
    (their height follows Dynamic Type: measured in render). */
 html.tn-player-on .screen-scroll>.scroll-content::after,html.tn-player-on .reader-content::after,
-html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:calc(var(--tn-float-h, 60px) + 12px)}
+html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:max(72px, calc(var(--tn-float-h, 60px) + 12px))}
 .rd-body > .tn-speaking,.rd-body .tn-speaking{background:rgba(168,180,255,.16);border-radius:6px;box-shadow:0 0 0 4px rgba(168,180,255,.16)}
 ${HIGHLIGHT_CSS}
 `;
