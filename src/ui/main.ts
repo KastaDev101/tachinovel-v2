@@ -14,6 +14,7 @@ import { installDiagnosticsOverlay } from './native/diagnostics-overlay.ts';
 import { installCarHelp } from './native/help-car.ts';
 import { Narration } from './native/narration.ts';
 import { installNarrationOverlay } from './native/narration-overlay.ts';
+import { installRecovery } from './native/recovery.ts';
 import { runSmokeTour } from './native/smoke.ts';
 import { installV1Hooks } from './native/v1-hooks.ts';
 
@@ -21,6 +22,7 @@ installCarHelp(HELP);
 installNarrationOverlay();
 installV1Hooks();
 installDiagnosticsOverlay();
+void installRecovery();
 runSmokeTour();
 
 if (__ADS__) {

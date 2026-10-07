@@ -20,15 +20,20 @@ describe('docs-only pull requests', () => {
 });
 
 describe('per-job gates', () => {
-  it('runs everything for pushes-like input, the workflow and the filter itself', () => {
+  it('runs everything for pushes-like input and for the workflow itself', () => {
     const all = { app: true, ui: true, ipa: true, voice: true };
     expect(classify([])).toEqual(all);
     expect(classify(['.github/workflows/ios.yml'])).toEqual(all);
-    expect(classify(['tools/ci-changes.ts', 'docs/x.md'])).toEqual(all);
   });
 
-  it('skips every macOS job for docs-only changes', () => {
-    expect(classify(['docs/a.md', 'changelog.d/x.md'])).toEqual({ app: false, ui: false, ipa: false, voice: false });
+  it('skips every macOS job for docs, the UI crawler and this filter', () => {
+    const none = { app: false, ui: false, ipa: false, voice: false };
+    expect(classify(['docs/a.md', 'changelog.d/x.md'])).toEqual(none);
+    expect(classify(['tests/crawler/crawler.ts', 'tests/crawler/known-issues.json', 'tools/ui-crawler.ts', 'tools/crawler-notify.ts', '.github/workflows/ui-crawler.yml', 'docs/qa.md'])).toEqual(none);
+    expect(classify(['tools/ci-changes.ts', 'tests/ci-changes.test.ts', 'CONTRIBUTING.md'])).toEqual(none);
+    // …but not together with something that does reach the app.
+    expect(classify(['tests/crawler/crawler.ts', 'src/ui/main.ts'])).toMatchObject({ app: true, ui: true });
+    expect(classify(['tools/ui-crawler.ts', 'tests/crawler-helpers.ts'])).toMatchObject({ app: true });
   });
 
   it('tests- and tools-only changes build and smoke-test, nothing more', () => {

@@ -2,10 +2,11 @@
  * CI job "changes" (.github/workflows/ios.yml): which macOS jobs can a pull request tell us anything
  * with? Free public repos get only a few macOS runners at a time, so each PR runs only the jobs its files
  * can affect. A skipped job counts as passing a required check. Pushes, tags and manual runs always run
- * everything, and so does any PR that changes this filter or the workflow itself.
+ * everything, and so does any PR that changes the workflow itself.
  *
- *   app    ios-compile + simulator smoke: anything but docs. Docs-only = every changed file is docs/**,
- *          *.md (except THIRD_PARTY_NOTICES.md, which the app shows), changelog.d/** or a PR/issue template.
+ *   app    ios-compile + simulator smoke: anything but docs (docs/**, *.md except THIRD_PARTY_NOTICES.md,
+ *          which the app shows, changelog.d/**, PR/issue templates) and files no macOS job can affect
+ *          (the UI crawler: tests/crawler/**, its tools and workflow; this filter and its test).
  *   ui     ios-ui-tests: app code (src/, ios/, vendor/), what builds the bundle (package*.json,
  *          capacitor config, tools/build.ts, tools/v1.ts) or the UI test's own fixtures and scripts.
  *   ipa    ios-ipa: native code (ios/, not the UI test target), what goes into the device build
@@ -37,14 +38,32 @@ export function isDocsOnlyFile(file: string): boolean {
   );
 }
 
+/**
+ * Files no macOS job can tell anything about: the UI crawler (its own Ubuntu workflow) and this filter
+ * (unit-tested in the web job; main always runs everything anyway).
+ */
+const NO_MACOS_IMPACT = [
+  /^tests\/crawler\//,
+  /^tools\/(ui-crawler|crawler-notify)\.ts$/,
+  /^\.github\/workflows\/ui-crawler\.yml$/,
+  /^tools\/ci-changes\.ts$/,
+  /^tests\/ci-changes\.test\.ts$/,
+];
+
+/** Docs, or one of the files above: no macOS job needs to run for it. */
+export function skipsMacJobs(file: string): boolean {
+  const f = file.replace(/\\/g, '/');
+  return isDocsOnlyFile(f) || NO_MACOS_IMPACT.some((r) => r.test(f));
+}
+
 /** True when the macOS jobs should run for these changed files (no files: run, to be safe). */
 export function appChanged(files: string[]): boolean {
-  return files.length === 0 || files.some((f) => !isDocsOnlyFile(f));
+  return files.length === 0 || files.some((f) => !skipsMacJobs(f));
 }
 
 const BUNDLE = [/^package(-lock)?\.json$/, /^capacitor\.config\.[a-z]+$/, /^tools\/(build|v1)\.ts$/];
-/** Changing these runs every job: the gates themselves. */
-const EVERYTHING = [/^\.github\/workflows\/ios\.yml$/, /^tools\/ci-changes\.ts$/];
+/** Changing the workflow runs every job (its job definitions are what changed). */
+const EVERYTHING = [/^\.github\/workflows\/ios\.yml$/];
 
 export const RULES = {
   ui: [/^src\//, /^ios\//, /^vendor\//, ...BUNDLE, /^ci\/ios-ui-tests\.sh$/, /^tools\/ui-(fixtures|attachments)\.ts$/, /^tests\/fixtures\/demo-site\//],
@@ -105,7 +124,7 @@ if (import.meta.main) {
     try {
       const files = execFileSync('git', ['diff', '--name-only', `${arg}...HEAD`], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
       const c = classify(files);
-      const why = files.length === 0 ? 'no changed files found: running everything' : c.app ? `${files.length} changed file(s)` : `docs-only: ${files.length} file(s)`;
+      const why = files.length === 0 ? 'no changed files found: running everything' : c.app ? `${files.length} changed file(s)` : `no macOS impact (docs, UI crawler, this filter): ${files.length} file(s)`;
       output(c, why);
     } catch (err) {
       output(ALL, `could not diff against ${arg}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
