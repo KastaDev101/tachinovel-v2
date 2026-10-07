@@ -17,6 +17,9 @@ export const LIBRARY_CONTENT =
 export interface BootTiming {
   /** WebView navigation start, epoch ms. */
   navStart: number;
+  /** ms after navStart: the page's HTML fully received, and parsed (WebKit; before any of our JS ran). */
+  html: number | null;
+  domReady: number | null;
   /** ms after navStart. */
   bootCall: number | null;
   content: number | null;
@@ -61,6 +64,8 @@ export function formatBootLine(t: BootTiming): string {
   const ms = (v: number | null): string => (v === null ? 'n/a' : `+${Math.round(v)}ms`);
   const parts = [
     `library visible ${ms(t.content)} after WebView start`,
+    `html ${ms(t.html)}`,
+    `dom ready ${ms(t.domReady)}`,
     `app.boot call ${ms(t.bootCall)}`,
     `launch screen hidden ${ms(t.splash)}${t.fallback ? ' (fallback timer)' : ''}`,
   ];
@@ -73,7 +78,7 @@ export function formatBootLine(t: BootTiming): string {
  * `fallbackMs`), then log the timing line once library content is visible (or after `reportAfterMs`).
  */
 export function installBootTiming(hideLaunchScreen: () => void, fallbackMs = 3000, reportAfterMs = 20_000): BootTiming {
-  const t: BootTiming = { navStart: performance.timeOrigin, bootCall: null, content: null, splash: null, fallback: false };
+  const t: BootTiming = { navStart: performance.timeOrigin, html: null, domReady: null, bootCall: null, content: null, splash: null, fallback: false };
   window.__tnBoot = t;
   const stop = observeCalls((method) => {
     if (method !== 'app.boot') return;
@@ -89,6 +94,12 @@ export function installBootTiming(hideLaunchScreen: () => void, fallbackMs = 300
   const fallbackTimer = setTimeout(() => hide(true), fallbackMs);
   void whenLibraryVisible(reportAfterMs).then((at) => {
     t.content = at;
+    // Where WebKit's part ends: response received, document parsed (Navigation Timing, ms after navStart).
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (nav) {
+      t.html = nav.responseEnd > 0 ? nav.responseEnd : null;
+      t.domReady = nav.domInteractive > 0 ? nav.domInteractive : null;
+    }
     clearTimeout(fallbackTimer);
     hide(at === null);
     void sharedClient()
