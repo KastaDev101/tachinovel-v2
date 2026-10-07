@@ -163,7 +163,7 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
 | Sources | Built-in Stonescape, LNReader repo seeded, JS plugins + declarative specs | Declarative specs only; nothing bundled or seeded |
 | JS plugin host | `www/core/lib/plugin-host.js` | Not built; `importLazy` refuses |
 | Ads | never | only with `--ads` |
-| Imported voices (`.tnvoice`, docs/voice-import.md) | Settings › Voices › Expressive voices › Import voice…, Open in TachiNovel | compiled out; native ignores opened files |
+| Imported voices (`.tnvoice`, docs/voice-import.md) | Settings › Voices › Expressive voices › Import voice…, Open in TachiNovel | compiled out; native ignores opened files (shipped voices still apply to Chatterbox Nano) |
 
 ## 7. Build, test, run (Windows)
 

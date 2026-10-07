@@ -27,15 +27,18 @@ const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8')
 
 const A = 'v0a1b2c3d4e5f6a7b';
 const B = 'vffffeeeeddddcccc';
+const S = 'b977be3f26cb8d509'; // a shipped voice ("narrator.tnvoice")
 const raw = {
   engine: 'chatterbox-nano',
   engineTitle: 'Chatterbox Nano',
   importEnabled: true,
+  default: S,
   selected: A,
   selectedMissing: false,
   loaded: null,
   note: null,
   list: [
+    { id: S, name: 'Narrator', createdAt: '2026-10-07T07:00:00Z', hasPreview: true, bundled: true, isDefault: true },
     { id: A, name: 'Mommy', createdAt: '2026-10-06T23:50:00Z', importedAt: '2026-10-07T08:00:00Z', hasPreview: true, madeFor: 'x', sourceFile: 'Mommy.tnvoice' },
     { id: B, name: 'Knight', createdAt: '2026-10-06T23:51:00Z', importedAt: '2026-10-07T09:00:00Z', hasPreview: false, madeFor: null, sourceFile: null },
   ],
@@ -43,15 +46,29 @@ const raw = {
 const ui = (over: Partial<VoicesUiState> = {}): VoicesUiState => ({ armed: '', renaming: '', renameDraft: '', ...over });
 
 describe('normalizeVoices', () => {
-  it('reads what native sends', () => {
+  it('reads what native sends: shipped voices (one the default), imported ones, the choice', () => {
     const info = normalizeVoices(raw);
-    expect(info?.list.map((v) => [v.id, v.name, v.hasPreview])).toEqual([
-      [A, 'Mommy', true],
-      [B, 'Knight', false],
+    expect(info?.list.map((v) => [v.id, v.name, v.hasPreview, v.bundled, v.isDefault])).toEqual([
+      [S, 'Narrator', true, true, true],
+      [A, 'Mommy', true, false, false],
+      [B, 'Knight', false, false, false],
     ]);
+    expect(info?.defaultVoice).toBe(S);
     expect(info?.selected).toBe(A);
     expect(info && effectiveVoice(info)).toBe(A);
     expect(info?.importEnabled).toBe(true);
+  });
+
+  it('uses the default voice when nothing is chosen, and Chatterbox’s own voice when nothing ships', () => {
+    const none = normalizeVoices({ ...raw, selected: null });
+    expect(none && effectiveVoice(none)).toBe(S);
+    const old = normalizeVoices({ ...raw, selected: null, default: undefined, list: raw.list.slice(1) });
+    expect(old?.defaultVoice).toBe(BUILT_IN);
+    expect(old && effectiveVoice(old)).toBe(BUILT_IN);
+    const chosen = normalizeVoices({ ...raw, selected: BUILT_IN });
+    expect(chosen && effectiveVoice(chosen)).toBe(BUILT_IN);
+    // An imported voice can't claim to be the default.
+    expect(normalizeVoices({ ...raw, default: A })?.defaultVoice).toBe(BUILT_IN);
   });
 
   it('is null for an app without voice import (an older build, a web update on old native) or junk', () => {
@@ -63,14 +80,14 @@ describe('normalizeVoices', () => {
 
   it('drops entries with ids that are not voice ids (never trusted to build anything) and duplicates', () => {
     const info = normalizeVoices({ ...raw, list: [...raw.list, { id: '../x', name: 'evil' }, { id: A, name: 'dupe' }, null, 42, { id: 'V0A1B2C3D4E5F6A7B', name: 'caps' }] });
-    expect(info?.list.map((v) => v.id)).toEqual([A, B]);
+    expect(info?.list.map((v) => v.id)).toEqual([S, A, B]);
   });
 
-  it('cleans names and treats a selection without a file as missing (built-in voice in use)', () => {
-    const info = normalizeVoices({ ...raw, selected: 'v9999999999999999', list: [{ id: A, name: '  Warm\u0007  narrator\n' }] });
-    expect(info?.list[0]?.name).toBe('Warm narrator');
+  it('cleans names and treats a selection without a file as missing (the default voice in use)', () => {
+    const info = normalizeVoices({ ...raw, selected: 'v9999999999999999', list: [raw.list[0], { id: A, name: '  Warm\u0007  narrator\n' }] });
+    expect(info?.list[1]?.name).toBe('Warm narrator');
     expect(info?.selectedMissing).toBe(true);
-    expect(info && effectiveVoice(info)).toBe(BUILT_IN);
+    expect(info && effectiveVoice(info)).toBe(S);
     expect(normalizeVoices({ ...raw, selected: '../../etc' })?.selected).toBeNull();
     expect(normalizeVoices({ ...raw, loaded: 'builtin' })?.loaded).toBe(BUILT_IN);
     expect(normalizeVoices({ ...raw, loaded: 'something' })?.loaded).toBeNull();
@@ -99,19 +116,27 @@ describe('names', () => {
 
 describe('the Narrator voice section', () => {
   const sectionInfo = info();
+  const rowIn = (html: string, id: string): string => html.split(`data-voice="${id}"`)[1]?.split('data-voice=')[0] ?? '';
 
-  it('lists the built-in voice and the imported ones, marks the narrator voice, offers Use on the others', () => {
+  it('lists shipped voices, Chatterbox’s own voice and the imported ones; marks the narrator and the default voice', () => {
     const html = voicesSection(sectionInfo, ui());
     expect(html).toContain('data-testid="xvoices"');
-    expect([...html.matchAll(/data-voice="([^"]+)"/g)].map((m) => m[1])).toEqual([BUILT_IN, A, B]);
-    const rowOf = (id: string): string => html.split(`data-voice="${id}"`)[1]?.split('data-voice=')[0] ?? '';
-    expect(rowOf(A)).toContain('Narrator voice');
-    expect(rowOf(A)).not.toContain('data-act="voice-use"');
-    expect(rowOf(BUILT_IN)).toContain('data-act="voice-use"');
-    expect(rowOf(BUILT_IN)).not.toContain('voice-rename'); // the built-in voice can't be renamed or deleted
-    expect(rowOf(BUILT_IN)).not.toContain('voice-arm-delete');
-    expect(rowOf(A)).toContain('has a preview');
-    expect(rowOf(B)).toContain('no preview');
+    expect([...html.matchAll(/data-voice="([^"]+)"/g)].map((m) => m[1])).toEqual([S, BUILT_IN, A, B]);
+    expect(rowIn(html, A)).toContain('Narrator voice');
+    expect(rowIn(html, A)).not.toContain('data-act="voice-use"');
+    expect(rowIn(html, S)).toContain('Default');
+    expect(rowIn(html, S)).toContain('Comes with TachiNovel');
+    expect(rowIn(html, BUILT_IN)).toContain('Original Chatterbox voice');
+    for (const id of [S, BUILT_IN]) {
+      // Shipped voices and Chatterbox's own can be chosen and heard, never renamed or deleted.
+      expect(rowIn(html, id)).toContain('data-act="voice-use"');
+      expect(rowIn(html, id)).toContain('data-act="voice-play"');
+      expect(rowIn(html, id)).not.toContain('voice-rename');
+      expect(rowIn(html, id)).not.toContain('voice-arm-delete');
+    }
+    expect(rowIn(html, A)).toContain('voice-rename');
+    expect(rowIn(html, A)).toContain('has a preview');
+    expect(rowIn(html, B)).toContain('no preview');
     expect(html).toContain('data-act="voice-import"');
   });
 
@@ -135,14 +160,14 @@ describe('the Narrator voice section', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;&quot;');
   });
 
-  it('says when Chatterbox Nano fell back to the built-in voice', () => {
+  it('says when Chatterbox Nano fell back to another voice', () => {
     const missing = normalizeVoices({ ...raw, selected: 'v9999999999999999' });
-    expect(missing && voicesSection(missing, ui())).toContain('isn’t on this iPhone any more, so Chatterbox Nano uses its built-in voice');
-    const note = normalizeVoices({ ...raw, note: 'Couldn’t use “Mommy”: damaged. Using the built-in voice instead.', loaded: 'builtin' });
+    expect(missing && voicesSection(missing, ui())).toContain('isn’t on this iPhone any more, so Chatterbox Nano uses the default voice (Narrator)');
+    const note = normalizeVoices({ ...raw, note: 'Couldn’t use “Mommy”: damaged. Using “Narrator” instead.', loaded: S });
     const html = note ? voicesSection(note, ui()) : '';
     expect(html).toContain('data-testid="xvoices-note"');
-    expect(html).toContain('Couldn’t use “Mommy”: damaged. Using the built-in voice instead.');
-    expect(html.split(`data-voice="${BUILT_IN}"`)[1]?.split('data-voice=')[0]).toContain('loaded');
+    expect(html).toContain('Couldn’t use “Mommy”: damaged. Using “Narrator” instead.');
+    expect(rowIn(html, S)).toContain('loaded');
   });
 
   it('has no Import button where import is off', () => {
@@ -162,13 +187,14 @@ describe('messages', () => {
   });
 
   it('after ▶ and for "Open in TachiNovel"', () => {
-    expect(sampleMessage({ played: 'preview' }, 'Mommy')).toBe('Playing the preview of “Mommy” made on the PC.');
-    expect(sampleMessage({ played: 'chatterbox-nano' }, 'Built-in voice')).toContain('The built-in voice through Chatterbox Nano');
+    expect(sampleMessage({ played: 'preview' }, 'Mommy')).toBe('Playing the preview of “Mommy”.');
+    expect(sampleMessage({ played: 'chatterbox-nano' }, 'Original Chatterbox voice')).toContain('“Original Chatterbox voice” through Chatterbox Nano');
     expect(importEventMessage({ ok: true, message: ' “Knight” imported. ' })).toEqual({ message: '“Knight” imported.', error: false });
     expect(importEventMessage({ ok: false })).toEqual({ message: 'Couldn’t import the voice.', error: true });
     expect(importEventMessage(null)).toEqual({ message: 'Couldn’t import the voice.', error: true });
     expect(voiceName(info(), B)).toBe('Knight');
-    expect(voiceName(info(), null)).toBe('Built-in voice');
+    expect(voiceName(info(), null)).toBe('Narrator');
+    expect(voiceName(info(), BUILT_IN)).toBe('Original Chatterbox voice');
     expect(voiceName(info(), 'v0000000000000000')).toBe('Unknown voice');
   });
 });

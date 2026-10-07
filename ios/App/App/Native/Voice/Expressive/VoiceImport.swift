@@ -1,6 +1,7 @@
 //
 //  VoiceImport.swift — imported voices (personal flavor, docs/voice-import.md): ".tnvoice" files opened
-//  from Files or the share sheet ("Open in TachiNovel", SceneDelegate) and the preview player.
+//  from Files or the share sheet ("Open in TachiNovel", SceneDelegate) and the preview player (imported and
+//  shipped voices).
 //
 //  An opened file may sit in another app's container, in iCloud Drive (opened in place, security-scoped) or
 //  in Documents/Inbox (a copy iOS made for us, which Files would show). It is copied into a temporary
@@ -91,14 +92,23 @@ enum VoiceImportInbox {
     }
 }
 
-/// Plays an imported voice's preview.m4a (made on the PC) through the sample audio session.
+/// Plays a voice's preview.m4a (made on the PC): an imported voice's file, or a shipped voice's bytes.
 final class VoicePreviewPlayer: NSObject, AVAudioPlayerDelegate {
+    enum Source {
+        case file(URL)
+        case data(Data)
+    }
+
     static let shared = VoicePreviewPlayer()
     private var player: AVAudioPlayer?
 
-    func play(_ url: URL) throws {
+    func play(_ source: Source) throws {
         stop()
-        let p = try AVAudioPlayer(contentsOf: url)
+        let p: AVAudioPlayer
+        switch source {
+        case .file(let url): p = try AVAudioPlayer(contentsOf: url)
+        case .data(let data): p = try AVAudioPlayer(data: data, fileTypeHint: AVFileType.m4a.rawValue)
+        }
         p.delegate = self
         guard p.duration > 0, p.duration < 120 else { throw VoicePackError.damaged("the preview isn’t playable audio") }
         p.prepareToPlay()

@@ -1,11 +1,15 @@
 ### Added
 
-- Imported voices (personal flavor): Settings › Voices › Expressive voices › Narrator voice. Voices designed
-  on the PC (`tachinovel-narrator/py/export_voice.py` writes a `.tnvoice` file to iCloud Drive ›
-  TachiNovel-Voices) come in with Import voice… (Files) or Open in TachiNovel from Files and the share sheet.
-  Each has ▶ Play (its preview, or Chatterbox Nano reading a line), Use, Rename and Delete. The chosen voice
-  is what Chatterbox Nano reads with instead of its built-in voice, kept across restarts; if its file is
-  missing or invalid when the model loads, the built-in voice reads and the screen says why. Kokoro and
+- Narrator voices for Chatterbox Nano: Settings › Voices › Expressive voices › Narrator voice. Voices can ship
+  inside the app (`ios/App/App/BuiltInVoices/`, added with one command: `export_voice.py … --bundle-into
+  ../tachinovel-v2 --default` or `node tools/built-in-voices.ts add <file> --default`); one of them is the
+  default narrator voice, and Chatterbox's own voice stays selectable. Shipped voices can be chosen, not renamed
+  or deleted, and are checked like imports when first listed and when loaded.
+- Imported voices (personal flavor): voices designed on the PC (`tachinovel-narrator/py/export_voice.py`
+  writes a `.tnvoice` file to iCloud Drive › TachiNovel-Voices) come in with Import voice… (Files) or Open in
+  TachiNovel from Files and the share sheet. Each has ▶ Play (its preview, or Chatterbox Nano reading a line),
+  Use, Rename and Delete. The chosen voice is what Chatterbox Nano reads with, kept across restarts; if its
+  file is missing or invalid when the model loads, the default voice reads and the screen says why. Kokoro and
   Apple voice settings are separate and unchanged. docs/voice-import.md has the format and the steps.
 
 ### Security

@@ -582,6 +582,13 @@ final class ImportedVoiceStoreTests: XCTestCase {
         }
         XCTAssertThrowsError(try store.setSelection("v0123456789abcdef", engine: "chatterbox-nano"))
         XCTAssertThrowsError(try store.directory("v0123456789abcdef", engine: "../kokoro"))
+        // Chatterbox's own voice and a shipped voice can be chosen (BundledVoices checks that a shipped one exists).
+        try store.setSelection("builtin", engine: "chatterbox-nano")
+        XCTAssertEqual(store.selection(engine: "chatterbox-nano"), "builtin")
+        try store.setSelection("b0123456789abcdef", engine: "chatterbox-nano")
+        XCTAssertEqual(store.selection(engine: "chatterbox-nano"), "b0123456789abcdef")
+        try store.setSelection(nil, engine: "chatterbox-nano")
+        XCTAssertNil(store.selection(engine: "chatterbox-nano"))
     }
 
     func testATamperedVoiceIsRefusedAtLoadTime() throws {
@@ -594,6 +601,80 @@ final class ImportedVoiceStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.conditioning(voice.id, engine: "chatterbox-nano")) { XCTAssertEqual($0 as? VoicePackError, .checksum("voice.safetensors")) }
         try FileManager.default.removeItem(at: file)
         XCTAssertThrowsError(try store.conditioning(voice.id, engine: "chatterbox-nano")) { XCTAssertEqual($0 as? VoicePackError, .notFound(voice.id)) }
+    }
+}
+
+final class BundledVoicesTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("shipped-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    private func write(_ name: String, _ bytes: [UInt8]) throws {
+        try Data(bytes).write(to: dir.appendingPathComponent(name))
+    }
+
+    func testListsValidShippedVoicesDefaultFirstAndLeavesOutBrokenOnes() throws {
+        try write("second.tnvoice", Pack.good(withPreview: false, name: "Second"))
+        try write("narrator.tnvoice", Pack.good(name: "Narrator"))
+        try write("broken.tnvoice", Array(Pack.good().prefix(5000)))
+        try write("notes.txt", Array("not a voice".utf8))
+        try write("voices.json", Array(#"{"schemaVersion":1,"default":"narrator.tnvoice"}"#.utf8))
+        let shipped = BundledVoices(directory: dir)
+        XCTAssertEqual(shipped.entries.map(\.fileName), ["narrator.tnvoice", "second.tnvoice"])
+        let narrator = try XCTUnwrap(shipped.entries.first)
+        XCTAssertTrue(narrator.isDefault)
+        XCTAssertTrue(narrator.hasPreview)
+        XCTAssertEqual(narrator.name, "Narrator")
+        XCTAssertEqual(narrator.id, BundledVoices.id(forFileName: "narrator.tnvoice"))
+        XCTAssertTrue(BundledVoices.isBundledID(narrator.id))
+        XCTAssertFalse(ImportedVoiceStore.isValidID(narrator.id))
+        XCTAssertEqual(shipped.defaultID(engine: "chatterbox-nano"), narrator.id)
+        XCTAssertEqual(shipped.problems.count, 1)
+        XCTAssertTrue(shipped.problems[0].hasPrefix("broken.tnvoice: "))
+        let contents = try shipped.contents(narrator.id)
+        XCTAssertEqual(contents.conditioningSHA256, narrator.sha256)
+        XCTAssertNotNil(contents.preview)
+        XCTAssertThrowsError(try shipped.contents("b0000000000000000"))
+        XCTAssertThrowsError(try shipped.contents("../narrator.tnvoice"))
+    }
+
+    func testIdsFollowTheFileNameSoARetunedVoiceKeepsItsId() throws {
+        try write("narrator.tnvoice", Pack.good(name: "Narrator v1"))
+        let before = BundledVoices(directory: dir).entries.first
+        try write("narrator.tnvoice", Pack.good(deflate: true, withPreview: false, name: "Narrator v2"))
+        let after = BundledVoices(directory: dir).entries.first
+        XCTAssertEqual(before?.id, after?.id)
+        XCTAssertEqual(after?.name, "Narrator v2")
+    }
+
+    func testABadDefaultOrNoFolderMeansNoShippedDefault() throws {
+        try write("narrator.tnvoice", Pack.good(name: "Narrator"))
+        try write("voices.json", Array(#"{"schemaVersion":1,"default":"missing.tnvoice"}"#.utf8))
+        let shipped = BundledVoices(directory: dir)
+        XCTAssertNil(shipped.defaultID(engine: "chatterbox-nano"))
+        XCTAssertEqual(shipped.entries.count, 1)
+        XCTAssertEqual(shipped.problems.count, 1)
+        XCTAssertEqual(BundledVoices(directory: nil).entries, [])
+        XCTAssertEqual(BundledVoices(directory: dir.appendingPathComponent("nope")).entries, [])
+    }
+
+    func testAShippedFileChangedAfterListingIsRefusedWhenLoaded() throws {
+        try write("narrator.tnvoice", Pack.good(name: "Narrator"))
+        let shipped = BundledVoices(directory: dir)
+        let id = try XCTUnwrap(shipped.entries.first?.id)
+        try write("narrator.tnvoice", Pack.good(deflate: true, name: "Narrator"))
+        XCTAssertNoThrow(try shipped.contents(id)) // same voice data, repacked: fine
+        var t = Safetensors.nanoTensors()
+        t[1].data[0] ^= 0x01
+        try write("narrator.tnvoice", Pack.with(voice: Safetensors.build(t)))
+        XCTAssertThrowsError(try shipped.contents(id)) { XCTAssertEqual($0 as? VoicePackError, .checksum("narrator.tnvoice")) }
     }
 }
 

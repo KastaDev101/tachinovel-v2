@@ -1,11 +1,13 @@
 /**
- * Imported voices (src/ui/native/voice-import.ts in expressive-lab.ts; docs/voice-import.md) in the PC shell,
- * personal flavor, against an ExpressiveVoice mock that keeps voices like native does (ImportedVoiceStore):
- *  - Settings › Voices › Expressive voices: "Narrator voice" lists the built-in voice as the narrator voice;
+ * Narrator voices for Chatterbox Nano (src/ui/native/voice-import.ts in expressive-lab.ts; docs/voice-import.md)
+ * in the PC shell, personal flavor, against an ExpressiveVoice mock that keeps voices like native does
+ * (ImportedVoiceStore + BundledVoices):
+ *  - Settings › Voices › Expressive voices: "Narrator voice" lists the voice that ships with the app (the
+ *    default, in use), Chatterbox's own voice; shipped voices can't be renamed or deleted;
  *  - Import voice… : a refused file shows native's reason; a good one appears in the list;
  *  - Use makes it the narrator voice; ▶ Play when its file turned out missing at load time: Chatterbox Nano
- *    falls back to the built-in voice and the screen says so (section note + Now playing);
- *  - Rename (inline field, Enter saves), Delete (second tap), the built-in voice is the narrator again;
+ *    falls back to the default voice and the screen says so (section note + Now playing);
+ *  - Use on Chatterbox's own voice sends "builtin"; Rename (inline field, Enter saves), Delete (second tap);
  *  - "Open in TachiNovel" (native event voiceImport) opens the screen with the result, success or failure;
  *  - the Kokoro/Apple voice settings are never written.
  * Screenshot: .cache/shell-shots/voice-import.png
@@ -25,15 +27,16 @@ interface Voice {
   name: string;
   engine: string;
   createdAt: string;
-  importedAt: string;
-  bytes: number;
+  importedAt?: string;
   hasPreview: boolean;
-  madeFor: string | null;
-  sourceFile: string | null;
+  bundled: boolean;
+  isDefault?: boolean;
 }
 
+const SHIPPED = 'b977be3f26cb8d509';
 const MOMMY = 'v0a1b2c3d4e5f6a7b';
 const KNIGHT = 'v1111222233334444';
+const shipped: Voice = { id: SHIPPED, name: 'Narrator', engine: 'chatterbox-nano', createdAt: '2026-10-07T07:00:00Z', hasPreview: true, bundled: true, isDefault: true };
 const state = {
   list: [] as Voice[],
   selected: null as string | null,
@@ -44,6 +47,8 @@ const state = {
   /** At the next Chatterbox load, the chosen voice's file is gone (deleted behind the app's back). */
   fileMissing: false,
 };
+const exists = (id: string): boolean => id === 'builtin' || id === SHIPPED || state.list.some((v) => v.id === id);
+const nameOf = (id: string): string => (id === 'builtin' ? 'Original Chatterbox voice' : id === SHIPPED ? 'Narrator' : (state.list.find((v) => v.id === id)?.name ?? ''));
 
 const status = (): Record<string, unknown> => ({
   available: true,
@@ -63,24 +68,24 @@ const status = (): Record<string, unknown> => ({
     engine: 'chatterbox-nano',
     engineTitle: 'Chatterbox Nano',
     importEnabled: true,
+    default: SHIPPED,
     selected: state.selected,
     selectedMissing: false,
     loaded: state.loaded,
     note: state.note,
-    list: state.list.map((v) => ({ ...v })),
+    list: [shipped, ...state.list].map((v) => ({ ...v })),
   },
 });
 
-const voice = (id: string, name: string): Voice => ({
-  id, name, engine: 'chatterbox-nano', createdAt: '2026-10-06T23:50:00Z', importedAt: '2026-10-07T08:00:00Z', bytes: 659_232,
-  hasPreview: false, madeFor: 'FluidInference/chatterbox-nano-coreml@f28421eff8e34bb6d70663ba1e3b1295562c620b', sourceFile: `${name}.tnvoice`,
+const imported = (id: string, name: string): Voice => ({
+  id, name, engine: 'chatterbox-nano', createdAt: '2026-10-06T23:50:00Z', importedAt: '2026-10-07T08:00:00Z', hasPreview: false, bundled: false,
 });
 
 const reject = (message: string, code: string): never => {
   throw Object.assign(new Error(message), { code });
 };
 
-describe('imported voices (PC shell)', () => {
+describe('narrator voices: shipped and imported (PC shell)', () => {
   beforeAll(async () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-voice-import');
@@ -99,37 +104,36 @@ describe('imported voices (PC shell)', () => {
     shell.pluginReplies.set('ExpressiveVoice.importVoice', () => {
       state.importAttempts += 1;
       if (state.importAttempts === 1) return reject('This voice file is damaged (voice.safetensors doesn’t match its checksum).', 'INVALID_VOICE');
-      const v = voice(MOMMY, 'Mommy');
+      const v = imported(MOMMY, 'Mommy');
       state.list.push(v);
       return { voice: { ...v }, replaced: false, status: status() };
     });
     shell.pluginReplies.set('ExpressiveVoice.selectVoice', (o) => {
       const id = (o as { id: string | null }).id;
-      if (id !== null && !state.list.some((v) => v.id === id)) return reject('That voice isn’t on this iPhone any more.', 'NOT_FOUND');
+      if (id !== null && !exists(id)) return reject('That voice isn’t on this iPhone any more.', 'NOT_FOUND');
       state.selected = id;
       state.note = null;
       return status();
     });
     shell.pluginReplies.set('ExpressiveVoice.playVoiceSample', (o) => {
-      const id = (o as { id: string | null }).id;
-      const v = state.list.find((x) => x.id === id);
-      // Like ExpressiveService.loadChatterbox: the voice can't be read at load time → built-in voice, and why.
-      if (v && state.fileMissing) {
-        state.loaded = 'builtin';
-        state.note = `Couldn’t use “${v.name}”: The voice “${v.id}” isn’t on this iPhone any more. Using the built-in voice instead.`;
+      const id = (o as { id: string | null }).id ?? SHIPPED;
+      // Like ExpressiveService.loadChatterbox: a voice that can't be read at load time → the default voice, and why.
+      if (id === MOMMY && state.fileMissing) {
+        state.loaded = SHIPPED;
+        state.note = `Couldn’t use “Mommy”: The voice “${MOMMY}” isn’t on this iPhone any more. Using “Narrator” instead.`;
       } else {
-        state.loaded = id ?? 'builtin';
+        state.loaded = id;
       }
       state.session = {
         state: 'playing', engine: 'chatterbox-nano', title: 'Chatterbox Nano', sample: 'voice', total: 1, current: 0, rows: [],
-        voice: { id: state.loaded, name: state.loaded === 'builtin' ? 'Built-in voice' : (v?.name ?? ''), loaded: true, note: state.note },
+        voice: { id: state.loaded, name: nameOf(state.loaded), loaded: true, note: state.note },
       };
       return { ...status(), played: 'chatterbox-nano' };
     });
     shell.pluginReplies.set('ExpressiveVoice.renameVoice', (o) => {
       const a = o as { id: string; name: string };
       const v = state.list.find((x) => x.id === a.id);
-      if (!v) return reject('That voice isn’t on this iPhone any more.', 'NOT_FOUND');
+      if (!v) return reject('Voices that come with TachiNovel can’t be renamed or deleted.', 'INVALID_ARGS');
       v.name = a.name;
       return status();
     });
@@ -160,17 +164,25 @@ describe('imported voices (PC shell)', () => {
   const message = () => lab().getByTestId('xlab-message');
   const calls = (method: string) => shell.pluginCalls.filter((c) => c.pluginId === 'ExpressiveVoice' && c.methodName === method).map((c) => c.options);
 
-  it('imports a voice, makes it the narrator voice, falls back to the built-in voice when its file is gone', async () => {
-    // Only the built-in voice at first, and it is the narrator voice.
-    await expect.poll(() => section().locator('.xv-row').count()).toBe(1);
-    expect(await row('builtin').textContent()).toContain('Narrator voice');
-    expect(await row('builtin').getByRole('button', { name: /^Use/ }).count()).toBe(0);
+  it('starts with the shipped default voice as the narrator; shipped voices can be chosen but not renamed or deleted', async () => {
+    await expect.poll(() => section().locator('.xv-row').count()).toBe(2);
+    expect(await row(SHIPPED).textContent()).toContain('Narrator voice');
+    expect(await row(SHIPPED).textContent()).toContain('Default');
+    expect(await row(SHIPPED).textContent()).toContain('Comes with TachiNovel');
+    expect(await row('builtin').textContent()).toContain('Original Chatterbox voice');
+    for (const id of [SHIPPED, 'builtin']) {
+      expect(await row(id).getByRole('button', { name: /^Rename/ }).count()).toBe(0);
+      expect(await row(id).getByRole('button', { name: /^Delete/ }).count()).toBe(0);
+    }
+    expect(await row(SHIPPED).getByRole('button', { name: /^Use/ }).count()).toBe(0);
+  });
 
+  it('imports a voice, makes it the narrator voice, falls back to the default voice when its file is gone', async () => {
     // A refused file: native's reason is shown as an error, nothing is added.
     await section().getByRole('button', { name: 'Import voice…' }).click();
     await expect.poll(() => message().textContent()).toBe('This voice file is damaged (voice.safetensors doesn’t match its checksum).');
     expect(await message().getAttribute('data-error')).toBe('1');
-    expect(await section().locator('.xv-row').count()).toBe(1);
+    expect(await section().locator('.xv-row').count()).toBe(2);
 
     // A good file.
     await section().getByRole('button', { name: 'Import voice…' }).click();
@@ -179,25 +191,29 @@ describe('imported voices (PC shell)', () => {
     await expect.poll(() => row(MOMMY).count()).toBe(1);
     expect(await row(MOMMY).textContent()).toContain('Imported 7 Oct 2026');
 
-    // Use it: the narrator voice moves to Mommy, the built-in voice gets a Use button.
+    // Use it: the narrator voice moves to Mommy, the shipped voice gets a Use button.
     await row(MOMMY).getByRole('button', { name: 'Use Mommy as the narrator voice' }).click();
     await expect.poll(() => calls('selectVoice')).toEqual([{ id: MOMMY }]);
     await expect.poll(() => row(MOMMY).textContent()).toContain('Narrator voice');
-    expect(await row('builtin').getByRole('button', { name: 'Use Built-in voice as the narrator voice' }).count()).toBe(1);
+    expect(await row(SHIPPED).getByRole('button', { name: 'Use Narrator as the narrator voice' }).count()).toBe(1);
 
-    // Listen while its file has gone missing: Chatterbox Nano reads with the built-in voice and says why.
+    // Listen while its file has gone missing: Chatterbox Nano reads with the default voice and says why.
     state.fileMissing = true;
     await row(MOMMY).getByRole('button', { name: 'Play a sample of Mommy' }).click();
     await expect.poll(() => calls('playVoiceSample')).toEqual([{ id: MOMMY }]);
     await expect.poll(() => section().getByTestId('xvoices-note').textContent()).toContain('Couldn’t use “Mommy”');
-    expect(await section().getByTestId('xvoices-note').textContent()).toContain('Using the built-in voice instead.');
+    expect(await section().getByTestId('xvoices-note').textContent()).toContain('Using “Narrator” instead.');
     const nowPlaying = lab().locator('.kv').first();
-    await expect.poll(() => nowPlaying.textContent()).toContain('Built-in voice');
-    expect(await row('builtin').textContent()).toContain('loaded');
+    await expect.poll(() => nowPlaying.textContent()).toContain('Narrator');
+    expect(await row(SHIPPED).textContent()).toContain('loaded');
     await shell.page.screenshot({ path: path.join(shots, 'voice-import.png') });
   });
 
-  it('renames inline and deletes with a second tap; the built-in voice is the narrator again', async () => {
+  it('chooses Chatterbox’s own voice by id, renames inline and deletes with a second tap', async () => {
+    await row('builtin').getByRole('button', { name: 'Use Original Chatterbox voice as the narrator voice' }).click();
+    await expect.poll(() => calls('selectVoice').at(-1)).toEqual({ id: 'builtin' });
+    await expect.poll(() => row('builtin').textContent()).toContain('Narrator voice');
+
     await row(MOMMY).getByRole('button', { name: 'Rename Mommy' }).click();
     const field = section().getByRole('textbox', { name: 'New name for Mommy' });
     expect(await field.inputValue()).toBe('Mommy');
@@ -211,13 +227,17 @@ describe('imported voices (PC shell)', () => {
     await row(MOMMY).getByRole('button', { name: 'Tap again: delete “Warm Mommy”' }).click();
     await expect.poll(() => calls('deleteVoice')).toEqual([{ id: MOMMY }]);
     await expect.poll(() => row(MOMMY).count()).toBe(0);
-    await expect.poll(() => row('builtin').textContent()).toContain('Narrator voice');
+
+    // Back to the shipped default voice.
+    await row(SHIPPED).getByRole('button', { name: 'Use Narrator as the narrator voice' }).click();
+    await expect.poll(() => calls('selectVoice').at(-1)).toEqual({ id: SHIPPED });
+    await expect.poll(() => row(SHIPPED).textContent()).toContain('Narrator voice');
   });
 
   it('shows the result of "Open in TachiNovel", even when the screen is closed', async () => {
     await lab().getByRole('button', { name: 'Close' }).click();
     await expect.poll(() => lab().count()).toBe(0);
-    state.list.push(voice(KNIGHT, 'Knight'));
+    state.list.push(imported(KNIGHT, 'Knight'));
     shell.emitPluginEvent('ExpressiveVoice', 'voiceImport', { ok: true, message: '“Knight” imported. Tap Use to make it the narrator voice.', id: KNIGHT });
     await lab().waitFor({ timeout: 5000 });
     await expect.poll(() => message().textContent()).toBe('“Knight” imported. Tap Use to make it the narrator voice.');

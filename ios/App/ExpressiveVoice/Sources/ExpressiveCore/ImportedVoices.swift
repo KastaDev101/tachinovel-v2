@@ -6,9 +6,15 @@
 //    <root>/<engine>/<id>/voice.safetensors   the checked conditioning tensors
 //    <root>/<engine>/<id>/preview.m4a         optional short sample made on the PC
 //    <root>/<engine>/<id>/info.json           name, dates, SHA-256 of voice.safetensors
-//    <root>/selection.json                    {"<engine>": "<id>"}: the narrator voice (absent = built-in)
+//    <root>/selection.json                    {"<engine>": "<id>"}: the narrator voice (absent = the app's default)
 //  An id is "v" + the first 16 hex digits of the voice data's SHA-256, so importing the same voice twice
 //  keeps one copy. Ids that come from the UI are checked against that pattern before any path is built.
+//
+//  Voices that ship in the app (BundledVoices): <app>/BuiltInVoices/*.tnvoice + voices.json (which one is the
+//  default narrator voice). Same checks as an import, done the first time the list is needed (never at
+//  launch) and again when a voice is loaded. Id = "b" + 16 hex digits of the SHA-256 of the file NAME, so a
+//  re-tuned voice shipped under the same name keeps the user's choice. "builtin" is Chatterbox Nano's own
+//  voice (voice-default.safetensors), always selectable.
 //
 //  ChatterboxVoiceSlot: FluidAudio 0.17.5's ChatterboxNanoManager has no way to pass a voice; it always
 //  reads <models>/chatterbox-nano/tables/voice-default.safetensors while loading (into memory). To speak
@@ -118,7 +124,7 @@ public final class ImportedVoiceStore: Sendable {
         return info
     }
 
-    /// Delete a voice; if it was the narrator voice, the built-in voice is used again.
+    /// Delete a voice; if it was the narrator voice, the app's default voice is used again.
     public func delete(_ id: String, engine: String) throws {
         let dir = try directory(id, engine: engine)
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
@@ -144,23 +150,34 @@ public final class ImportedVoiceStore: Sendable {
 
     // MARK: - Narrator voice
 
-    /// The chosen voice id for an engine, or nil for the built-in voice. The id may no longer exist (deleted
-    /// files): callers fall back to the built-in voice and say so.
+    /// Chatterbox Nano's own voice (voice-default.safetensors), as a selection value.
+    public static let engineVoice = "builtin"
+
+    /// A value selection.json may hold: an imported voice, a voice that ships in the app, or the engine's own.
+    public static func isSelectable(_ id: String) -> Bool {
+        id == engineVoice || isValidID(id) || BundledVoices.isBundledID(id)
+    }
+
+    /// The chosen voice id for an engine, or nil for the app's default. The id may no longer exist (deleted
+    /// files, a voice no longer shipped): callers fall back to the default voice and say so.
     public func selection(engine: String) -> String? {
         guard let data = try? Data(contentsOf: root.appendingPathComponent(Self.selectionName)),
               let map = try? JSONDecoder().decode([String: String].self, from: data),
-              let id = map[engine], Self.isValidID(id) else { return nil }
+              let id = map[engine], Self.isSelectable(id) else { return nil }
         return id
     }
 
+    /// nil = the app's default voice. An imported voice must exist; whether a shipped ("b…") voice exists is
+    /// the caller's check (BundledVoices).
     public func setSelection(_ id: String?, engine: String) throws {
         if let id {
-            guard Self.isValidID(id), voice(id, engine: engine) != nil else { throw VoicePackError.notFound(id) }
+            guard Self.isSelectable(id) else { throw VoicePackError.unsafeID(id) }
+            if Self.isValidID(id), voice(id, engine: engine) == nil { throw VoicePackError.notFound(id) }
         }
         var map: [String: String] = [:]
         if let data = try? Data(contentsOf: root.appendingPathComponent(Self.selectionName)),
            let old = try? JSONDecoder().decode([String: String].self, from: data) {
-            map = old.filter { VoicePackEngine.find($0.key) != nil && Self.isValidID($0.value) }
+            map = old.filter { VoicePackEngine.find($0.key) != nil && Self.isSelectable($0.value) }
         }
         map[engine] = id
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -181,6 +198,92 @@ public final class ImportedVoiceStore: Sendable {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: date)
+    }
+}
+
+/// Voices that ship inside the app: `<directory>/*.tnvoice` plus `voices.json`
+/// (`{"schemaVersion": 1, "default": "<file>.tnvoice" | null}`: the default narrator voice). Each file gets the
+/// same checks as an import (VoicePack.read) the first time the list is needed, never at launch; a file that
+/// fails is left out and listed in `problems`. A voice's data is read again (and checked again) only when it is
+/// loaded or previewed.
+public final class BundledVoices: @unchecked Sendable { // the scan cache is lock-protected
+    public struct Entry: Sendable, Equatable {
+        public let id: String
+        public let fileName: String
+        public let name: String
+        public let engine: String
+        public let createdAt: String
+        public let hasPreview: Bool
+        public let isDefault: Bool
+        /// SHA-256 of the voice data (voice.safetensors) when it was listed.
+        public let sha256: String
+    }
+
+    public static let indexName = "voices.json"
+    public let directory: URL?
+    private let lock = NSLock()
+    private var scanned: (entries: [Entry], problems: [String])?
+
+    public init(directory: URL?) {
+        self.directory = directory
+    }
+
+    /// "b" + 16 hex digits of the SHA-256 of the file name: stable when a voice is re-tuned under the same name.
+    public static func id(forFileName name: String) -> String { "b" + String(VoicePack.sha256Hex(Array(name.utf8)).prefix(16)) }
+
+    public static func isBundledID(_ id: String) -> Bool {
+        id.utf8.count == 17 && id.hasPrefix("b") && id.utf8.dropFirst().allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    /// The valid shipped voices of every engine, the default first.
+    public var entries: [Entry] { scan().entries }
+    /// Shipped files that failed the checks (with why), and a voices.json default that isn't a valid voice.
+    public var problems: [String] { scan().problems }
+
+    public func entries(engine: String) -> [Entry] { entries.filter { $0.engine == engine } }
+    public func defaultID(engine: String) -> String? { entries(engine: engine).first { $0.isDefault }?.id }
+    public func entry(_ id: String) -> Entry? { entries.first { $0.id == id } }
+
+    /// A shipped voice's checked parts, read again from the app (when it is loaded or previewed).
+    public func contents(_ id: String) throws -> VoicePackContents {
+        guard Self.isBundledID(id), let entry = entry(id), let directory else { throw VoicePackError.notFound(id) }
+        let contents = try VoicePack.read(fileAt: directory.appendingPathComponent(entry.fileName))
+        guard contents.conditioningSHA256 == entry.sha256 else { throw VoicePackError.checksum(entry.fileName) }
+        return contents
+    }
+
+    private func scan() -> (entries: [Entry], problems: [String]) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let scanned { return scanned }
+        var entries: [Entry] = []
+        var problems: [String] = []
+        if let directory {
+            let suffix = "." + VoicePackFormat.fileExtension
+            let names = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).filter { $0.lowercased().hasSuffix(suffix) }.sorted()
+            var defaultName: String?
+            if let data = try? Data(contentsOf: directory.appendingPathComponent(Self.indexName)),
+               let index = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                defaultName = index["default"] as? String
+            }
+            for name in names {
+                do {
+                    let c = try VoicePack.read(fileAt: directory.appendingPathComponent(name))
+                    entries.append(Entry(id: Self.id(forFileName: name), fileName: name, name: c.manifest.name, engine: c.manifest.engine.id,
+                                         createdAt: c.manifest.createdAt, hasPreview: c.preview != nil, isDefault: name == defaultName,
+                                         sha256: c.conditioningSHA256))
+                } catch {
+                    problems.append("\(name): \(error.localizedDescription)")
+                }
+            }
+            if let defaultName, !entries.contains(where: { $0.fileName == defaultName }) {
+                problems.append("\(Self.indexName): the default “\(defaultName)” isn’t a valid voice")
+            }
+        }
+        entries.sort { ($0.isDefault ? 0 : 1, $0.name) < ($1.isDefault ? 0 : 1, $1.name) }
+        let result = (entries: entries, problems: problems)
+        scanned = result
+        return result
     }
 }
 

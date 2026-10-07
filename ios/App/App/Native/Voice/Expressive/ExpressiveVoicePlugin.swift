@@ -15,9 +15,10 @@
 //  Imported voices (personal flavor, docs/voice-import.md; status() carries them as `voices`):
 //  importVoice                    Files picker for a .tnvoice → checked and kept → {voice, replaced, status} or
 //                                 {cancelled}; an invalid file is rejected with the reason (code INVALID_VOICE)
-//  selectVoice                    {id | null}: Chatterbox Nano's narrator voice (null = built-in), kept across launches
-//  renameVoice / deleteVoice      {id, name} / {id}
-//  playVoiceSample                {id | null}: the file's preview, else Chatterbox Nano reads a line in that voice
+//  selectVoice                    {id | null}: Chatterbox Nano's narrator voice, kept across launches: an imported
+//                                 or shipped voice's id, "builtin" (Chatterbox's own voice), null = the default
+//  renameVoice / deleteVoice      {id, name} / {id}: imported voices only (shipped ones can't be changed)
+//  playVoiceSample                {id | null}: the voice's preview, else Chatterbox Nano reads a line in that voice
 //  event "voiceImport"            {ok, message, id?}: a .tnvoice opened with "Open in TachiNovel" (SceneDelegate)
 //
 
@@ -158,16 +159,23 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    // MARK: - Imported voices
+    // MARK: - Imported and shipped voices
 
-    /// A voice id from JS: an imported voice that exists, or nil (built-in) when `id` is null or absent.
-    private func voiceID(_ call: CAPPluginCall, allowBuiltIn: Bool) -> String?? {
+    /// A voice id from JS that exists: "builtin" (Chatterbox's own voice), a shipped voice or an imported one;
+    /// `.some(nil)` (the default voice) when `id` is null or absent and `anyVoice`. Only imported voices when
+    /// `anyVoice` is false (rename, delete). Rejects the call and returns nil otherwise.
+    private func voiceID(_ call: CAPPluginCall, anyVoice: Bool) -> String?? {
+        let svc = ExpressiveService.shared
         guard let raw = call.getString("id") else {
-            if allowBuiltIn { return .some(nil) }
+            if anyVoice { return .some(nil) }
             call.reject("No voice", "INVALID_ARGS")
             return nil
         }
-        guard ImportedVoiceStore.isValidID(raw), ExpressiveService.shared.voiceList.contains(where: { $0.id == raw }) else {
+        if !anyVoice, raw == ExpressiveService.builtInVoice || BundledVoices.isBundledID(raw) {
+            call.reject("Voices that come with TachiNovel can’t be renamed or deleted.", "INVALID_ARGS")
+            return nil
+        }
+        guard ImportedVoiceStore.isSelectable(raw), svc.voiceExists(raw) else {
             call.reject("That voice isn’t on this iPhone any more.", "NOT_FOUND")
             return nil
         }
@@ -196,7 +204,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func selectVoice(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard let id = self.voiceID(call, allowBuiltIn: true) else { return }
+            guard let id = self.voiceID(call, anyVoice: true) else { return }
             do {
                 if ExpressiveLabPlayer.shared.engine.primary == .chatterboxNano { ExpressiveLabPlayer.shared.stop() }
                 try ExpressiveService.shared.selectVoice(id)
@@ -209,7 +217,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func renameVoice(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard let id = self.voiceID(call, allowBuiltIn: false), let voice = id else { return }
+            guard let id = self.voiceID(call, anyVoice: false), let voice = id else { return }
             let name = call.getString("name") ?? ""
             guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return call.reject("Type a name.", "INVALID_ARGS") }
             do {
@@ -223,7 +231,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func deleteVoice(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard let id = self.voiceID(call, allowBuiltIn: false), let voice = id else { return }
+            guard let id = self.voiceID(call, anyVoice: false), let voice = id else { return }
             do {
                 if ExpressiveLabPlayer.shared.engine.primary == .chatterboxNano { ExpressiveLabPlayer.shared.stop() }
                 VoicePreviewPlayer.shared.stop()
@@ -237,15 +245,18 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func playVoiceSample(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard let id = self.voiceID(call, allowBuiltIn: true) else { return }
+            guard let id = self.voiceID(call, anyVoice: true) else { return }
             ExpressiveService.shared.cancelSpeedTest(reason: "stopped: playback started")
             ExpressiveLabPlayer.shared.stop()
             VoicePreviewPlayer.shared.stop()
             // The preview made on the PC plays at once and needs no model.
-            if let id, let url = ExpressiveService.shared.previewURL(id) {
+            let svc = ExpressiveService.shared
+            let target = id ?? svc.defaultVoice
+            let preview = svc.previewURL(target).map { VoicePreviewPlayer.Source.file($0) } ?? svc.shippedPreview(target).map { VoicePreviewPlayer.Source.data($0) }
+            if let preview {
                 NarrationController.shared.activateForSample()
                 do {
-                    try VoicePreviewPlayer.shared.play(url)
+                    try VoicePreviewPlayer.shared.play(preview)
                     var out = Self.status()
                     out["played"] = "preview"
                     return call.resolve(out)
@@ -257,7 +268,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             guard ExpressiveService.shared.isInstalled(.chatterboxNano) else {
                 return call.reject("Download Chatterbox Nano below to hear this voice (it came without a preview).", "NO_MODEL")
             }
-            ExpressiveService.shared.sampleVoice = id ?? ExpressiveService.builtInVoice
+            svc.sampleVoice = target
             ExpressiveLabPlayer.shared.play(primary: .chatterboxNano, sample: "voice", lines: [ExpressiveLine(text: Self.voiceSampleLine)])
             var out = Self.status()
             out["played"] = "chatterbox-nano"

@@ -1,14 +1,42 @@
-# Imported voices (personal flavor)
+# Narrator voices for Chatterbox Nano: shipped and imported
 
-Status 2026-10-07: built and unit-tested; the phone checklist at the end is still to do.
+Status 2026-10-07: built and unit-tested; the phone checklist at the end is still to do. No voice ships yet:
+the first one is bundled once Kasta approves it (one command, below).
 
 Kasta designs original synthetic narrator voices on the PC (descriptions → Parler-TTS reference clips, no
-recording of a real person) and wants to hear them on the iPhone. A voice is exported on the PC as a
-`.tnvoice` file and imported in the app, where **Chatterbox Nano** (the expressive engine,
-docs/expressive-tts.md) reads with it instead of its built-in voice. Kokoro and the Apple voice are separate
-settings and never change.
+recording of a real person). A voice is exported on the PC as a `.tnvoice` file and then either **ships inside
+the app** (no files to handle on the phone; one of them is the default narrator voice) or is **imported** on
+the iPhone (personal flavor). **Chatterbox Nano** (the expressive engine, docs/expressive-tts.md) reads with the
+chosen voice instead of its own; its own voice ("Original Chatterbox voice") stays selectable. Kokoro and the
+Apple voice are separate settings and never change.
 
-## Make a voice on the PC and get it onto the iPhone
+Settings › Voices › **Expressive voices (experimental)** › **Narrator voice** lists, in this order: the voices
+that ship with TachiNovel (the default first, tagged Default), the Original Chatterbox voice, then imported
+voices. Every row has ▶ Play (the voice's preview; without one, Chatterbox Nano reads a line) and Use; imported
+voices also have Rename and Delete (two taps). The choice survives restarts; with no choice the default voice
+reads. If the chosen voice can't be used when the model loads, the default voice reads (then Chatterbox's own)
+and the screen says why.
+
+## Ship a voice inside the app (one line; redo it whenever the voice is re-tuned)
+
+From `tachinovel-narrator`, with a tachinovel-v2 checkout on a branch next to it:
+
+```
+..\tachinovel-tts-lab\.venv-chatterbox\Scripts\python.exe -W ignore py\export_voice.py REF.wav --name "Narrator" ^
+    --force --bundle-into ..\tachinovel-v2 --default
+```
+
+That exports and checks the voice (below), then runs `node tools/built-in-voices.ts add <file> --as Narrator
+--default` in tachinovel-v2: the file is checked with the app's rules again, stored as
+`ios/App/App/BuiltInVoices/narrator.tnvoice` and made the default in `voices.json`. Commit that folder (plus a
+changelog fragment) and the next build ships it. Keep the same `--name` when re-tuning: a shipped voice's id
+comes from its file name, so phones that chose it keep it and get the new version.
+
+Other commands: `node tools/built-in-voices.ts list` (names, ids, sizes; exits 1 if anything is invalid — the
+web CI job runs the same check), `default <name>|none`, `remove <name>`. The folder is bundled as a folder
+reference (`tools/ios-project.ts`); only `.tnvoice` files and `voices.json` may be in it.
+
+## Make a voice on the PC and import it on the iPhone
 
 1. Have a reference clip of at least 15 seconds of one synthetic voice (for example
    `iCloud Drive/TachiNovel-TTS-Samples/tuning/round8-personas/ref-8A.wav`).
@@ -27,9 +55,6 @@ settings and never change.
    Or tap the file in the Files app (or AirDrop it) and choose **Open in TachiNovel** / share to TachiNovel.
 4. Tap **Use** on it: Chatterbox Nano now reads with that voice (▶ Play sample, the Voice Lab samples). The
    choice survives restarts. Download Chatterbox Nano on the same screen if it isn't yet (0.75 GB, Wi-Fi).
-
-Each imported voice row has ▶ Play (the preview made on the PC; without one, Chatterbox Nano reads a line),
-Use, Rename and Delete (two taps). The built-in voice stays in the list and can be chosen again.
 
 ## The `.tnvoice` format (version 1)
 
@@ -100,19 +125,25 @@ Nothing in the file is executed. Names are cleaned (no control or bidi character
 
 ## How the app uses it
 
-- Kept in `Application Support/TachiNovel/voices/chatterbox-nano/<id>/` (`voice.safetensors`, `preview.m4a`,
-  `info.json`); the id is `v` + 16 hex digits of the voice's SHA-256 (the same voice imported twice is one
-  copy). `selection.json` holds the narrator voice. Ids from the UI are checked before any path is built.
+- Imported voices are kept in `Application Support/TachiNovel/voices/chatterbox-nano/<id>/` (`voice.safetensors`,
+  `preview.m4a`, `info.json`); the id is `v` + 16 hex digits of the voice's SHA-256 (the same voice imported
+  twice is one copy). `selection.json` holds the narrator voice: an imported id, a shipped id, `builtin`
+  (Chatterbox's own voice) or nothing (the default voice). Ids from the UI are checked before any path is built.
+- Shipped voices are read from the app bundle (`BuiltInVoices/`): checked with the same rules the first time
+  the list is needed (never at launch) and again whenever one is loaded or previewed; a file that fails is left
+  out and logged. Their id is `b` + 16 hex digits of the SHA-256 of the file name.
 - FluidAudio 0.17.5's `ChatterboxNanoManager` can't be given a voice: it reads
   `<models>/chatterbox-nano/tables/voice-default.safetensors` while loading. The app puts the chosen voice's
   file in that slot just for the load (one load at a time) and restores the pinned built-in file right after
   (a backup sits next to it); after a crash mid-load the slot is repaired at the next launch. The downloaded
   model therefore always matches its pinned SHA-256 outside a load.
-- At load time the voice is checked again (SHA-256 against the import, the tensor checks). Missing or
-  invalid → Chatterbox Nano loads its built-in voice and the screen says why (section note, Now playing).
+- At load time the voice is checked again (SHA-256 against the import or the listing, the tensor checks).
+  Missing or invalid → Chatterbox Nano loads the default voice (then its own) and the screen says why (section
+  note, Now playing).
 - Kokoro voice packs could come in the same way later: `VoicePackEngine.all` is the list of importable
   engines with their tensor layout; the ZIP/manifest checks, the store and the UI are engine-agnostic.
-- Personal flavor only: the store flavor compiles the UI out and native ignores opened `.tnvoice` files.
+- Importing is personal flavor only: the store flavor compiles the UI out and native ignores opened `.tnvoice`
+  files. Shipped voices (and the default) apply to Chatterbox Nano in both flavors.
 
 ## Verification on the PC
 
@@ -126,7 +157,8 @@ built-in `voice-default.safetensors` from the checkpoint's `conds.pt` and compar
 
 ## Phone checklist (5 minutes)
 
-1. Install the PR's IPA. Export a voice on the PC (above) and let iCloud sync.
+1. Install the PR's IPA. Export a voice on the PC (above) and let iCloud sync. (Once a voice ships: it is
+   listed first, tagged Default and Narrator voice, without importing anything.)
 2. Settings › Voices › Expressive voices › Import voice… › TachiNovel-Voices › the file. It appears in the list.
 3. ▶ Play on it: the preview plays at once.
 4. Download Chatterbox Nano if needed. Tap Use on the voice, then ▶ Play sample (Emotional dialogue) with

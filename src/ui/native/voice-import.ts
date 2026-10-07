@@ -18,19 +18,26 @@ export interface ImportedVoiceInfo {
   hasPreview: boolean;
   madeFor: string | null;
   sourceFile: string | null;
+  /** Ships with the app (BuiltInVoices/): can be chosen, not renamed or deleted. */
+  bundled: boolean;
+  /** The shipped default narrator voice. */
+  isDefault: boolean;
 }
 
 export interface VoicesInfo {
   engineTitle: string;
   importEnabled: boolean;
-  /** The narrator voice's id; null = Chatterbox Nano's built-in voice. */
+  /** The default narrator voice: a shipped voice's id, or "builtin" (Chatterbox Nano's own voice). */
+  defaultVoice: string;
+  /** The chosen narrator voice ("builtin" or an id); null = the default voice. */
   selected: string | null;
-  /** The chosen voice's files are gone: Chatterbox Nano falls back to the built-in voice. */
+  /** The chosen voice's files are gone: Chatterbox Nano falls back to the default voice. */
   selectedMissing: boolean;
   /** The voice the loaded model speaks with ("builtin" or an id), null when Chatterbox Nano isn't loaded. */
   loaded: string | null;
-  /** Why the last load used the built-in voice instead of the chosen one. */
+  /** Why the last load didn't use the chosen voice. */
   note: string | null;
+  /** Shipped voices (default first), then imported ones. */
   list: ImportedVoiceInfo[];
 }
 
@@ -43,8 +50,11 @@ export interface VoicesUiState {
   renameDraft: string;
 }
 
+/** Chatterbox Nano's own voice (the model's voice-default.safetensors), always selectable. */
 export const BUILT_IN = 'builtin';
-const ID = /^v[0-9a-f]{16}$/;
+export const ENGINE_VOICE_NAME = 'Original Chatterbox voice';
+/** "v…" imported, "b…" shipped with the app. */
+const ID = /^[vb][0-9a-f]{16}$/;
 export const MAX_NAME = 40;
 
 const str = (x: unknown): string | null => (typeof x === 'string' && x.length > 0 ? x : null);
@@ -60,6 +70,7 @@ export function normalizeVoices(raw: unknown): VoicesInfo | null {
     const v = item as Record<string, unknown>;
     const id = str(v.id);
     if (!id || !ID.test(id) || list.some((x) => x.id === id)) continue;
+    const bundled = id.startsWith('b');
     list.push({
       id,
       name: cleanVoiceName(typeof v.name === 'string' ? v.name : ''),
@@ -68,16 +79,23 @@ export function normalizeVoices(raw: unknown): VoicesInfo | null {
       hasPreview: v.hasPreview === true,
       madeFor: str(v.madeFor),
       sourceFile: str(v.sourceFile),
+      bundled,
+      isDefault: bundled && v.isDefault === true,
     });
   }
+  const known = (id: string | null): id is string => id === BUILT_IN || (!!id && list.some((v) => v.id === id));
   const selected = str(r.selected);
+  const fallback = str(r.default);
   const loaded = str(r.loaded);
+  const validSelection = selected === BUILT_IN || (!!selected && ID.test(selected));
   return {
     engineTitle: str(r.engineTitle) ?? 'Chatterbox Nano',
     importEnabled: r.importEnabled === true,
-    selected: selected && ID.test(selected) ? selected : null,
-    selectedMissing: r.selectedMissing === true || (!!selected && ID.test(selected) && !list.some((v) => v.id === selected)),
-    loaded: loaded === BUILT_IN || (loaded && ID.test(loaded)) ? loaded : null,
+    // Only a shipped voice (or Chatterbox's own) can be the default.
+    defaultVoice: fallback && list.some((v) => v.id === fallback && v.bundled) ? fallback : BUILT_IN,
+    selected: validSelection ? selected : null,
+    selectedMissing: r.selectedMissing === true || (validSelection && !known(selected)),
+    loaded: known(loaded) ? loaded : null,
     note: str(r.note),
     list,
   };
@@ -112,33 +130,34 @@ export function shortDate(iso: string | null): string {
 
 /** The voice Chatterbox Nano reads with right now ("builtin" or an id). */
 export function effectiveVoice(info: VoicesInfo): string {
-  return info.selected && !info.selectedMissing ? info.selected : BUILT_IN;
+  return info.selected && !info.selectedMissing ? info.selected : info.defaultVoice;
 }
 
 export function voiceName(info: VoicesInfo, id: string | null): string {
-  if (!id || id === BUILT_IN) return 'Built-in voice';
-  return info.list.find((v) => v.id === id)?.name ?? 'Unknown voice';
+  const target = id ?? info.defaultVoice;
+  if (target === BUILT_IN) return ENGINE_VOICE_NAME;
+  return info.list.find((v) => v.id === target)?.name ?? 'Unknown voice';
 }
 
-function row(info: VoicesInfo, ui: VoicesUiState, id: string, name: string, sub: string): string {
-  const imported = id !== BUILT_IN;
+function row(info: VoicesInfo, ui: VoicesUiState, id: string, name: string, sub: string, editable: boolean): string {
   const inUse = effectiveVoice(info) === id;
   const tags = [
     inUse ? '<span class="xtag">Narrator voice</span>' : '',
+    info.defaultVoice === id ? '<span class="xtag">Default</span>' : '',
     info.loaded === id ? '<span class="xtag">loaded</span>' : '',
   ].join('');
   const acts = [
     `<button type="button" data-act="voice-play" data-id="${esc(id)}" aria-label="Play a sample of ${esc(name)}">▶ Play</button>`,
     inUse ? '' : `<button type="button" data-act="voice-use" data-id="${esc(id)}" aria-label="Use ${esc(name)} as the narrator voice">Use</button>`,
-    imported && ui.renaming !== id ? `<button type="button" data-act="voice-rename" data-id="${esc(id)}" aria-label="Rename ${esc(name)}">Rename</button>` : '',
-    !imported
+    editable && ui.renaming !== id ? `<button type="button" data-act="voice-rename" data-id="${esc(id)}" aria-label="Rename ${esc(name)}">Rename</button>` : '',
+    !editable
       ? ''
       : ui.armed === `voice-delete:${id}`
         ? `<button type="button" class="warn" data-act="voice-delete" data-id="${esc(id)}">Tap again: delete “${esc(name)}”</button>`
         : `<button type="button" data-act="voice-arm-delete" data-id="${esc(id)}" aria-label="Delete ${esc(name)}">Delete</button>`,
   ].join('');
   const rename =
-    imported && ui.renaming === id
+    editable && ui.renaming === id
       ? `<div class="acts" data-testid="xvoice-rename">
           <input type="text" data-act-input="voice-name" maxlength="${MAX_NAME}" autocomplete="off" aria-label="New name for ${esc(name)}" value="${esc(ui.renameDraft)}">
           <button type="button" class="on" data-act="voice-rename-save" data-id="${esc(id)}">Save name</button>
@@ -152,24 +171,28 @@ function row(info: VoicesInfo, ui: VoicesUiState, id: string, name: string, sub:
     </div>`;
 }
 
-/** Settings › Voices › Expressive voices › "Narrator voice": the built-in voice, the imported ones, Import voice…. */
+/**
+ * Settings › Voices › Expressive voices › "Narrator voice": the voices that ship with the app (default first),
+ * Chatterbox's own voice, the imported ones, Import voice….
+ */
 export function voicesSection(info: VoicesInfo, ui: VoicesUiState): string {
   const fallback = info.selectedMissing
-    ? 'Your narrator voice’s file isn’t on this iPhone any more, so Chatterbox Nano uses its built-in voice. Pick another voice or import it again.'
+    ? `Your narrator voice isn’t on this iPhone any more, so Chatterbox Nano uses the default voice (${voiceName(info, null)}). Pick another voice or import it again.`
     : info.note;
+  const preview = (v: ImportedVoiceInfo): string => (v.hasPreview ? 'has a preview' : 'no preview: ▶ uses the model');
+  const shipped = info.list.filter((v) => v.bundled);
+  const imported = info.list.filter((v) => !v.bundled);
   const rows = [
-    row(info, ui, BUILT_IN, 'Built-in voice', `Comes with ${info.engineTitle}`),
-    ...info.list.map((v) => {
-      const bits = [v.importedAt ? `Imported ${shortDate(v.importedAt)}` : 'Imported', v.hasPreview ? 'has a preview' : 'no preview: ▶ uses the model'];
-      return row(info, ui, v.id, v.name, bits.join(' · '));
-    }),
+    ...shipped.map((v) => row(info, ui, v.id, v.name, `Comes with TachiNovel · ${preview(v)}`, false)),
+    row(info, ui, BUILT_IN, ENGINE_VOICE_NAME, `Comes with the ${info.engineTitle} download`, false),
+    ...imported.map((v) => row(info, ui, v.id, v.name, `${v.importedAt ? `Imported ${shortDate(v.importedAt)}` : 'Imported'} · ${preview(v)}`, true)),
   ].join('');
   const importButton = info.importEnabled
     ? '<div class="acts"><button type="button" class="on" data-act="voice-import">Import voice…</button></div>'
     : '<div class="muted">Importing voices isn’t part of this build.</div>';
   return `<h2>Narrator voice (${esc(info.engineTitle)})</h2>
     <div class="card" data-testid="xvoices">
-      <div class="muted">Voices you designed on the PC. The narrator voice is what ${esc(info.engineTitle)} reads with; Kokoro and the Apple voice stay as they are.</div>
+      <div class="muted">The narrator voice is what ${esc(info.engineTitle)} reads with: one that comes with TachiNovel, ${esc(info.engineTitle)}’s own, or one you designed on the PC. Kokoro and the Apple voice stay as they are.</div>
       ${fallback ? `<div class="err" data-testid="xvoices-note">${esc(fallback)}</div>` : ''}
       ${rows}
       ${importButton}
@@ -189,8 +212,8 @@ export function importMessage(result: unknown): string {
 /** The message after playVoiceSample() answered. */
 export function sampleMessage(result: unknown, name: string): string {
   const played = result && typeof result === 'object' ? (result as Record<string, unknown>).played : undefined;
-  if (played === 'preview') return `Playing the preview of “${name}” made on the PC.`;
-  return `${name === 'Built-in voice' ? 'The built-in voice' : `“${name}”`} through Chatterbox Nano: Kokoro reads until the model has loaded.`;
+  if (played === 'preview') return `Playing the preview of “${name}”.`;
+  return `“${name}” through Chatterbox Nano: Kokoro reads until the model has loaded.`;
 }
 
 /** An "Open in TachiNovel" result (native event "voiceImport"). */
@@ -258,17 +281,16 @@ export function createVoiceSection(host: VoiceSectionHost): VoiceSection {
     },
     click(act, id) {
       if (act !== 'voice-delete') ui.armed = '';
-      const target = id === BUILT_IN ? null : id;
       switch (act) {
         case 'voice-import':
           host.call(host.plugin.importVoice(), importMessage);
           return true;
         case 'voice-use':
-          host.apply(host.plugin.selectVoice({ id: target }), `${target ? `“${nameOf(target)}”` : 'The built-in voice'} is the narrator voice now.`);
+          host.apply(host.plugin.selectVoice({ id }), `“${nameOf(id)}” is the narrator voice now.`);
           return true;
         case 'voice-play': {
-          const name = nameOf(target);
-          host.call(host.plugin.playVoiceSample({ id: target }), (r) => sampleMessage(r, name));
+          const name = nameOf(id);
+          host.call(host.plugin.playVoiceSample({ id }), (r) => sampleMessage(r, name));
           return true;
         }
         case 'voice-rename':
