@@ -227,6 +227,11 @@ describe('voice mixer (PC shell)', () => {
     expect(await card.locator('select').count(), 'pieces hidden while off').toBe(0);
     await card.locator('input[data-k="enabled"]').click();
     await expect.poll(() => prefs.narrator.enabled).toBe(true);
+    await card.locator('input[data-k="pacing"]').waitFor({ timeout: 5000 });
+    // One narrator voice by default: the dialogue voices sit, closed, under Advanced.
+    expect(await card.locator('[data-testid="narrator-advanced"]').evaluate((d) => (d as HTMLDetailsElement).open)).toBe(false);
+    expect(prefs.narrator.dialogueVoice).toBeNull();
+    await card.locator('[data-testid="narrator-advanced"] summary').click();
     await card.locator('select[data-k="dialogueVoice"]').waitFor({ timeout: 5000 });
     expect(await card.locator('select[data-k="secondDialogueVoice"]').isDisabled(), 'no second speaker without a dialogue voice').toBe(true);
     await card.locator('select[data-k="dialogueVoice"]').selectOption('am_michael');

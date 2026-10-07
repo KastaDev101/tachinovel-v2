@@ -99,7 +99,8 @@ novel's voice.
 Settings › Voices › **Narrator mode** (off by default). Each piece has its own switch, and **▶ Without /
 ▶ With** reads a short test passage both ways. The Voice Lab has the same A/B with the switches.
 
-- **Dialogue voice:** words in quotation marks are read in another voice (a voice or a mix). A sentence
+- **Dialogue voice (Advanced, off by default: one narrator voice reads the whole story):** words in quotation
+  marks can be read in another voice (a voice or a mix). A sentence
   that mixes speech and narration ("“Run,” she said.") is read in parts with a short gap between them.
   The script marks each sentence (src/core/narration/narrator.ts, on v1's front-end), so resume points and
   highlighting don't change.

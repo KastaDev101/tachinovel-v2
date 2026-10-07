@@ -82,6 +82,11 @@ const CSS = `
 .tn-v .mix-ends{display:flex;justify-content:space-between;color:#a1a1aa;font-size:${fs(13)};margin-top:2px}
 .tn-v .edit{color:#a8b4ff;padding:6px 4px;flex:none;font-size:${fs(15)}}
 .tn-v .btn.danger{color:#ff8a8a}
+.tn-v details.tn-adv{display:block}
+.tn-v details.tn-adv>summary{list-style:none;cursor:pointer}
+.tn-v details.tn-adv>summary::-webkit-details-marker{display:none}
+.tn-v details.tn-adv>summary .sub{display:block;color:#a1a1aa;font-size:${fs(13)};margin-top:2px}
+.tn-v details.tn-adv>.row{padding-left:0;padding-right:0}
 .tn-v .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%);background:rgba(40,40,48,.95);color:#fff;padding:10px 16px;border-radius:12px;font-size:${fs(14)};z-index:95;max-width:86%}
 `;
 
@@ -290,11 +295,12 @@ function narratorCard(info: VoiceSettingsInfo): string {
   const n = info.narrator ?? NARRATOR_OFF;
   const sw = (k: keyof NarratorInfo, label: string, sub: string, disabled = false): string =>
     `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="narrator" data-k="${k}" ${n[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}"></label>`;
-  const pieces = n.enabled
-    ? `<label class="row"><div class="main"><b>Dialogue voice</b><span class="sub">Words in quotation marks</span></div><select data-act="narrator-voice" data-k="dialogueVoice" aria-label="Dialogue voice">${choiceOptions(info, n.dialogueVoice, 'Narrator’s voice')}</select></label>
+  // One narrator voice for the whole story by default; separate dialogue voices are an Advanced option.
+  const advanced = `<details class="row tn-adv" data-testid="narrator-advanced"${n.dialogueVoice ? ' open' : ''}><summary><b>Advanced</b><span class="sub">Separate voices for dialogue</span></summary>
+       <label class="row"><div class="main"><b>Dialogue voice</b><span class="sub">Words in quotation marks (default: the narrator’s voice)</span></div><select data-act="narrator-voice" data-k="dialogueVoice" aria-label="Dialogue voice">${choiceOptions(info, n.dialogueVoice, 'Narrator’s voice')}</select></label>
        <label class="row"><div class="main"><b>Second speaker</b><span class="sub">Every other paragraph of an exchange</span></div><select data-act="narrator-voice" data-k="secondDialogueVoice" aria-label="Second speaker" ${n.dialogueVoice ? '' : 'disabled'}>${choiceOptions(info, n.secondDialogueVoice, 'Same as dialogue')}</select></label>
-       ${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}`
-    : '';
+     </details>`;
+  const pieces = n.enabled ? `${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}${advanced}` : '';
   return `<div class="card" data-testid="voices-narrator">
       ${sw('enabled', 'Narrator mode', 'Dialogue in its own voice, natural pauses, studio sound')}
       ${pieces}
@@ -303,7 +309,7 @@ function narratorCard(info: VoiceSettingsInfo): string {
         <button type="button" class="chip" data-act="narrator-ab" data-v="on">▶ With</button>
       </div></div>
     </div>
-    <p class="note">Compare on a short passage with dialogue. The second speaker changes with each paragraph of a conversation, so now and then it picks the wrong person.</p>`;
+    <p class="note">Compare on a short passage with dialogue. One voice reads the whole story; Advanced can give dialogue its own voice.</p>`;
 }
 
 /** A voice's or a mix's name. */
