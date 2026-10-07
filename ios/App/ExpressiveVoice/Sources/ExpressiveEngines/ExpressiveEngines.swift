@@ -199,7 +199,7 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         } else {
             session = try await manager.makeSession(seed: seed)
         }
-        session.enqueue(StyleMapper.plainText(line.text))
+        session.enqueue(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
         session.finish()
         for try await frame in session.frames {
             if first == nil { first = elapsedMs(since: t0) }

@@ -96,6 +96,30 @@ public enum StyleMapper {
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Pocket TTS's text: an ellipsis ends its generation early (measured 2026-10-07: "Hmm... I've seen farmers do
+    /// better." lost its second half in 1 of 5 renders with the Narrator voice, 5 of 5 with a performed one; with a
+    /// comma 0 of 10). So a trailing-off "…" inside a line becomes a comma, at the end of a line or quote a period,
+    /// and a leading one goes. The hesitation comes back afterwards: NaturalFinish stretches the pause at each
+    /// ellipsis the director marked (350–450 ms).
+    public static func pocketText(_ text: String) -> String {
+        let dots = #"(?:\.\s?\.\s?\.|…)"#
+        var out = text
+        let rules: [(String, String)] = [
+            (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
+            (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
+            (#"\#(dots)+(?=[”"’']|\s*$)"#, "."), // trailing off at the end of a line or quote
+            (#"\#(dots)+(?=\s)"#, ","), // "Hmm… I've", "bite… often"
+            (#"\#(dots)+"#, ", "), // "Hmm…well" (no space)
+            (#",(?:\s*,)+"#, ","), // "paused, …, then" → "paused, then"
+            (#",\s*([.!?])"#, "$1"),
+            (#"\s{2,}"#, " "),
+        ]
+        for (pattern, template) in rules {
+            out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// The tag Chatterbox Nano gets in front of a line (style first, else the emotion), or nil.
     public static func chatterboxLeadTag(_ line: ExpressiveLine) -> String? {
         switch line.style ?? "" {

@@ -41,6 +41,17 @@ final class TextChunkerTests: XCTestCase {
 }
 
 final class StyleMapperTests: XCTestCase {
+    func testPocketTextKeepsEllipsesFromEndingTheLine() {
+        XCTAssertEqual(StyleMapper.pocketText("Oh, is that how you hold a blade? Hmm... I've seen farmers do better."),
+                       "Oh, is that how you hold a blade? Hmm, I've seen farmers do better.")
+        XCTAssertEqual(StyleMapper.pocketText("“Relax, little one. I don’t bite… often.”"), "“Relax, little one. I don’t bite, often.”")
+        XCTAssertEqual(StyleMapper.pocketText("“I don’t know…” she said."), "“I don’t know.” she said.")
+        XCTAssertEqual(StyleMapper.pocketText("…and then the lights went out..."), "and then the lights went out.")
+        XCTAssertEqual(StyleMapper.pocketText("“…what? Ah! Hm… W-wait…?”"), "“what? Ah! Hm, W-wait?”")
+        XCTAssertEqual(StyleMapper.pocketText("Well. . . maybe."), "Well, maybe.")
+        XCTAssertEqual(StyleMapper.pocketText("He paused, …, then went on."), "He paused, then went on.")
+    }
+
     func testPlainTextRemovesSoundTags() {
         XCTAssertEqual(StyleMapper.plainText("“It was a fair price, I swear [chuckle]. Well, almost fair.”"), "“It was a fair price, I swear. Well, almost fair.”")
         XCTAssertEqual(StyleMapper.plainText("[gasp] “It’s coming from the cellar!”"), "“It’s coming from the cellar!”")
