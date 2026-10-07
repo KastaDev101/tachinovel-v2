@@ -65,6 +65,30 @@ export interface ShippedVoice {
   isDefault: boolean;
 }
 
+/** BuiltInVoices/breaths/: the breath pack that ships with the voices. */
+export const BREATHS_DIR = 'breaths';
+const BREATH_MAX_BYTES = 100 * 1024;
+const BREATHS_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Only `.wav` files, each a short clip, all together small. */
+export function checkBreaths(dir: string): string[] {
+  const problems: string[] = [];
+  let total = 0;
+  for (const f of readdirSync(dir).sort()) {
+    const p = path.join(dir, f);
+    if (!f.toLowerCase().endsWith('.wav') || statSync(p).isDirectory()) {
+      problems.push(`${BREATHS_DIR}/${f}: only .wav files belong in BuiltInVoices/${BREATHS_DIR}/`);
+      continue;
+    }
+    const size = statSync(p).size;
+    total += size;
+    if (size > BREATH_MAX_BYTES) problems.push(`${BREATHS_DIR}/${f}: ${Math.round(size / 1024)} KB is too long for a breath`);
+    if (readFileSync(p).subarray(0, 4).toString('latin1') !== 'RIFF') problems.push(`${BREATHS_DIR}/${f}: not a WAV file`);
+  }
+  if (total > BREATHS_MAX_BYTES) problems.push(`${BREATHS_DIR}/: ${Math.round(total / 1024)} KB in all (at most ${BREATHS_MAX_BYTES / 1024} KB)`);
+  return problems;
+}
+
 /** Every shipped voice checked with the app's rules; problems instead of throwing (CI test + `list`). */
 export function checkBuiltInVoices(dir = BUILT_IN_VOICES_DIR): { voices: ShippedVoice[]; problems: string[] } {
   const problems: string[] = [];
@@ -81,6 +105,11 @@ export function checkBuiltInVoices(dir = BUILT_IN_VOICES_DIR): { voices: Shipped
   }
   for (const file of readdirSync(dir).sort()) {
     if (file === INDEX_NAME) continue;
+    // Recorded inhales for natural delivery (HybridSpeechEngine.breathPack): only small 24 kHz WAVs.
+    if (file === BREATHS_DIR && statSync(path.join(dir, file)).isDirectory()) {
+      problems.push(...checkBreaths(path.join(dir, file)));
+      continue;
+    }
     // The whole folder goes into the app: nothing else belongs here.
     if (!file.endsWith(`.${FILE_EXTENSION}`) || statSync(path.join(dir, file)).isDirectory()) {
       problems.push(`${file}: only .${FILE_EXTENSION} files and ${INDEX_NAME} belong in BuiltInVoices/`);

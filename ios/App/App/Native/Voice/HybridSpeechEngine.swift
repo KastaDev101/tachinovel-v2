@@ -138,7 +138,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         } else {
             natural = nil
         }
-        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: prefs.clampedAhead))
+        // The expressive voice renders about a minute ahead while the app is in front: it can't run in the background
+        // (GPU), so locking the phone keeps the Narrator voice for that long before Kokoro takes over.
+        let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : prefs.clampedAhead
+        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: ahead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         scheduler = s
         if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
