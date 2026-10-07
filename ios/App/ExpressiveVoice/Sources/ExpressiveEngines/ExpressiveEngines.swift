@@ -14,6 +14,7 @@
 //  ExpressiveSpeechEngine: Kokoro takes over while the app isn't active).
 //
 
+import CoreML
 import ExpressiveCore
 import FluidAudio
 import Foundation
