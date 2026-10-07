@@ -68,7 +68,7 @@ launch of the seeded app followed by the state's path, and records what happened
 | Check | Fails when |
 |---|---|
 | Errors | an uncaught error or unhandled rejection, a `console.error`, v1's red crash box, or a "Something Went Wrong" state appears |
-| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing) |
+| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing). Before failing, it tries five quick taps (a hidden gesture, like the About version's Voice Lab) and a mouse click (desktop WebKit's tap emulation); either one working makes it a warning |
 | Time | a core call is still pending 5 s after the tap (warning when the UI takes longer than 1.5 s to settle) |
 | Back | the nav bar Back button doesn't leave the screen, or the screen it lands on is blank or broken |
 | Layout | the page scrolls sideways, an element sticks out of the screen unclipped, the end of a tab's content stays behind the tab bar, a fixed control sits under the status bar or on the home indicator, or a fixed control is covered by another element |
