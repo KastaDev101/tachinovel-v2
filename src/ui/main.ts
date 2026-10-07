@@ -15,6 +15,7 @@ import { installDiagnosticsOverlay } from './native/diagnostics-overlay.ts';
 import { installCarHelp } from './native/help-car.ts';
 import { Narration } from './native/narration.ts';
 import { installNarrationOverlay } from './native/narration-overlay.ts';
+import { installOtaUi } from './native/ota-ui.ts';
 import { installRecovery } from './native/recovery.ts';
 import { runSmokeTour } from './native/smoke.ts';
 import { installV1Hooks } from './native/v1-hooks.ts';
@@ -25,6 +26,8 @@ installV1Hooks();
 installDiagnosticsOverlay();
 void installRecovery();
 runSmokeTour();
+// Web updates: personal flavor only (compiled out of the store flavor).
+if (__FLAVOR__ === 'personal') installOtaUi();
 
 if (__ADS__) {
   let narrating = false;

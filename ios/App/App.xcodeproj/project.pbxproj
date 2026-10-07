@@ -42,14 +42,15 @@
 		B39966270AA09334B4F8E5D4 /* HDVoiceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 9BD0FFA38A8356A77E1675A3 /* HDVoiceCore */; };
 		766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */; };
 		87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */; };
+		C534AE8D32C9679FFD437DE2 /* SmokeResponder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */; };
+		97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D19C36D763DD38A51A524D7 /* CarAudio.swift */; };
+		047E190744D786077B79A114 /* DrivePrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */; };
+		EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F88FB48C4F7B70FABE254E /* WebBundle.swift */; };
+		ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB34A7C483D66F43B1D5815 /* Concurrency.swift */; };
 		818DAEB97B80825C0A49A2BE /* ExpressiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EDE257A742849D01FAA618A /* ExpressiveService.swift */; };
 		9AA347654A96C65825B49291 /* ExpressiveSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */; };
 		AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */; };
 		56C547BC5B3C81BBF0794D5A /* ExpressiveVoice in Frameworks */ = {isa = PBXBuildFile; productRef = 6A5794005B80F8EEE8949FA3 /* ExpressiveVoice */; };
-		97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D19C36D763DD38A51A524D7 /* CarAudio.swift */; };
-		ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB34A7C483D66F43B1D5815 /* Concurrency.swift */; };
-		047E190744D786077B79A114 /* DrivePrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */; };
-		C534AE8D32C9679FFD437DE2 /* SmokeResponder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -100,13 +101,14 @@
 		92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSettings.swift"; sourceTree = "<group>"; };
 		D7F3C92A13EB7D44431F05E9 /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };
 		A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/WebContentRecovery.swift"; sourceTree = "<group>"; };
+		20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/SmokeResponder.swift"; sourceTree = "<group>"; };
+		3D19C36D763DD38A51A524D7 /* CarAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/CarAudio.swift"; sourceTree = "<group>"; };
+		6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/DrivePrep.swift"; sourceTree = "<group>"; };
+		82F88FB48C4F7B70FABE254E /* WebBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/WebBundle.swift"; sourceTree = "<group>"; };
+		9AB34A7C483D66F43B1D5815 /* Concurrency.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/Concurrency.swift"; sourceTree = "<group>"; };
 		7EDE257A742849D01FAA618A /* ExpressiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveService.swift"; sourceTree = "<group>"; };
 		C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveSpeechEngine.swift"; sourceTree = "<group>"; };
 		0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/ExpressiveVoicePlugin.swift"; sourceTree = "<group>"; };
-		3D19C36D763DD38A51A524D7 /* CarAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/CarAudio.swift"; sourceTree = "<group>"; };
-		9AB34A7C483D66F43B1D5815 /* Concurrency.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/Concurrency.swift"; sourceTree = "<group>"; };
-		6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/DrivePrep.swift"; sourceTree = "<group>"; };
-		20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/SmokeResponder.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -194,13 +196,14 @@
 				CF7FB3B1C574F31ABF40923B /* VoiceLab.swift */,
 				92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */,
 				A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */,
+				20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */,
+				3D19C36D763DD38A51A524D7 /* CarAudio.swift */,
+				6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */,
+				82F88FB48C4F7B70FABE254E /* WebBundle.swift */,
+				9AB34A7C483D66F43B1D5815 /* Concurrency.swift */,
 				7EDE257A742849D01FAA618A /* ExpressiveService.swift */,
 				C0B2B9A994A7552853907EBB /* ExpressiveSpeechEngine.swift */,
 				0F9E737F62754040BE03E8B2 /* ExpressiveVoicePlugin.swift */,
-				3D19C36D763DD38A51A524D7 /* CarAudio.swift */,
-				9AB34A7C483D66F43B1D5815 /* Concurrency.swift */,
-				6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */,
-				20F9C6B4C4D0FC2B7CBD2C7C /* SmokeResponder.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -354,13 +357,14 @@
 				35FE6311BE4C8C43152A2014 /* VoiceLab.swift in Sources */,
 				7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */,
 				87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */,
+				C534AE8D32C9679FFD437DE2 /* SmokeResponder.swift in Sources */,
+				97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */,
+				047E190744D786077B79A114 /* DrivePrep.swift in Sources */,
+				EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */,
+				ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */,
 				818DAEB97B80825C0A49A2BE /* ExpressiveService.swift in Sources */,
 				9AA347654A96C65825B49291 /* ExpressiveSpeechEngine.swift in Sources */,
 				AB84973AF59C4D3DC512CFE1 /* ExpressiveVoicePlugin.swift in Sources */,
-				97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */,
-				ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */,
-				047E190744D786077B79A114 /* DrivePrep.swift in Sources */,
-				C534AE8D32C9679FFD437DE2 /* SmokeResponder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

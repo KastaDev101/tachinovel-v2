@@ -86,6 +86,37 @@ versioned asset) and uploads it to the rolling release **`altstore-source`** (cr
 a pre-release, never deleted; the file is replaced with `--clobber`). Stable URL for AltStore:
 `https://github.com/KastaDev101/tachinovel-v2/releases/download/altstore-source/apps.json`.
 
+## Web updates (personal flavor)
+
+Most changes are web UI and core JS, so the app can update those without a new IPA. Each release also
+publishes a **signed web update** on the rolling release **`ota`**: `manifest.json` (Ed25519-signed) and
+`web-<build>.json` (the pack: the exact `www/` that went into the IPA). The app checks it 20 s after
+launch (at most every 6 hours), from background refresh, and from More › About › **App Update**:
+
+1. the manifest's signature must verify with the public key in `src/core/ota/public-key.ts`;
+2. it must be for the personal flavor, for this app's **native level** (`src/core/ota/native-level.ts` =
+   `WebBundle.nativeLevel` in Swift; bump both with any incompatible native↔JS change), newer than the
+   bundle running now, and not rolled back before;
+3. the pack's SHA-256 and size must match the signed manifest; paths must stay inside the bundle.
+
+The core stages it under `ota/bundles/<id>/`; `WebBundle.swift` switches to it at the **next launch**.
+If a staged bundle fails to answer the UI's `app.boot` within 30 s on two launches in a row, the app
+falls back to the bundle inside the IPA by itself and never takes that update again. The store flavor
+has none of this (the code is compiled out; the Swift loader is inert without the personal build info).
+
+**Key setup (owner; done 2026-10-07, repeat only to replace the key):**
+
+1. On your PC, outside the repository: `node tools/ota-keygen.ts --out=<a private folder>`. It writes the
+   private key `tachinovel-ota-signing-key.pem` and prints the public key.
+2. `gh secret set OTA_SIGNING_KEY --repo KastaDev101/tachinovel-v2 < <that .pem>`
+3. In a pull request, set `OTA_PUBLIC_KEY` in `src/core/ota/public-key.ts` to the printed public key.
+4. Keep the .pem in a password manager and delete the file. Anyone with it can push code to the app.
+
+Without a public key in the build, the app reports "not set up" and never downloads anything; without the
+secret, releases skip the web update step. If the secret doesn't match the public key, the release fails
+at that step (`tools/ota-pack.ts` verifies its own signature) instead of publishing an update phones reject.
+A new key reaches phones only with a new IPA: an installed app trusts the key it was built with.
+
 ## Verifying a download
 
 ```sh

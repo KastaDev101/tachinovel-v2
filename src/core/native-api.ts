@@ -105,6 +105,19 @@ export interface NativeHostInfo {
   documentsRoot?: string | null;
   /** How the native side launched the core: foreground UI, BGAppRefreshTask, narration-only, … */
   launchReason: 'ui' | 'background-refresh' | 'narration';
+  /**
+   * The web update bundle this launch runs (UI and core), chosen by WebBundle.swift before anything loads;
+   * null or missing = the bundle shipped inside the app (src/core/ota/ota.ts).
+   */
+  webBundle?: string | null;
+}
+
+/** CryptoKit, synchronous (small inputs). */
+export interface NativeCrypto {
+  /** SHA-256 of the UTF-8 bytes of `text`, lowercase hex. */
+  sha256Hex(text: string): string;
+  /** Ed25519: is `signatureBase64` (64 bytes) a signature of the UTF-8 `message` under the raw 32-byte key? */
+  verifyEd25519(publicKeyBase64: string, message: string, signatureBase64: string): boolean;
 }
 
 export interface NativeHost {
@@ -123,6 +136,7 @@ export interface NativeHost {
     clear(id: number): void;
   };
   readonly ui: NativeUiApi;
+  readonly crypto: NativeCrypto;
   log(level: string, line: string): void;
   /** Read-only files shipped in the app bundle under public/core/ (relative path), or null. */
   readonly bundle: {
