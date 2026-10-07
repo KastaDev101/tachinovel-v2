@@ -51,6 +51,7 @@ public class TachiNativePlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "TachiNative"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "consumeRecovery", returnType: CAPPluginReturnPromise),
     ]
 
     /// Navigation guard for the app's web view (defense in depth: chapter HTML is sanitized and the CSP
@@ -76,5 +77,11 @@ public class TachiNativePlugin: CAPPlugin, CAPBridgedPlugin {
             UIApplication.shared.isIdleTimerDisabled = on
             call.resolve()
         }
+    }
+
+    /// How many times iOS killed the web view's content process since the UI last asked (the page was
+    /// reloaded; src/ui/native/recovery.ts then restores the screen it was on). Read once.
+    @objc func consumeRecovery(_ call: CAPPluginCall) {
+        call.resolve(["terminations": WebContentRecoveryState.consume()])
     }
 }

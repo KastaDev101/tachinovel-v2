@@ -17,6 +17,8 @@ import { installStatusBar } from './status-bar.ts';
 
 interface TachiNativePlugin {
   setKeepAwake(opts: { on: boolean }): Promise<void>;
+  /** Web content process terminations since the last call (WebContentRecovery.swift). */
+  consumeRecovery(): Promise<{ terminations: number }>;
 }
 
 export const TachiNative = registerPlugin<TachiNativePlugin>('TachiNative');

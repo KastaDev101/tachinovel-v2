@@ -12,14 +12,24 @@ import UIKit
 import WebKit
 
 class MainViewController: CAPBridgeViewController {
+    /// WKWebView keeps its navigation delegate weakly: this keeps the recovery wrapper alive.
+    private var recovery: WebContentRecovery?
+
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(CorePlugin())
         bridge?.registerPluginInstance(TachiNativePlugin())
         bridge?.registerPluginInstance(NarrationPlugin())
         bridge?.registerPluginInstance(StorePlugin())
+        // WebContent process killed by iOS → Capacitor reloads; the UI then restores its screen (WebContentRecovery.swift).
+        if let webView, let capacitorDelegate = webView.navigationDelegate {
+            let wrapper = WebContentRecovery(wrapping: capacitorDelegate)
+            recovery = wrapper
+            webView.navigationDelegate = wrapper
+        }
         view.backgroundColor = UIColor(red: 0x1b / 255, green: 0x1b / 255, blue: 0x1f / 255, alpha: 1)
         #if DEBUG
         installSmokeHook()
+        installSmokeWebContentKill()
         #endif
     }
 
@@ -76,3 +86,20 @@ struct TachiRouter: Router {
         return CoreHost.shared.localAppDir.appendingPathComponent(dir).appendingPathComponent(name).path
     }
 }
+
+#if DEBUG
+extension MainViewController {
+    /// CI smoke (ci/ios-sim-smoke.sh): `-tachiSmokeKillWebContentAfter <seconds>` kills the web view's content
+    /// process like iOS does under memory pressure (WebKit SPI, Debug builds only), so the run proves that
+    /// WebContentRecovery + src/ui/native/recovery.ts bring the UI back.
+    func installSmokeWebContentKill() {
+        let seconds = UserDefaults.standard.double(forKey: "tachiSmokeKillWebContentAfter")
+        guard seconds > 0 else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            CoreHost.shared.log.error("smoke: killing the WebContent process")
+            _ = self?.webView?.perform(NSSelectorFromString("_killWebContentProcess"))
+        }
+    }
+}
+#endif
