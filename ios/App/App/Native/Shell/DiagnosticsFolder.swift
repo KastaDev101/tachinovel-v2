@@ -12,7 +12,7 @@
 //  The web side is src/ui/native/qa-folder.ts.
 //
 
-import Capacitor
+@preconcurrency import Capacitor
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
