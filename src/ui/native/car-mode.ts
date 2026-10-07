@@ -17,50 +17,51 @@ import { sharedClient } from '../capacitor-client.ts';
 import { formatSpeed, presetFor, snapSpeed, SPEED_MAX, SPEED_MIN, SPEED_PRESETS, SPEED_STEP, VOLUME_MAX_PERCENT, volumePercent } from './listen-controls.ts';
 import { Narration, type AudioNovelInfo, type NarrationState } from './narration.ts';
 import { closeVoicePanels, openVoicePicker, voiceLabel } from './voices-ui.ts';
+import { fs } from './type.ts';
 
 const CSS = `
 .tn-car{position:fixed;inset:0;z-index:80;background:#121215;color:#f2f2f7;display:flex;flex-direction:column;
   padding:env(safe-area-inset-top) max(16px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px,env(safe-area-inset-left));
-  font:17px -apple-system,system-ui;-webkit-user-select:none;user-select:none;transform:translateY(100%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+  font:${fs(17)} -apple-system,system-ui;-webkit-user-select:none;user-select:none;transform:translateY(100%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
 .tn-car.is-open{transform:none}
 .tn-car[hidden]{display:none}
 .tn-car button{font:inherit;color:inherit;background:transparent;border:0;-webkit-tap-highlight-color:transparent}
-.tn-car .hd{display:flex;align-items:center;justify-content:space-between;height:52px}
-.tn-car .hd h1{font-size:20px;font-weight:600;margin:0}
+.tn-car .hd{display:flex;align-items:center;justify-content:space-between;min-height:52px}
+.tn-car .hd h1{font-size:${fs(20)};font-weight:600;margin:0}
 .tn-car .x{width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center}
 .tn-car .now{background:#1f1f25;border-radius:20px;padding:16px;margin:8px 0 12px}
-.tn-car .t1{font-size:20px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tn-car .t1{font-size:${fs(20)};font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tn-car .t2{color:#a1a1aa;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tn-car .eng{display:inline-block;font-size:12px;padding:2px 8px;border-radius:9px;background:rgba(168,180,255,.18);color:#c7cdff;margin-top:6px}
+.tn-car .eng{display:inline-block;font-size:${fs(12)};padding:2px 8px;border-radius:9px;background:rgba(168,180,255,.18);color:#c7cdff;margin-top:6px}
 .tn-car .bar{height:28px;display:flex;align-items:center;margin-top:10px}
 .tn-car .bar div{height:6px;border-radius:3px;background:rgba(255,255,255,.15);flex:1;position:relative;overflow:hidden}
 .tn-car .bar i{position:absolute;left:0;top:0;bottom:0;background:#a8b4ff;border-radius:3px}
-.tn-car .tm{display:flex;justify-content:space-between;color:#a1a1aa;font-size:13px;font-variant-numeric:tabular-nums}
+.tn-car .tm{display:flex;justify-content:space-between;color:#a1a1aa;font-size:${fs(13)};font-variant-numeric:tabular-nums}
 .tn-car .ctl{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
 .tn-car .ctl button{width:68px;height:68px;border-radius:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08)}
 .tn-car .ctl .pp{width:88px;height:88px;border-radius:44px;background:#a8b4ff;color:#15151a}
 .tn-car .ctl button:active{transform:scale(.94)}
 .tn-car .spd{display:flex;gap:6px;margin-top:8px;justify-content:space-between}
-.tn-car .spd button{flex:1;padding:8px 0;border-radius:14px;background:rgba(255,255,255,.08);font-size:15px;font-variant-numeric:tabular-nums}
+.tn-car .spd button{flex:1;padding:8px 0;border-radius:14px;background:rgba(255,255,255,.08);font-size:${fs(15)};font-variant-numeric:tabular-nums}
 .tn-car .spd button.on{background:#a8b4ff;color:#15151a}
 .tn-car .lc{background:#1f1f25;border-radius:20px;padding:12px 16px 14px;margin:0 0 12px}
-.tn-car .lc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;font-size:15px}
+.tn-car .lc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;font-size:${fs(15)}}
 .tn-car .lc-row label{font-weight:600}
 .tn-car .lc-v{color:#c7cdff;font-variant-numeric:tabular-nums}
 .tn-car .lc-sld{width:100%;margin:8px 0 2px;accent-color:#a8b4ff;height:28px}
 .tn-car .list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding:0 4px 12px}
-.tn-car .sec{color:#a1a1aa;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin:14px 4px 6px}
+.tn-car .sec{color:#a1a1aa;font-size:${fs(13)};text-transform:uppercase;letter-spacing:.04em;margin:14px 4px 6px}
 .tn-car .row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px;border-radius:14px;background:#1b1b20;margin-bottom:8px;min-height:64px}
 .tn-car .row:active{background:#26262d}
 .tn-car .row img,.tn-car .row .ph{width:40px;height:60px;border-radius:6px;object-fit:cover;background:#2a2a31;flex:none}
 .tn-car .row b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tn-car .row span{display:block;color:#a1a1aa;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tn-car .row span{display:block;color:#a1a1aa;font-size:${fs(14)};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tn-car .row div{min-width:0;flex:1}
 .tn-car .link{width:100%;padding:16px;border-radius:16px;background:#a8b4ff;color:#15151a;font-weight:600;margin-top:6px}
-.tn-car .note{color:#a1a1aa;font-size:14px;margin:8px 4px;line-height:1.4}
-.tn-car .folder{display:flex;justify-content:space-between;align-items:center;color:#a1a1aa;font-size:14px;margin:4px 4px 0}
+.tn-car .note{color:#a1a1aa;font-size:${fs(14)};margin:8px 4px;line-height:1.4}
+.tn-car .folder{display:flex;justify-content:space-between;align-items:center;color:#a1a1aa;font-size:${fs(14)};margin:4px 4px 0}
 .tn-car .folder button{color:#a8b4ff;padding:8px 0 8px 12px}
-.tn-car .voice{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);font-size:15px}
+.tn-car .voice{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);font-size:${fs(15)}}
 .tn-car .voice span{color:#a1a1aa}
 `;
 

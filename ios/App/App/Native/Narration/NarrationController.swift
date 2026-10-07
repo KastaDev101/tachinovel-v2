@@ -511,6 +511,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             d["pluginId"] = ch.pluginId
             d["novelPath"] = ch.novelPath
             d["chapterPath"] = ch.chapterPath
+            d["novelName"] = ch.novelName
             d["chapterName"] = ch.chapterName
         }
         d["engine"] = mode.rawValue
