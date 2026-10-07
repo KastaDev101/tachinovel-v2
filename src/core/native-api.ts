@@ -71,6 +71,9 @@ export interface NativeUiApi {
   /** JSON {title?, message?, actions:[{title, destructive?}], cancel?} → chosen index, -1 = cancel. */
   actionSheet(optsJson: string, cb: NativeCallback<number>): void;
   alert(optsJson: string, cb: NativeCallback<number>): void;
+  /** Go to the home screen and end the app (App Update › Restart Now: the next launch opens the staged web
+   * update). Absent before native level 2. */
+  quitApp?(): void;
   /** JSON {text?, url?}. */
   share(optsJson: string, cb: NativeCallback<true>): void;
   shareFile(absPath: string, cb: NativeCallback<true>): void;

@@ -58,10 +58,20 @@ export function installOtaUi(): void {
       label.value = 'Checking…';
       void client
         .call('ota.check', { force: true })
-        .then((r) => {
+        .then(async (r) => {
           const res = r as CheckResult;
-          const title = res.status === 'staged' ? 'Update Ready' : res.status === 'error' ? 'Couldn’t Check' : 'App Update';
-          return client.call('native.alert', { title, message: res.message, actions: [{ title: 'OK' }] });
+          if (res.status === 'staged') {
+            // Restart Now: the app closes itself; tap its icon and it opens on the update.
+            const pick = (await client.call('native.alert', {
+              title: 'Update Ready',
+              message: `${res.message}\n\nRestart now to use it: the app closes, then tap its icon to open the new version.`,
+              actions: [{ title: 'Restart Now' }, { title: 'Later' }],
+            })) as { index?: number } | null;
+            if (pick?.index === 0) await client.call('ota.restart');
+            return;
+          }
+          const title = res.status === 'error' ? 'Couldn’t Check' : 'App Update';
+          await client.call('native.alert', { title, message: res.message, actions: [{ title: 'OK' }] });
         })
         .catch(() => undefined)
         .finally(() => {
