@@ -626,6 +626,17 @@ export class CrawlEnv {
       if (method === 'products') return { products: [] };
       return {};
     }
+    // Settings › Voices › Expressive voices (ExpressiveVoicePlugin): two engines, not downloaded.
+    if (plugin === 'ExpressiveVoice' && method === 'status') {
+      return {
+        engines: [
+          { id: 'chatterbox-nano', title: 'Chatterbox Nano', installed: false, supported: true, bytes: 700_000_000, download: { state: 'idle' } },
+          { id: 'neutts-2e', title: 'NeuTTS-2E', installed: false, supported: true, bytes: 1_400_000_000, download: { state: 'idle' } },
+        ],
+        device: { memoryMB: 180, availableMB: 2600 },
+        storage: { freeMB: 40_000 },
+      };
+    }
     if (plugin === 'StatusBar' && method === 'getInfo') return { visible: true, style: 'DARK', overlays: true };
     return {};
   }

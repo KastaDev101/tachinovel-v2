@@ -1,0 +1,100 @@
+# Expressive-voice benchmark (docs/expressive-tts.md): the EXPERIMENTAL expressive engines of the Voice Lab
+# (Chatterbox Nano, NeuTTS-2E) plus Pocket TTS, on the macOS runner (Apple Silicon VM: a rough proxy for
+# the iPhone, without the Neural Engine).
+#
+#   - ExpressiveCore unit tests (swift test, release build shared with the benchmark binary);
+#   - per engine, in its own process: download the pinned model files with the app's downloader (Hugging
+#     Face revision + SHA-256 per file; never cached, never committed), load cold, render the Voice Lab's
+#     samples (narration, emotional dialogue, a ~3-minute passage), reload warm; report load, time to first
+#     audio, × real time, memory, audio sanity;
+#   - ASR sanity check: whisper.cpp (pinned, same as voice-quality) transcribes every line, WER per sample;
+#   - optional Kokoro baseline on the same runner (the voice-quality check), for the A/B numbers.
+# Artifact "expressive-bench": report.json + one WAV per line per engine (listen to them) + summary.md.
+#
+# macOS minutes are scarce, so this never runs by itself:
+#   - manual: Actions › expressive-bench › Run workflow (once this file is on main), or
+#     `gh workflow run expressive-bench.yml --ref <branch>`;
+#   - on a pull request: add the label `expressive-bench` (each time the label is added = one run).
+
+name: expressive-bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: Engines to benchmark (space-separated)
+        type: string
+        default: chatterbox-nano neutts-2e pocket-tts
+      budget:
+        description: Max seconds of rendering per engine
+        type: string
+        default: '900'
+      kokoro_baseline:
+        description: Also run the Kokoro check on the same runner (about 8 more minutes)
+        type: boolean
+        default: true
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: expressive-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: expressive-bench (macOS)
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'expressive-bench'
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      ENGINES: ${{ inputs.engines || 'chatterbox-nano neutts-2e pocket-tts' }}
+      BUDGET: ${{ inputs.budget || '900' }}
+      KOKORO_BASELINE: ${{ github.event_name == 'pull_request' || inputs.kokoro_baseline }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Fixture lines (the Voice Lab samples)
+        run: node tools/expressive-fixtures.ts .cache/expressive-fixtures.json
+      - name: Model lock is consistent
+        run: node tools/expressive-models.ts --check
+      - name: Build expressive-bench (release)
+        run: swift build -c release --package-path ios/App/ExpressiveVoice --product expressive-bench
+      - name: ExpressiveCore unit tests
+        run: swift test -c release --package-path ios/App/ExpressiveVoice
+      - name: Benchmark (one process per engine)
+        run: bash ci/expressive-bench.sh build/expressive-bench
+      - name: Cache whisper.cpp
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/whisper
+          key: whisper-v1.9.4-base.en-q8_0-${{ runner.os }}
+      - name: ASR round trip (whisper.cpp v1.9.4, base.en q8_0)
+        run: bash ci/expressive-asr.sh build/expressive-bench
+      - name: Kokoro baseline (same runner)
+        if: env.KOKORO_BASELINE == 'true'
+        continue-on-error: true
+        run: |
+          npm ci
+          node tools/fetch-voices.ts
+          node tools/voice-fixtures.ts .cache/voice-fixtures.json
+          swift build -c release --package-path ios/App/HDVoice --product kokoro-check
+          bash ci/voice-check.sh build/voice-check
+      - name: Summary
+        if: always()
+        run: |
+          node ci/expressive-bench-report.ts build/expressive-bench .cache/expressive-fixtures.json build/voice-check/report.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: expressive-bench
+          path: |
+            build/expressive-bench
+            build/voice-check/report.json
+          if-no-files-found: ignore
+          retention-days: 14

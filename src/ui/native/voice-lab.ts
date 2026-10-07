@@ -7,6 +7,7 @@
  */
 import type { SourceBlock } from '@v1tts/frontend.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
+import { openExpressiveLab } from './expressive-lab.ts';
 import { Narration, type NarratorInfo } from './narration.ts';
 import { fs } from './type.ts';
 
@@ -211,7 +212,9 @@ export function openVoiceLab(): void {
         <button type="button" data-act="stop">Stop</button>
         <button type="button" data-act="reset">Reset numbers</button>
         <button type="button" data-act="copy">Copy report</button>
-      </div>`;
+      </div>
+      <h2>Experimental</h2>
+      <div class="acts"><button type="button" data-act="expressive">Experimental engines (expressive voices) ›</button></div>`;
   };
 
   const refresh = async (): Promise<void> => {
@@ -246,6 +249,9 @@ export function openVoiceLab(): void {
         return;
       case 'stop':
         void Narration.stop();
+        return;
+      case 'expressive':
+        openExpressiveLab();
         return;
       case 'test':
         void playTestPassage();

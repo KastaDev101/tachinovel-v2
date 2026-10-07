@@ -22,6 +22,7 @@ import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { groupVoices } from './voice-groups.ts';
+import { openExpressiveLab } from './expressive-lab.ts';
 import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
 import { blendVoice, cleanMixName, mixPercent, mixProblem, mixShares, suggestedMixName, usableMixes } from './voice-mix.ts';
 import {
@@ -353,6 +354,8 @@ export function openVoicesScreen(): void {
       ${status}
       <div class="sec">Narrator mode</div>
       ${narratorCard(info)}
+      <div class="sec">Experimental</div>
+      <div class="card"><button type="button" class="row" data-act="expressive"><div class="main"><b>Expressive voices (experimental)</b><span class="sub">More emotion, much slower. Downloaded in the app on Wi-Fi when you try one; the size is shown first</span></div><span aria-hidden="true">›</span></button></div>
       <div class="sec">Fallback</div>
       ${appleCard(info)}
       <div class="sec">Pronunciations</div>
@@ -408,6 +411,9 @@ export function openVoicesScreen(): void {
         return;
       case 'mix-new':
         openMixer(info, null, () => void load());
+        return;
+      case 'expressive':
+        openExpressiveLab();
         return;
       case 'narrator-ab':
         void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch((err: unknown) => toast(`Couldn't play: ${err instanceof Error ? err.message : String(err)}`));
