@@ -118,11 +118,12 @@ final class ExpressiveService {
         downloads[id] = .downloading(DownloadProgress(bytesDone: 0, bytesTotal: model.totalBytes, filesDone: 0, filesTotal: model.files.count, currentFile: ""))
         beginBackgroundTime()
         let task = Task.detached(priority: .utility) { [weak self] in
-            var failure: String?
+            let failure: String?
             do {
                 try await store.install(model, wifiOnly: true) { p in
                     DispatchQueue.main.async { self?.downloads[id] = .downloading(p) }
                 }
+                failure = nil
             } catch is CancellationError {
                 failure = ModelDownloadError.cancelled.localizedDescription
             } catch {
