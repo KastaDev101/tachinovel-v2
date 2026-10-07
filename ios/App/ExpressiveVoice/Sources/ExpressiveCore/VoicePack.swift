@@ -5,15 +5,17 @@
 //  A .tnvoice file is UNTRUSTED data from outside the app. Nothing in it is ever executed; this file
 //  checks everything before the app keeps it:
 //   - size cap on the whole file and on every part, BEFORE anything is decompressed;
-//   - ZIP: one disk, no ZIP64, no encryption, stored or deflate only, at most 8 entries, entries may not
-//     overlap, every name must be exactly one of manifest.json / voice.safetensors / preview.m4a (no
+//   - ZIP: one disk, no ZIP64, no encryption, stored or deflate only, at most 136 entries, entries may not
+//     overlap, every name must be exactly one of manifest.json / voice.safetensors / preview.m4a /
+//     nonverbal|breaths/manifest.json, or a plain snippet file name inside nonverbal/ or breaths/ (no deeper
 //     folders, no "..", no duplicates: nothing is ever extracted to a path taken from the file), CRC-32
 //     and the exact uncompressed size checked;
 //   - manifest.json: schema (format, version, engine, engine version, model weights, name, createdAt,
 //     parts), every part listed with its size and SHA-256 and every listed part present;
 //   - voice.safetensors: header parsed with bounds checks (length, JSON, offsets), exactly the tensor
 //     names, dtypes and shapes the engine's precomputed voice has, tensors tiling the payload with no
-//     gap, overlap or trailing bytes, finite floats, token ids inside the speech vocabulary.
+//     gap, overlap or trailing bytes, finite floats, token ids inside the speech vocabulary;
+//   - nonverbal/ and breaths/ (optional): VoiceSnippets.swift.
 //  The engine spec is a table (VoicePackEngine.all): a Kokoro voice pack could be added the same way later.
 //
 
@@ -73,20 +75,43 @@ public enum VoicePackFormat {
     public static let conditioningName = "voice.safetensors"
     public static let previewName = "preview.m4a"
 
-    public static let maxFileBytes = 8 * 1_048_576
+    public static let maxFileBytes = 16 * 1_048_576
     public static let maxManifestBytes = 64 * 1024
     public static let maxConditioningBytes = 2 * 1_048_576
     public static let maxPreviewBytes = 3 * 1_048_576
-    public static let maxEntries = 8
+    /// manifest, voice, preview, two folder manifests and 2 × 64 snippets, with a little room.
+    public static let maxEntries = 136
     public static let maxSafetensorsHeaderBytes = 64 * 1024
     public static let maxNameCharacters = 40
 
-    /// The only names a .tnvoice may contain, with each one's size cap and manifest role.
+    // Optional nonverbal/ and breaths/ folders (VoiceSnippets.swift).
+    public static let maxSnippetsPerFolder = 64
+    public static let maxSnippetSeconds = 2.5
+    /// All snippet audio of a pack together (uncompressed).
+    public static let maxSnippetBytesTotal = 8 * 1_048_576
+    /// One snippet file: 2.5 s of 48 kHz 24-bit mono is 360 KB.
+    public static let maxSnippetFileBytes = 512 * 1024
+    public static let snippetSampleRates = 16_000...48_000
+    public static let snippetBits: Set<Int> = [16, 24]
+
+    /// The only top-level names (and folder manifests) a .tnvoice may contain, with each one's size cap and
+    /// manifest role. Snippet audio has its own rule (snippetEntry).
     static let allowedEntries: [String: (limit: Int, role: String?)] = [
         manifestName: (maxManifestBytes, nil),
         conditioningName: (maxConditioningBytes, "conditioning"),
         previewName: (maxPreviewBytes, "preview"),
+        "nonverbal/manifest.json": (maxManifestBytes, "nonverbal"),
+        "breaths/manifest.json": (maxManifestBytes, "breaths"),
     ]
+
+    /// "nonverbal/chuckle-01.wav" → (.nonverbal, "chuckle-01.wav"): a snippet's folder and bare file name, or nil
+    /// for any other name (no deeper paths, no "..", only .wav/.caf).
+    static func snippetEntry(_ name: String) -> (kind: SnippetKind, file: String)? {
+        let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, let kind = SnippetKind(rawValue: String(parts[0])) else { return nil }
+        let file = String(parts[1])
+        return VoiceSnippets.isSnippetFileName(file) ? (kind, file) : nil
+    }
 }
 
 public enum TensorDType: String, Sendable, Equatable {
@@ -174,6 +199,11 @@ public struct VoicePackContents: Sendable {
     public let preview: Data?
     /// Lowercase hex SHA-256 of `conditioning`.
     public let conditioningSHA256: String
+    /// Decoded nonverbal sounds and breaths (empty when the pack has none).
+    public let extras: VoiceExtras
+    /// The checked nonverbal/ and breaths/ files as they were in the pack ("nonverbal/manifest.json",
+    /// "nonverbal/chuckle-01.wav", …), for the store to keep.
+    public let extraFiles: [String: Data]
 }
 
 public enum VoicePack {
@@ -195,8 +225,19 @@ public enum VoicePack {
         }
         let bytes = [UInt8](data)
         let entries = try TinyZip.entries(bytes)
+        // Snippet audio: the declared sizes together under the cap before anything is decompressed.
+        let snippetBytes = entries.reduce(0) { VoicePackFormat.snippetEntry($1.name) == nil ? $0 : $0 + $1.uncompressedSize }
+        guard snippetBytes <= VoicePackFormat.maxSnippetBytesTotal else {
+            throw VoicePackError.tooLarge(bytes: snippetBytes, limit: VoicePackFormat.maxSnippetBytesTotal)
+        }
         var parts: [String: [UInt8]] = [:]
+        var snippets: [SnippetKind: [String: [UInt8]]] = [:]
         for entry in entries {
+            if let s = VoicePackFormat.snippetEntry(entry.name) {
+                guard snippets[s.kind]?[s.file] == nil else { throw VoicePackError.duplicateEntry(entry.name) }
+                snippets[s.kind, default: [:]][s.file] = try TinyZip.extract(entry, from: bytes, limit: VoicePackFormat.maxSnippetFileBytes)
+                continue
+            }
             guard let allowed = VoicePackFormat.allowedEntries[entry.name] else { throw VoicePackError.unexpectedEntry(entry.name) }
             guard parts[entry.name] == nil else { throw VoicePackError.duplicateEntry(entry.name) }
             parts[entry.name] = try TinyZip.extract(entry, from: bytes, limit: allowed.limit)
@@ -217,8 +258,24 @@ public enum VoicePack {
         try validateConditioning(conditioning, engine: parsed.manifest.engine)
         let preview = parts[VoicePackFormat.previewName]
         if let preview { try checkPreview(preview) }
+        // nonverbal/ and breaths/: each folder's manifest is a listed part (hashed above) and lists every file in it.
+        var decoded: [SnippetKind: [VoiceSnippet]] = [:]
+        var extraFiles: [String: Data] = [:]
+        for kind in SnippetKind.allCases {
+            let manifestPath = kind.manifestPath
+            let files = snippets[kind] ?? [:]
+            guard let folderManifest = parts[manifestPath] else {
+                if let stray = files.keys.sorted().first { throw VoicePackError.manifest("\(kind.rawValue)/\(stray) is not listed") }
+                continue
+            }
+            decoded[kind] = try VoiceSnippets.read(kind, manifest: folderManifest, files: files)
+            extraFiles[manifestPath] = Data(folderManifest)
+            for (file, body) in files { extraFiles["\(kind.rawValue)/\(file)"] = Data(body) }
+        }
         return VoicePackContents(manifest: parsed.manifest, conditioning: Data(conditioning), preview: preview.map { Data($0) },
-                                 conditioningSHA256: sha256Hex(conditioning))
+                                 conditioningSHA256: sha256Hex(conditioning),
+                                 extras: VoiceExtras(nonverbal: decoded[.nonverbal] ?? [], breaths: decoded[.breaths] ?? []),
+                                 extraFiles: extraFiles)
     }
 
     // MARK: - Manifest
@@ -258,7 +315,7 @@ public enum VoicePack {
         guard let createdAt = root["createdAt"] as? String, createdAt.count <= 40, parseDate(createdAt) != nil else {
             throw VoicePackError.manifest("createdAt is not a date")
         }
-        guard let list = root["parts"] as? [Any], (1...2).contains(list.count) else { throw VoicePackError.manifest("parts must list 1 or 2 files") }
+        guard let list = root["parts"] as? [Any], (1...4).contains(list.count) else { throw VoicePackError.manifest("parts must list 1 to 4 files") }
         var parts: [Part] = []
         for item in list {
             guard let o = item as? [String: Any], let path = o["path"] as? String else { throw VoicePackError.manifest("a part has no path") }
@@ -379,6 +436,13 @@ enum JSONNumbers {
         let d = n.doubleValue
         guard d.isFinite, d == d.rounded(), abs(d) <= 9_007_199_254_740_991 else { return nil }
         return Int(d)
+    }
+
+    /// A finite JSON number (never a boolean).
+    static func double(_ value: Any?) -> Double? {
+        guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return nil }
+        let d = n.doubleValue
+        return d.isFinite ? d : nil
     }
 }
 

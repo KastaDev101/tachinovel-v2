@@ -417,6 +417,27 @@ final class ExpressiveService {
     func refreshVoices() {
         voiceList = voices.list(engine: VoicePackEngine.chatterboxNano.id)
         selectedVoice = voices.selection(engine: VoicePackEngine.chatterboxNano.id)
+        extrasCache = nil
+    }
+
+    private var extrasCache: (id: String, extras: VoiceExtras)?
+
+    /// The narrator voice's nonverbal sounds and breaths, for natural delivery (branch natural-delivery):
+    /// `ExpressiveService.shared.narratorExtras()?.nonverbalSnippets("chuckle")`, `….breathSnippets()` (mono Float
+    /// samples, checked like the rest of the voice). nil for Chatterbox's own voice, or when the voice's extras
+    /// can't be read (logged). Read once per voice, then kept until the voices change. Main thread.
+    func narratorExtras() -> VoiceExtras? {
+        let id = selectedVoice.flatMap { voiceExists($0) ? $0 : nil } ?? defaultVoice
+        if id == Self.builtInVoice { return nil }
+        if let cached = extrasCache, cached.id == id { return cached.extras }
+        do {
+            let extras = BundledVoices.isBundledID(id) ? try bundled.extras(id) : try voices.extras(id, engine: VoicePackEngine.chatterboxNano.id)
+            extrasCache = (id: id, extras: extras)
+            return extras
+        } catch {
+            log.error("expressive: extras of \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     /// Shipped voices for Chatterbox Nano (checked on the first call).
@@ -472,11 +493,15 @@ final class ExpressiveService {
         [
             "id": v.id, "name": v.name, "engine": v.engine, "createdAt": v.createdAt, "importedAt": v.importedAt, "bytes": v.bytes,
             "hasPreview": v.hasPreview, "madeFor": v.madeFor ?? NSNull(), "sourceFile": v.sourceFile ?? NSNull(), "bundled": false,
+            "nonverbal": v.nonverbalCount ?? 0, "breaths": v.breathCount ?? 0,
         ]
     }
 
     static func shippedJSON(_ e: BundledVoices.Entry) -> [String: Any] {
-        ["id": e.id, "name": e.name, "engine": e.engine, "createdAt": e.createdAt, "hasPreview": e.hasPreview, "bundled": true, "isDefault": e.isDefault]
+        [
+            "id": e.id, "name": e.name, "engine": e.engine, "createdAt": e.createdAt, "hasPreview": e.hasPreview, "bundled": true, "isDefault": e.isDefault,
+            "nonverbal": e.nonverbalCount, "breaths": e.breathCount,
+        ]
     }
 
     /// The Voice Lab's "Narrator voice" block: shipped voices (default first), then imported ones.

@@ -41,6 +41,11 @@ public struct ImportedVoice: Codable, Equatable, Sendable {
     public var hasPreview: Bool
     public var madeFor: String?
     public var sourceFile: String?
+    /// Nonverbal sounds and breaths kept with the voice (VoiceSnippets.swift).
+    public var nonverbalCount: Int?
+    public var breathCount: Int?
+    /// SHA-256 of each folder manifest at import ("nonverbal/manifest.json" → hex), checked when loaded.
+    public var extras: [String: String]?
 }
 
 public final class ImportedVoiceStore: Sendable {
@@ -99,15 +104,30 @@ public final class ImportedVoiceStore: Sendable {
         let staging = engineDir(engine).appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
+        var extrasSHA: [String: String] = [:]
+        for kind in SnippetKind.allCases {
+            if let m = contents.extraFiles[kind.manifestPath] { extrasSHA[kind.manifestPath] = VoicePack.sha256Hex(m) }
+        }
         let info = ImportedVoice(
             id: id, name: previous?.name ?? contents.manifest.name, engine: engine, engineVersion: contents.manifest.engine.engineVersion,
             createdAt: contents.manifest.createdAt, importedAt: previous?.importedAt ?? Self.iso(now), sha256: contents.conditioningSHA256,
             bytes: contents.conditioning.count, hasPreview: contents.preview != nil, madeFor: contents.manifest.madeFor,
-            sourceFile: sourceFile.map { VoicePack.cleanName($0) }
+            sourceFile: sourceFile.map { VoicePack.cleanName($0) },
+            nonverbalCount: contents.extras.nonverbal.count, breathCount: contents.extras.breaths.count,
+            extras: extrasSHA.isEmpty ? nil : extrasSHA
         )
         try contents.conditioning.write(to: staging.appendingPathComponent(VoicePackFormat.conditioningName), options: .atomic)
         if let preview = contents.preview {
             try preview.write(to: staging.appendingPathComponent(VoicePackFormat.previewName), options: .atomic)
+        }
+        // nonverbal/ and breaths/ as checked (names validated by VoicePack.read; checked again here before any path is built).
+        for (path, body) in contents.extraFiles {
+            guard VoicePackFormat.snippetEntry(path) != nil || SnippetKind.allCases.contains(where: { $0.manifestPath == path }) else {
+                throw VoicePackError.unexpectedEntry(path)
+            }
+            let url = staging.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try body.write(to: url, options: .atomic)
         }
         try Self.encode(info).write(to: staging.appendingPathComponent(Self.infoName), options: .atomic)
         let dest = try directory(id, engine: engine)
@@ -129,6 +149,31 @@ public final class ImportedVoiceStore: Sendable {
         let dir = try directory(id, engine: engine)
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
         if selection(engine: engine) == id { try setSelection(nil, engine: engine) }
+    }
+
+    /// The voice's nonverbal sounds and breaths, read and checked again (folder manifests against their SHA-256 at
+    /// import, then VoiceSnippets.read). `.none` for a voice without them.
+    public func extras(_ id: String, engine: String) throws -> VoiceExtras {
+        guard let info = voice(id, engine: engine) else { throw VoicePackError.notFound(id) }
+        let dir = try directory(id, engine: engine)
+        var found: [SnippetKind: [VoiceSnippet]] = [:]
+        for kind in SnippetKind.allCases {
+            guard let sha = info.extras?[kind.manifestPath] else { continue }
+            let folder = dir.appendingPathComponent(kind.rawValue, isDirectory: true)
+            guard let manifest = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")), manifest.count <= VoicePackFormat.maxManifestBytes,
+                  VoicePack.sha256Hex(manifest) == sha else { throw VoicePackError.checksum(kind.manifestPath) }
+            let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0 != "manifest.json" }
+            guard names.count <= VoicePackFormat.maxSnippetsPerFolder else { throw VoicePackError.manifest("too many files in \(kind.rawValue)/") }
+            var files: [String: [UInt8]] = [:]
+            for name in names where VoiceSnippets.isSnippetFileName(name) {
+                let url = folder.appendingPathComponent(name)
+                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                guard size <= VoicePackFormat.maxSnippetFileBytes else { throw VoicePackError.tooLarge(bytes: size, limit: VoicePackFormat.maxSnippetFileBytes) }
+                files[name] = [UInt8](try Data(contentsOf: url))
+            }
+            found[kind] = try VoiceSnippets.read(kind, manifest: [UInt8](manifest), files: files)
+        }
+        return VoiceExtras(nonverbal: found[.nonverbal] ?? [], breaths: found[.breaths] ?? [])
     }
 
     public func previewURL(_ id: String, engine: String) -> URL? {
@@ -217,6 +262,8 @@ public final class BundledVoices: @unchecked Sendable { // the scan cache is loc
         public let isDefault: Bool
         /// SHA-256 of the voice data (voice.safetensors) when it was listed.
         public let sha256: String
+        public let nonverbalCount: Int
+        public let breathCount: Int
     }
 
     public static let indexName = "voices.json"
@@ -252,6 +299,9 @@ public final class BundledVoices: @unchecked Sendable { // the scan cache is loc
         return contents
     }
 
+    /// A shipped voice's nonverbal sounds and breaths (read from the app and checked again).
+    public func extras(_ id: String) throws -> VoiceExtras { try contents(id).extras }
+
     private func scan() -> (entries: [Entry], problems: [String]) {
         lock.lock()
         defer { lock.unlock() }
@@ -271,7 +321,7 @@ public final class BundledVoices: @unchecked Sendable { // the scan cache is loc
                     let c = try VoicePack.read(fileAt: directory.appendingPathComponent(name))
                     entries.append(Entry(id: Self.id(forFileName: name), fileName: name, name: c.manifest.name, engine: c.manifest.engine.id,
                                          createdAt: c.manifest.createdAt, hasPreview: c.preview != nil, isDefault: name == defaultName,
-                                         sha256: c.conditioningSHA256))
+                                         sha256: c.conditioningSHA256, nonverbalCount: c.extras.nonverbal.count, breathCount: c.extras.breaths.count))
                 } catch {
                     problems.append("\(name): \(error.localizedDescription)")
                 }
