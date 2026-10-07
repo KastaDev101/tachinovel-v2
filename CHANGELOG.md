@@ -9,6 +9,32 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.3] - 2026-10-07
+
+### Added
+
+- UI tests: the native-only surfaces with real taps on the simulator (document picker Cancel and swipe
+  down, the next popup after a swipe, share sheet Close, reader brightness and keep-awake, Listen with the
+  mini player and the car player's controls); the UI test job also fails on a crash report.
+- Narrator voices for Chatterbox Nano: Settings › Voices › Expressive voices › Narrator voice. Voices can ship
+  inside the app (`ios/App/App/BuiltInVoices/`, added with one command: `export_voice.py … --bundle-into
+  ../tachinovel-v2 --default` or `node tools/built-in-voices.ts add <file> --default`); one of them is the
+  default narrator voice, and Chatterbox's own voice stays selectable. Shipped voices can be chosen, not renamed
+  or deleted, and are checked like imports when first listed and when loaded.
+- Imported voices (personal flavor): voices designed on the PC (`tachinovel-narrator/py/export_voice.py`
+  writes a `.tnvoice` file to iCloud Drive › TachiNovel-Voices) come in with Import voice… (Files) or Open in
+  TachiNovel from Files and the share sheet. Each has ▶ Play (its preview, or Chatterbox Nano reading a line),
+  Use, Rename and Delete. The chosen voice is what Chatterbox Nano reads with, kept across restarts; if its
+  file is missing or invalid when the model loads, the default voice reads and the screen says why. Kokoro and
+  Apple voice settings are separate and unchanged. docs/voice-import.md has the format and the steps.
+
+### Security
+
+- A `.tnvoice` file is checked before anything is kept: size caps before decompressing, only three allowed
+  ZIP entries (no paths, no duplicates, no overlaps, no encryption or ZIP64), manifest schema with SHA-256
+  per part, engine and model version, and the voice tensors' header parsed with bounds checks against the
+  exact names, dtypes and shapes Chatterbox Nano's built-in voice has. Nothing in it is executed.
+
 ## [2.0.0-alpha.2] - 2026-10-07
 
 ### Added
@@ -266,5 +292,6 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...HEAD
+[2.0.0-alpha.3]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
 [2.0.0-alpha.2]: https://github.com/KastaDev101/tachinovel-v2/releases/tag/v2.0.0-alpha.2

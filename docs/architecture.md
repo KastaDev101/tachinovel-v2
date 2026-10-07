@@ -72,7 +72,8 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
    script), `updates.backgroundCheck` (BGAppRefreshTask, 25 s budget), `app.background` (flush),
    `app.openLink` (deep links → v1's `app.deepLink` event).
 4. **Plugin JS APIs:** `Narration` (src/ui/native/narration.ts), `Store` (src/ui/monetization/entitlements.ts),
-   `TachiNative.setKeepAwake`.
+   `TachiNative.setKeepAwake`, `ExpressiveVoice` (src/ui/native/expressive-lab.ts: the experimental expressive
+   engines and, personal flavor, imported voices — docs/voice-import.md).
 
 ### v1 Scriptable → v2 mapping
 | v1 (Scriptable) | v2 |
@@ -129,6 +130,10 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   the web bundle and covers by flat file name; `openUrl` and web-view navigations leaving the app accept
   http(s) only; deep links are validated by the core (installed sources only, paths on the source's own
   site); the web view is inspectable in Debug builds only.
+- **Imported voices** (personal flavor): `.tnvoice` files from Files/the share sheet are untrusted data,
+  checked in Swift before anything is kept (size caps before decompressing, ZIP entry allow-list, manifest
+  schema + SHA-256 per part, safetensors header bounds and the exact tensor layout); nothing in them is
+  executed (docs/voice-import.md).
 - **Review:** OWASP Mobile Top 10 findings and their status: [security-review.md](security-review.md).
 
 ## 5. Reusing v1
@@ -158,6 +163,7 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
 | Sources | Built-in Stonescape, LNReader repo seeded, JS plugins + declarative specs | Declarative specs only; nothing bundled or seeded |
 | JS plugin host | `www/core/lib/plugin-host.js` | Not built; `importLazy` refuses |
 | Ads | never | only with `--ads` |
+| Imported voices (`.tnvoice`, docs/voice-import.md) | Settings › Voices › Expressive voices › Import voice…, Open in TachiNovel | compiled out; native ignores opened files (shipped voices still apply to Chatterbox Nano) |
 
 ## 7. Build, test, run (Windows)
 
