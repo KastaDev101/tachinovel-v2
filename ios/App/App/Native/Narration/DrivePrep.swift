@@ -173,7 +173,7 @@ final class ChapterRenderer: @unchecked Sendable {
         self.items = items
         self.voice = voice
         self.narrator = narrator
-        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone) : nil
+        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
         self.folder = folder
         stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
     }

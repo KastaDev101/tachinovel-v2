@@ -173,6 +173,8 @@ export interface NarratorInfo {
   roomTone: boolean;
   /** Short pauses between phrases: 'clauses' (the default) or 'off'. */
   phraseBreaks: 'off' | 'clauses';
+  /** Pause lengths with pacing on: 'relaxed' (the default) or 'natural'. */
+  pacingStyle: 'relaxed' | 'natural';
 }
 
 /** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */

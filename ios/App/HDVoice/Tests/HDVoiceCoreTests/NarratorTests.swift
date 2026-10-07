@@ -11,7 +11,7 @@ final class NarratorTests: XCTestCase {
     func resolve(_ id: String) -> String? { VoiceCatalog.voice(id) != nil ? id : nil }
 
     func testOffChangesNothing() {
-        let off = NarratorSettings(dialogueVoice: "am_michael")
+        let off = NarratorSettings(enabled: false, dialogueVoice: "am_michael")
         XCTAssertNil(NarratorPlan.parts(for: mixed, settings: off, resolve: resolve))
         XCTAssertEqual(NarratorPlan.pause(for: mixed, settings: off), 0.7, accuracy: 1e-9)
         XCTAssertEqual(NarratorPlan.rate(1.25, for: mixed, settings: off), 1.25)
@@ -45,6 +45,7 @@ final class NarratorTests: XCTestCase {
 
     func testPacingAndJitterSwitches() {
         var s = NarratorSettings.all(dialogueVoice: nil)
+        s.pacingStyle = "natural" // `mixed` carries the natural pause only
         XCTAssertEqual(NarratorPlan.pause(for: mixed, settings: s), 0.52, accuracy: 1e-9)
         XCTAssertEqual(NarratorPlan.rate(1, for: mixed, settings: s), 1.028, accuracy: 1e-6)
         s.pacing = false
@@ -70,9 +71,44 @@ final class NarratorTests: XCTestCase {
         XCTAssertNil(NarratorPlan.parts(for: withRuns, settings: on) { $0 }, "phoneme runs can't be split by text")
     }
 
+    func testDefaultsAreKastasPicks() throws {
+        let d = NarratorSettings()
+        XCTAssertTrue(d.enabled)
+        XCTAssertNil(d.dialogueVoice, "one narrator voice")
+        XCTAssertNil(d.secondDialogueVoice)
+        XCTAssertTrue(d.pacing)
+        XCTAssertEqual(d.pacingStyle, "relaxed")
+        XCTAssertEqual(d.phraseBreaks, "clauses")
+        XCTAssertFalse(d.jitter)
+        XCTAssertTrue(d.polish)
+        XCTAssertEqual(d.compressorRatio, 1.5)
+        XCTAssertFalse(d.roomTone)
+        XCTAssertEqual(VoicePreferences().narrator, d)
+        // Settings saved before these defaults (no version, e.g. narrator mode off with jitter on) become them.
+        let before = try JSONDecoder().decode(NarratorSettings.self, from: Data(#"{"enabled":false,"jitter":true,"pacing":true}"#.utf8))
+        XCTAssertEqual(before, d)
+        // Choices saved with the current version are kept.
+        var mine = d
+        mine.enabled = false
+        mine.pacingStyle = "natural"
+        mine.compressorRatio = 2
+        XCTAssertEqual(try JSONDecoder().decode(NarratorSettings.self, from: JSONEncoder().encode(mine)), mine)
+        XCTAssertEqual(NarratorSettings(compressorRatio: 9).compressorRatio, 4, "clamped")
+        XCTAssertEqual(NarratorSettings(pacingStyle: "weird").pacingStyle, "relaxed")
+    }
+
+    func testRelaxedAndNaturalPacing() {
+        let s = NarratorSentence(text: "The bridge held.", runs: nil, pauseMs: 700, pacedMs: 820, relaxedMs: 1200)
+        XCTAssertEqual(NarratorPlan.pause(for: s, settings: NarratorSettings()), 1.2, accuracy: 1e-9, "relaxed by default")
+        XCTAssertEqual(NarratorPlan.pause(for: s, settings: NarratorSettings(pacingStyle: "natural")), 0.82, accuracy: 1e-9)
+        XCTAssertEqual(NarratorPlan.pause(for: s, settings: NarratorSettings(pacing: false)), 0.7, accuracy: 1e-9)
+        let same = NarratorSentence(text: "Chapter One", runs: nil, pauseMs: 1300)
+        XCTAssertEqual(NarratorPlan.pause(for: same, settings: NarratorSettings()), 1.3, accuracy: 1e-9, "titles unchanged")
+    }
+
     func testSettingsPersistAndDeletingAMixClearsIt() throws {
         var p = VoicePreferences()
-        XCTAssertFalse(p.narrator.enabled, "off by default")
+        XCTAssertTrue(p.narrator.enabled, "on by default (Kasta's pick)")
         let mix = try p.saveCustomVoice(id: nil, name: "Gruff", a: "am_fenrir", b: "am_michael", percent: 30)
         p.narrator = .all(dialogueVoice: mix.id, secondDialogueVoice: "bf_emma", roomTone: true)
         let back = try JSONDecoder().decode(VoicePreferences.self, from: JSONEncoder().encode(p))
@@ -82,7 +118,7 @@ final class NarratorTests: XCTestCase {
         try p.deleteCustomVoice(id: mix.id)
         XCTAssertNil(p.narrator.dialogueVoice)
         XCTAssertEqual(p.narrator.secondDialogueVoice, "bf_emma")
-        let old = try JSONDecoder().decode(VoicePreferences.self, from: Data(#"{"defaultVoice":"af_heart","narrator":{"enabled":true}}"#.utf8))
+        let old = try JSONDecoder().decode(VoicePreferences.self, from: Data(#"{"defaultVoice":"af_heart","narrator":{"version":2,"enabled":true}}"#.utf8))
         XCTAssertEqual(old.narrator, NarratorSettings(enabled: true), "missing narrator keys take their defaults")
     }
 }

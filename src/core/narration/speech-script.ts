@@ -15,7 +15,8 @@
  * Narrator mode (narrator.ts; native uses each only when its switch is on):
  *   role/parts dialogue in quotation marks: the whole sentence, or its quoted and narrated parts,
  *   speaker    1 on every other paragraph of an exchange (alternating dialogue voices),
- *   pacedMs    the smarter pause, when it differs from pauseMs,
+ *   pacedMs    the smarter pause ("natural" preset), when it differs from pauseMs,
+ *   relaxedMs  the same with the "relaxed" preset (the default), when it differs from pauseMs,
  *   rate       a deterministic ±3 % speed factor (prosody jitter),
  *   phrases    the sentence in phrases with a short pause after each (phrase breaks; not for sentences with
  *              lexicon phoneme runs, which can't be split by text).
@@ -52,6 +53,8 @@ export interface SpeechItem {
   speaker?: 1;
   /** Narrator mode: the smarter pause (ms at 1.0×), when it differs from pauseMs. */
   pacedMs?: number;
+  /** Narrator mode: the smarter pause with the "relaxed" preset (the default), when it differs from pauseMs. */
+  relaxedMs?: number;
   /** Narrator mode: prosody jitter, a speed factor in [0.97, 1.03] (absent: 1). */
   rate?: number;
   /** Narrator mode: phrase breaks, when the sentence splits into more than one phrase. */
@@ -122,6 +125,8 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
   items.forEach((it, i) => {
     const paced = pacedPause(meta, i);
     if (paced !== it.pauseMs) it.pacedMs = paced;
+    const relaxed = pacedPause(meta, i, 'relaxed');
+    if (relaxed !== it.pauseMs) it.relaxedMs = relaxed;
     if (speakers[i] === 1 && meta[i]?.dialogue) it.speaker = 1;
     const rate = rateJitter(it.hash);
     if (rate !== 1) it.rate = rate;

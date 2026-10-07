@@ -68,10 +68,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         var pacedMs: Double? = nil
         var rateJitter: Double? = nil
         var phrases: [NarratorSentence.Phrase]? = nil
+        var relaxedMs: Double? = nil
 
         var narrator: NarratorSentence {
             NarratorSentence(text: text, runs: runs, quoted: quoted, parts: parts, speaker: speaker, pauseMs: pauseMs, pacedMs: pacedMs, rate: rateJitter,
-                             phrases: phrases)
+                             phrases: phrases, relaxedMs: relaxedMs)
         }
 
         static func parseRuns(_ raw: Any?) -> [SpeechRun]? {
@@ -102,6 +103,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
                 item.speaker = (o["speaker"] as? NSNumber)?.intValue == 1 ? 1 : 0
                 item.pacedMs = (o["pacedMs"] as? NSNumber)?.doubleValue
                 item.rateJitter = (o["rate"] as? NSNumber)?.doubleValue
+                item.relaxedMs = (o["relaxedMs"] as? NSNumber)?.doubleValue
                 let phrases: [NarratorSentence.Phrase] = (o["phrases"] as? [Any] ?? []).compactMap { p in
                     guard let po = p as? [String: Any], let t = po["text"] as? String else { return nil }
                     return NarratorSentence.Phrase(text: t, pauseMs: (po["pauseMs"] as? NSNumber)?.doubleValue ?? 0)
@@ -154,7 +156,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
 
     /// The pause after an item: narrator mode's smarter pause when Pacing is on.
     private func pause(of it: Item) -> TimeInterval {
-        narrator.usesPacing ? (it.pacedAfter ?? it.pauseAfter) : it.pauseAfter
+        guard narrator.usesPacing, let s = it.segment else { return it.pauseAfter }
+        return NarratorPlan.pause(for: s.narrator, settings: narrator)
     }
 
     /// One engine segment: narrator mode decides the voices of its parts and its speed.

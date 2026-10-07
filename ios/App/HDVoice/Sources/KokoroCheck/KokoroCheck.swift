@@ -190,7 +190,7 @@ struct KokoroCheck {
         }
 
         // Narrator mode on the ASR sentences, through the same plan and polish as the app.
-        var polish = NarrationPolish(sampleRate: 24_000, roomTone: false)
+        var polish = NarrationPolish(sampleRate: 24_000, roomTone: false, compressorRatio: checkedNarrator.compressorRatio)
         for f in fixtures where f.asr == true {
             let s = f.narrator
             let speed = NarratorPlan.rate(1, for: s, settings: checkedNarrator)

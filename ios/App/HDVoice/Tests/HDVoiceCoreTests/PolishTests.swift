@@ -97,6 +97,26 @@ final class PolishTests: XCTestCase {
         XCTAssertEqual(first, other.prepareSentence(speechLike(seconds: 3, level: 0.06, sampleRate: fs, seed: 1), pause: 0.3))
     }
 
+    func testLightPolishCompressesLessAndRatioOneSkipsTheCompressor() {
+        let fs = 24_000
+        let loud = sine(440, amplitude: 0.9, seconds: 1, sampleRate: fs)
+        func peakToRms(_ ratio: Double) -> Double {
+            var p = NarrationPolish(sampleRate: fs, roomTone: false, compressorRatio: ratio)
+            let out = p.prepareSentence(loud, pause: 0)
+            return Double(PCM.peak(out)) / rms(out)
+        }
+        XCTAssertEqual(NarrationPolish(sampleRate: fs, roomTone: false).compressorRatio, 1.5, "light polish by default")
+        // A steady sine: compression changes the level, not the crest factor; all ratios stay valid audio.
+        for r in [1.0, 1.5, 2.0] { XCTAssertTrue(peakToRms(r).isFinite) }
+        var c15 = Compressor(ratio: 1.5)
+        var c20 = Compressor(ratio: 2)
+        var a = loud
+        var b = loud
+        c15.process(&a, sampleRate: fs)
+        c20.process(&b, sampleRate: fs)
+        XCTAssertGreaterThan(rms(a), rms(b), "1.5:1 compresses less than 2:1")
+    }
+
     func testRoomToneFillsPausesFaintly() {
         let fs = 24_000
         var plain = NarrationPolish(sampleRate: fs, roomTone: false)

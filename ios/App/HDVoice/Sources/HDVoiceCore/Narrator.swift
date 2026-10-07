@@ -12,8 +12,13 @@
 
 import Foundation
 
+/// Defaults are Kasta's picks from the PC tuning rounds (narrator repo py/tune.py, 43ddb12/d172d45): narrator
+/// mode on, one narrator voice, relaxed pacing, phrase breaks, light polish (1.5:1), no jitter, no room tone.
 public struct NarratorSettings: Sendable, Equatable, Codable {
-    /// Narrator mode as a whole (off by default; the pieces below only count when it is on).
+    /// Settings saved before these defaults (no version) are replaced by them.
+    public static let currentVersion = 2
+    public var version: Int
+    /// Narrator mode as a whole (on by default; the pieces below only count when it is on).
     public var enabled: Bool
     /// Quoted speech in this voice (a built-in id or a mix id; nil = the narrator's voice).
     public var dialogueVoice: String?
@@ -29,9 +34,15 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
     public var roomTone: Bool
     /// Short pauses between the phrases of a sentence: "clauses" (Kasta's pick, the default) or "off".
     public var phraseBreaks: String
+    /// Pause lengths with pacing on: "relaxed" (Kasta's pick, the default) or "natural" (PacingPreset).
+    public var pacingStyle: String
+    /// The polish compressor's ratio (1.5 = light; 1 or less = no compressor, EQ and loudness stay).
+    public var compressorRatio: Double
 
-    public init(enabled: Bool = false, dialogueVoice: String? = nil, secondDialogueVoice: String? = nil, pacing: Bool = true, jitter: Bool = true,
-                polish: Bool = true, roomTone: Bool = false, phraseBreaks: String = "clauses") {
+    public init(enabled: Bool = true, dialogueVoice: String? = nil, secondDialogueVoice: String? = nil, pacing: Bool = true, jitter: Bool = false,
+                polish: Bool = true, roomTone: Bool = false, phraseBreaks: String = "clauses", pacingStyle: String = "relaxed",
+                compressorRatio: Double = 1.5) {
+        version = Self.currentVersion
         self.enabled = enabled
         self.dialogueVoice = dialogueVoice
         self.secondDialogueVoice = secondDialogueVoice
@@ -40,12 +51,20 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
         self.polish = polish
         self.roomTone = roomTone
         self.phraseBreaks = phraseBreaks == "off" ? "off" : "clauses"
+        self.pacingStyle = pacingStyle == "natural" ? "natural" : "relaxed"
+        self.compressorRatio = compressorRatio.isFinite ? min(4, max(1, compressorRatio)) : 1.5
     }
 
-    /// Tolerant decoding: missing keys take their defaults.
+    /// Tolerant decoding: missing keys take their defaults; settings from before the current defaults
+    /// (no version) become the defaults.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = NarratorSettings()
+        guard let v = try? c.decode(Int.self, forKey: .version), v >= Self.currentVersion else {
+            self = d
+            return
+        }
+        version = v
         enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? d.enabled
         dialogueVoice = try? c.decode(String.self, forKey: .dialogueVoice)
         secondDialogueVoice = try? c.decode(String.self, forKey: .secondDialogueVoice)
@@ -54,6 +73,9 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
         polish = (try? c.decode(Bool.self, forKey: .polish)) ?? d.polish
         roomTone = (try? c.decode(Bool.self, forKey: .roomTone)) ?? d.roomTone
         phraseBreaks = (try? c.decode(String.self, forKey: .phraseBreaks)) == "off" ? "off" : d.phraseBreaks
+        pacingStyle = (try? c.decode(String.self, forKey: .pacingStyle)) == "natural" ? "natural" : d.pacingStyle
+        let ratio = (try? c.decode(Double.self, forKey: .compressorRatio)) ?? d.compressorRatio
+        compressorRatio = ratio.isFinite ? min(4, max(1, ratio)) : d.compressorRatio
     }
 
     public var usesPacing: Bool { enabled && pacing }
@@ -62,9 +84,9 @@ public struct NarratorSettings: Sendable, Equatable, Codable {
     public var usesRoomTone: Bool { enabled && polish && roomTone }
     public var usesPhraseBreaks: Bool { enabled && phraseBreaks != "off" }
 
-    /// Every piece on, with these dialogue voices (Voice Lab "B").
+    /// Every piece on (jitter too), with these dialogue voices (CI and tests).
     public static func all(dialogueVoice: String?, secondDialogueVoice: String? = nil, roomTone: Bool = false) -> NarratorSettings {
-        NarratorSettings(enabled: true, dialogueVoice: dialogueVoice, secondDialogueVoice: secondDialogueVoice, roomTone: roomTone)
+        NarratorSettings(enabled: true, dialogueVoice: dialogueVoice, secondDialogueVoice: secondDialogueVoice, jitter: true, roomTone: roomTone)
     }
 }
 
@@ -106,9 +128,12 @@ public struct NarratorSentence: Sendable, Equatable {
     public let pauseMs: Double
     public let pacedMs: Double?
     public let rate: Double?
+    /// The pause with the "relaxed" pacing preset (nil: the same as pauseMs).
+    public let relaxedMs: Double?
 
     public init(text: String, runs: [SpeechRun]?, quoted: Bool = false, parts: [Part]? = nil, speaker: Int = 0, pauseMs: Double, pacedMs: Double? = nil,
-                rate: Double? = nil, phrases: [Phrase]? = nil) {
+                rate: Double? = nil, phrases: [Phrase]? = nil, relaxedMs: Double? = nil) {
+        self.relaxedMs = relaxedMs
         self.phrases = phrases
         self.text = text
         self.runs = runs
@@ -164,7 +189,14 @@ public enum NarratorPlan {
 
     /// The pause after a sentence, in seconds at 1.0×.
     public static func pause(for s: NarratorSentence, settings: NarratorSettings) -> TimeInterval {
-        let ms = settings.usesPacing ? (s.pacedMs ?? s.pauseMs) : s.pauseMs
+        let ms: Double
+        if !settings.usesPacing {
+            ms = s.pauseMs
+        } else if settings.pacingStyle == "natural" {
+            ms = s.pacedMs ?? s.pauseMs
+        } else {
+            ms = s.relaxedMs ?? s.pauseMs
+        }
         return max(0, ms) / 1000
     }
 
@@ -189,7 +221,7 @@ extension VoicePreferences {
         let first = n.dialogueVoice.flatMap { engineVoice($0) } ?? "-"
         let second = n.secondDialogueVoice.flatMap { engineVoice($0) } ?? "-"
         let flags = [n.pacing, n.jitter, n.polish, n.usesRoomTone].map { $0 ? "1" : "0" }.joined()
-        return "\(voice)|narrator:\(first),\(second),\(flags)"
+        return "\(voice)|narrator:\(first),\(second),\(flags),\(n.pacingStyle),\(n.phraseBreaks),\(n.compressorRatio)"
     }
 
     public func preparedVoice(forNovel key: String?) -> String { preparedVoice(voice: voice(forNovel: key)) }

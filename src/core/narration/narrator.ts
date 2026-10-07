@@ -206,13 +206,25 @@ export interface PacedSentence {
   quoted: boolean;
 }
 
+/**
+ * Pacing presets (ms at 1.0×), as in the narrator repo's py/tune.py (43ddb12): "natural" is the original
+ * pacing; "relaxed" (Kasta's pick, the app's default) stretches pauses inside a paragraph by 1.25 and gives
+ * paragraph ends more room. Titles and scene breaks are unchanged either way.
+ */
+export const PACING_PRESETS = {
+  natural: { sentenceScale: 1, quickExchangeMs: 520, longParagraphMs: 820, paragraphMs: 700 },
+  relaxed: { sentenceScale: 1.25, quickExchangeMs: 650, longParagraphMs: 1200, paragraphMs: 1000 },
+} as const;
+export type PacingStyle = keyof typeof PACING_PRESETS;
+
 /** Pauses at or above this are titles, scene breaks and system messages: kept as they are. */
 const STRUCTURAL_MS = 900;
 /** The front-end's pause between halves of an over-long sentence (frontend.ts DEFAULT_PAUSES.clause). */
 const CLAUSE_MS = 160;
 
 /** Smarter pause after sentence `i` (ms at 1.0×). */
-export function pacedPause(list: readonly PacedSentence[], i: number): number {
+export function pacedPause(list: readonly PacedSentence[], i: number, style: PacingStyle = 'natural'): number {
+  const preset = PACING_PRESETS[style];
   const s = list[i];
   if (!s) return 0;
   const next = list[i + 1];
@@ -224,9 +236,9 @@ export function pacedPause(list: readonly PacedSentence[], i: number): number {
     // End of a paragraph.
     const paragraph = list.filter((x) => x.block === s.block);
     const chars = paragraph.reduce((n, x) => n + x.text.length, 0);
-    if (s.dialogue && next.dialogue && chars < 140) return 520; // a quick exchange of short lines
-    if (chars > 450) return 820; // let a long paragraph land
-    return Math.max(s.pauseMs, 700);
+    if (s.dialogue && next.dialogue && chars < 140) return preset.quickExchangeMs; // a quick exchange of short lines
+    if (chars > 450) return preset.longParagraphMs; // let a long paragraph land
+    return Math.max(s.pauseMs, preset.paragraphMs);
   }
   let ms: number;
   if (end === '…' || end === '—' || end === '-') ms = 500;
@@ -237,7 +249,7 @@ export function pacedPause(list: readonly PacedSentence[], i: number): number {
   if (length < 40) ms *= 0.8;
   else if (length > 180) ms *= 1.15;
   if (s.quoted !== next.quoted) ms = Math.max(ms, 420); // the speaker changes
-  return Math.round(ms);
+  return Math.round(ms * preset.sentenceScale);
 }
 
 /** Speed factor in [0.97, 1.03] from a sentence's 24-bit text hash (3 decimals; 1 for a zero hash). */

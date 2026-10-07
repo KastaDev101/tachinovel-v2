@@ -188,6 +188,7 @@ function defaultVoicePrefs(): {
     polish: boolean;
     roomTone: boolean;
     phraseBreaks: string;
+    pacingStyle: string;
   };
 } {
   return {
@@ -197,7 +198,17 @@ function defaultVoicePrefs(): {
     carButtons: 'chapters',
     novelVoices: {},
     customVoices: [],
-    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false, phraseBreaks: 'clauses' },
+    narrator: {
+      enabled: true,
+      dialogueVoice: null,
+      secondDialogueVoice: null,
+      pacing: true,
+      jitter: false,
+      polish: true,
+      roomTone: false,
+      phraseBreaks: 'clauses',
+      pacingStyle: 'relaxed',
+    },
   };
 }
 
@@ -550,6 +561,7 @@ export class CrawlEnv {
             for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
             for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
             if (n.phraseBreaks === 'off' || n.phraseBreaks === 'clauses') v.narrator.phraseBreaks = n.phraseBreaks;
+            if (n.pacingStyle === 'relaxed' || n.pacingStyle === 'natural') v.narrator.pacingStyle = n.pacingStyle;
           }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
