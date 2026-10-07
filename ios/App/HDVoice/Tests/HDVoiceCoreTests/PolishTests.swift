@@ -53,7 +53,7 @@ final class PolishTests: XCTestCase {
             var q = make()
             var x = sine(f, amplitude: 0.5, seconds: 1, sampleRate: Int(fs))
             q.process(&x)
-            let settled = Array(x[x.count / 2...])
+            let settled = Array(x[(x.count / 2)...])
             return 20 * log10(rms(settled) / (0.5 / 2.0.squareRoot()))
         }
         XCTAssertLessThan(gain({ .highPass(frequency: 70, q: 0.707, sampleRate: fs) }, 20), -18, "rumble cut")
