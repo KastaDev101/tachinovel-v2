@@ -163,6 +163,29 @@ public struct HybridScheduler: Sendable {
         return nil
     }
 
+    /// Render the pending segments right after `i` (up to `last`) in the same call as `i` (one model call for a short
+    /// run of sentences). Only while `i` is the render in flight; stops at the first segment that isn't pending.
+    /// Returns the ones taken: each is finished with `renderDone`, or handed back with `releaseRender`.
+    public mutating func extendRender(_ i: Int, through last: Int) -> [Int] {
+        guard rendering == i else { return [] }
+        // Never past the render-ahead window.
+        let upper = min(last, count - 1, (playing ?? (cursor - 1)) + config.ahead)
+        var taken: [Int] = []
+        var j = i + 1
+        while j <= upper, slots[j] == .pending {
+            slots[j] = .rendering
+            taken.append(j)
+            j += 1
+        }
+        return taken
+    }
+
+    /// Hand back a segment taken with `extendRender` (it is rendered on its own later).
+    public mutating func releaseRender(_ j: Int) {
+        guard slots.indices.contains(j), slots[j] == .rendering, rendering != j else { return }
+        slots[j] = .pending
+    }
+
     /// A render finished. A segment Apple took in the meantime stays taken (the audio is discarded).
     public mutating func renderDone(_ i: Int, ok: Bool) {
         if rendering == i { rendering = nil }

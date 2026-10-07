@@ -252,26 +252,95 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
+            // Short sentences of one paragraph go to the model together (one call, so it paces them as one
+            // thought: no "Relax, little one." [stop] "I don't bite…" [stop]); NaturalFinish cuts them apart again.
+            let group = chunkGroup(from: i, limit: id.maxCharactersPerCall)
+            let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
-            let text = StyleMapper.plainText(segments[i].natural?.params.say ?? segments[i].kokoroText)
+            let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
             ExpressiveService.shared.synthesize(ExpressiveLine(text: text), engine: id) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     switch result {
                     case .success(let a) where a.sampleRate == 24_000 && !a.samples.isEmpty:
-                        self.rendered(i, gen: g, voice: id.rawValue, result: .success(KokoroAudio(samples: a.samples, sampleRate: a.sampleRate, synthMs: a.synthMs)))
+                        let audio = KokoroAudio(samples: a.samples, sampleRate: a.sampleRate, synthMs: a.synthMs)
+                        if members.count > 1 {
+                            self.renderedGroup(members, gen: g, voice: id.rawValue, audio: audio)
+                        } else {
+                            self.rendered(i, gen: g, voice: id.rawValue, result: .success(audio))
+                        }
                     case .success:
                         self.log.error("voice: \(id.rawValue, privacy: .public) gave unusable audio for sentence \(i); Kokoro renders it")
-                        self.renderWithKokoro(i, gen: g)
+                        self.expressiveFailed(members, gen: g)
                     case .failure(let error):
                         self.log.error("voice: \(id.rawValue, privacy: .public) failed on sentence \(i): \(error.localizedDescription, privacy: .public); Kokoro renders it")
-                        self.renderWithKokoro(i, gen: g)
+                        self.expressiveFailed(members, gen: g)
                     }
                 }
             }
             return
         }
         renderWithKokoro(i, gen: g)
+    }
+
+    /// The text a voice reads: the director's shaped text for the expressive voice, the sentence for Kokoro.
+    private static func readText(_ seg: SpeechSegment, expressive: Bool) -> String {
+        expressive ? (seg.natural?.params.say ?? seg.kokoroText) : seg.kokoroText
+    }
+
+    /// Sentence i and the ones right after it that share one model call: natural delivery only, never the session's
+    /// first sentence (it starts alone, fast), never across a paragraph's end, at most `limit` characters in all.
+    private func chunkGroup(from i: Int, limit: Int) -> [Int] {
+        guard natural != nil, i > 0 else { return [i] }
+        var out = [i]
+        var length = Self.readText(segments[i], expressive: true).count
+        var j = i
+        while j + 1 < segments.count, (segments[j].naturalPause ?? segments[j].pauseAfter) < 0.6 {
+            let next = Self.readText(segments[j + 1], expressive: true).count
+            guard length + 1 + next <= limit else { break }
+            length += 1 + next
+            j += 1
+            out.append(j)
+        }
+        return out
+    }
+
+    /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.
+    private func expressiveFailed(_ members: [Int], gen g: Int) {
+        for j in members.dropFirst() { scheduler?.releaseRender(j) }
+        renderWithKokoro(members[0], gen: g)
+    }
+
+    /// One model call for several sentences: NaturalFinish finds the sentence ends in the audio and returns one buffer
+    /// per sentence (the director's per-line controls apply when the cuts are confident).
+    private func renderedGroup(_ members: [Int], gen g: Int, voice: String, audio: KokoroAudio) {
+        guard g == gen, scheduler != nil else { return }
+        guard var nf = natural, audio.sampleRate == nf.sampleRate else {
+            // Natural delivery went away mid-call (a settings change restarts the session anyway).
+            for j in members.dropFirst() { scheduler?.releaseRender(j) }
+            return rendered(members[0], gen: g, voice: voice, result: .success(audio))
+        }
+        let chars = members.reduce(0) { $0 + segments[$1].kokoroText.count }
+        KokoroService.shared.stats.record(SentenceStat(index: members[0], characters: chars, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
+        let lines = members.map { naturalLine($0, expressive: true) }
+        let pieces = nf.render(NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true))
+        natural = nf
+        for (k, j) in members.enumerated() {
+            let buf = k < pieces.count ? makeBuffer(pieces[k].frames) : nil
+            scheduler?.renderDone(j, ok: buf != nil)
+            if let buf, scheduler?.isReady(j) == true { buffers[j] = buf }
+        }
+        pumpRender()
+        if waiting { advance() } else { prefetch() }
+    }
+
+    /// Natural delivery's description of sentence i: the director's per-line controls only for the expressive voice;
+    /// the context pause and breath place for every sentence of the session.
+    private func naturalLine(_ i: Int, expressive: Bool) -> NaturalFinish.Line {
+        let seg = segments[i]
+        return NaturalFinish.Line(params: expressive ? seg.natural?.params : nil, letters: Self.readText(seg, expressive: expressive).count,
+                                  pause: seg.naturalPause ?? seg.pauseAfter, breath: seg.natural?.breath ?? Self.breathPoint(after: seg),
+                                  seed: UInt64(truncatingIfNeeded: seg.id))
     }
 
     private func renderWithKokoro(_ i: Int, gen g: Int) {
@@ -312,15 +381,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     // Natural delivery: the clean-warm chain, rate leveling and the listener's speed (the expressive
                     // engine has no speed of its own), the pause after and a breath inside it when the lung budget
                     // says so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump.
-                    let seg = segments[i]
                     let expressive = voice == listenEngine?.rawValue
-                    // The director's per-line controls (contrast, emphasis, gain, tempo) only for the expressive voice;
-                    // its context pause and breath place for every sentence of the session.
-                    let pause = seg.naturalPause ?? seg.pauseAfter
-                    let read = expressive ? (seg.natural?.params.say ?? seg.kokoroText) : seg.kokoroText
-                    let line = NaturalFinish.Line(params: expressive ? seg.natural?.params : nil, letters: read.count, pause: pause,
-                                                  breath: seg.natural?.breath ?? Self.breathPoint(after: seg), seed: UInt64(truncatingIfNeeded: seg.id))
-                    let unit = NaturalFinish.Unit(samples: audio.samples, lines: [line], speed: expressive ? Double(seg.rate) : 1, expressive: expressive)
+                    let unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
+                                                  speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
                     frames = nf.render(unit).flatMap(\.frames)
                     natural = nf
                 } else if var p = polish, audio.sampleRate == p.sampleRate {
