@@ -159,6 +159,18 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
   const [pillShown, setPillShown] = useState(false);
   const pillMode = infoPillMode(rs.showFooter);
   const [viewportW, setViewportW] = useState(() => window.innerWidth);
+  // The bottom bar's height (it grows with auto-scroll / "Back to" rows) → --rd-bottom-h for the padding.
+  const bottomBar = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const bar = bottomBar.current;
+    const host = root.current;
+    if (!bar || !host) return;
+    const apply = (): void => host.style.setProperty('--rd-bottom-h', `${bar.offsetHeight}px`);
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     const onResize = (): void => setViewportW(window.innerWidth);
     window.addEventListener('resize', onResize);
@@ -1415,7 +1427,7 @@ function ReaderView(props: { pluginId: string; novelPath: string; chapterPath: s
         )}
       </header>
 
-      <footer class="rd-bottom" aria-hidden={!barsVisible}>
+      <footer class="rd-bottom" ref={bottomBar} aria-hidden={!barsVisible}>
         {auto.mode !== 'off' && (
           <div class="rd-auto-row" data-testid="reader-autoscroll-controls">
             <button
