@@ -52,13 +52,19 @@ public struct HybridScheduler: Sendable {
         public var dryGrace: TimeInterval
         /// This many failed renders in a row make Kokoro unavailable for the session.
         public var maxConsecutiveFailures: Int
+        /// At a paragraph start (`paragraphStarts`), wait up to this long instead: a longer pause between
+        /// paragraphs sounds natural, a switch to the Apple voice doesn't (Kasta, 2026-10-07: "rather a 2 second
+        /// pause than the Apple voice").
+        public var paragraphGrace: TimeInterval
 
-        public init(ahead: Int = 3, returnAhead: Int = 2, startGrace: TimeInterval = 2.5, dryGrace: TimeInterval = 0.25, maxConsecutiveFailures: Int = 3) {
+        public init(ahead: Int = 3, returnAhead: Int = 2, startGrace: TimeInterval = 2.5, dryGrace: TimeInterval = 0.25, maxConsecutiveFailures: Int = 3,
+                    paragraphGrace: TimeInterval = 2) {
             self.ahead = max(1, ahead)
             self.returnAhead = max(1, returnAhead)
             self.startGrace = max(0, startGrace)
             self.dryGrace = max(0, dryGrace)
             self.maxConsecutiveFailures = max(1, maxConsecutiveFailures)
+            self.paragraphGrace = max(0, paragraphGrace)
         }
     }
 
@@ -113,6 +119,8 @@ public struct HybridScheduler: Sendable {
     /// The render in flight (only one at a time).
     public private(set) var rendering: Int?
     private var waitStart: TimeInterval?
+    /// Segments that start a paragraph: the voice may wait up to `paragraphGrace` for them.
+    public var paragraphStarts: Set<Int> = []
     /// Something has been handed to a voice in this session.
     public private(set) var started = false
     private var consecutiveFailures = 0
@@ -161,6 +169,29 @@ public struct HybridScheduler: Sendable {
             return i
         }
         return nil
+    }
+
+    /// Render the pending segments right after `i` (up to `last`) in the same call as `i` (one model call for a short
+    /// run of sentences). Only while `i` is the render in flight; stops at the first segment that isn't pending.
+    /// Returns the ones taken: each is finished with `renderDone`, or handed back with `releaseRender`.
+    public mutating func extendRender(_ i: Int, through last: Int) -> [Int] {
+        guard rendering == i else { return [] }
+        // Never past the render-ahead window.
+        let upper = min(last, count - 1, (playing ?? (cursor - 1)) + config.ahead)
+        var taken: [Int] = []
+        var j = i + 1
+        while j <= upper, slots[j] == .pending {
+            slots[j] = .rendering
+            taken.append(j)
+            j += 1
+        }
+        return taken
+    }
+
+    /// Hand back a segment taken with `extendRender` (it is rendered on its own later).
+    public mutating func releaseRender(_ j: Int) {
+        guard slots.indices.contains(j), slots[j] == .rendering, rendering != j else { return }
+        slots[j] = .pending
     }
 
     /// A render finished. A segment Apple took in the meantime stays taken (the audio is discarded).
@@ -271,7 +302,7 @@ public struct HybridScheduler: Sendable {
     }
 
     private mutating func waitRemaining(now: TimeInterval) -> TimeInterval? {
-        let grace = started ? config.dryGrace : config.startGrace
+        let grace = started ? (paragraphStarts.contains(cursor) ? max(config.dryGrace, config.paragraphGrace) : config.dryGrace) : config.startGrace
         if waitStart == nil { waitStart = now }
         let remaining = grace - (now - (waitStart ?? now))
         return remaining > 0.001 ? remaining : nil

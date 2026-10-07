@@ -284,3 +284,63 @@ export function alternateSpeakers(list: readonly Pick<PacedSentence, 'block' | '
   }
   return list.map((s) => speakerOf.get(s.block) ?? 0);
 }
+
+/**
+ * Single quotation marks (‘…’ or '…'). A chapter that quotes speech with double marks uses single ones for a
+ * character's thoughts (web novels: 'Curse it...'); one that doesn't uses them for speech (British style).
+ * An opening mark starts a word (after a space, a bracket or a dash) and a closing one ends it, so apostrophes
+ * (don’t, Sunny’s) never count. A quotation left open at the end of a paragraph goes on into the next one only
+ * when that paragraph closes it at its end (a thought spanning two paragraphs).
+ */
+const SINGLE = new Set(['‘', "'"]);
+const SINGLE_CLOSE = new Set(['’', "'"]);
+const OPENS_AFTER = /[\s([{“"—–-]/u;
+const WORDY = /[\p{L}\p{N}]/u;
+
+export type SingleQuoteStyle = 'thought' | 'dialogue';
+
+/** [start, end) UTF-16 spans of single-quoted text in each block (marks included). */
+export function singleQuoteSpans(texts: readonly string[]): [number, number][][] {
+  let carry = false;
+  return texts.map((text, b) => {
+    const spans: [number, number][] = [];
+    let start = carry ? 0 : -1;
+    carry = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charAt(i);
+      const prev = text.charAt(i - 1);
+      const next = text.charAt(i + 1);
+      if (start < 0 && SINGLE.has(ch) && (i === 0 || OPENS_AFTER.test(prev)) && next !== '' && !/\s/u.test(next)) {
+        start = i;
+      } else if (start >= 0 && SINGLE_CLOSE.has(ch) && prev !== '' && !/\s/u.test(prev) && !WORDY.test(next)) {
+        spans.push([start, i + 1]);
+        start = -1;
+      }
+    }
+    if (start >= 0) {
+      const following = (texts[b + 1] ?? '').trimEnd();
+      if (SINGLE_CLOSE.has(following.slice(-1)) && !/\s/u.test(following.slice(-2, -1))) {
+        spans.push([start, text.length]);
+        carry = true;
+      }
+    }
+    return spans;
+  });
+}
+
+/** Double quotation marks anywhere in the chapter → single quotes are thoughts; none → they are speech. */
+export function singleQuoteStyle(texts: readonly string[]): SingleQuoteStyle {
+  return texts.some((t) => /[“”"]/u.test(t)) ? 'thought' : 'dialogue';
+}
+
+/** The share of a sentence's letters [start, end) that sit inside the spans. */
+export function quotedShare(text: string, start: number, end: number, spans: readonly [number, number][]): number {
+  let inside = 0;
+  let all = 0;
+  for (let i = start; i < end; i++) {
+    if (!WORDY.test(text.charAt(i))) continue;
+    all++;
+    if (spans.some(([a, z]) => i >= a && i < z)) inside++;
+  }
+  return all ? inside / all : 0;
+}

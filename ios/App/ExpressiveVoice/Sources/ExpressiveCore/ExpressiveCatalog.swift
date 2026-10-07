@@ -67,8 +67,12 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var emotion: String
     /// whisper, dramatic, sarcastic, narration (Chatterbox tags only)
     public var style: String?
-    /// narrator, male, female
+    /// narrator, male, female; "performed" = the narrator voice performing (dialogue, thoughts; Pocket TTS)
     public var role: String
+
+    public static let performedRole = "performed"
+    /// Sampling temperature for engines that take one per call (Pocket TTS); nil = the engine's default.
+    public var temperature: Float?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
@@ -94,6 +98,54 @@ public enum StyleMapper {
         out = out.replacingOccurrences(of: "\\s+([,.!?;:…”’])", with: "$1", options: .regularExpression)
         out = out.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Pocket TTS's text: an ellipsis ends its generation early (measured 2026-10-07: "Hmm... I've seen farmers do
+    /// better." lost its second half in 1 of 5 renders with the Narrator voice, 5 of 5 with a performed one; with a
+    /// comma 0 of 10). So a trailing-off "…" inside a line becomes a comma, at the end of a line or quote a period,
+    /// and a leading one goes. The hesitation comes back afterwards: NaturalFinish stretches the pause at each
+    /// ellipsis the director marked (350–450 ms).
+    public static func pocketText(_ text: String) -> String {
+        let dots = #"(?:\.\s?\.\s?\.|…)"#
+        // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
+        // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
+        var out = joinBrokenWords(text).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
+        let rules: [(String, String)] = [
+            (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
+            (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
+            (#"\#(dots)+(?=[”"’']|\s*$)"#, "."), // trailing off at the end of a line or quote
+            (#"\#(dots)+(?=\s)"#, ","), // "Hmm… I've", "bite… often"
+            (#"\#(dots)+"#, ", "), // "Hmm…well" (no space)
+            (#",(?:\s*,)+"#, ","), // "paused, …, then" → "paused, then"
+            (#",\s*([.!?])"#, "$1"),
+            (#"\s{2,}"#, " "),
+        ]
+        for (pattern, template) in rules {
+            out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Word endings that, after a trailing-off "…", finish the word before it ("Damna… tion" → "Damnation"); a
+    /// real word after one stays apart ("bite… often", "Gods… help").
+    static let brokenWordEndings: Set<String> = [
+        "tion", "tions", "sion", "sions", "ation", "ible", "able", "ably", "ibly", "ment", "ments", "ness", "less", "ful",
+        "ous", "ious", "ive", "ity", "ally", "ing", "ings", "ed", "er", "ers", "est", "ly", "al", "ial", "ian", "ance",
+        "ence", "ant", "ent", "ism", "ist", "ize", "ise", "ted", "ble", "tic", "ty", "ry", "ny", "cy",
+    ]
+
+    /// "Damna… tion" → "Damnation", "imposs... ible" → "impossible": a word broken by a trailing-off "…" is read
+    /// whole (the director's ellipsis stretch still lengthens the moment).
+    static func joinBrokenWords(_ text: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(\p{L}{2,})(?:\.\s?\.\s?\.|…)\s*(\p{Ll}{1,5})(?=[^\p{L}]|$)"#) else { return text }
+        var out = text
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let whole = Range(m.range, in: out), let head = Range(m.range(at: 1), in: out), let tail = Range(m.range(at: 2), in: out) else { continue }
+            let fragment = String(out[tail])
+            guard brokenWordEndings.contains(fragment) else { continue }
+            out.replaceSubrange(whole, with: String(out[head]) + fragment)
+        }
+        return out
     }
 
     /// The tag Chatterbox Nano gets in front of a line (style first, else the emotion), or nil.

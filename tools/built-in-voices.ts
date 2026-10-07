@@ -18,6 +18,7 @@
  *   <lab>/.venv-chatterbox/Scripts/python.exe py/export_voice.py ref.wav --name Narrator --force \
  *       --bundle-into ../tachinovel-v2 --default
  */
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { bundledVoiceId, FILE_EXTENSION, readVoicePack } from './voice-pack.ts';
@@ -65,6 +66,91 @@ export interface ShippedVoice {
   isDefault: boolean;
 }
 
+/** BuiltInVoices/breaths/: the breath pack that ships with the voices. */
+export const BREATHS_DIR = 'breaths';
+const BREATH_MAX_BYTES = 100 * 1024;
+const BREATHS_MAX_BYTES = 2 * 1024 * 1024;
+
+/** Only `.wav` files, each a short clip, all together small. */
+export function checkBreaths(dir: string): string[] {
+  const problems: string[] = [];
+  let total = 0;
+  for (const f of readdirSync(dir).sort()) {
+    const p = path.join(dir, f);
+    if (!f.toLowerCase().endsWith('.wav') || statSync(p).isDirectory()) {
+      problems.push(`${BREATHS_DIR}/${f}: only .wav files belong in BuiltInVoices/${BREATHS_DIR}/`);
+      continue;
+    }
+    const size = statSync(p).size;
+    total += size;
+    if (size > BREATH_MAX_BYTES) problems.push(`${BREATHS_DIR}/${f}: ${Math.round(size / 1024)} KB is too long for a breath`);
+    if (readFileSync(p).subarray(0, 4).toString('latin1') !== 'RIFF') problems.push(`${BREATHS_DIR}/${f}: not a WAV file`);
+  }
+  if (total > BREATHS_MAX_BYTES) problems.push(`${BREATHS_DIR}/: ${Math.round(total / 1024)} KB in all (at most ${BREATHS_MAX_BYTES / 1024} KB)`);
+  return problems;
+}
+
+/** BuiltInVoices/pocket/: the Narrator voice for Pocket TTS (ExpressiveCore/PocketVoice.swift, same rules). */
+export const POCKET_DIR = 'pocket';
+export const POCKET_VOICE = 'narrator.pocketvoice';
+export const POCKET_MANIFEST = 'narrator.json';
+const POCKET_EXT = '.pocketvoice';
+const POCKET_DIM = 1024;
+const POCKET_MAX_FRAMES = 125;
+
+/** Every <name>.pocketvoice + <name>.json pair (the Narrator, and its performed read "character"); narrator required. */
+export function checkPocketVoice(dir: string): string[] {
+  const problems: string[] = [];
+  const files = readdirSync(dir).sort();
+  const names = new Set<string>();
+  for (const f of files) {
+    if (f.endsWith(POCKET_EXT)) names.add(f.slice(0, -POCKET_EXT.length));
+    else if (f.endsWith('.json')) names.add(f.slice(0, -'.json'.length));
+    else problems.push(`${POCKET_DIR}/${f}: only <name>${POCKET_EXT} + <name>.json pairs belong in BuiltInVoices/${POCKET_DIR}/`);
+  }
+  if (!names.has('narrator')) problems.push(`${POCKET_DIR}/: needs ${POCKET_VOICE} and ${POCKET_MANIFEST}`);
+  for (const name of names) problems.push(...checkPocketPair(dir, name));
+  return problems;
+}
+
+function checkPocketPair(dir: string, name: string): string[] {
+  const problems: string[] = [];
+  const voiceFile = `${name}${POCKET_EXT}`;
+  const manifestFile = `${name}.json`;
+  const where = (f: string) => `${POCKET_DIR}/${f}`;
+  if (!existsSync(path.join(dir, voiceFile)) || !existsSync(path.join(dir, manifestFile))) {
+    return [`${POCKET_DIR}/: ${name} needs ${voiceFile} and ${manifestFile}`];
+  }
+  let m: Record<string, unknown>;
+  try {
+    m = JSON.parse(readFileSync(path.join(dir, manifestFile), 'utf8')) as Record<string, unknown>;
+  } catch (err) {
+    return [`${where(manifestFile)}: ${err instanceof Error ? err.message : String(err)}`];
+  }
+  const data = readFileSync(path.join(dir, voiceFile));
+  const frames = m.frames;
+  if (m.schemaVersion !== 1) problems.push(`${where(manifestFile)}: schemaVersion must be 1`);
+  if (m.engine !== 'pocket-tts') problems.push(`${where(manifestFile)}: engine must be pocket-tts`);
+  if (m.embeddingDim !== POCKET_DIM) problems.push(`${where(manifestFile)}: embeddingDim must be ${POCKET_DIM}`);
+  if (typeof frames !== 'number' || !Number.isInteger(frames) || frames < 1 || frames > POCKET_MAX_FRAMES) {
+    problems.push(`${where(manifestFile)}: frames must be 1…${POCKET_MAX_FRAMES}`);
+  } else if (m.bytes !== frames * POCKET_DIM * 4 || data.length !== m.bytes) {
+    problems.push(`${where(voiceFile)}: ${data.length} bytes, expected ${frames} × ${POCKET_DIM} float32`);
+  }
+  if (typeof m.sha256 !== 'string' || createHash('sha256').update(data).digest('hex') !== m.sha256.toLowerCase()) {
+    problems.push(`${where(voiceFile)}: doesn’t match the manifest’s sha256`);
+  }
+  if (data.length % 4 === 0) {
+    for (let i = 0; i < data.length; i += 4) {
+      if (!Number.isFinite(data.readFloatLE(i))) {
+        problems.push(`${where(voiceFile)}: value ${i / 4} isn’t a finite number`);
+        break;
+      }
+    }
+  }
+  return problems;
+}
+
 /** Every shipped voice checked with the app's rules; problems instead of throwing (CI test + `list`). */
 export function checkBuiltInVoices(dir = BUILT_IN_VOICES_DIR): { voices: ShippedVoice[]; problems: string[] } {
   const problems: string[] = [];
@@ -81,6 +167,15 @@ export function checkBuiltInVoices(dir = BUILT_IN_VOICES_DIR): { voices: Shipped
   }
   for (const file of readdirSync(dir).sort()) {
     if (file === INDEX_NAME) continue;
+    // Recorded inhales for natural delivery (HybridSpeechEngine.breathPack): only small 24 kHz WAVs.
+    if (file === BREATHS_DIR && statSync(path.join(dir, file)).isDirectory()) {
+      problems.push(...checkBreaths(path.join(dir, file)));
+      continue;
+    }
+    if (file === POCKET_DIR && statSync(path.join(dir, file)).isDirectory()) {
+      problems.push(...checkPocketVoice(path.join(dir, file)));
+      continue;
+    }
     // The whole folder goes into the app: nothing else belongs here.
     if (!file.endsWith(`.${FILE_EXTENSION}`) || statSync(path.join(dir, file)).isDirectory()) {
       problems.push(`${file}: only .${FILE_EXTENSION} files and ${INDEX_NAME} belong in BuiltInVoices/`);

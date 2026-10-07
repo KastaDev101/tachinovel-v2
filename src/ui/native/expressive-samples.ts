@@ -9,8 +9,11 @@
  *  - `role`: who speaks (narrator / a male / a female character), mapped to a voice per engine;
  *  - inline sound tags in the text ([laugh], [chuckle], [sigh], [gasp], …): Chatterbox Nano performs them,
  *    the other engines get the text with the tags removed.
+ *  - `natural`: natural delivery (src/core/narration/delivery.ts): the director's mood, Nano's controls and the
+ *    pause after the line; native uses it when Settings › Voices › Natural delivery is on (the default).
  * All prose here is original (written for this test), not taken from a novel.
  */
+import { deliverLines, type LineDelivery } from '../../core/narration/delivery.ts';
 
 export const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'fearful', 'surprised', 'disgusted'] as const;
 export type Emotion = (typeof EMOTIONS)[number];
@@ -26,6 +29,16 @@ export interface ExpressiveLine {
   emotion: Emotion;
   style?: Style;
   role: Role;
+  natural?: LineDelivery;
+}
+
+/** The lines with their natural delivery (each line its own paragraph). */
+export function withNatural(lines: readonly ExpressiveLine[]): ExpressiveLine[] {
+  const natural = deliverLines(lines);
+  return lines.map((l, i) => {
+    const n = natural[i];
+    return n ? { ...l, natural: n } : { ...l };
+  });
 }
 
 export interface ExpressiveSample {
@@ -98,6 +111,8 @@ export const SAMPLES: ExpressiveSample[] = [
     ],
   },
 ];
+
+for (const s of SAMPLES) s.lines = withNatural(s.lines);
 
 export function sample(id: ExpressiveSample['id']): ExpressiveSample {
   const s = SAMPLES.find((x) => x.id === id);
@@ -177,5 +192,5 @@ export function annotate(text: string): ExpressiveLine[] {
       lines.push({ text: sentence, emotion, role, ...(style ? { style } : {}) });
     }
   }
-  return lines;
+  return withNatural(lines);
 }

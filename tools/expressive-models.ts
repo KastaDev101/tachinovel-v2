@@ -93,8 +93,9 @@ export const ENGINES: EngineSpec[] = [
     license: 'CC-BY-4.0',
     licenseUrl: 'https://huggingface.co/kyutai/pocket-tts',
     upstream: 'kyutai/pocket-tts',
-    inApp: false,
-    // English v2.1 pack, `.ane` placement (rank-4 FlowLM on the Neural Engine), voice "alba" only.
+    inApp: true,
+    // English v2.1 pack, `.ane` placement (rank-4 FlowLM on the Neural Engine, Mimi on the CPU: allowed in the background).
+    // The Narrator voice ships in the app (BuiltInVoices/pocket/); "alba" stays as FluidAudio's default.
     include: (p) =>
       under(['v2.1/english/cond_prefill_ane.mlmodelc', 'v2.1/english/flowlm_step_ane.mlmodelc', 'v2.1/english/flow_decoder_fused.mlmodelc', 'v2.1/english/mimi_decoder.mlmodelc'])(p) ||
       ['bos_emb.bin', 'text_embed_table.bin', 'tokenizer.model', 'bos_before_voice.bin', 'alba.safetensors'].map((f) => `v2.1/english/constants_bin/${f}`).includes(p) ||

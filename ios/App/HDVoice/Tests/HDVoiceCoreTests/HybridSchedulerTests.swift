@@ -13,6 +13,23 @@ private func renderAll(_ s: inout HybridScheduler, ok: Bool = true) -> [Int] {
 
 /// Drives the scheduler the way HybridSpeechEngine does: render → decide → start/finish.
 final class HybridSchedulerTests: XCTestCase {
+    func testExtendRenderTakesThePendingRunAndReleaseHandsItBack() {
+        var s = HybridScheduler(count: 10, kokoro: .ready, config: .init(ahead: 6))
+        XCTAssertEqual(s.nextRender(), 0)
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.nextRender(), 1)
+        XCTAssertEqual(s.extendRender(2, through: 4), [], "only for the render in flight")
+        XCTAssertEqual(s.extendRender(1, through: 3), [2, 3])
+        XCTAssertNil(s.nextRender(), "still one model call in flight")
+        s.renderDone(1, ok: true)
+        s.renderDone(2, ok: true)
+        s.releaseRender(3)
+        XCTAssertTrue(s.isReady(2))
+        XCTAssertFalse(s.isReady(3))
+        XCTAssertEqual(s.nextRender(), 3, "a released sentence is rendered on its own")
+        XCTAssertEqual(s.extendRender(3, through: 99), [4, 5], "never past the window's pending sentences or the end")
+    }
+
     func testRendersOnlyAheadWindowAndOneAtATime() {
         var s = HybridScheduler(count: 10, kokoro: .ready, config: .init(ahead: 3))
         XCTAssertEqual(s.nextRender(), 0)
@@ -65,6 +82,29 @@ final class HybridSchedulerTests: XCTestCase {
         // The late render of 0 is discarded.
         s.renderDone(0, ok: true)
         XCTAssertFalse(s.isReady(0))
+    }
+
+    func testWaitsLongerAtAParagraphStartBeforeTheAppleVoice() {
+        var s = HybridScheduler(count: 4, kokoro: .ready, config: .init(ahead: 3, dryGrace: 0.25, paragraphGrace: 2))
+        s.paragraphStarts = [2]
+        XCTAssertEqual(s.nextRender(), 0)
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        XCTAssertEqual(s.nextRender(), 1)
+        s.renderDone(1, ok: true)
+        XCTAssertEqual(s.prefetchNext(), 1)
+        XCTAssertEqual(s.nextRender(), 2)
+        // Sentence 2 starts a paragraph and is still rendering: wait up to 2 s, not 0.25 s.
+        XCTAssertEqual(s.decide(now: 10), .wait(2))
+        guard case .wait(let w) = s.decide(now: 11.5) else { return XCTFail("expected wait") }
+        XCTAssertEqual(w, 0.5, accuracy: 0.001)
+        s.renderDone(2, ok: true)
+        XCTAssertEqual(s.decide(now: 11.6), .kokoro(2))
+        XCTAssertEqual(s.underruns, 0)
+        // Inside a paragraph the short grace still applies.
+        XCTAssertEqual(s.nextRender(), 3)
+        XCTAssertEqual(s.decide(now: 20), .wait(0.25))
+        XCTAssertEqual(s.decide(now: 20.3), .apple(3, .queueDry))
     }
 
     func testQueueRunsDryMidChapterFallsBackThenReturnsWhenAhead() {

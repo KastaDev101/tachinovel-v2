@@ -13,6 +13,7 @@
  * → "…", spaced hyphen/en dash → em dash, "!!!" → "!", "***" scene breaks become a pause marker.
  */
 import { Parser } from 'htmlparser2';
+import type { Emphasis } from './delivery.ts';
 
 export interface NarrationParagraph {
   /** Index in the chapter's paragraph list (same numbering the reader uses for positions). */
@@ -169,5 +170,56 @@ export function narrationScript(html: string, title?: string): NarrationParagrap
     if (index === 0 && title && /^chapter\s+\d/i.test(text)) text = `${text.replace(/\s+—\s+/, '. ').replace(/[.!?…]?$/, '.')}`;
     out.push({ index, text, sentences: splitSentences(text) });
   });
+  return out;
+}
+
+const ITALIC = new Set(['em', 'i', 'cite']);
+const BOLD = new Set(['strong', 'b']);
+
+/**
+ * The italic and bold text of chapter HTML, in document order (natural delivery's emphasis, delivery.ts): one
+ * fragment per outermost <em>/<i>/<cite>/<strong>/<b>; nested emphasis belongs to the outer one; skipped
+ * content (scripts, styles…) is ignored like everywhere else.
+ */
+export function htmlEmphasis(html: string): Emphasis[] {
+  const out: Emphasis[] = [];
+  let skipDepth = 0;
+  let depth = 0;
+  let bold = false;
+  let text = '';
+  const parser = new Parser(
+    {
+      onopentag(name) {
+        if (SKIP.has(name)) {
+          skipDepth++;
+          return;
+        }
+        if (skipDepth > 0 || !(ITALIC.has(name) || BOLD.has(name))) return;
+        if (depth === 0) {
+          bold = BOLD.has(name);
+          text = '';
+        }
+        depth++;
+      },
+      ontext(t) {
+        if (skipDepth === 0 && depth > 0) text += t;
+      },
+      onclosetag(name) {
+        if (SKIP.has(name)) {
+          skipDepth = Math.max(0, skipDepth - 1);
+          return;
+        }
+        if (skipDepth > 0 || depth === 0 || !(ITALIC.has(name) || BOLD.has(name))) return;
+        depth--;
+        if (depth === 0) {
+          const t = text.replace(/[\s\u00A0\u200B]+/g, ' ').trim();
+          if (t) out.push(bold ? { text: t, bold: true } : { text: t });
+        }
+      },
+    },
+    { decodeEntities: true, lowerCaseTags: true },
+  );
+  parser.write(html);
+  parser.end();
   return out;
 }

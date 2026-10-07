@@ -28,6 +28,10 @@ struct SpeechSegment {
     /// Narrator mode: the sentence read in parts by different voices (nil voice = the narrator's); nil =
     /// one piece in the narrator's voice.
     var parts: [NarratorPart]? = nil
+    /// Natural delivery (the expressive narrator): the director's controls for this sentence and its natural pause
+    /// after (seconds, already for the speed); nil = none in the script.
+    var natural: NaturalSentence? = nil
+    var naturalPause: TimeInterval? = nil
 }
 
 protocol SpeechEngineDelegate: AnyObject {

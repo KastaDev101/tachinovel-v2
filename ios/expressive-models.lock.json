@@ -234,7 +234,7 @@
       "license": "CC-BY-4.0",
       "licenseUrl": "https://huggingface.co/kyutai/pocket-tts",
       "upstream": "kyutai/pocket-tts",
-      "inApp": false,
+      "inApp": true,
       "bytes": 367508618,
       "files": [
         {

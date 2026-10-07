@@ -14,6 +14,7 @@
 //  ExpressiveSpeechEngine: Kokoro takes over while the app isn't active).
 //
 
+import CoreML
 import ExpressiveCore
 import FluidAudio
 import Foundation
@@ -70,7 +71,10 @@ public enum ExpressiveEngines {
     }
 
     /// A new, unloaded engine; nil if this OS can't run it (Chatterbox Nano and NeuTTS-2E need iOS 18).
-    public static func make(_ id: ExpressiveEngineID, narratorSpeaker: String = "emily") -> (any ExpressiveSynthesizer)? {
+    /// `pocketVoice`: Pocket TTS reads with this cloned voice (the shipped Narrator) instead of its default one;
+    /// `pocketPerformed`: the same voice performing, for lines whose role is "performed".
+    public static func make(_ id: ExpressiveEngineID, narratorSpeaker: String = "emily", pocketVoice: PocketVoice? = nil,
+                            pocketPerformed: PocketVoice? = nil) -> (any ExpressiveSynthesizer)? {
         switch id {
         case .chatterboxNano:
             if #available(iOS 18.0, macOS 15.0, *) { return ChatterboxNanoSynth() }
@@ -79,7 +83,7 @@ public enum ExpressiveEngines {
             if #available(iOS 18.0, macOS 15.0, *) { return NeuTtsSynth(narrator: narratorSpeaker) }
             return nil
         case .pocketTts:
-            return PocketTtsSynth()
+            return PocketTtsSynth(voice: pocketVoice, performed: pocketPerformed)
         }
     }
 }
@@ -169,13 +173,25 @@ public actor NeuTtsSynth: ExpressiveSynthesizer {
 
 public actor PocketTtsSynth: ExpressiveSynthesizer {
     private var manager: PocketTtsManager?
+    /// The cloned voice (FluidAudio prepends Pocket's BOS itself); nil = Pocket's default voice.
+    private let voiceData: PocketTtsVoiceData?
+    private let performedData: PocketTtsVoiceData?
 
-    public init() {}
+    /// CPU + Neural Engine for every transformer stage, CPU for the Mimi decoder (FluidAudio's own choice there).
+    public static let backgroundSafeUnits = PocketTtsComputeUnits(conditioner: .cpuAndNeuralEngine, flowLM: .cpuAndNeuralEngine,
+                                                                  flowDecoder: .cpuAndNeuralEngine, mimiDecoder: .cpuOnly)
+
+    public init(voice: PocketVoice? = nil, performed: PocketVoice? = nil) {
+        voiceData = voice.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
+        performedData = performed.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
+    }
 
     public func load() async throws -> Double {
         if manager != nil { return 0 }
         let t0 = Date()
-        let m = PocketTtsManager(placement: .ane)
+        // No stage on the GPU: iOS refuses GPU work in the background, and Pocket is the voice that reads with the
+        // screen locked and in CarPlay. FluidAudio's defaults leave cond_prefill and flow_decoder_fused on `.all`.
+        let m = PocketTtsManager(placement: .ane, computeUnits: Self.backgroundSafeUnits)
         try await m.initialize()
         manager = m
         return elapsedMs(since: t0)
@@ -186,8 +202,20 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         let t0 = Date()
         var samples: [Float] = []
         var first: Double?
-        let stream = try await manager.synthesizeStreaming(text: StyleMapper.plainText(line.text))
-        for try await frame in stream {
+        // A session per call: the voice prefill (~125 tokens) runs once instead of once per ~50-token text chunk, and
+        // the Mimi decoder state carries across chunks (no seams inside a paragraph).
+        let session: PocketTtsSession
+        let voice = line.role == ExpressiveLine.performedRole ? (performedData ?? voiceData) : voiceData
+        // The director's temperature (calm narration 0.7 … playful 0.85), kept inside Pocket's stable range.
+        let temperature = min(0.85, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
+        if let voice {
+            session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
+        } else {
+            session = try await manager.makeSession(temperature: temperature, seed: seed)
+        }
+        session.enqueue(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
+        session.finish()
+        for try await frame in session.frames {
             if first == nil { first = elapsedMs(since: t0) }
             samples.append(contentsOf: frame.samples)
         }

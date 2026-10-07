@@ -127,11 +127,13 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     public var customVoices: [CustomVoice]
     /// Narrator mode (Narrator.swift): dialogue voices, pacing, jitter, polish.
     public var narrator: NarratorSettings
+    /// Expressive voices (Delivery.swift): who reads chapters, natural delivery, director, breaths, studio sound.
+    public var delivery: DeliverySettings
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
                 route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
                 speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = [],
-                narrator: NarratorSettings = NarratorSettings()) {
+                narrator: NarratorSettings = NarratorSettings(), delivery: DeliverySettings = DeliverySettings()) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
@@ -143,6 +145,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         self.volume = VoiceVolume.clamp(volume)
         self.customVoices = customVoices
         self.narrator = narrator
+        self.delivery = delivery
     }
 
     /// Tolerant decoding: missing keys take their defaults (settings written by older builds).
@@ -160,6 +163,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         volume = VoiceVolume.clamp((try? c.decode(Double.self, forKey: .volume)) ?? d.volume)
         customVoices = (try? c.decode([CustomVoice].self, forKey: .customVoices)) ?? d.customVoices
         narrator = (try? c.decode(NarratorSettings.self, forKey: .narrator)) ?? d.narrator
+        delivery = (try? c.decode(DeliverySettings.self, forKey: .delivery)) ?? d.delivery
     }
 
     /// The voice a novel speaks with (its own choice, else the global default, else Heart): a built-in id,

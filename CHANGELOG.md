@@ -9,6 +9,40 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.4] - 2026-10-07
+
+### Added
+
+- The Narrator voice reads chapters with Pocket TTS (Kyutai, CC-BY-4.0; on-demand download in Settings › Voices ›
+  Expressive voices). It runs on the Neural Engine and CPU, so it keeps reading with the screen locked and in CarPlay.
+  Chatterbox Nano stays an option; when Pocket isn't downloaded, Nano reads, then Kokoro.
+- Natural delivery for the narrator: a whole paragraph per model call (one thought, no sentence-by-sentence cuts),
+  a director (moods, dialogue vs narration, emphasis, persona line classes), context pauses, recorded breaths with
+  a lung budget, the clean-warm studio chain, rate leveling and speech shaping.
+- Thoughts in single quotes ('Curse it...') are read as thoughts; chapters that quote speech with ‘…’ get their
+  dialogue recognized.
+- Dialogue and thoughts are performed: the same Narrator voice, acting, while narration stays calm (Settings ›
+  Voices › Narrator voice › Act out dialogue).
+- LitRPG system messages ([You have slain…]) get a soft interface chime and an interface tone on the voice.
+- Settings › Voices › Narrator voice: who reads chapters (Pocket TTS, Chatterbox Nano or Kokoro) and switches for
+  natural delivery, acting, breaths, studio sound and the system-message sound.
+
+### Changed
+
+- While the narrator voice loads, Kokoro covers only the first sentence or two, so the Narrator takes over within
+  moments.
+- Pocket TTS: one temperature per call from the director (calmer narration, livelier lines), its tone matched to
+  the approved narration (a little more presence, less hiss), "Hmm" read as a steady "Hm".
+- When the narrator voice runs late at the start of a paragraph, Listen waits up to 2 seconds before the Apple
+  voice takes over (was a quarter second), so a short delay becomes a longer pause instead of a voice switch.
+
+### Fixed
+
+- Pocket TTS no longer drops the rest of a line after an ellipsis ("Hmm... I've seen farmers do better.").
+- Pocket TTS stays off the GPU, which iOS doesn't allow in the background, so it keeps reading with the screen locked.
+- A Pocket line that comes back clearly too short (words dropped at the end) is rendered once more.
+- A word broken by an ellipsis ("Damna… tion") is read as one word.
+
 ## [2.0.0-alpha.3] - 2026-10-07
 
 ### Added
@@ -292,6 +326,7 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...HEAD
+[2.0.0-alpha.4]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...v2.0.0-alpha.4
 [2.0.0-alpha.3]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
 [2.0.0-alpha.2]: https://github.com/KastaDev101/tachinovel-v2/releases/tag/v2.0.0-alpha.2

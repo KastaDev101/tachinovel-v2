@@ -33,6 +33,7 @@ parse it: `## <Name>`, then a `- License: <SPDX expression>` line, then the noti
 | NeMo text processing | Apache-2.0 | Reading numbers, dates and currency before speech (inside FluidAudio). |
 | rustfst | MIT OR Apache-2.0 | Text-normalization grammar runtime (inside FluidAudio). |
 | fastcluster | BSD-2-Clause | Linked into FluidAudio (not used by the voices). |
+| Pocket TTS | CC-BY-4.0 | The Narrator voice that reads chapters (Kyutai's model, downloaded on demand). |
 | Apple frameworks and SF Symbols | Apple SDK terms | System APIs used by the app; no notice required |
 
 ## LNReader
@@ -481,6 +482,20 @@ PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR B
 HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+```
+
+## Pocket TTS
+
+- License: CC-BY-4.0
+- Source: https://huggingface.co/kyutai/pocket-tts (Core ML build: https://huggingface.co/FluidInference/pocket-tts-coreml)
+- Used for: The Narrator voice that reads chapters: Kyutai's Pocket TTS model, downloaded on demand from Settings › Voices › Expressive voices (pinned revision + SHA-256, ios/expressive-models.lock.json), run on the Neural Engine and CPU by FluidAudio. The Narrator voice prompt that ships in the app was made with the model's voice-cloning encoder. Changes: converted to Core ML by FluidInference.
+
+```text
+Pocket TTS
+Copyright Kyutai (https://kyutai.org)
+
+Licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/
 ```
 
 <!--
