@@ -118,8 +118,10 @@ enum VoiceLab {
     }
 
     private static func batteryLevel() -> Double {
-        UIDevice.current.isBatteryMonitoringEnabled = true
-        return Double(UIDevice.current.batteryLevel)
+        MainThread.run { () -> Double in
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            return Double(UIDevice.current.batteryLevel)
+        }
     }
 
     /// Physical footprint (what jetsam counts), in MB.
@@ -144,7 +146,8 @@ enum VoiceLab {
 }
 
 /// Simulator voice self-test support (inactive unless launched with -tachiVoiceSelfTest).
-final class NarrationSelfTest {
+/// Main-thread confined (the plugin and the controller use it on main).
+final class NarrationSelfTest: @unchecked Sendable {
     static let shared = NarrationSelfTest()
     static var isActive: Bool {
         #if DEBUG

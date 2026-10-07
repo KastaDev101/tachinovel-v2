@@ -1,12 +1,17 @@
 /**
  * Voices UI (v2 additions over the unchanged v1 UI):
  *
- *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the six Kokoro
- *    voices with ▶ samples and the default one, the Apple voice that stands in when Kokoro can't keep up
- *    (with the "download a Premium voice" hint), Kokoro on/off, pronunciations, In the car (what the car's
- *    side buttons do, prepared audio storage), and Advanced › "Use PC audio when available" (off by
- *    default; the PC narrator is sidelined).
- *  - The voice picker for one novel (from the Listen player): its own voice or the default.
+ *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the 28 Kokoro
+ *    voices, grouped by accent and gender with the best graded first, with ▶ samples and the default one;
+ *    the Apple voice that stands in when Kokoro can't keep up (with the "download a Premium voice" hint);
+ *    Kokoro on/off, pronunciations, In the car (what the car's side buttons do, prepared audio storage),
+ *    and Advanced › "Use PC audio when available" (off by default; the PC narrator is sidelined).
+ *  - The voice mixer (Settings › Voices › Mix a voice): two voices and a blend slider, ▶ to listen,
+ *    saved under a name in "Your mixes" (on this iPhone), usable as the default or for one novel; edit and
+ *    delete. Rules shared with native in voice-mix.ts.
+ *  - Narrator mode (Settings › Voices): a dialogue voice (and a second speaker), natural pauses, natural
+ *    variation, studio sound, room tone, each with its own switch, and ▶ Without / ▶ With on a test passage.
+ *  - The voice picker for one novel (from the Listen player): its own voice (or mix) or the default.
  *  - The pronunciation editor (global, or one novel): word → respelling and/or Kokoro phonemes, the same
  *    lexicon format the PC narrator uses (v1 frontend.ts), so a narrator lexicon can be pasted in.
  *
@@ -16,7 +21,19 @@ import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } fr
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
-import { Narration, type CarButtons, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
+import { groupVoices } from './voice-groups.ts';
+import { openExpressiveLab } from './expressive-lab.ts';
+import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
+import { blendVoice, cleanMixName, mixPercent, mixProblem, mixShares, suggestedMixName, usableMixes } from './voice-mix.ts';
+import {
+  Narration,
+  type CarButtons,
+  type CustomVoiceInfo,
+  type KokoroVoiceInfo,
+  type NarrationState,
+  type NarratorInfo,
+  type VoiceSettingsInfo,
+} from './narration.ts';
 import { fs } from './type.ts';
 
 const CSS = `
@@ -52,10 +69,24 @@ const CSS = `
 .tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:max(16px,${fs(16)}) -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
 .tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:${fs(13)}}
 .tn-v .del{color:#ff8a8a;width:36px;height:36px;flex:none}
+.tn-v .sub-sec{color:#a1a1aa;font-size:${fs(13)};margin:12px 4px 6px}
+.tn-v .grade{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;background:rgba(168,180,255,.16);color:#c7cdff;font-size:${fs(12)};font-weight:600;vertical-align:1px}
 .tn-v .chips{display:flex;gap:8px;flex:1}
 .tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
 .tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
 .tn-v .link{color:#a8b4ff;padding:6px 0;flex:none}
+.tn-v select{flex:none;max-width:52%;background:#26262d;color:#f2f2f7;border:0;border-radius:10px;font:${fs(16)} -apple-system,system-ui;padding:9px 10px}
+.tn-v .mix{display:block;padding:14px}
+.tn-v .mix-shares{font-weight:600;text-align:center;margin-bottom:10px}
+.tn-v .mix-range{width:100%;accent-color:#a8b4ff;margin:0;height:32px}
+.tn-v .mix-ends{display:flex;justify-content:space-between;color:#a1a1aa;font-size:${fs(13)};margin-top:2px}
+.tn-v .edit{color:#a8b4ff;padding:6px 4px;flex:none;font-size:${fs(15)}}
+.tn-v .btn.danger{color:#ff8a8a}
+.tn-v details.tn-adv{display:block}
+.tn-v details.tn-adv>summary{list-style:none;cursor:pointer}
+.tn-v details.tn-adv>summary::-webkit-details-marker{display:none}
+.tn-v details.tn-adv>summary .sub{display:block;color:#a1a1aa;font-size:${fs(13)};margin-top:2px}
+.tn-v details.tn-adv>.row{padding-left:0;padding-right:0}
 .tn-v .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%);background:rgba(40,40,48,.95);color:#fff;padding:10px 16px;border-radius:12px;font-size:${fs(14)};z-index:95;max-width:86%}
 `;
 
@@ -102,6 +133,22 @@ export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'
   return describeVoice(s);
 }
 
+/** Narrator settings from native (absent in older builds: off). Unknown voices read as none. */
+export function normalizeNarrator(raw: unknown, isChoice: (id: unknown) => boolean): NarratorInfo {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof NarratorInfo, unknown>>;
+  const flag = (k: 'pacing' | 'jitter' | 'polish' | 'roomTone'): boolean => (typeof r[k] === 'boolean' ? r[k] : NARRATOR_OFF[k]);
+  const voice = (v: unknown): string | null => (typeof v === 'string' && isChoice(v) ? v : null);
+  return {
+    enabled: r.enabled === true,
+    dialogueVoice: voice(r.dialogueVoice),
+    secondDialogueVoice: voice(r.secondDialogueVoice),
+    pacing: flag('pacing'),
+    jitter: flag('jitter'),
+    polish: flag('polish'),
+    roomTone: flag('roomTone'),
+  };
+}
+
 /** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
 export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -110,14 +157,18 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
   const first = voices[0];
   if (!first) return null;
   const k: Partial<VoiceSettingsInfo['kokoro']> = r.kokoro ?? {};
+  const customVoices = usableMixes(r.customVoices, voices);
+  const isChoice = (id: unknown): id is string => typeof id === 'string' && (voices.some((v) => v.id === id) || customVoices.some((m) => m.id === id));
   return {
     ...r,
     voices,
-    defaultVoice: typeof r.defaultVoice === 'string' && voices.some((v) => v.id === r.defaultVoice) ? r.defaultVoice : first.id,
+    customVoices,
+    defaultVoice: isChoice(r.defaultVoice) ? r.defaultVoice : first.id,
     kokoroEnabled: r.kokoroEnabled !== false,
     usePCAudio: r.usePCAudio === true,
     carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
     speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
+    narrator: normalizeNarrator(r.narrator, (id) => isChoice(id)),
     volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
       bundled: k.bundled === true,
@@ -135,7 +186,7 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
 const UNAVAILABLE = '<p class="note">Voices aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>';
 
 function describe(v: KokoroVoiceInfo): string {
-  return `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender} · ${v.blurb}`;
+  return v.blurb || (v.grade ? `Kokoro grade ${v.grade}` : `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender}`);
 }
 
 /** Close functions of the open panels (Settings › Voices, a novel's voice picker, the pronunciation editor). */
@@ -195,16 +246,75 @@ async function sample(btn: HTMLButtonElement, voice: string, text = SAMPLE_TEXT,
   }
 }
 
-function voiceRows(info: VoiceSettingsInfo, selected: string): string {
-  return info.voices
-    .map(
-      (v) => `<div class="row" data-voice="${esc(v.id)}">
+function voiceRow(v: KokoroVoiceInfo, selected: string): string {
+  const grade = v.grade ? `<span class="grade" title="Kokoro's grade for this voice">${esc(v.grade)}</span>` : '';
+  return `<div class="row" data-voice="${esc(v.id)}">
         <button type="button" class="play" data-act="sample" data-voice="${esc(v.id)}" aria-label="Play a sample of ${esc(v.name)}">${ICON.play}</button>
-        <button type="button" class="main" data-act="pick" data-voice="${esc(v.id)}" style="text-align:left;padding:0"><b>${esc(v.name)}</b><span class="sub">${esc(describe(v))}</span></button>
+        <button type="button" class="main" data-act="pick" data-voice="${esc(v.id)}" style="text-align:left;padding:0"><b>${esc(v.name)}${grade}</b><span class="sub">${esc(describe(v))}</span></button>
         <span class="check" aria-hidden="true">${v.id === selected ? '✓' : ''}</span>
-      </div>`,
-    )
+      </div>`;
+}
+
+function mixRow(info: VoiceSettingsInfo, m: CustomVoiceInfo, selected: string, editable: boolean): string {
+  return `<div class="row" data-voice="${esc(m.id)}">
+        <button type="button" class="play" data-act="sample" data-voice="${esc(m.id)}" aria-label="Play a sample of ${esc(m.name)}">${ICON.play}</button>
+        <button type="button" class="main" data-act="pick" data-voice="${esc(m.id)}" style="text-align:left;padding:0"><b>${esc(m.name)}</b><span class="sub">${esc(mixShares(info.voices, m.a, m.b, m.percent))}</span></button>
+        ${editable ? `<button type="button" class="edit" data-act="mix-edit" data-mix="${esc(m.id)}" aria-label="Edit ${esc(m.name)}">Edit</button>` : ''}
+        <span class="check" aria-hidden="true">${m.id === selected ? '✓' : ''}</span>
+      </div>`;
+}
+
+/**
+ * The voices grouped by accent and gender, best-graded first (a sub-header and a card per group), then
+ * "Your mixes". `editable` adds Edit to each mix and a "Mix a voice" row (Settings › Voices).
+ */
+function voiceRows(info: VoiceSettingsInfo, selected: string, editable = false): string {
+  const groups = groupVoices(info.voices)
+    .map((g) => `<div class="sub-sec" data-group="${esc(g.key)}">${esc(g.label)}</div><div class="card">${g.voices.map((v) => voiceRow(v, selected)).join('')}</div>`)
     .join('');
+  const mixes = info.customVoices ?? [];
+  const newRow = editable
+    ? `<button type="button" class="row" data-act="mix-new"><div class="main"><b>Mix a voice</b><span class="sub">Blend two voices into your own</span></div><span aria-hidden="true">›</span></button>`
+    : '';
+  if (mixes.length === 0 && !newRow) return groups;
+  return `${groups}<div class="sub-sec" data-group="mixes">Your mixes</div><div class="card" data-testid="voice-mixes">${mixes.map((m) => mixRow(info, m, selected, editable)).join('')}${newRow}</div>`;
+}
+
+/** A <select> of every choice (voices by group, then your mixes), with a first "none" option. */
+function choiceOptions(info: VoiceSettingsInfo, selected: string | null, none: string): string {
+  const opt = (id: string, label: string): string => `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>${esc(label)}</option>`;
+  const groups = groupVoices(info.voices).map((g) => `<optgroup label="${esc(g.label)}">${g.voices.map((v) => opt(v.id, v.name)).join('')}</optgroup>`);
+  const mixes = info.customVoices?.length ? `<optgroup label="Your mixes">${info.customVoices.map((m) => opt(m.id, m.name)).join('')}</optgroup>` : '';
+  return `<option value=""${selected ? '' : ' selected'}>${esc(none)}</option>${groups.join('')}${mixes}`;
+}
+
+const NARRATOR_OFF: NarratorInfo = { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false };
+
+/** Settings › Voices › Narrator mode. */
+function narratorCard(info: VoiceSettingsInfo): string {
+  const n = info.narrator ?? NARRATOR_OFF;
+  const sw = (k: keyof NarratorInfo, label: string, sub: string, disabled = false): string =>
+    `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="narrator" data-k="${k}" ${n[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}"></label>`;
+  // One narrator voice for the whole story by default; separate dialogue voices are an Advanced option.
+  const advanced = `<details class="row tn-adv" data-testid="narrator-advanced"${n.dialogueVoice ? ' open' : ''}><summary><b>Advanced</b><span class="sub">Separate voices for dialogue</span></summary>
+       <label class="row"><div class="main"><b>Dialogue voice</b><span class="sub">Words in quotation marks (default: the narrator’s voice)</span></div><select data-act="narrator-voice" data-k="dialogueVoice" aria-label="Dialogue voice">${choiceOptions(info, n.dialogueVoice, 'Narrator’s voice')}</select></label>
+       <label class="row"><div class="main"><b>Second speaker</b><span class="sub">Every other paragraph of an exchange</span></div><select data-act="narrator-voice" data-k="secondDialogueVoice" aria-label="Second speaker" ${n.dialogueVoice ? '' : 'disabled'}>${choiceOptions(info, n.secondDialogueVoice, 'Same as dialogue')}</select></label>
+     </details>`;
+  const pieces = n.enabled ? `${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}${advanced}` : '';
+  return `<div class="card" data-testid="voices-narrator">
+      ${sw('enabled', 'Narrator mode', 'Dialogue in its own voice, natural pauses, studio sound')}
+      ${pieces}
+      <div class="row"><div class="chips" role="group" aria-label="Compare on a test passage">
+        <button type="button" class="chip" data-act="narrator-ab" data-v="off">▶ Without</button>
+        <button type="button" class="chip" data-act="narrator-ab" data-v="on">▶ With</button>
+      </div></div>
+    </div>
+    <p class="note">Compare on a short passage with dialogue. One voice reads the whole story; Advanced can give dialogue its own voice.</p>`;
+}
+
+/** A voice's or a mix's name. */
+function choiceName(info: VoiceSettingsInfo, id: string | undefined): string {
+  return info.voices.find((v) => v.id === id)?.name ?? info.customVoices?.find((m) => m.id === id)?.name ?? '';
 }
 
 function carChip(current: CarButtons | undefined, value: CarButtons, label: string): string {
@@ -246,8 +356,12 @@ export function openVoicesScreen(): void {
            <p class="note">iOS 26.4 and later have a known Core ML crash that can hit Kokoro (FluidAudio #844). This build carries FluidAudio’s fix for it (0.17), not yet proven on an iPhone. If Kokoro still crashes twice in a row, the app switches to the Apple voice by itself and says so here.</p>`;
     p.body.innerHTML = `
       <div class="sec">Voice</div>
-      <div class="card">${voiceRows(info, info.defaultVoice)}</div>
+      ${voiceRows(info, info.defaultVoice, true)}
       ${status}
+      <div class="sec">Narrator mode</div>
+      ${narratorCard(info)}
+      <div class="sec">Experimental</div>
+      <div class="card"><button type="button" class="row" data-act="expressive"><div class="main"><b>Expressive voices (experimental)</b><span class="sub">More emotion, much slower. Downloaded in the app on Wi-Fi when you try one; the size is shown first</span></div><span aria-hidden="true">›</span></button></div>
       <div class="sec">Fallback</div>
       ${appleCard(info)}
       <div class="sec">Pronunciations</div>
@@ -301,6 +415,20 @@ export function openVoicesScreen(): void {
       case 'lexicon':
         openLexiconEditor(undefined, 'All novels');
         return;
+      case 'mix-new':
+        openMixer(info, null, () => void load());
+        return;
+      case 'expressive':
+        openExpressiveLab();
+        return;
+      case 'narrator-ab':
+        void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch((err: unknown) => toast(`Couldn't play: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      case 'mix-edit': {
+        const mix = info.customVoices?.find((m) => m.id === el.dataset.mix);
+        if (mix) openMixer(info, mix, () => void load());
+        return;
+      }
       case 'kokoro-on':
         void Narration.setVoiceSettings({ kokoroEnabled: true }).then(load);
         return;
@@ -325,11 +453,133 @@ export function openVoicesScreen(): void {
   });
   p.body.addEventListener('change', (ev) => {
     const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'narrator' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.checked } }).then(load);
+    if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(load);
     if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
     if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);
   });
   render();
   void load();
+}
+
+// ---------------------------------------------------------------- the voice mixer
+
+function voiceOptions(info: VoiceSettingsInfo, selected: string): string {
+  return groupVoices(info.voices)
+    .map(
+      (g) =>
+        `<optgroup label="${esc(g.label)}">${g.voices
+          .map((v) => `<option value="${esc(v.id)}"${v.id === selected ? ' selected' : ''}>${esc(v.name)}${v.grade ? ` (${esc(v.grade)})` : ''}</option>`)
+          .join('')}</optgroup>`,
+    )
+    .join('');
+}
+
+/** A new mix starts from the default voice and the best other voice of a different accent or gender. */
+function startingPair(info: VoiceSettingsInfo): { a: string; b: string } {
+  const voices = groupVoices(info.voices).flatMap((g) => g.voices);
+  const a = voices.find((v) => v.id === info.defaultVoice) ?? voices[0];
+  const best = [...voices].sort((x, y) => (y.gradeRank ?? -1) - (x.gradeRank ?? -1));
+  const b = best.find((v) => v.id !== a?.id && (v.language !== a?.language || v.gender !== a.gender)) ?? best.find((v) => v.id !== a?.id);
+  return { a: a?.id ?? 'af_heart', b: b?.id ?? 'bf_emma' };
+}
+
+/**
+ * Mix a voice / Edit mix: two voices, the blend slider, ▶, a name, Save (and Delete for a saved mix). The
+ * slider and pickers update the screen in place (never rebuilt while a finger is on them).
+ */
+export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | null, onDone: () => void): void {
+  const p = panel(existing ? 'Edit mix' : 'Mix a voice', 'voice-mixer');
+  const start = existing ?? { ...startingPair(info), percent: 50, name: '' };
+  let a = start.a;
+  let b = start.b;
+  let percent = mixPercent(start.percent);
+  let busy = false;
+  p.body.innerHTML = `
+    <div class="sec">Voices</div>
+    <div class="card">
+      <label class="row"><div class="main"><b>First voice</b></div><select data-act="mix-a" aria-label="First voice">${voiceOptions(info, a)}</select></label>
+      <label class="row"><div class="main"><b>Second voice</b></div><select data-act="mix-b" aria-label="Second voice">${voiceOptions(info, b)}</select></label>
+    </div>
+    <div class="sec">Blend</div>
+    <div class="card"><div class="mix">
+      <div class="mix-shares" data-shares></div>
+      <input type="range" class="mix-range" data-act="mix-blend" min="0" max="100" step="1" value="${String(percent)}" aria-label="Blend">
+      <div class="mix-ends"><span data-end="a"></span><span data-end="b"></span></div>
+    </div></div>
+    <button type="button" class="btn alt" data-act="mix-play">▶ Listen to the mix</button>
+    <div class="sec">Name</div>
+    <input type="text" data-act="mix-name" maxlength="40" autocomplete="off" aria-label="Name" value="${esc(existing?.name ?? '')}">
+    <p class="note warn" data-problem hidden></p>
+    <button type="button" class="btn" data-act="mix-save">${existing ? 'Save changes' : 'Save mix'}</button>
+    ${existing ? '<button type="button" class="btn alt danger" data-act="mix-delete">Delete mix</button>' : ''}
+    <p class="note">Mixes are kept on this iPhone. Pick one in Settings › Voices for every novel, or for one novel in the Listen player › Voice.</p>`;
+  const $ = <T extends Element>(sel: string): T => p.body.querySelector(sel) as T;
+  const nameInput = $<HTMLInputElement>('[data-act="mix-name"]');
+  const reflect = (): void => {
+    $<HTMLElement>('[data-shares]').textContent = mixShares(info.voices, a, b, percent);
+    $<HTMLElement>('[data-end="a"]').textContent = info.voices.find((v) => v.id === a)?.name ?? a;
+    $<HTMLElement>('[data-end="b"]').textContent = info.voices.find((v) => v.id === b)?.name ?? b;
+    nameInput.placeholder = suggestedMixName(info.voices, a, b, percent);
+    const problem = mixProblem(info.voices, a, b);
+    const note = $<HTMLElement>('[data-problem]');
+    note.hidden = !problem;
+    note.textContent = problem ?? '';
+    $<HTMLButtonElement>('[data-act="mix-save"]').disabled = !!problem;
+    $<HTMLButtonElement>('[data-act="mix-play"]').disabled = !!problem;
+  };
+  const onInput = (ev: Event): void => {
+    const el = ev.target as HTMLInputElement | HTMLSelectElement;
+    if (el.dataset.act === 'mix-a') a = el.value;
+    else if (el.dataset.act === 'mix-b') b = el.value;
+    else if (el.dataset.act === 'mix-blend') percent = mixPercent(Number(el.value));
+    else return;
+    reflect();
+  };
+  p.body.addEventListener('input', onInput);
+  p.body.addEventListener('change', onInput);
+  let deleteArmed: ReturnType<typeof setTimeout> | null = null;
+  p.body.addEventListener('click', (ev) => {
+    const el = (ev.target as Element).closest<HTMLButtonElement>('button[data-act]');
+    if (!el || el.disabled || busy) return;
+    const act = el.dataset.act;
+    if (act === 'mix-play') return void sample(el, blendVoice(a, b, percent));
+    if (act === 'mix-save') {
+      const name = cleanMixName(nameInput.value) || suggestedMixName(info.voices, a, b, percent);
+      busy = true;
+      void Narration.saveCustomVoice({ ...(existing ? { id: existing.id } : {}), name, a, b, percent })
+        .then(() => {
+          toast(`Saved “${name}”`);
+          p.close();
+          onDone();
+        })
+        .catch((err: unknown) => toast(`Couldn't save the mix: ${err instanceof Error ? err.message : String(err)}`))
+        .finally(() => (busy = false));
+      return;
+    }
+    if (act === 'mix-delete' && existing) {
+      if (!deleteArmed) {
+        el.textContent = 'Tap again to delete';
+        deleteArmed = setTimeout(() => {
+          deleteArmed = null;
+          el.textContent = 'Delete mix';
+        }, 4000);
+        return;
+      }
+      clearTimeout(deleteArmed);
+      deleteArmed = null;
+      busy = true;
+      void Narration.deleteCustomVoice({ id: existing.id })
+        .then(() => {
+          toast(`Deleted “${existing.name}”`);
+          p.close();
+          onDone();
+        })
+        .catch((err: unknown) => toast(`Couldn't delete the mix: ${err instanceof Error ? err.message : String(err)}`))
+        .finally(() => (busy = false));
+    }
+  });
+  reflect();
 }
 
 // ---------------------------------------------------------------- one novel's voice
@@ -346,8 +596,8 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     const own = info.novelVoice ?? null;
     p.body.innerHTML = `
       <div class="sec">Voice for this novel</div>
-      <div class="card">${voiceRows(info, info.effectiveVoice ?? info.defaultVoice)}</div>
-      <p class="note">${own ? 'This novel has its own voice.' : `Using the default voice (${esc(info.voices.find((v) => v.id === info?.defaultVoice)?.name ?? '')}).`}</p>
+      ${voiceRows(info, info.effectiveVoice ?? info.defaultVoice)}
+      <p class="note">${own ? 'This novel has its own voice.' : `Using the default voice (${esc(choiceName(info, info.defaultVoice))}).`}</p>
       ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
       <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>
       <div class="sec">Pronunciations</div>

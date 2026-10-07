@@ -3,14 +3,16 @@
 //
 
 import AVFoundation
-import Capacitor
+@preconcurrency import Capacitor
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
 import MediaPlayer
 
+/// Capacitor calls arrive on its plugin queue; every method hops to the main thread before touching state,
+/// and the listeners it registers run on main, so the plugin is effectively main-thread confined.
 @objc(NarrationPlugin)
-public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
+public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "NarrationPlugin"
     public let jsName = "Narration"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -34,6 +36,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setVoiceSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "sampleVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopSample", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveCustomVoice", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteCustomVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
@@ -76,6 +80,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let startSentence = (start["sentence"] as? NSNumber)?.intValue ?? 0
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
+        // Voice Lab A/B: "on" / "off" overrides narrator mode for this play (the saved pieces either way).
+        let narratorOverride: Bool? = call.getString("narrator").flatMap { $0 == "on" ? true : $0 == "off" ? false : nil }
         let raw = call.getArray("paragraphs")
         let script = NarrationController.ScriptItem.parse(call.getObject("script"))
         // PC-narrated audio for this chapter (only with Settings › Voices › Advanced › "Use PC audio when
@@ -84,6 +90,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
+            self.n.narratorOverride = narratorOverride
             if let audioChapter {
                 self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
             } else if raw != nil || script != nil {
@@ -259,15 +266,28 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
             let k = KokoroService.shared
             var out: [String: Any] = [
                 "voices": VoiceCatalog.voices.map { v in
-                    ["id": v.id, "name": v.name, "language": v.language, "gender": v.gender.rawValue, "blurb": v.blurb] as [String: Any]
+                    ["id": v.id, "name": v.name, "language": v.language, "gender": v.gender.rawValue, "blurb": v.blurb,
+                     "grade": v.grade, "gradeRank": v.gradeRank] as [String: Any]
                 },
-                "defaultVoice": prefs.voice(forNovel: nil),
+                "customVoices": prefs.customVoices.map { m in
+                    ["id": m.id, "name": m.name, "a": m.a, "b": m.b, "percent": m.percent] as [String: Any]
+                },
+                "defaultVoice": prefs.choice(forNovel: nil),
                 "kokoroEnabled": prefs.kokoroEnabled,
                 "usePCAudio": prefs.usePCAudio,
                 "carButtons": prefs.carButtonsChoice.rawValue,
                 "speed": prefs.speed,
                 "volume": prefs.volume,
                 "speedPresets": SpeechSpeed.presets,
+                "narrator": [
+                    "enabled": prefs.narrator.enabled,
+                    "dialogueVoice": prefs.narrator.dialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
+                    "secondDialogueVoice": prefs.narrator.secondDialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
+                    "pacing": prefs.narrator.pacing,
+                    "jitter": prefs.narrator.jitter,
+                    "polish": prefs.narrator.polish,
+                    "roomTone": prefs.narrator.roomTone,
+                ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
                     "status": k.statusText,
@@ -282,7 +302,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
             if let pluginId, let novelPath {
                 let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
                 out["novelVoice"] = prefs.novelVoices[key] ?? NSNull()
-                out["effectiveVoice"] = prefs.voice(forNovel: key)
+                out["effectiveVoice"] = prefs.choice(forNovel: key)
             }
             call.resolve(out)
         }
@@ -290,24 +310,39 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func setVoiceSettings(_ call: CAPPluginCall) {
         let defaultVoice = call.getString("defaultVoice")
-        let novel = call.getObject("novel")
         let usePCAudio = call.getBool("usePCAudio")
         let kokoroEnabled = call.getBool("kokoroEnabled")
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
         let speed = call.getDouble("speed")
         let volume = call.getDouble("volume")
         DispatchQueue.main.async {
+            let novel = call.getObject("novel")
+            let narrator = call.getObject("narrator")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }
                 if let speed { p.speed = SpeechSpeed.clamp(speed) }
                 if let volume { p.volume = VoiceVolume.clamp(volume) }
-                if let defaultVoice, VoiceCatalog.voice(defaultVoice) != nil { p.defaultVoice = defaultVoice }
+                if let defaultVoice, p.isChoice(defaultVoice) { p.defaultVoice = defaultVoice }
                 if let novel, let pid = novel["pluginId"] as? String, let path = novel["novelPath"] as? String {
                     p.setVoice(novel["voice"] as? String, forNovel: VoiceSettings.novelKey(pluginId: pid, novelPath: path))
                 }
                 if let usePCAudio { p.usePCAudio = usePCAudio }
                 if let kokoroEnabled { p.kokoroEnabled = kokoroEnabled }
+                if let narrator {
+                    // Narrator mode: only the keys sent change; a voice of null (or unknown) means none.
+                    var n = p.narrator
+                    if let v = narrator["enabled"] as? Bool { n.enabled = v }
+                    if narrator.keys.contains("dialogueVoice") { n.dialogueVoice = (narrator["dialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil } }
+                    if narrator.keys.contains("secondDialogueVoice") {
+                        n.secondDialogueVoice = (narrator["secondDialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil }
+                    }
+                    if let v = narrator["pacing"] as? Bool { n.pacing = v }
+                    if let v = narrator["jitter"] as? Bool { n.jitter = v }
+                    if let v = narrator["polish"] as? Bool { n.polish = v }
+                    if let v = narrator["roomTone"] as? Bool { n.roomTone = v }
+                    p.narrator = n
+                }
             }
             if kokoroEnabled == true, KokoroService.shared.crashDisabled { KokoroService.shared.resetCrashes() }
             if VoiceSettings.shared.prefs.kokoroEnabled != before.kokoroEnabled { KokoroService.shared.settingsChanged() }
@@ -317,7 +352,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private let appleSampler = AVSpeechSynthesizer()
 
-    /// ▶ sample: a Kokoro voice id, or "apple" for the fallback voice. Resolves once audio starts.
+    /// ▶ sample: a Kokoro voice id, a mix id, a blend ("af_heart+bf_emma@35", the mixer's audition), or
+    /// "apple" for the fallback voice. Resolves once audio starts.
     @objc func sampleVoice(_ call: CAPPluginCall) {
         let voice = call.getString("voice") ?? VoiceCatalog.defaultVoiceId
         let text = call.getString("text") ?? "The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath."
@@ -339,13 +375,43 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.appleSampler.speak(u)
                 return call.resolve(["ms": 0, "source": "apple"])
             }
-            guard VoiceCatalog.voice(voice) != nil else { return call.reject("Unknown voice \(voice)", "INVALID_ARGS") }
-            KokoroService.shared.playSample(voice: voice, text: text, runs: runs?.isEmpty == false ? runs : nil) { result in
+            guard let engineVoice = VoiceSettings.shared.prefs.engineVoice(voice) else { return call.reject("Unknown voice \(voice)", "INVALID_ARGS") }
+            KokoroService.shared.playSample(voice: engineVoice, text: text, runs: runs?.isEmpty == false ? runs : nil) { result in
                 switch result {
                 case .success(let ms): call.resolve(["ms": ms, "source": "kokoro"])
                 case .failure(let e): call.reject(e.localizedDescription, "VOICE_UNAVAILABLE")
                 }
             }
+        }
+    }
+
+    /// Voice mixer: save a new mix ({name, a, b, percent}) or change one ({id, …}). Resolves {mix}.
+    @objc func saveCustomVoice(_ call: CAPPluginCall) {
+        let id = call.getString("id")
+        let name = call.getString("name") ?? ""
+        guard let a = call.getString("a"), let b = call.getString("b") else { return call.reject("a and b are required", "INVALID_ARGS") }
+        let percent = VoiceBlend.percent(call.getDouble("percent") ?? 50)
+        DispatchQueue.main.async {
+            var saved: CustomVoice?
+            var failure: Error?
+            VoiceSettings.shared.update { p in
+                do { saved = try p.saveCustomVoice(id: id, name: name, a: a, b: b, percent: percent) } catch { failure = error }
+            }
+            guard let mix = saved else { return call.reject(failure?.localizedDescription ?? "Couldn't save the mix", "INVALID_ARGS") }
+            call.resolve(["mix": ["id": mix.id, "name": mix.name, "a": mix.a, "b": mix.b, "percent": mix.percent] as [String: Any]])
+        }
+    }
+
+    /// Voice mixer: delete a mix ({id}); the default and novels using it go back to Heart / the default.
+    @objc func deleteCustomVoice(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("id is required", "INVALID_ARGS") }
+        DispatchQueue.main.async {
+            var failure: Error?
+            VoiceSettings.shared.update { p in
+                do { try p.deleteCustomVoice(id: id) } catch { failure = error }
+            }
+            if let failure { return call.reject(failure.localizedDescription, "INVALID_ARGS") }
+            call.resolve()
         }
     }
 
@@ -366,8 +432,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let route = call.getString("route")
         let ahead = call.getInt("ahead")
         let reset = call.getBool("resetStats") ?? false
-        let inject = call.getObject("inject")
         DispatchQueue.main.async {
+            let inject = call.getObject("inject")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let route, KokoroRoute(rawValue: route) != nil { p.route = route }
@@ -467,8 +533,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Simulator self-test: a synthetic multi-chapter novel ({chapterPath, title, paragraphs, script, next?, prev?}).
     @objc func selfTestChapters(_ call: CAPPluginCall) {
-        let list = (call.getArray("chapters") ?? []).compactMap { $0 as? [String: Any] }
         DispatchQueue.main.async {
+            let list = (call.getArray("chapters") ?? []).compactMap { $0 as? [String: Any] }
             guard NarrationSelfTest.isActive else { return call.reject("self-test only", "UNAVAILABLE") }
             NarrationSelfTest.shared.register(chapters: list)
             call.resolve(["chapters": list.count])
@@ -486,8 +552,9 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func onMain(_ call: CAPPluginCall, _ fn: @escaping (NarrationController) -> Void) {
+        let work = MainBound(fn)
         DispatchQueue.main.async {
-            fn(self.n)
+            work.value(self.n)
             call.resolve()
         }
     }

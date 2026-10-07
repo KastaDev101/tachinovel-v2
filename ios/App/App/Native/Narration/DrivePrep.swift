@@ -13,7 +13,7 @@
 //  The decisions (policy, index, job walk) are platform-free in HDVoiceCore/DrivePrep.swift. Main thread.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 @preconcurrency import BackgroundTasks
 import Foundation
 import HDVoiceCore
@@ -35,7 +35,8 @@ enum DriveError: Error, LocalizedError {
 
 // MARK: - Prepared files
 
-final class DriveCache {
+/// Main-thread confined (DrivePrep and the controller use it on main).
+final class DriveCache: @unchecked Sendable {
     static let shared = DriveCache()
     static let changed = Notification.Name("tachinovel.driveCacheChanged")
 
@@ -130,7 +131,8 @@ final class DriveCache {
 
 /// Renders a chapter's sentence script with Kokoro into `<stem>.m4a` (AAC-LC, mono 24 kHz, 32 kbps,
 /// ~14 MB per hour) and `<stem>.json` (timestamp manifest). Main thread; file writes on a serial queue.
-final class ChapterRenderer {
+/// Driven on main; only the audio file is touched on its writer queue (`io`), one write at a time.
+final class ChapterRenderer: @unchecked Sendable {
     struct Output {
         let audioFile: String
         let manifestFile: String
@@ -142,6 +144,9 @@ final class ChapterRenderer {
     private let chapter: NarrationController.Chapter
     private let items: [NarrationController.ScriptItem]
     private let voice: String
+    /// Narrator mode at render time: dialogue voices, pacing, jitter and polish, as live narration has them.
+    private let narrator: NarratorSettings
+    private var polish: NarrationPolish?
     private let folder: URL
     private let stem: String
     private let io = DispatchQueue(label: "app.tachinovel.drive-writer")
@@ -162,10 +167,13 @@ final class ChapterRenderer {
     /// Sentences done / total.
     var onProgress: ((Int, Int) -> Void)?
 
-    init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, folder: URL) {
+    init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, narrator: NarratorSettings = NarratorSettings(),
+         folder: URL) {
         self.chapter = chapter
         self.items = items
         self.voice = voice
+        self.narrator = narrator
+        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone) : nil
         self.folder = folder
         stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
     }
@@ -173,13 +181,13 @@ final class ChapterRenderer {
     func start(_ completion: @escaping (Result<Output, Error>) -> Void) {
         self.completion = completion
         let url = folder.appendingPathComponent("\(stem).m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 24_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 32_000,
-        ]
         io.async {
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 24_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000,
+            ]
             do {
                 let f = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
                 DispatchQueue.main.async {
@@ -199,7 +207,10 @@ final class ChapterRenderer {
         if let why = stopReason ?? shouldStop?() { return finish(.failure(DriveError.interrupted(why))) }
         guard next < items.count else { return finalize() }
         let item = items[next]
-        KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: 1) { [weak self] result in
+        let sentence = item.narrator
+        let speed = NarratorPlan.rate(1, for: sentence, settings: narrator)
+        let prefs = VoiceSettings.shared.prefs
+        let handle: (Result<KokoroAudio, Error>) -> Void = { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let audio):
@@ -215,12 +226,23 @@ final class ChapterRenderer {
                 KokoroService.shared.ensureLoaded { _ in self.step() }
             }
         }
+        if let parts = NarratorPlan.parts(for: sentence, settings: narrator, resolve: { prefs.engineVoice($0) }) {
+            KokoroService.shared.synthesize(parts: parts, voice: voice, speed: speed, completion: handle)
+        } else {
+            KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: speed, completion: handle)
+        }
     }
 
     private func append(_ item: NarrationController.ScriptItem, _ audio: KokoroAudio) {
         sampleRate = audio.sampleRate
-        let pause = max(0, item.pauseMs) / 1000
-        let out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
+        let pause = NarratorPlan.pause(for: item.narrator, settings: narrator)
+        let out: [Float]
+        if var p = polish, p.sampleRate == audio.sampleRate {
+            out = p.prepareSentence(audio.samples, pause: pause)
+            polish = p
+        } else {
+            out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
+        }
         let speech = max(0, out.count - PCM.silenceFrames(seconds: pause, sampleRate: audio.sampleRate))
         let sr = Double(max(1, audio.sampleRate))
         let t0 = Double(frames) / sr
@@ -282,7 +304,8 @@ final class ChapterRenderer {
 
 // MARK: - Requests and the runner
 
-final class DrivePrep {
+/// Main-thread confined: requests, the runner and the system callbacks all hop to main.
+final class DrivePrep: @unchecked Sendable {
     static let shared = DrivePrep()
     static let taskId = "app.tachinovel.drive-prep"
     static let changed = Notification.Name("tachinovel.drivePrepChanged")
@@ -329,10 +352,10 @@ final class DrivePrep {
         guard !started else { return }
         started = true
         jobs = Self.loadJobs()
-        UIDevice.current.isBatteryMonitoringEnabled = true
+        MainThread.run { UIDevice.current.isBatteryMonitoringEnabled = true }
         monitor.pathUpdateHandler = { [weak self] path in
             let wifi = path.status == .satisfied && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, self.wifi != wifi else { return }
                 self.wifi = wifi
                 self.kick()
@@ -414,7 +437,7 @@ final class DrivePrep {
     // MARK: Runner
 
     private func conditions() -> DriveConditions {
-        let battery = UIDevice.current.batteryState
+        let battery = MainThread.run { UIDevice.current.batteryState }
         let n = NarrationController.shared
         return DriveConditions(charging: battery == .charging || battery == .full, wifi: wifi,
                                lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
@@ -503,13 +526,16 @@ final class DrivePrep {
                                                        novelName: job.novelName, coverUrl: job.coverUrl) { ch in
             guard self.runningKey == job.novelKey else { return self.done() }
             guard let ch, let script = ch.script, !script.isEmpty else { return self.failed(job, "Couldn't load \(chapterPath)") }
-            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: job.voice) != nil {
+            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(voice: job.voice)) != nil {
                 return self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
             }
             KokoroService.shared.ensureLoaded { status in
                 guard status == .ready else { return self.failed(job, "Kokoro isn't available (\(KokoroService.shared.statusText))") }
                 self.usedKokoro = true
-                let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, folder: DriveCache.shared.folder)
+                // Filed under the voice plus narrator mode's settings now (what playback will look for).
+                let prefs = VoiceSettings.shared.prefs
+                let key = prefs.preparedVoice(voice: job.voice)
+                let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, narrator: prefs.narrator, folder: DriveCache.shared.folder)
                 r.shouldStop = { [weak self] in self?.stopReason(job) }
                 r.onProgress = { [weak self] i, n in
                     self?.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: i, sentences: n)
@@ -523,7 +549,7 @@ final class DrivePrep {
                     self.current = nil
                     switch result {
                     case .success(let out):
-                        let entry = PreparedChapter(novelKey: job.novelKey, chapterPath: chapterPath, title: ch.chapterName, voice: job.voice,
+                        let entry = PreparedChapter(novelKey: job.novelKey, chapterPath: chapterPath, title: ch.chapterName, voice: key,
                                                     audioFile: out.audioFile, manifestFile: out.manifestFile, bytes: out.bytes,
                                                     durationMs: out.durationMs, sentences: out.sentences, createdAt: Date().timeIntervalSince1970)
                         let keep = Set((self.jobs.first { $0.novelKey == job.novelKey }?.done ?? []).map { DriveCacheIndex.id(novelKey: job.novelKey, chapterPath: $0) })
@@ -594,15 +620,18 @@ final class DrivePrep {
     /// app running anyway; otherwise this buys ~30 s, then the BGProcessingTask continues later).
     private func beginBackgroundWork() {
         guard appTask == .invalid, bgTask == nil else { return }
-        appTask = UIApplication.shared.beginBackgroundTask(withName: "drive-prep") { [weak self] in
-            self?.renderer?.stop("Continuing later")
-            self?.endBackgroundWork()
+        appTask = MainThread.run {
+            UIApplication.shared.beginBackgroundTask(withName: "drive-prep") { [weak self] in
+                self?.renderer?.stop("Continuing later")
+                self?.endBackgroundWork()
+            }
         }
     }
 
     private func endBackgroundWork() {
         if appTask != .invalid {
-            UIApplication.shared.endBackgroundTask(appTask)
+            let task = appTask
+            MainThread.run { UIApplication.shared.endBackgroundTask(task) }
             appTask = .invalid
         }
         if let task = bgTask, renderer == nil, runningKey == nil {
@@ -623,12 +652,13 @@ final class DrivePrep {
     private func runInBackground(_ task: BGProcessingTask) {
         bgTask = task
         task.expirationHandler = { [weak self] in
-            DispatchQueue.main.async {
-                self?.renderer?.stop("Continuing later")
-                if let t = self?.bgTask {
-                    self?.bgTask = nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.renderer?.stop("Continuing later")
+                if let t = self.bgTask {
+                    self.bgTask = nil
                     t.setTaskCompleted(success: false)
-                    self?.scheduleBackground()
+                    self.scheduleBackground()
                 }
             }
         }

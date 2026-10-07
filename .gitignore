@@ -13,6 +13,8 @@ ios/App/App/public/
 ios/App/App/KokoroModels/
 ios/App/HDVoice/.build/
 ios/App/HDVoice/.swiftpm/
+ios/App/ExpressiveVoice/.build/
+ios/App/ExpressiveVoice/.swiftpm/
 ios/App/App/capacitor.config.json
 ios/App/App/config.xml
 ios/App/build/

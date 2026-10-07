@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ASR round trip on the WAVs kokoro-check wrote (af_heart, the `asr` fixtures): whisper.cpp v1.9.4 (pinned,
+# ASR round trip on the WAVs kokoro-check wrote (af_heart and a voice mix, the `asr` fixtures): whisper.cpp v1.9.4 (pinned,
 # built from source) with ggml-base.en-q8_0 (pinned Hugging Face revision + SHA-256) transcribes them, and
 # ci/voice-asr.ts fails if the word error rate is above 15%. If whisper.cpp can't be built or the model
 # can't be fetched, the round trip is skipped with a warning (never a failure).
