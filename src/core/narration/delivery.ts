@@ -27,7 +27,7 @@
  *  - Pauses: a context model (what the sentence hands over to: the same speaker, narration, a switch between
  *    narration and dialogue, a new paragraph, a command) with ±10 % variation seeded by the sentence, ×1.2 after
  *    "…" inside a paragraph, ×0.85 after an intense line.
- *  - Breath groups: Nano reads a paragraph per call (chunks), which sounds more connected than sentence by sentence.
+ *  - Breath groups: the narrator voice reads a paragraph per call (chunks), which sounds more connected than sentence by sentence.
  * On iOS 26 native can refine the moods ahead of playback with Apple's on-device model (MOOD_TABLE travels with
  * the script so the parameters follow the refined mood); these rules stay the fallback and never wait for it.
  * No imports on purpose: the Voice Lab samples (and the CI benchmark fixtures built from them with plain Node, no
@@ -837,9 +837,10 @@ export const DELIVERY_AUDIO = {
   nonVerbalDb: -3,
 };
 
-/** Breath-group synthesis: Nano reads a paragraph (or a same-speaker run of quote paragraphs) per call, split at
- * sentence ends under this many characters (Nano's safe length per call; the voice agent is measuring it). */
-export const CHUNK_MAX_CHARS = 120;
+/** Breath-group synthesis: the narrator voice reads a paragraph (or a same-speaker run of quote paragraphs) per call,
+ * split at sentence ends under this many characters: the longest call of any Listen engine (Pocket TTS, 400).
+ * Native splits a chunk further at the engine's own limit (ExpressiveEngineID.maxCharactersPerCall; Nano 120). */
+export const CHUNK_MAX_CHARS = 400;
 /** Lines whose temperatures differ by more than this don't share a call (one temperature per call: the chunk's
  * letter-weighted mean). */
 export const CHUNK_MAX_T_STEP = 0.1;

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Narrator",
+  "frames": 125,
+  "embeddingDim": 1024,
+  "bytes": 512000,
+  "sha256": "dcda6df42999fe67f1807deb5d9b5e3d5b4598d25b6af2cc8750c6631741a66e",
+  "source": "ref-8A2-a.wav, first 10.00 s"
+}

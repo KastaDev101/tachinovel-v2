@@ -70,7 +70,8 @@ public enum ExpressiveEngines {
     }
 
     /// A new, unloaded engine; nil if this OS can't run it (Chatterbox Nano and NeuTTS-2E need iOS 18).
-    public static func make(_ id: ExpressiveEngineID, narratorSpeaker: String = "emily") -> (any ExpressiveSynthesizer)? {
+    /// `pocketVoice`: Pocket TTS reads with this cloned voice (the shipped Narrator) instead of its default one.
+    public static func make(_ id: ExpressiveEngineID, narratorSpeaker: String = "emily", pocketVoice: PocketVoice? = nil) -> (any ExpressiveSynthesizer)? {
         switch id {
         case .chatterboxNano:
             if #available(iOS 18.0, macOS 15.0, *) { return ChatterboxNanoSynth() }
@@ -79,7 +80,7 @@ public enum ExpressiveEngines {
             if #available(iOS 18.0, macOS 15.0, *) { return NeuTtsSynth(narrator: narratorSpeaker) }
             return nil
         case .pocketTts:
-            return PocketTtsSynth()
+            return PocketTtsSynth(voice: pocketVoice)
         }
     }
 }
@@ -169,8 +170,12 @@ public actor NeuTtsSynth: ExpressiveSynthesizer {
 
 public actor PocketTtsSynth: ExpressiveSynthesizer {
     private var manager: PocketTtsManager?
+    /// The cloned voice (FluidAudio prepends Pocket's BOS itself); nil = Pocket's default voice.
+    private let voiceData: PocketTtsVoiceData?
 
-    public init() {}
+    public init(voice: PocketVoice? = nil) {
+        voiceData = voice.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
+    }
 
     public func load() async throws -> Double {
         if manager != nil { return 0 }
@@ -186,7 +191,13 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         let t0 = Date()
         var samples: [Float] = []
         var first: Double?
-        let stream = try await manager.synthesizeStreaming(text: StyleMapper.plainText(line.text))
+        let text = StyleMapper.plainText(line.text)
+        let stream: AsyncThrowingStream<PocketTtsSynthesizer.AudioFrame, Error>
+        if let voiceData {
+            stream = try await manager.synthesizeStreaming(text: text, voiceData: voiceData)
+        } else {
+            stream = try await manager.synthesizeStreaming(text: text)
+        }
         for try await frame in stream {
             if first == nil { first = elapsedMs(since: t0) }
             samples.append(contentsOf: frame.samples)

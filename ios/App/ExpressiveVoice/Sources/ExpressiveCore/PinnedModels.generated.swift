@@ -67,7 +67,7 @@ extension PinnedModels {
             id: "pocket-tts", title: "Pocket TTS", repo: "FluidInference/pocket-tts-coreml",
             revision: "91748676fe3c8b2eb3007b3125253bcd898202c3", folder: "pocket-tts",
             license: "CC-BY-4.0", licenseURL: "https://huggingface.co/kyutai/pocket-tts", upstream: "kyutai/pocket-tts",
-            inApp: false,
+            inApp: true,
             files: [
                 PinnedFile(path: "v2.1/english/cond_prefill_ane.mlmodelc/analytics/coremldata.bin", size: 243, sha256: "1c9d0f384e454921a66cdd1a9fb8fa59fa0c5cd3703ca32a9792a97e67e8a1c2"),
                 PinnedFile(path: "v2.1/english/cond_prefill_ane.mlmodelc/coremldata.bin", size: 1388, sha256: "39d79bbbf366dca5fb7339c461952d79484e12da2b3642e45881afd4ddf82e7b"),

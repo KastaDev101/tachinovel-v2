@@ -4,12 +4,12 @@
  * same reasons as on the phone, truncation and byte-flip fuzzing, the spec in step with the Swift one, and the
  * BuiltInVoices folder that goes into the app.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
-import { addVoice, BUILT_IN_VOICES_DIR, checkBuiltInVoices, readIndex, slug, writeIndex } from '../tools/built-in-voices.ts';
+import { addVoice, BUILT_IN_VOICES_DIR, checkBuiltInVoices, checkPocketVoice, readIndex, slug, writeIndex } from '../tools/built-in-voices.ts';
 import { bundledVoiceId, ENGINES, LIMITS, readVoicePack, sha256, validateConditioning } from '../tools/voice-pack.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -280,6 +280,33 @@ describe('tools/built-in-voices.ts (voices that ship in the app)', () => {
     const { problems } = checkBuiltInVoices(d);
     expect(problems.some((p) => p.startsWith('README.md'))).toBe(true);
     expect(problems.some((p) => p.includes('gone.tnvoice'))).toBe(true);
+  });
+
+  it('checks the Pocket TTS Narrator voice: shape, size, sha256, finite values, nothing else in its folder', () => {
+    const d = path.join(temp(), 'pocket');
+    mkdirSync(d);
+    const write = (frames: number, floats: Float32Array, sha?: string) => {
+      const data = Buffer.from(floats.buffer);
+      writeFileSync(path.join(d, 'narrator.pocketvoice'), data);
+      const manifest = { schemaVersion: 1, engine: 'pocket-tts', name: 'Narrator', frames, embeddingDim: 1024, bytes: frames * 4096, sha256: sha ?? sha256(data) };
+      writeFileSync(path.join(d, 'narrator.json'), JSON.stringify(manifest));
+    };
+    const good = new Float32Array(2 * 1024).map((_, i) => Math.sin(i) * 0.1);
+    write(2, good);
+    expect(checkPocketVoice(d)).toEqual([]);
+    write(2, good, '0'.repeat(64));
+    expect(checkPocketVoice(d).some((p) => p.includes('sha256'))).toBe(true);
+    write(3, good);
+    expect(checkPocketVoice(d).some((p) => p.includes('float32'))).toBe(true);
+    write(126, new Float32Array(126 * 1024));
+    expect(checkPocketVoice(d).some((p) => p.includes('frames must be'))).toBe(true);
+    const nan = good.slice();
+    nan[5] = Number.NaN;
+    write(2, nan);
+    expect(checkPocketVoice(d).some((p) => p.includes('finite'))).toBe(true);
+    write(2, good);
+    writeFileSync(path.join(d, 'extra.bin'), 'x');
+    expect(checkPocketVoice(d).some((p) => p.startsWith('pocket/extra.bin'))).toBe(true);
   });
 
   it('names files like the voice', () => {

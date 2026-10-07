@@ -83,6 +83,13 @@ final class ExpressiveService {
     let voices: ImportedVoiceStore
     /// Voices that ship in the app (BuiltInVoices/), checked on first use; one of them can be the default.
     let bundled = BundledVoices(directory: Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil))
+    /// The Narrator voice for Pocket TTS (BuiltInVoices/pocket/), checked once (size, shape, sha256).
+    lazy var pocketNarrator: Result<PocketVoice, Error> = Result {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
+            throw PocketVoice.Problem.missing("BuiltInVoices")
+        }
+        return try PocketVoice.narrator(builtInVoices: dir)
+    }
     let chatterboxSlot: ChatterboxVoiceSlot?
     /// The chosen narrator voice for Chatterbox Nano: an imported ("v…") or shipped ("b…") voice's id, or
     /// "builtin" for Chatterbox's own voice; nil = the default voice.
@@ -252,7 +259,17 @@ final class ExpressiveService {
         guard !crashDisabled else { return completion(.failure(ExpressiveError.disabled)) }
         guard Self.supported(id) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         guard isInstalled(id) else { return completion(.failure(ExpressiveEngineError.modelNotInstalled(id.title))) }
-        guard let engine = ExpressiveEngines.make(id) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        // Pocket TTS reads with the Narrator voice; a voice file that fails its check is never used (Listen falls back).
+        var pocketVoice: PocketVoice?
+        if id == .pocketTts {
+            switch pocketNarrator {
+            case .success(let v): pocketVoice = v
+            case .failure(let error):
+                log.error("expressive: pocket voice: \(error.localizedDescription, privacy: .public)")
+                return completion(.failure(error))
+            }
+        }
+        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         if loadedID != nil { unload(reason: "switching engine") }
         loadedID = id
         synth = engine

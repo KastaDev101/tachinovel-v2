@@ -59,8 +59,8 @@ describe('pinned expressive models', () => {
     const swift = read('ios/App/ExpressiveVoice/Sources/ExpressiveCore/ExpressiveCatalog.swift');
     const ids = [...swift.matchAll(/case \w+ = "([a-z0-9-]+)"/g)].map((m) => m[1]);
     expect(ids.sort()).toEqual(lock.engines.map((e) => e.id).sort());
-    // The app offers the two expressive engines; Pocket TTS is benchmark-only.
-    expect(lock.engines.filter((e) => e.inApp).map((e) => e.id).sort()).toEqual(['chatterbox-nano', 'neutts-2e']);
+    // The app offers all three; Pocket TTS (the Narrator voice, CPU/Neural Engine) is the default Listen engine.
+    expect(lock.engines.filter((e) => e.inApp).map((e) => e.id).sort()).toEqual(['chatterbox-nano', 'neutts-2e', 'pocket-tts']);
   });
 });
 

@@ -809,12 +809,22 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         activateSession()
     }
 
+    /// The expressive engine that reads chapters: the chosen one, or Chatterbox Nano when Pocket TTS (the default)
+    /// isn't downloaded but Nano is; nil = Kokoro.
+    static func listenEngine() -> ExpressiveEngineID? {
+        guard let id = VoiceSettings.shared.prefs.delivery.listenEngine.flatMap(ExpressiveEngineID.init(rawValue:)) else { return nil }
+        let svc = ExpressiveService.shared
+        func ready(_ e: ExpressiveEngineID) -> Bool { ExpressiveService.supported(e) && svc.isInstalled(e) }
+        if id == .pocketTts, !ready(.pocketTts), ready(.chatterboxNano) { return .chatterboxNano }
+        return id
+    }
+
     /// What the speech engine was started with; a settings change that alters it restarts the sentence.
     private var appliedVoiceKey = ""
 
     private func voiceKey() -> String {
         let p = VoiceSettings.shared.prefs
-        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(p.delivery.listenEngine ?? "kokoro")"
+        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")"
     }
 
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.
@@ -875,7 +885,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         engine.narrator = narrator
         engine.kokoroVoice = kokoroVoiceForCurrentNovel()
         engine.explicitAppleVoice = voiceIdentifier
-        engine.listenEngine = VoiceSettings.shared.prefs.delivery.listenEngine.flatMap(ExpressiveEngineID.init(rawValue:))
+        engine.listenEngine = Self.listenEngine()
         appliedVoiceKey = voiceKey()
         engine.enqueue(segs)
         resetSentenceClock()

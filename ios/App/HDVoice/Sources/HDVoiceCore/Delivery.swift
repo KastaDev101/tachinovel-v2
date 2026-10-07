@@ -43,16 +43,22 @@ public enum BreathPoint: String, Sendable, Equatable {
 /// Chatterbox Nano reads, natural delivery, the rules director, breaths, studio sound ("clean-warm"), non-verbals
 /// (when the voice has a pack) and breath-group synthesis are on.
 public struct DeliverySettings: Sendable, Equatable, Codable {
-    public static let currentVersion = 1
+    /// 2: Pocket TTS became the default Listen engine (version 1 only knew Chatterbox Nano, and saved it as the default).
+    public static let currentVersion = 2
+    public static let pocketTts = "pocket-tts"
     public static let chatterboxNano = "chatterbox-nano"
+    /// The expressive engines Listen can read chapters with.
+    public static let listenEngines: Set<String> = [pocketTts, chatterboxNano]
     public static let rules = "rules"
     public static let rulesAI = "rules+ai"
     public static let chunks = "chunks"
     public static let sentences = "sentences"
 
     public var version: Int
-    /// Listen reads chapters with this expressive engine when it is downloaded (Chatterbox Nano, the built-in
-    /// "Narrator" voice, by default); nil = Kokoro. Kokoro still reads any sentence the expressive engine can't.
+    /// Listen reads chapters with this expressive engine when it is downloaded: Pocket TTS with the built-in
+    /// "Narrator" voice by default (CPU + Neural Engine, so it keeps reading with the screen locked and in CarPlay),
+    /// or Chatterbox Nano; nil = Kokoro. When Pocket isn't downloaded, Nano reads if it is, then Kokoro; Kokoro
+    /// still reads any sentence the expressive engine can't.
     public var listenEngine: String?
     /// Natural delivery: the director, context pauses, the clean chain, breaths.
     public var natural: Bool
@@ -67,10 +73,10 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// "chunks" (a paragraph per model call, the default) or "sentences" (one call per sentence: the fallback).
     public var unit: String
 
-    public init(listenEngine: String? = DeliverySettings.chatterboxNano, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
+    public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rules, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks) {
         version = Self.currentVersion
-        self.listenEngine = listenEngine == Self.chatterboxNano ? listenEngine : nil
+        self.listenEngine = listenEngine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
         self.natural = natural
         self.director = director == Self.rulesAI ? Self.rulesAI : Self.rules
         self.breaths = breaths
@@ -84,14 +90,39 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = DeliverySettings()
         version = Self.currentVersion
-        let engine = try? c.decode(String.self, forKey: .listenEngine)
-        listenEngine = engine == Self.chatterboxNano ? engine : nil
+        let saved = (try? c.decode(Int.self, forKey: .version)) ?? 1
+        if !c.contains(.listenEngine) {
+            listenEngine = d.listenEngine
+        } else if (try? c.decodeNil(forKey: .listenEngine)) == true {
+            listenEngine = nil // Kokoro was chosen
+        } else {
+            let engine = try? c.decode(String.self, forKey: .listenEngine)
+            // Version 1 saved Chatterbox Nano as the default (nobody could pick it): those move to Pocket TTS.
+            if saved < 2, engine == Self.chatterboxNano {
+                listenEngine = Self.pocketTts
+            } else {
+                listenEngine = engine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
+            }
+        }
         natural = (try? c.decode(Bool.self, forKey: .natural)) ?? d.natural
         director = (try? c.decode(String.self, forKey: .director)) == Self.rulesAI ? Self.rulesAI : Self.rules
         breaths = (try? c.decode(Bool.self, forKey: .breaths)) ?? d.breaths
         studioSound = (try? c.decode(Bool.self, forKey: .studioSound)) ?? d.studioSound
         sounds = (try? c.decode(Bool.self, forKey: .sounds)) ?? d.sounds
         unit = (try? c.decode(String.self, forKey: .unit)) == Self.sentences ? Self.sentences : Self.chunks
+    }
+
+    /// listenEngine is written even when nil (Kokoro chosen), so a missing key always means "the default".
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        try c.encode(listenEngine, forKey: .listenEngine)
+        try c.encode(natural, forKey: .natural)
+        try c.encode(director, forKey: .director)
+        try c.encode(breaths, forKey: .breaths)
+        try c.encode(studioSound, forKey: .studioSound)
+        try c.encode(sounds, forKey: .sounds)
+        try c.encode(unit, forKey: .unit)
     }
 
     public var usesAI: Bool { natural && director == Self.rulesAI }
@@ -406,6 +437,6 @@ public struct ExpressiveGovernor: Sendable, Equatable {
 }
 
 extension VoicePreferences {
-    /// Listen reads chapters with Chatterbox Nano (the expressive narrator was picked).
-    public var expressiveListen: Bool { delivery.listenEngine == DeliverySettings.chatterboxNano }
+    /// Listen reads chapters with an expressive engine (the Narrator voice was picked).
+    public var expressiveListen: Bool { delivery.listenEngine.map(DeliverySettings.listenEngines.contains) ?? false }
 }

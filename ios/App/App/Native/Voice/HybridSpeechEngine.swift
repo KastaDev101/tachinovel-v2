@@ -138,8 +138,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         } else {
             natural = nil
         }
-        // The expressive voice renders about a minute ahead while the app is in front: it can't run in the background
-        // (GPU), so locking the phone keeps the Narrator voice for that long before Kokoro takes over.
+        // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
+        // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
         let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : prefs.clampedAhead
         var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: ahead))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
@@ -252,8 +252,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
-            // Short sentences of one paragraph go to the model together (one call, so it paces them as one
-            // thought: no "Relax, little one." [stop] "I don't bite…" [stop]); NaturalFinish cuts them apart again.
+            // The sentences of one breath-group chunk (a paragraph, or a same-speaker run of quote paragraphs; the
+            // script plans them) go to the model together, up to its per-call limit (Pocket TTS 400 characters, a
+            // whole paragraph; Nano 120). One call paces them as one thought: no "Relax, little one." [stop]
+            // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
             let group = chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
@@ -289,13 +291,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     /// Sentence i and the ones right after it that share one model call: natural delivery only, never the session's
-    /// first sentence (it starts alone, fast), never across a paragraph's end, at most `limit` characters in all.
+    /// first sentence (it starts alone, fast), only inside the script's chunk, at most `limit` characters in all.
     private func chunkGroup(from i: Int, limit: Int) -> [Int] {
-        guard natural != nil, i > 0 else { return [i] }
+        // Settings › "sentences" (one call per sentence) is the fallback unit.
+        guard natural != nil, i > 0, VoiceSettings.shared.prefs.delivery.usesChunks else { return [i] }
         var out = [i]
         var length = Self.readText(segments[i], expressive: true).count
         var j = i
-        while j + 1 < segments.count, (segments[j].naturalPause ?? segments[j].pauseAfter) < 0.6 {
+        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]) {
             let next = Self.readText(segments[j + 1], expressive: true).count
             guard length + 1 + next <= limit else { break }
             length += 1 + next
@@ -303,6 +306,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             out.append(j)
         }
         return out
+    }
+
+    /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
+    /// planChunks), or for an older web bundle without them, no paragraph-length pause between them.
+    private static func sameChunk(_ a: SpeechSegment, _ b: SpeechSegment) -> Bool {
+        if let x = a.natural?.chunk, let y = b.natural?.chunk { return x == y }
+        return (a.naturalPause ?? a.pauseAfter) < 0.6
     }
 
     /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.
