@@ -101,14 +101,16 @@ describe('voice mixer (PC shell)', () => {
     await shell.page.getByTestId('onboarding-skip').click();
     await shell.page.getByTestId('tab-more').click();
     await shell.page.getByTestId('more-voices').click();
-    await shell.page.getByTestId('screen-voices').locator('[data-act="mix-new"]').waitFor({ timeout: 5000 });
+    // The mixer lives with every Kokoro voice: Settings › Voices › All Kokoro voices.
+    await shell.page.getByTestId('screen-voices').locator('[data-act="kokoro-all"]').click();
+    await shell.page.getByTestId('kokoro-voices').locator('[data-act="mix-new"]').waitFor({ timeout: 5000 });
   });
 
   afterAll(async () => {
     await shell?.close();
   });
 
-  const screen = () => shell.page.locator('[data-testid="screen-voices"]:not([inert])');
+  const screen = () => shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
   const mixer = () => shell.page.locator('[data-testid="voice-mixer"]:not([inert])');
   const calls = (method: string) => shell.pluginCalls.filter((c) => c.methodName === method).map((c) => c.options);
   const settled = async (el: ReturnType<typeof mixer>) => {
@@ -167,6 +169,7 @@ describe('voice mixer (PC shell)', () => {
     await row.locator('[data-act="sample"]').click();
     await expect.poll(() => calls('sampleVoice').at(-1)).toMatchObject({ voice: 'mix_00000001' });
     await screen().locator('[data-act="close"]').click();
+    await shell.page.locator('[data-testid="screen-voices"]:not([inert]) [data-act="close"]').click();
 
     // Listen player › Voice for a novel being read aloud.
     shell.pluginReplies.set('Narration.state', () => ({
@@ -184,9 +187,13 @@ describe('voice mixer (PC shell)', () => {
     const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
     await picker.locator('.row[data-voice="mix_00000001"]').waitFor({ timeout: 5000 });
     expect(await picker.locator('[data-act="mix-edit"], [data-act="mix-new"]').count()).toBe(0);
-    expect(await picker.textContent()).toContain('Using the default voice (Warm narrator)');
-    await picker.locator('.row[data-voice="bf_emma"] [data-act="pick"]').click();
+    expect(await picker.textContent()).toContain('Using the default (Warm narrator)');
+    await picker.locator('[data-act="kokoro-all"]').click();
+    const all = shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
+    await all.locator('.row[data-voice="bf_emma"] [data-act="pick"]').click();
     await expect.poll(() => prefs.novelVoices[`${novel.pluginId}:${novel.novelPath}`]).toBe('bf_emma');
+    await all.locator('[data-act="close"]').click();
+    await all.waitFor({ state: 'hidden', timeout: 5000 });
     await picker.locator('[data-act="close"]').click();
     await player.locator('[data-act="close"]').click();
     shell.pluginReplies.delete('Narration.state');
@@ -194,6 +201,7 @@ describe('voice mixer (PC shell)', () => {
 
   it('Edit keeps the id; the same voice twice cannot be saved; Delete needs a second tap', async () => {
     await shell.page.getByTestId('more-voices').click();
+    await shell.page.getByTestId('screen-voices').locator('[data-act="kokoro-all"]').click();
     const row = screen().locator('.row[data-voice="mix_00000001"]');
     await row.locator('[data-act="mix-edit"]').click();
     const m = mixer();
