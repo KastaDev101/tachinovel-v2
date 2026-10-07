@@ -1,10 +1,10 @@
 /**
  * Chapter blocks → the sentence script the native speech engine plays (Kokoro on device, Apple fallback).
  *
- * Built on v1's narration front-end (vendor/v1/experiments/tts/frontend.ts, the same code the PC narrator
- * uses), so the narrator's fixes apply on the phone too: text normalization ("Ch. 12" → "Chapter 12",
- * numbers, units, shouting, stutters…), the pronunciation lexicon (built-in interjections + the user's
- * global and per-novel entries) and the pauses (sentence, paragraph, dialogue turns, titles, scenes).
+ * Built on text prep (prep/prepare.ts: what is skipped, LitRPG system messages and stat tables, numbers and
+ * abbreviations in words, the pronunciation dictionary), which runs v1's narration front-end
+ * (vendor/v1/experiments/tts/frontend.ts, the PC narrator's) for sentences and pauses (sentence, paragraph,
+ * dialogue turns, titles, scenes).
  *
  * One item per spoken sentence:
  *   text    plain text for the Apple voice and for Kokoro's own G2P (lexicon respellings applied),
@@ -23,8 +23,10 @@
  *
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
-import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
+import { blockAnchor, renderPhonemeRuns, renderPlain, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
 import { alternateSpeakers, dialogueParts, pacedPause, phrases, rateJitter, type PacedSentence, type PhraseJson, type SpeechPartJson } from './narrator.ts';
+import { prepareScript, type PrepareOptions } from './prep/prepare.ts';
+import type { TextPrepPrefs } from './prep/prefs.ts';
 
 export interface SpeechRunJson {
   /** Text for the engine's G2P. */
@@ -68,7 +70,7 @@ export interface SpeechScript {
   items: SpeechItem[];
 }
 
-export interface SpeechScriptOptions extends FrontendOptions {
+export interface SpeechScriptOptions extends PrepareOptions {
   /** Reader paragraph of a block (default: the block index). */
   paragraphOf?: (block: number) => number;
 }
@@ -76,7 +78,7 @@ export interface SpeechScriptOptions extends FrontendOptions {
 const SPEAKABLE = /[\p{L}\p{N}]/u;
 
 export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptOptions = {}): SpeechScript {
-  const script = buildScript(blocks, opts);
+  const script = prepareScript(blocks, opts);
   const items: SpeechItem[] = [];
   for (const seg of script.segments) {
     if (seg.kind === 'scene') {
@@ -166,6 +168,8 @@ export interface LexiconStore {
   global: Lexicon;
   /** novel key "<pluginId>:<novelPath>" → that novel's entries. */
   novels: Record<string, Lexicon>;
+  /** Text prep settings (Settings › Voices › Pronunciations › Reading); absent: the defaults. */
+  prep?: TextPrepPrefs;
 }
 
 export const EMPTY_LEXICON: Lexicon = { schemaVersion: 1, entries: [] };

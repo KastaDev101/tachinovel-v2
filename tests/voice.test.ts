@@ -23,10 +23,10 @@ describe('speech script (v1 narration front-end → native sentences)', () => {
     const blocks = htmlToBlocks(html);
     const s = speechScript(blocks, { title: 'The Hall', lexicons: [lex] });
     const texts = s.items.map((i) => i.text);
-    expect(texts[0]).toBe('Chapter 3. The Hall.');
+    expect(texts[0]).toBe('Chapter three. The Hall.');
     expect(s.items[0]?.kind).toBe('title');
     expect(texts.join(' ')).toContain('Mister Smith');
-    expect(texts.join(' ')).toContain('Chapter 12 said nothing!');
+    expect(texts.join(' ')).toContain('Chapter twelve said nothing!');
     const nephis = s.items.find((i) => i.text.includes('Nephis'));
     expect(nephis?.runs).toEqual([{ p: 'nˈɛfɪs' }, { t: ', wait!' }]);
     // The built-in lexicon too: "Hmmm…" → "Hmm" → phonemes.
@@ -126,7 +126,7 @@ describe('CI voice checks', () => {
   it('fixtures go through the app front-end, one sentence each, lexicon runs included', () => {
     const f = buildFixtures();
     expect(f.map((x) => x.id)).toEqual(['short', 'long', 'dialogue', 'numbers', 'names', 'plain']);
-    expect(f.find((x) => x.id === 'numbers')?.text).toContain('Chapter 12');
+    expect(f.find((x) => x.id === 'numbers')?.text).toContain('Chapter twelve on page three hundred and four, back in nineteen ninety-nine');
     expect(f.find((x) => x.id === 'names')?.runs?.[0]).toEqual({ p: 'nˈɛfɪs' });
     expect(f.filter((x) => x.asr).length).toBe(3);
   });
