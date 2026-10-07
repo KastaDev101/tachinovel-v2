@@ -78,6 +78,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let startSentence = (start["sentence"] as? NSNumber)?.intValue ?? 0
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
+        // Voice Lab A/B: "on" / "off" overrides narrator mode for this play (the saved pieces either way).
+        let narratorOverride: Bool? = call.getString("narrator").flatMap { $0 == "on" ? true : $0 == "off" ? false : nil }
         let raw = call.getArray("paragraphs")
         let script = NarrationController.ScriptItem.parse(call.getObject("script"))
         // PC-narrated audio for this chapter (only with Settings › Voices › Advanced › "Use PC audio when
@@ -86,6 +88,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
+            self.n.narratorOverride = narratorOverride
             if let audioChapter {
                 self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
             } else if raw != nil || script != nil {
@@ -274,6 +277,15 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 "speed": prefs.speed,
                 "volume": prefs.volume,
                 "speedPresets": SpeechSpeed.presets,
+                "narrator": [
+                    "enabled": prefs.narrator.enabled,
+                    "dialogueVoice": prefs.narrator.dialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
+                    "secondDialogueVoice": prefs.narrator.secondDialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
+                    "pacing": prefs.narrator.pacing,
+                    "jitter": prefs.narrator.jitter,
+                    "polish": prefs.narrator.polish,
+                    "roomTone": prefs.narrator.roomTone,
+                ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
                     "status": k.statusText,
@@ -302,6 +314,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
         let speed = call.getDouble("speed")
         let volume = call.getDouble("volume")
+        let narrator = call.getObject("narrator")
         DispatchQueue.main.async {
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
@@ -314,6 +327,20 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 if let usePCAudio { p.usePCAudio = usePCAudio }
                 if let kokoroEnabled { p.kokoroEnabled = kokoroEnabled }
+                if let narrator {
+                    // Narrator mode: only the keys sent change; a voice of null (or unknown) means none.
+                    var n = p.narrator
+                    if let v = narrator["enabled"] as? Bool { n.enabled = v }
+                    if narrator.keys.contains("dialogueVoice") { n.dialogueVoice = (narrator["dialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil } }
+                    if narrator.keys.contains("secondDialogueVoice") {
+                        n.secondDialogueVoice = (narrator["secondDialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil }
+                    }
+                    if let v = narrator["pacing"] as? Bool { n.pacing = v }
+                    if let v = narrator["jitter"] as? Bool { n.jitter = v }
+                    if let v = narrator["polish"] as? Bool { n.polish = v }
+                    if let v = narrator["roomTone"] as? Bool { n.roomTone = v }
+                    p.narrator = n
+                }
             }
             if kokoroEnabled == true, KokoroService.shared.crashDisabled { KokoroService.shared.resetCrashes() }
             if VoiceSettings.shared.prefs.kokoroEnabled != before.kokoroEnabled { KokoroService.shared.settingsChanged() }

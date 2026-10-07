@@ -12,10 +12,16 @@
  *   block/start/end/hash  the sentence in the chapter's canonical blocks, so the reader can highlight it,
  *   paragraph  the reader paragraph it belongs to (v1 ChapterPosition.paragraph: progress + resume),
  *   pauseMs    silence after it at 1.0× (scene breaks are folded into the sentence before them).
+ * Narrator mode (narrator.ts; native uses each only when its switch is on):
+ *   role/parts dialogue in quotation marks: the whole sentence, or its quoted and narrated parts,
+ *   speaker    1 on every other paragraph of an exchange (alternating dialogue voices),
+ *   pacedMs    the smarter pause, when it differs from pauseMs,
+ *   rate       a deterministic ±3 % speed factor (prosody jitter).
  *
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
+import { alternateSpeakers, dialogueParts, pacedPause, rateJitter, type PacedSentence, type SpeechPartJson } from './narrator.ts';
 
 export interface SpeechRunJson {
   /** Text for the engine's G2P. */
@@ -36,6 +42,16 @@ export interface SpeechItem {
   text: string;
   runs?: SpeechRunJson[];
   pauseMs: number;
+  /** Narrator mode: the whole sentence is dialogue (absent: narration, or mixed — see `parts`). */
+  role?: 'dialogue';
+  /** Narrator mode: a sentence mixing quoted speech and narration, split by role. */
+  parts?: SpeechPartJson[];
+  /** Narrator mode: 1 = the other speaker of an exchange (absent: 0). */
+  speaker?: 1;
+  /** Narrator mode: the smarter pause (ms at 1.0×), when it differs from pauseMs. */
+  pacedMs?: number;
+  /** Narrator mode: prosody jitter, a speed factor in [0.97, 1.03] (absent: 1). */
+  rate?: number;
 }
 
 export interface SpeechScript {
@@ -78,8 +94,30 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
     if (seg.pieces.some((p) => p.ipa)) {
       item.runs = renderPhonemeRuns(seg.pieces).map((r) => (r.phonemes !== undefined ? { p: r.phonemes } : { t: r.text ?? '' }));
     }
+    if (seg.kind === 'text') {
+      const display = blocks[seg.block]?.text.slice(seg.start, seg.end) ?? '';
+      const parts = dialogueParts(display, seg.start, seg.pieces, seg.quoted);
+      if (parts) item.parts = parts;
+      else if (seg.quoted) item.role = 'dialogue';
+    }
     items.push(item);
   }
+  const meta: PacedSentence[] = items.map((it) => ({
+    block: it.block,
+    kind: it.kind,
+    text: it.text,
+    pauseMs: it.pauseMs,
+    dialogue: it.role === 'dialogue' || !!it.parts?.some((p) => p.role === 'dialogue'),
+    quoted: it.role === 'dialogue',
+  }));
+  const speakers = alternateSpeakers(meta);
+  items.forEach((it, i) => {
+    const paced = pacedPause(meta, i);
+    if (paced !== it.pauseMs) it.pacedMs = paced;
+    if (speakers[i] === 1 && meta[i]?.dialogue) it.speaker = 1;
+    const rate = rateJitter(it.hash);
+    if (rate !== 1) it.rate = rate;
+  });
   return { frontendVersion: script.frontendVersion, textHash: script.textHash, items };
 }
 

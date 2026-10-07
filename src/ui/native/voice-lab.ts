@@ -7,7 +7,7 @@
  */
 import type { SourceBlock } from '@v1tts/frontend.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
-import { Narration } from './narration.ts';
+import { Narration, type NarratorInfo } from './narration.ts';
 
 /** Synthetic chapter for "Speak test paragraph" (and the simulator self-test): no novel, no progress. */
 export const LAB_PLUGIN = 'voice-lab';
@@ -23,6 +23,33 @@ export function labScript(paragraphs = TEST_PARAGRAPHS): ReturnType<typeof speec
   const blocks: SourceBlock[] = paragraphs.map((text) => ({ text, tag: 'p' }));
   return speechScript(blocks, { title: 'The Old Bridge', lexicons: [{ schemaVersion: 1, entries: [{ match: 'Nephis', ipa: 'nˈɛfɪs' }] }] });
 }
+
+/**
+ * Speak the test passage (dialogue, a lexicon name, numbers): as the settings say, or for an A/B with
+ * narrator mode off ('off') or on with the saved pieces ('on') for this play only.
+ */
+export function playTestPassage(narrator?: 'on' | 'off'): Promise<void> {
+  return Narration.play({
+    pluginId: LAB_PLUGIN,
+    novelPath: 'lab',
+    chapterPath: 'lab/1',
+    novelName: 'Voice Lab',
+    chapterName: narrator === 'on' ? 'Test passage · narrator mode' : narrator === 'off' ? 'Test passage · plain' : 'Test paragraph',
+    script: labScript(),
+    start: { paragraph: 0 },
+    autoContinue: false,
+    engine: 'speech',
+    ...(narrator ? { narrator } : {}),
+  });
+}
+
+/** Narrator mode's pieces, for switches (Settings › Voices and the Voice Lab). */
+export const NARRATOR_PIECES = [
+  ['pacing', 'Natural pauses', 'Pauses follow the punctuation and the conversation'],
+  ['jitter', 'Natural variation', 'Each sentence a touch faster or slower'],
+  ['polish', 'Studio sound', 'EQ, gentle compression, even loudness (−16 LUFS)'],
+  ['roomTone', 'Room tone', 'A faint room sound instead of dead silence'],
+] as const;
 
 const CSS = `
 .tn-lab{position:fixed;inset:0;z-index:92;background:#0e0e11;color:#e8e8ee;display:flex;flex-direction:column;
@@ -74,6 +101,15 @@ export function openVoiceLab(): void {
   const body = root.querySelector('.body') as HTMLElement;
   let lab: Obj = {};
   let poll = 0;
+  let nar: NarratorInfo | null = null;
+  let dialogueName = '';
+  const loadNarrator = async (): Promise<void> => {
+    const s = await Narration.voiceSettings().catch(() => null);
+    nar = s?.narrator ?? null;
+    const id = nar?.dialogueVoice;
+    dialogueName = id ? (s?.voices.find((v) => v.id === id)?.name ?? s?.customVoices?.find((m) => m.id === id)?.name ?? id) : '';
+    render();
+  };
 
   const render = (): void => {
     const k = obj(lab.kokoro);
@@ -161,6 +197,14 @@ export function openVoiceLab(): void {
       <h2>Sentences (newest first)</h2>
       <table><tr><th>#</th><th>chars</th><th>synth</th><th>audio</th><th>× RT</th><th>RTF</th></tr>
       ${rows.map((r) => `<tr><td>${fmt(r.index)}</td><td>${fmt(r.chars)}</td><td>${fmt(r.synthMs)} ms</td><td>${fmt(typeof r.audioMs === 'number' ? r.audioMs / 1000 : undefined, 1)} s</td><td>${fmt(r.x, 1)}</td><td>${fmt(r.rtf, 3)}</td></tr>`).join('')}</table>
+      <h2>Narrator mode A/B</h2>
+      <div class="kv"><span>Dialogue voice</span><span>${esc(dialogueName || 'the narrator’s (set one in Settings › Voices › Narrator mode)')}</span>
+        <span>Saved</span><span>${nar?.enabled ? 'on' : 'off'}</span></div>
+      <div class="acts" data-testid="lab-narrator">${NARRATOR_PIECES.map(([k, label]) => `<button type="button" data-act="nar-piece" data-k="${k}" class="${nar?.[k] ? 'on' : ''}" aria-pressed="${String(!!nar?.[k])}">${label}</button>`).join('')}</div>
+      <div class="acts">
+        <button type="button" data-act="ab" data-v="off">A: narrator off</button>
+        <button type="button" data-act="ab" data-v="on">B: narrator on</button>
+      </div>
       <div class="acts">
         <button type="button" data-act="test">Speak test paragraph</button>
         <button type="button" data-act="stop">Stop</button>
@@ -203,18 +247,17 @@ export function openVoiceLab(): void {
         void Narration.stop();
         return;
       case 'test':
-        void Narration.play({
-          pluginId: LAB_PLUGIN,
-          novelPath: 'lab',
-          chapterPath: 'lab/1',
-          novelName: 'Voice Lab',
-          chapterName: 'Test paragraph',
-          script: labScript(),
-          start: { paragraph: 0 },
-          autoContinue: false,
-          engine: 'speech',
-        });
+        void playTestPassage();
         return;
+      case 'ab':
+        void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off');
+        return;
+      case 'nar-piece': {
+        const k = el.dataset.k as keyof NarratorInfo | undefined;
+        if (!k || !nar) return;
+        void Narration.setVoiceSettings({ narrator: { [k]: !nar[k] } }).then(loadNarrator);
+        return;
+      }
       case 'copy':
         void navigator.clipboard
           .writeText(JSON.stringify(lab, null, 2))
@@ -226,6 +269,7 @@ export function openVoiceLab(): void {
   });
   render();
   void refresh();
+  void loadNarrator();
   void Narration.voicePlacement()
     .then(refresh)
     .catch(() => undefined);

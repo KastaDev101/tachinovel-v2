@@ -35,6 +35,8 @@ export interface PlayOptions {
   autoContinue?: boolean;
   /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
   engine?: 'audio' | 'speech';
+  /** Voice Lab A/B: narrator mode off, or on with the saved pieces, for this play only. */
+  narrator?: 'on' | 'off';
 }
 
 export interface NarrationVoice {
@@ -156,6 +158,19 @@ export interface KokoroVoiceInfo {
   gradeRank?: number;
 }
 
+/** Narrator mode (HDVoiceCore Narrator.swift): each piece has its own switch; off by default. */
+export interface NarratorInfo {
+  enabled: boolean;
+  /** Quoted speech in this voice (a voice or mix id); null = the narrator's voice. */
+  dialogueVoice: string | null;
+  /** The other speaker of an exchange; null = one dialogue voice. */
+  secondDialogueVoice: string | null;
+  pacing: boolean;
+  jitter: boolean;
+  polish: boolean;
+  roomTone: boolean;
+}
+
 /** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */
 export interface CustomVoiceInfo {
   /** "mix_" + 8 hex digits. */
@@ -179,6 +194,7 @@ export interface VoiceSettingsInfo {
   speed?: number;
   volume?: number;
   speedPresets?: number[];
+  narrator?: NarratorInfo;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
   /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
   apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
@@ -260,6 +276,8 @@ export interface NarrationPlugin {
     speed?: number;
     /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
     volume?: number;
+    /** Narrator mode: only the keys sent change. */
+    narrator?: Partial<NarratorInfo>;
   }): Promise<void>;
   /** Voice mixer: save a new mix (no id) or change one. */
   saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;

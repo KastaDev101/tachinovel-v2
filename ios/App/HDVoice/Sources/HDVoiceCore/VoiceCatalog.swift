@@ -125,10 +125,13 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     /// "Your mixes": named blends of two voices (VoiceMix.swift). `defaultVoice` and `novelVoices` may hold
     /// their ids.
     public var customVoices: [CustomVoice]
+    /// Narrator mode (Narrator.swift): dialogue voices, pacing, jitter, polish.
+    public var narrator: NarratorSettings
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
                 route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
-                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = []) {
+                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = [],
+                narrator: NarratorSettings = NarratorSettings()) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
@@ -139,6 +142,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         self.speed = SpeechSpeed.clamp(speed)
         self.volume = VoiceVolume.clamp(volume)
         self.customVoices = customVoices
+        self.narrator = narrator
     }
 
     /// Tolerant decoding: missing keys take their defaults (settings written by older builds).
@@ -155,6 +159,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         speed = SpeechSpeed.clamp((try? c.decode(Double.self, forKey: .speed)) ?? d.speed)
         volume = VoiceVolume.clamp((try? c.decode(Double.self, forKey: .volume)) ?? d.volume)
         customVoices = (try? c.decode([CustomVoice].self, forKey: .customVoices)) ?? d.customVoices
+        narrator = (try? c.decode(NarratorSettings.self, forKey: .narrator)) ?? d.narrator
     }
 
     /// The voice a novel speaks with (its own choice, else the global default, else Heart): a built-in id,

@@ -29,6 +29,12 @@ public struct KokoroAudio: Sendable {
     /// Wall time of the synthesis call (G2P + 7 stages).
     public let synthMs: Double
     public var durationMs: Double { sampleRate > 0 ? Double(samples.count) * 1000 / Double(sampleRate) : 0 }
+
+    public init(samples: [Float], sampleRate: Int, synthMs: Double) {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        self.synthMs = synthMs
+    }
 }
 
 public enum KokoroRuntimeError: Error, LocalizedError, Equatable {

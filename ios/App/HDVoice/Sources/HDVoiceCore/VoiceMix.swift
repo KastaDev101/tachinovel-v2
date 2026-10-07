@@ -163,7 +163,9 @@ extension VoicePreferences {
 
     /// The display name of a choice or engine voice: a voice's name, a mix's name, or "Heart + Emma (35 %)"
     /// for an unnamed blend.
-    public func displayName(_ id: String) -> String {
+    public func displayName(_ raw: String) -> String {
+        // A prepared-audio key ("<voice>|narrator:…") shows as its voice.
+        let id = raw.split(separator: "|", maxSplits: 1).first.map(String.init) ?? raw
         if let v = VoiceCatalog.voice(id) { return v.name }
         if let mix = customVoices.first(where: { $0.id == id }) { return mix.name }
         if let blend = VoiceBlend.parse(id) {
@@ -197,12 +199,15 @@ extension VoicePreferences {
         return mix
     }
 
-    /// Delete a mix; the default and any novel using it go back to Heart / the default.
+    /// Delete a mix; the default and any novel using it go back to Heart / the default, and narrator mode
+    /// stops using it for dialogue.
     public mutating func deleteCustomVoice(id: String) throws {
         guard let i = customVoices.firstIndex(where: { $0.id == id }) else { throw CustomVoiceError.notFound }
         customVoices.remove(at: i)
         if defaultVoice == id { defaultVoice = VoiceCatalog.defaultVoiceId }
         novelVoices = novelVoices.filter { $0.value != id }
+        if narrator.dialogueVoice == id { narrator.dialogueVoice = nil }
+        if narrator.secondDialogueVoice == id { narrator.secondDialogueVoice = nil }
     }
 }
 

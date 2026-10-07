@@ -32,6 +32,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// Per chapter (NarrationController sets these before enqueue).
     var kokoroVoice = VoiceCatalog.defaultVoiceId
+    /// Narrator mode (polish and room tone are applied here; parts and pauses come with the segments).
+    var narrator = NarratorSettings()
+    /// Narrator mode's polish chain for this session (nil: off; PCM.prepareSentence as before).
+    private var polish: NarrationPolish?
     /// A system voice the user picked explicitly (Narration.setOptions voiceId), else automatic.
     var explicitAppleVoice: String?
     /// The next chapter's first sentences: once this chapter is fully rendered, Kokoro renders these into
@@ -107,6 +111,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
+        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone) : nil
         sessionStart = Date()
         firstAudioLogged = false
         currentSource = nil
@@ -220,6 +225,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let seg = segments[i]
         let g = gen
         let voice = kokoroVoice
+        if let parts = seg.parts {
+            KokoroService.shared.synthesize(parts: parts, voice: voice, speed: seg.rate) { [weak self] result in
+                self?.rendered(i, gen: g, voice: voice, result: result)
+            }
+            return
+        }
         KokoroService.shared.synthesize(text: seg.kokoroText, runs: seg.runs, voice: voice, speed: seg.rate) { [weak self] result in
             self?.rendered(i, gen: g, voice: voice, result: result)
         }
@@ -228,6 +239,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func prewarmLookahead() {
         guard !prewarming, !lookahead.isEmpty, let s = scheduler, s.allRendered, !s.throttled, kokoroState() == .ready else { return }
         let seg = lookahead.removeFirst()
+        // A sentence in parts is rendered when its turn comes (the warm cache holds whole sentences).
+        if seg.parts != nil { return prewarmLookahead() }
         prewarming = true
         KokoroService.shared.prewarm(text: seg.kokoroText, runs: seg.runs, voice: kokoroVoice, speed: seg.rate) { [weak self] in
             self?.prewarming = false
@@ -242,7 +255,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             KokoroService.shared.stats.record(SentenceStat(index: i, characters: segments[i].kokoroText.count, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
             scheduler?.renderDone(i, ok: true)
             if scheduler?.isReady(i) == true {
-                let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: segments[i].pauseAfter, loudness: &loudness)
+                let frames: [Float]
+                if var p = polish, audio.sampleRate == p.sampleRate {
+                    frames = p.prepareSentence(audio.samples, pause: segments[i].pauseAfter)
+                    polish = p
+                } else {
+                    frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: segments[i].pauseAfter, loudness: &loudness)
+                }
                 if let buf = makeBuffer(frames) { buffers[i] = buf } else { scheduler?.renderDone(i, ok: false) }
             }
         case .failure(let error):

@@ -243,6 +243,34 @@ final class KokoroService {
         render(text: text, runs: runs, voice: voice, speed: speed, completion: completion)
     }
 
+    /// Narrator mode: a sentence read in parts by different voices (nil voice = `voice`), joined with a short
+    /// gap. Fails if a part fails (the engine then reads the whole sentence with the fallback). Completion on main.
+    func synthesize(parts: [NarratorPart], voice: String, speed: Float, completion: @escaping (Result<KokoroAudio, Error>) -> Void) {
+        var collected: [[Float]] = []
+        var synthMs = 0.0
+        var sampleRate = 24_000
+        func step(_ i: Int) {
+            guard i < parts.count else {
+                let gap = NarratorPlan.partGap / Double(max(0.5, speed))
+                let joined = PCM.joinParts(collected, sampleRate: sampleRate, gap: gap)
+                return completion(.success(KokoroAudio(samples: joined, sampleRate: sampleRate, synthMs: synthMs)))
+            }
+            let part = parts[i]
+            synthesize(text: part.text, runs: part.runs, voice: part.voice ?? voice, speed: speed) { result in
+                switch result {
+                case .failure(let error):
+                    completion(.failure(error))
+                case .success(let audio):
+                    collected.append(audio.samples)
+                    synthMs += audio.synthMs
+                    sampleRate = audio.sampleRate
+                    step(i + 1)
+                }
+            }
+        }
+        step(0)
+    }
+
     private func render(text: String, runs: [SpeechRun]?, voice: String, speed: Float, completion: @escaping (Result<KokoroAudio, Error>) -> Void) {
         guard let runtime else { return completion(.failure(KokoroRuntimeError.notLoaded)) }
         let sentinel = self.sentinel

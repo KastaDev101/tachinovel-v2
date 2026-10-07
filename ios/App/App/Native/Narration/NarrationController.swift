@@ -58,6 +58,27 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         let text: String
         let runs: [SpeechRun]?
         let pauseMs: Double
+        /// Narrator mode (src/core/narration/narrator.ts): all dialogue, or its parts by role; the speaker of an
+        /// exchange; the smarter pause; the jitter factor.
+        var quoted = false
+        var parts: [NarratorSentence.Part]? = nil
+        var speaker = 0
+        var pacedMs: Double? = nil
+        var rateJitter: Double? = nil
+
+        var narrator: NarratorSentence {
+            NarratorSentence(text: text, runs: runs, quoted: quoted, parts: parts, speaker: speaker, pauseMs: pauseMs, pacedMs: pacedMs, rate: rateJitter)
+        }
+
+        static func parseRuns(_ raw: Any?) -> [SpeechRun]? {
+            let runs: [SpeechRun]? = (raw as? [Any])?.compactMap { r in
+                guard let ro = r as? [String: Any] else { return nil }
+                if let p = ro["p"] as? String { return SpeechRun.phonemes(p) }
+                if let t = ro["t"] as? String { return SpeechRun.text(t) }
+                return nil
+            }
+            return runs?.isEmpty == false ? runs : nil
+        }
 
         /// Parse the `script` object sent by the UI (Narration.play) or the core (narration.chapterText).
         static func parse(_ script: Any?) -> [ScriptItem]? {
@@ -65,15 +86,19 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             let items: [ScriptItem] = raw.compactMap { v in
                 guard let o = v as? [String: Any], let text = o["text"] as? String else { return nil }
                 func int(_ k: String) -> Int { (o[k] as? NSNumber)?.intValue ?? 0 }
-                let runs: [SpeechRun]? = (o["runs"] as? [Any])?.compactMap { r in
-                    guard let ro = r as? [String: Any] else { return nil }
-                    if let p = ro["p"] as? String { return SpeechRun.phonemes(p) }
-                    if let t = ro["t"] as? String { return SpeechRun.text(t) }
-                    return nil
+                var item = ScriptItem(id: int("id"), block: int("block"), paragraph: int("paragraph"), start: int("start"), end: int("end"),
+                                      hash: int("hash"), text: text, runs: parseRuns(o["runs"]),
+                                      pauseMs: (o["pauseMs"] as? NSNumber)?.doubleValue ?? 320)
+                item.quoted = (o["role"] as? String) == "dialogue"
+                let parts: [NarratorSentence.Part] = (o["parts"] as? [Any] ?? []).compactMap { p in
+                    guard let po = p as? [String: Any], let t = po["text"] as? String else { return nil }
+                    return NarratorSentence.Part(dialogue: (po["role"] as? String) == "dialogue", text: t, runs: parseRuns(po["runs"]))
                 }
-                return ScriptItem(id: int("id"), block: int("block"), paragraph: int("paragraph"), start: int("start"), end: int("end"),
-                                  hash: int("hash"), text: text, runs: runs?.isEmpty == false ? runs : nil,
-                                  pauseMs: (o["pauseMs"] as? NSNumber)?.doubleValue ?? 320)
+                item.parts = parts.count > 1 ? parts : nil
+                item.speaker = (o["speaker"] as? NSNumber)?.intValue == 1 ? 1 : 0
+                item.pacedMs = (o["pacedMs"] as? NSNumber)?.doubleValue
+                item.rateJitter = (o["rate"] as? NSNumber)?.doubleValue
+                return item
             }
             return items.isEmpty ? nil : items
         }
@@ -103,6 +128,37 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         var runs: [SpeechRun]? = nil
         /// Script segment (front-end id, block, canonical range, hash) for sentence highlighting.
         var segment: ScriptItem? = nil
+        /// Narrator mode's smarter pause (used when its Pacing switch is on).
+        var pacedAfter: TimeInterval? = nil
+    }
+
+    /// Narrator mode for this session: the saved settings, or the Voice Lab's A/B override.
+    private var narrator = NarratorSettings()
+    /// Voice Lab A/B ("off" / "on" with the saved pieces); nil = the saved settings. Set by Narration.play.
+    var narratorOverride: Bool?
+
+    private func refreshNarrator() {
+        var n = VoiceSettings.shared.prefs.narrator
+        if let on = narratorOverride { n.enabled = on }
+        narrator = n
+    }
+
+    /// The pause after an item: narrator mode's smarter pause when Pacing is on.
+    private func pause(of it: Item) -> TimeInterval {
+        narrator.usesPacing ? (it.pacedAfter ?? it.pauseAfter) : it.pauseAfter
+    }
+
+    /// One engine segment: narrator mode decides the voices of its parts and its speed.
+    private func speechSegment(_ it: Item, id: Int, speed: Double) -> SpeechSegment {
+        let s = it.segment?.narrator
+        var seg = SpeechSegment(id: id, text: NarrationText.attributed(it.text, lexicon: lexicon), kokoroText: it.text, runs: it.runs,
+                                rate: s.map { NarratorPlan.rate(rate, for: $0, settings: narrator) } ?? rate,
+                                pitch: pitch, pauseAfter: pause(of: it) / speed)
+        if let s {
+            let prefs = VoiceSettings.shared.prefs
+            seg.parts = NarratorPlan.parts(for: s, settings: narrator) { prefs.engineVoice($0) }
+        }
+        return seg
     }
 
     // Options (setOptions)
@@ -197,7 +253,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         } else {
             items = Self.items(for: ch.paragraphs, paragraphPause: paragraphPause, scenePause: scenePause)
         }
-        timeline = ChapterTimeline(items.map { ChapterTimeline.Sentence(characters: $0.text.count, pause: $0.pauseAfter) })
+        refreshNarrator()
+        timeline = ChapterTimeline(items.map { ChapterTimeline.Sentence(characters: $0.text.count, pause: pause(of: $0)) })
         resetSentenceClock()
         current = items.firstIndex { $0.paragraph >= startParagraph && ($0.paragraph > startParagraph || $0.sentence >= startSentence) } ?? 0
         guard !items.isEmpty else { return finishChapter() }
@@ -487,7 +544,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     private func preparedChapter(pluginId: String, novelPath: String, chapterPath: String) -> PreparedChapter? {
         guard !Self.isSynthetic(pluginId) || NarrationSelfTest.shared.hasChapters else { return nil }
         let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
-        return DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.voice(forNovel: key))
+        return DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(forNovel: key))
     }
 
     private func playPrepared(_ p: PreparedChapter, pluginId: String, novelPath: String, novelName: String, startParagraph: Int) {
@@ -728,7 +785,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
 
     private func voiceKey() -> String {
         let p = VoiceSettings.shared.prefs
-        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)"
+        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))"
     }
 
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.
@@ -774,19 +831,19 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         return script.map { s in
             let n = perParagraph[s.paragraph, default: 0]
             perParagraph[s.paragraph] = n + 1
-            return Item(paragraph: s.paragraph, sentence: n, text: s.text, pauseAfter: max(0, s.pauseMs) / 1000, runs: s.runs, segment: s)
+            return Item(paragraph: s.paragraph, sentence: n, text: s.text, pauseAfter: max(0, s.pauseMs) / 1000, runs: s.runs, segment: s,
+                        pacedAfter: s.pacedMs.map { max(0, $0) / 1000 })
         }
     }
 
     private func enqueueFromCurrent() {
         // Pauses scale with the speed, like the speech itself (front-end pauses are at 1.0x).
         let speed = Double(max(0.5, rate))
+        refreshNarrator()
         let segs = items[current...].enumerated().map { offset, it in
-            SpeechSegment(id: generation * 100_000 + current + offset,
-                          text: NarrationText.attributed(it.text, lexicon: lexicon),
-                          kokoroText: it.text, runs: it.runs,
-                          rate: rate, pitch: pitch, pauseAfter: it.pauseAfter / speed)
+            speechSegment(it, id: generation * 100_000 + current + offset, speed: speed)
         }
+        engine.narrator = narrator
         engine.kokoroVoice = kokoroVoiceForCurrentNovel()
         engine.explicitAppleVoice = voiceIdentifier
         appliedVoiceKey = voiceKey()
@@ -843,7 +900,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         if let t0 = sentenceStartedAt, !sentenceInterrupted, let it = items[safe: i], i == current {
             // Wall time × speed = chapter time at 1×; the pause after the sentence is already known.
             let played = (sentencePlayed + ProcessInfo.processInfo.systemUptime - t0) * Double(max(0.5, rate))
-            timeline.record(i, seconds: played - it.pauseAfter)
+            timeline.record(i, seconds: played - pause(of: it))
         }
         resetSentenceClock()
         if i >= items.count - 1 { finishChapter() }
@@ -941,10 +998,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     private func warmUp(_ ch: Chapter) {
         guard mode == .speech, let script = ch.script else { return }
         let speed = Double(max(0.5, rate))
-        engine.lookahead = Self.items(for: script).prefix(2).map { it in
-            SpeechSegment(id: -1, text: NarrationText.attributed(it.text, lexicon: lexicon), kokoroText: it.text, runs: it.runs,
-                          rate: rate, pitch: pitch, pauseAfter: it.pauseAfter / speed)
-        }
+        engine.lookahead = Self.items(for: script).prefix(2).map { it in speechSegment(it, id: -1, speed: speed) }
     }
 
     private func saveProgress(force: Bool, finished: Bool = false) {
@@ -1052,7 +1106,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         if mode == .audio { return audioChapterTime }
         guard let it = items[safe: current] else { return 0 }
         let inSentence = sentencePlayed + (sentenceStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0)
-        return timeline.start(of: current) + min(inSentence * Double(max(0.5, rate)), timeline.speaking(current) + it.pauseAfter)
+        return timeline.start(of: current) + min(inSentence * Double(max(0.5, rate)), timeline.speaking(current) + pause(of: it))
     }
 
     /// Lock screen, Control Center and the car: chapter, novel, "TachiNovel", cover, time and length.

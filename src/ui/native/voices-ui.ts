@@ -9,6 +9,8 @@
  *  - The voice mixer (Settings › Voices › Mix a voice): two voices and a blend slider, ▶ to listen,
  *    saved under a name in "Your mixes" (on this iPhone), usable as the default or for one novel; edit and
  *    delete. Rules shared with native in voice-mix.ts.
+ *  - Narrator mode (Settings › Voices): a dialogue voice (and a second speaker), natural pauses, natural
+ *    variation, studio sound, room tone, each with its own switch, and ▶ Without / ▶ With on a test passage.
  *  - The voice picker for one novel (from the Listen player): its own voice (or mix) or the default.
  *  - The pronunciation editor (global, or one novel): word → respelling and/or Kokoro phonemes, the same
  *    lexicon format the PC narrator uses (v1 frontend.ts), so a narrator lexicon can be pasted in.
@@ -20,8 +22,17 @@ import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { groupVoices } from './voice-groups.ts';
+import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
 import { blendVoice, cleanMixName, mixPercent, mixProblem, mixShares, suggestedMixName, usableMixes } from './voice-mix.ts';
-import { Narration, type CarButtons, type CustomVoiceInfo, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
+import {
+  Narration,
+  type CarButtons,
+  type CustomVoiceInfo,
+  type KokoroVoiceInfo,
+  type NarrationState,
+  type NarratorInfo,
+  type VoiceSettingsInfo,
+} from './narration.ts';
 
 const CSS = `
 .tn-v{position:fixed;inset:0;z-index:90;background:#121215;color:#f2f2f7;display:flex;flex-direction:column;
@@ -115,6 +126,22 @@ export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'
   return describeVoice(s);
 }
 
+/** Narrator settings from native (absent in older builds: off). Unknown voices read as none. */
+export function normalizeNarrator(raw: unknown, isChoice: (id: unknown) => boolean): NarratorInfo {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof NarratorInfo, unknown>>;
+  const flag = (k: 'pacing' | 'jitter' | 'polish' | 'roomTone'): boolean => (typeof r[k] === 'boolean' ? r[k] : NARRATOR_OFF[k]);
+  const voice = (v: unknown): string | null => (typeof v === 'string' && isChoice(v) ? v : null);
+  return {
+    enabled: r.enabled === true,
+    dialogueVoice: voice(r.dialogueVoice),
+    secondDialogueVoice: voice(r.secondDialogueVoice),
+    pacing: flag('pacing'),
+    jitter: flag('jitter'),
+    polish: flag('polish'),
+    roomTone: flag('roomTone'),
+  };
+}
+
 /** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
 export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -134,6 +161,7 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     usePCAudio: r.usePCAudio === true,
     carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
     speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
+    narrator: normalizeNarrator(r.narrator, (id) => isChoice(id)),
     volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
       bundled: k.bundled === true,
@@ -245,6 +273,37 @@ function voiceRows(info: VoiceSettingsInfo, selected: string, editable = false):
   return `${groups}<div class="sub-sec" data-group="mixes">Your mixes</div><div class="card" data-testid="voice-mixes">${mixes.map((m) => mixRow(info, m, selected, editable)).join('')}${newRow}</div>`;
 }
 
+/** A <select> of every choice (voices by group, then your mixes), with a first "none" option. */
+function choiceOptions(info: VoiceSettingsInfo, selected: string | null, none: string): string {
+  const opt = (id: string, label: string): string => `<option value="${esc(id)}"${id === selected ? ' selected' : ''}>${esc(label)}</option>`;
+  const groups = groupVoices(info.voices).map((g) => `<optgroup label="${esc(g.label)}">${g.voices.map((v) => opt(v.id, v.name)).join('')}</optgroup>`);
+  const mixes = info.customVoices?.length ? `<optgroup label="Your mixes">${info.customVoices.map((m) => opt(m.id, m.name)).join('')}</optgroup>` : '';
+  return `<option value=""${selected ? '' : ' selected'}>${esc(none)}</option>${groups.join('')}${mixes}`;
+}
+
+const NARRATOR_OFF: NarratorInfo = { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false };
+
+/** Settings › Voices › Narrator mode. */
+function narratorCard(info: VoiceSettingsInfo): string {
+  const n = info.narrator ?? NARRATOR_OFF;
+  const sw = (k: keyof NarratorInfo, label: string, sub: string, disabled = false): string =>
+    `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="narrator" data-k="${k}" ${n[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}"></label>`;
+  const pieces = n.enabled
+    ? `<label class="row"><div class="main"><b>Dialogue voice</b><span class="sub">Words in quotation marks</span></div><select data-act="narrator-voice" data-k="dialogueVoice" aria-label="Dialogue voice">${choiceOptions(info, n.dialogueVoice, 'Narrator’s voice')}</select></label>
+       <label class="row"><div class="main"><b>Second speaker</b><span class="sub">Every other paragraph of an exchange</span></div><select data-act="narrator-voice" data-k="secondDialogueVoice" aria-label="Second speaker" ${n.dialogueVoice ? '' : 'disabled'}>${choiceOptions(info, n.secondDialogueVoice, 'Same as dialogue')}</select></label>
+       ${NARRATOR_PIECES.map(([k, label, sub]) => sw(k, label, sub, k === 'roomTone' && !n.polish)).join('')}`
+    : '';
+  return `<div class="card" data-testid="voices-narrator">
+      ${sw('enabled', 'Narrator mode', 'Dialogue in its own voice, natural pauses, studio sound')}
+      ${pieces}
+      <div class="row"><div class="chips" role="group" aria-label="Compare on a test passage">
+        <button type="button" class="chip" data-act="narrator-ab" data-v="off">▶ Without</button>
+        <button type="button" class="chip" data-act="narrator-ab" data-v="on">▶ With</button>
+      </div></div>
+    </div>
+    <p class="note">Compare on a short passage with dialogue. The second speaker changes with each paragraph of a conversation, so now and then it picks the wrong person.</p>`;
+}
+
 /** A voice's or a mix's name. */
 function choiceName(info: VoiceSettingsInfo, id: string | undefined): string {
   return info.voices.find((v) => v.id === id)?.name ?? info.customVoices?.find((m) => m.id === id)?.name ?? '';
@@ -291,6 +350,8 @@ export function openVoicesScreen(): void {
       <div class="sec">Voice</div>
       ${voiceRows(info, info.defaultVoice, true)}
       ${status}
+      <div class="sec">Narrator mode</div>
+      ${narratorCard(info)}
       <div class="sec">Fallback</div>
       ${appleCard(info)}
       <div class="sec">Pronunciations</div>
@@ -347,6 +408,9 @@ export function openVoicesScreen(): void {
       case 'mix-new':
         openMixer(info, null, () => void load());
         return;
+      case 'narrator-ab':
+        void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch((err: unknown) => toast(`Couldn't play: ${err instanceof Error ? err.message : String(err)}`));
+        return;
       case 'mix-edit': {
         const mix = info.customVoices?.find((m) => m.id === el.dataset.mix);
         if (mix) openMixer(info, mix, () => void load());
@@ -376,6 +440,8 @@ export function openVoicesScreen(): void {
   });
   p.body.addEventListener('change', (ev) => {
     const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'narrator' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.checked } }).then(load);
+    if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(load);
     if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
     if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);
   });

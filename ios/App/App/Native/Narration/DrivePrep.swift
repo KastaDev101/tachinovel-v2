@@ -142,6 +142,9 @@ final class ChapterRenderer {
     private let chapter: NarrationController.Chapter
     private let items: [NarrationController.ScriptItem]
     private let voice: String
+    /// Narrator mode at render time: dialogue voices, pacing, jitter and polish, as live narration has them.
+    private let narrator: NarratorSettings
+    private var polish: NarrationPolish?
     private let folder: URL
     private let stem: String
     private let io = DispatchQueue(label: "app.tachinovel.drive-writer")
@@ -162,10 +165,13 @@ final class ChapterRenderer {
     /// Sentences done / total.
     var onProgress: ((Int, Int) -> Void)?
 
-    init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, folder: URL) {
+    init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, narrator: NarratorSettings = NarratorSettings(),
+         folder: URL) {
         self.chapter = chapter
         self.items = items
         self.voice = voice
+        self.narrator = narrator
+        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone) : nil
         self.folder = folder
         stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
     }
@@ -199,7 +205,10 @@ final class ChapterRenderer {
         if let why = stopReason ?? shouldStop?() { return finish(.failure(DriveError.interrupted(why))) }
         guard next < items.count else { return finalize() }
         let item = items[next]
-        KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: 1) { [weak self] result in
+        let sentence = item.narrator
+        let speed = NarratorPlan.rate(1, for: sentence, settings: narrator)
+        let prefs = VoiceSettings.shared.prefs
+        let handle: (Result<KokoroAudio, Error>) -> Void = { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let audio):
@@ -215,12 +224,23 @@ final class ChapterRenderer {
                 KokoroService.shared.ensureLoaded { _ in self.step() }
             }
         }
+        if let parts = NarratorPlan.parts(for: sentence, settings: narrator, resolve: { prefs.engineVoice($0) }) {
+            KokoroService.shared.synthesize(parts: parts, voice: voice, speed: speed, completion: handle)
+        } else {
+            KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: speed, completion: handle)
+        }
     }
 
     private func append(_ item: NarrationController.ScriptItem, _ audio: KokoroAudio) {
         sampleRate = audio.sampleRate
-        let pause = max(0, item.pauseMs) / 1000
-        let out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
+        let pause = NarratorPlan.pause(for: item.narrator, settings: narrator)
+        let out: [Float]
+        if var p = polish, p.sampleRate == audio.sampleRate {
+            out = p.prepareSentence(audio.samples, pause: pause)
+            polish = p
+        } else {
+            out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
+        }
         let speech = max(0, out.count - PCM.silenceFrames(seconds: pause, sampleRate: audio.sampleRate))
         let sr = Double(max(1, audio.sampleRate))
         let t0 = Double(frames) / sr
@@ -503,13 +523,16 @@ final class DrivePrep {
                                                        novelName: job.novelName, coverUrl: job.coverUrl) { ch in
             guard self.runningKey == job.novelKey else { return self.done() }
             guard let ch, let script = ch.script, !script.isEmpty else { return self.failed(job, "Couldn't load \(chapterPath)") }
-            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: job.voice) != nil {
+            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(voice: job.voice)) != nil {
                 return self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
             }
             KokoroService.shared.ensureLoaded { status in
                 guard status == .ready else { return self.failed(job, "Kokoro isn't available (\(KokoroService.shared.statusText))") }
                 self.usedKokoro = true
-                let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, folder: DriveCache.shared.folder)
+                // Filed under the voice plus narrator mode's settings now (what playback will look for).
+                let prefs = VoiceSettings.shared.prefs
+                let key = prefs.preparedVoice(voice: job.voice)
+                let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, narrator: prefs.narrator, folder: DriveCache.shared.folder)
                 r.shouldStop = { [weak self] in self?.stopReason(job) }
                 r.onProgress = { [weak self] i, n in
                     self?.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: i, sentences: n)
@@ -523,7 +546,7 @@ final class DrivePrep {
                     self.current = nil
                     switch result {
                     case .success(let out):
-                        let entry = PreparedChapter(novelKey: job.novelKey, chapterPath: chapterPath, title: ch.chapterName, voice: job.voice,
+                        let entry = PreparedChapter(novelKey: job.novelKey, chapterPath: chapterPath, title: ch.chapterName, voice: key,
                                                     audioFile: out.audioFile, manifestFile: out.manifestFile, bytes: out.bytes,
                                                     durationMs: out.durationMs, sentences: out.sentences, createdAt: Date().timeIntervalSince1970)
                         let keep = Set((self.jobs.first { $0.novelKey == job.novelKey }?.done ?? []).map { DriveCacheIndex.id(novelKey: job.novelKey, chapterPath: $0) })
