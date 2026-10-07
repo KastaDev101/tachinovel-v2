@@ -7,7 +7,10 @@
 #  build    macOS 26: personal-flavor web build, cap sync, unsigned device build → TachiNovel-<version>-
 #           unsigned.ipa (CFBundleVersion = this workflow's run number) + SHA256SUMS.txt. Read-only token.
 #  publish  ubuntu: build provenance attestation for the IPA, then `gh release create` (pre-release when
-#           the version has a suffix such as -alpha.1). The only job with write access.
+#           the version has a suffix such as -alpha.1), then the AltStore source: apps.json (this IPA as
+#           the newest version, tools/altstore-source.ts) on the rolling release "altstore-source", so
+#           AltStore offers the update (stable URL in docs/how-to-test-tonight.md). The only job with
+#           write access.
 #
 # Dry run (manual run with a version): the same jobs on main with `release.ts prepare <version>` applied on
 # the runner only; publish makes a draft release instead (no tag, no attestation), checks it, deletes it.
@@ -191,3 +194,44 @@ jobs:
             echo
             cat notes.md
           } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
+        with:
+          path: src
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: github.event_name == 'push'
+        with:
+          node-version: 24
+      - name: AltStore source (rolling release "altstore-source")
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          ipa="dist/TachiNovel-${VERSION}-unsigned.ipa"
+          # Versions, bundle id, minimum iOS and privacy strings come from the IPA's own Info.plist.
+          python3 - "$ipa" > info.json <<'PY'
+          import json, plistlib, re, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          name = next(n for n in z.namelist() if re.fullmatch(r'Payload/[^/]+\.app/Info\.plist', n))
+          p = plistlib.loads(z.read(name))
+          print(json.dumps({
+              'bundleId': p['CFBundleIdentifier'],
+              'version': p['CFBundleShortVersionString'],
+              'build': str(p['CFBundleVersion']),
+              'minOS': p.get('MinimumOSVersion'),
+              'privacy': {k: v for k, v in p.items() if re.fullmatch(r'NS\w+UsageDescription', k)},
+          }))
+          PY
+          repo="$GITHUB_REPOSITORY"
+          if ! gh release view altstore-source --repo "$repo" > /dev/null 2>&1; then
+            gh release create altstore-source --repo "$repo" --title "AltStore source" --latest=false \
+              --notes "AltStore source for TachiNovel (apps.json, rewritten by every release). In AltStore: Sources › + › https://github.com/${repo}/releases/download/altstore-source/apps.json"
+          fi
+          gh release download altstore-source --repo "$repo" --pattern apps.json --output previous.json || true
+          node src/tools/altstore-source.ts --info=info.json --ipa="$ipa" \
+            --url="https://github.com/${repo}/releases/download/${TAG}/TachiNovel-${VERSION}-unsigned.ipa" \
+            --notes=dist/release-notes.md --previous=previous.json --label="$VERSION" --out=apps.json
+          gh release upload altstore-source apps.json --clobber --repo "$repo"
