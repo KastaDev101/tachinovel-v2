@@ -32,3 +32,5 @@
   cover in Now Playing.
 - A crash when the Apple voice stood in and was slow to start: the sentence was handed to the system
   synthesizer a second time, which iOS doesn't allow (found by the simulator voice self-test).
+- A crash when a prepared or PC-narrated chapter started: its position was read before the audio engine
+  had a valid clock.
