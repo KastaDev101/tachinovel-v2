@@ -1,6 +1,7 @@
 # QA: the click-everything crawler and the native smoke tour
 
-Two automated "user tests" check that every button works, on every pull request and every night:
+Two automated "user tests" check that every button works, on every pull request (and the crawler every
+2 hours on main):
 
 | | Where | What it taps | Catches |
 |---|---|---|---|
@@ -68,7 +69,7 @@ launch of the seeded app followed by the state's path, and records what happened
 | Check | Fails when |
 |---|---|
 | Errors | an uncaught error or unhandled rejection, a `console.error`, v1's red crash box, or a "Something Went Wrong" state appears |
-| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing) |
+| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing). Before failing, it tries five quick taps (a hidden gesture, like the About version's Voice Lab) and a mouse click (desktop WebKit's tap emulation); either one working makes it a warning |
 | Time | a core call is still pending 5 s after the tap (warning when the UI takes longer than 1.5 s to settle) |
 | Back | the nav bar Back button doesn't leave the screen, or the screen it lands on is blank or broken |
 | Layout | the page scrolls sideways, an element sticks out of the screen unclipped, the end of a tab's content stays behind the tab bar, a fixed control sits under the status bar or on the home indicator, or a fixed control is covered by another element |
@@ -81,6 +82,14 @@ terminates. Several workers (own WebKit and core each) run the controls of a BFS
 results are merged in a fixed order. A control that left the app unchanged lets the next control of the
 same state reuse the page; a failure seen on a reused page is re-checked from a fresh launch, so every
 reported failure's repro is "launch → path → control".
+
+### Every 2 hours on main
+
+The workflow also runs on a schedule (every 2 hours, on `main`). Its last job, `report new failures`,
+posts failures that are **new** — not in `known-issues.json` and not already reported — as a comment on the
+issue "UI crawler: new failures on main" (opened on the first one), with the repro steps and a link to the
+run's screenshots; a clean run closes the issue (`tools/crawler-notify.ts`). Fix the failure or, if it can't
+be fixed in this repo, add it to `known-issues.json`.
 
 ### Known issues
 

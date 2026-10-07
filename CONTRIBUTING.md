@@ -97,6 +97,21 @@ notices and don't fail the build. Remove a path from the list once its owner has
 If the Swift compiler itself crashes (seen once with Swift 6.3.3 in the `SendNonSendable` pass), the log
 names the function; restructure that closure or revert the change that triggered it.
 
+## Budgets
+
+Size and speed budgets keep regressions from slipping in unnoticed (`tools/budgets.ts`, baselines in
+[`ci/budgets.json`](ci/budgets.json), unit-tested on the PC):
+
+- **Web bundles:** `node tools/build.ts` fails when a file in `www/` is over its budget (every build).
+- **Sideload IPA (hard):** the `ios-ipa` job fails when the unsigned IPA is more than 10% over the
+  committed baseline. If the growth is intended (a new bundled model, say), raise the baseline in the same
+  PR and say why: `node tools/budgets.ts set-ipa <bytes>` (the job summary prints the exact command). When
+  the IPA shrinks by more than 10% the job warns: lower the baseline so later growth is caught.
+- **Boot time (soft):** the `ios-compile` job warns (never fails) when the simulator's cold-launch median,
+  process start → library painted (`boot-times.txt` in the `simulator-screenshots` artifact), is over
+  `warnAboveMs`. The CI VM is noisy: re-run before investigating, and measure on a phone before
+  optimizing.
+
 ## Public repository hygiene
 
 The repository is public. Never commit:

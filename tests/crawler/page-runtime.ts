@@ -533,7 +533,8 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
           const x = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2));
           const y = Math.min(innerHeight - 1, Math.max(0, r.top + r.height / 2));
           const hit = document.elementFromPoint(x, y);
-          if (!hit || s.contains(hit) || leaf.contains(hit) || !pinnedOutside(hit, s)) continue;
+          // Toasts are transient (they expire on their own); only lasting UI counts here.
+          if (!hit || s.contains(hit) || leaf.contains(hit) || hit.closest('.toast-host') || !pinnedOutside(hit, s)) continue;
           issues.push({ kind: 'behind-fixed', detail: `${describe(leaf)} (y=${Math.round(r.top)}…${Math.round(r.bottom)}) stays under ${describe(hit.closest('button, nav, [role], [class]') ?? hit)} when ${describe(s)} is scrolled to the end` });
           break;
         }

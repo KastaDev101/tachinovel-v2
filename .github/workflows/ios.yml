@@ -203,6 +203,9 @@ jobs:
         env:
           # Personal flavor ships the Stonescape source: also screenshot a live source list.
           SMOKE_SOURCE: ${{ env.FLAVOR == 'personal' && 'stonescape' || '' }}
+      - name: Boot time budget (soft, warns only; ci/budgets.json)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node tools/budgets.ts boot build/screenshots/boot-times.txt
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -321,6 +324,12 @@ jobs:
           path: build/ipa/xcodebuild-device.log
           if-no-files-found: ignore
           retention-days: 7
+      # Last, so the IPA and the log are uploaded even when it fails.
+      - name: IPA size budget (fails over +10%; ci/budgets.json)
+        if: ${{ !cancelled() && steps.ipa.outcome == 'success' }}
+        env:
+          IPA: ${{ steps.ipa.outputs.ipa }}
+        run: node tools/budgets.ts ipa "$IPA"
 
   voice-quality:
     name: voice-quality (Kokoro on macOS + ASR)
