@@ -290,6 +290,15 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "phraseBreaks": prefs.narrator.phraseBreaks,
                     "pacingStyle": prefs.narrator.pacingStyle,
                 ] as [String: Any],
+                "delivery": [
+                    "listenEngine": prefs.delivery.listenEngine ?? NSNull(),
+                    "natural": prefs.delivery.natural,
+                    "performed": prefs.delivery.performed,
+                    "breaths": prefs.delivery.breaths,
+                    "studioSound": prefs.delivery.studioSound,
+                    "systemChime": prefs.delivery.systemChime,
+                    "systemTone": prefs.delivery.systemTone,
+                ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
                     "status": k.statusText,
@@ -320,6 +329,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async {
             let novel = call.getObject("novel")
             let narrator = call.getObject("narrator")
+            let delivery = call.getObject("delivery")
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }
@@ -346,6 +356,20 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = narrator["phraseBreaks"] as? String { n.phraseBreaks = v == "off" ? "off" : "clauses" }
                     if let v = narrator["pacingStyle"] as? String { n.pacingStyle = v == "natural" ? "natural" : "relaxed" }
                     p.narrator = n
+                }
+                if let delivery {
+                    // The narrator voice: only the keys sent change; listenEngine null = Kokoro.
+                    var d = p.delivery
+                    if delivery.keys.contains("listenEngine") {
+                        d.listenEngine = (delivery["listenEngine"] as? String).flatMap { DeliverySettings.listenEngines.contains($0) ? $0 : nil }
+                    }
+                    if let v = delivery["natural"] as? Bool { d.natural = v }
+                    if let v = delivery["performed"] as? Bool { d.performed = v }
+                    if let v = delivery["breaths"] as? Bool { d.breaths = v }
+                    if let v = delivery["studioSound"] as? Bool { d.studioSound = v }
+                    if let v = delivery["systemChime"] as? Bool { d.systemChime = v }
+                    if let v = delivery["systemTone"] as? Bool { d.systemTone = v }
+                    p.delivery = d
                 }
             }
             if kokoroEnabled == true, KokoroService.shared.crashDisabled { KokoroService.shared.resetCrashes() }

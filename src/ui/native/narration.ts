@@ -201,12 +201,25 @@ export interface VoiceSettingsInfo {
   volume?: number;
   speedPresets?: number[];
   narrator?: NarratorInfo;
+  /** The narrator voice that reads chapters and how it reads (natural delivery). */
+  delivery?: DeliveryInfo;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
   /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
   apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
   /** With pluginId/novelPath: the novel's own choice (null = the default) and the voice it uses. */
   novelVoice?: string | null;
   effectiveVoice?: string;
+}
+
+/** Listen › the narrator voice: which engine reads chapters (null = Kokoro) and natural delivery's switches. */
+export interface DeliveryInfo {
+  listenEngine: 'pocket-tts' | 'chatterbox-nano' | null;
+  natural: boolean;
+  performed: boolean;
+  breaths: boolean;
+  studioSound: boolean;
+  systemChime: boolean;
+  systemTone: boolean;
 }
 
 /** One "Prepare for the drive" request. */
@@ -284,6 +297,8 @@ export interface NarrationPlugin {
     volume?: number;
     /** Narrator mode: only the keys sent change. */
     narrator?: Partial<NarratorInfo>;
+    /** The narrator voice: only the keys sent change. */
+    delivery?: Partial<DeliveryInfo>;
   }): Promise<void>;
   /** Voice mixer: save a new mix (no id) or change one. */
   saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;

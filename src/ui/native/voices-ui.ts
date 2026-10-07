@@ -29,6 +29,7 @@ import {
   Narration,
   type CarButtons,
   type CustomVoiceInfo,
+  type DeliveryInfo,
   type KokoroVoiceInfo,
   type NarrationState,
   type NarratorInfo,
@@ -329,6 +330,39 @@ function narratorCard(info: VoiceSettingsInfo): string {
     <p class="note">Compare on a short passage with dialogue. One voice reads the whole story; Advanced can give dialogue its own voice.</p>`;
 }
 
+/** Listen › the narrator voice (natural delivery), as native sends it; defaults when an older app sends none. */
+const DELIVERY_DEFAULT: DeliveryInfo = {
+  listenEngine: 'pocket-tts',
+  natural: true,
+  performed: true,
+  breaths: true,
+  studioSound: true,
+  systemChime: true,
+  systemTone: true,
+};
+
+const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine'>, string, string][] = [
+  ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
+  ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
+  ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
+  ['studioSound', 'Studio sound', 'Clean, warm and even'],
+  ['systemChime', 'System message chime', 'A soft chime before [System] lines'],
+  ['systemTone', 'System message voice', 'An interface tone for [System] lines'],
+];
+
+function deliveryCard(info: VoiceSettingsInfo): string {
+  const d = { ...DELIVERY_DEFAULT, ...info.delivery };
+  const opt = (v: string, label: string): string => `<option value="${v}"${(d.listenEngine ?? 'kokoro') === v ? ' selected' : ''}>${label}</option>`;
+  const rows = DELIVERY_SWITCHES.map(
+    ([k, label, sub]) =>
+      `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${k !== 'natural' && !d.natural ? 'disabled' : ''} aria-label="${esc(label)}"></label>`,
+  ).join('');
+  return `<div class="card" data-testid="voices-delivery">
+      <label class="row"><div class="main"><b>Reads chapters</b><span class="sub">Pocket keeps reading with the screen locked and in CarPlay</span></div><select data-act="delivery-engine" aria-label="Reads chapters">${opt('pocket-tts', 'Narrator (Pocket TTS)')}${opt('chatterbox-nano', 'Narrator (Chatterbox Nano)')}${opt('kokoro', 'Kokoro')}</select></label>
+      ${d.listenEngine ? rows : ''}
+    </div>`;
+}
+
 /** A voice's or a mix's name. */
 function choiceName(info: VoiceSettingsInfo, id: string | undefined): string {
   return info.voices.find((v) => v.id === id)?.name ?? info.customVoices?.find((m) => m.id === id)?.name ?? '';
@@ -375,6 +409,8 @@ export function openVoicesScreen(): void {
       <div class="sec">Voice</div>
       ${voiceRows(info, info.defaultVoice, true)}
       ${status}
+      <div class="sec">Narrator voice</div>
+      ${deliveryCard(info)}
       <div class="sec">Narrator mode</div>
       ${narratorCard(info)}
       <div class="sec">Experimental</div>
@@ -474,6 +510,11 @@ export function openVoicesScreen(): void {
     if (el.dataset.act === 'narrator-pacing-style') void Narration.setVoiceSettings({ narrator: { pacingStyle: el.value === 'natural' ? 'natural' : 'relaxed' } }).then(load);
     if (el.dataset.act === 'narrator-phrases') void Narration.setVoiceSettings({ narrator: { phraseBreaks: el.checked ? 'clauses' : 'off' } }).then(load);
     if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(load);
+    if (el.dataset.act === 'delivery' && el.dataset.k) void Narration.setVoiceSettings({ delivery: { [el.dataset.k]: el.checked } }).then(load);
+    if (el.dataset.act === 'delivery-engine') {
+      const v = el.value === 'pocket-tts' || el.value === 'chatterbox-nano' ? el.value : null;
+      void Narration.setVoiceSettings({ delivery: { listenEngine: v } }).then(load);
+    }
     if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
     if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);
   });
