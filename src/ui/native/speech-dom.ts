@@ -9,6 +9,7 @@
  */
 import { blockRange, domBlocks, type DomBlock } from '@v1tts/player/dom-blocks.ts';
 import type { Lexicon } from '@v1tts/frontend.ts';
+import type { Emphasis } from '../../core/narration/delivery.ts';
 import { speechScript, type SpeechScript } from '../../core/narration/speech-script.ts';
 
 /** Index of the reader paragraph (`.rd-body > *`) that contains a node. */
@@ -25,6 +26,22 @@ export interface DomScript {
   script: SpeechScript;
 }
 
+const EMPHASIS = 'em, i, cite, strong, b';
+
+/** The reader's italic and bold text in document order (natural delivery's emphasis; nested ones count once). */
+export function domEmphasis(body: HTMLElement): Emphasis[] {
+  const out: Emphasis[] = [];
+  for (const el of Array.from(body.querySelectorAll<HTMLElement>(EMPHASIS))) {
+    const outer = el.parentElement?.closest(EMPHASIS);
+    if (outer && body.contains(outer)) continue;
+    const text = (el.textContent ?? '').replace(/[\s\u00A0\u200B]+/g, ' ').trim();
+    if (!text) continue;
+    const bold = el.tagName === 'STRONG' || el.tagName === 'B';
+    out.push(bold ? { text, bold } : { text });
+  }
+  return out;
+}
+
 /** Script for a rendered chapter body. `title` helps the front-end recognise the title line. */
 export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexicons?: Lexicon[] } = {}): DomScript {
   const blocks = domBlocks(body);
@@ -33,7 +50,12 @@ export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexic
     const anchor = blk?.element && blk.element !== body ? blk.element : (blk?.nodes.find((n) => n !== null) ?? null);
     return paragraphIndexOf(body, anchor);
   };
-  const script = speechScript(blocks, { ...(opts.title ? { title: opts.title } : {}), ...(opts.lexicons ? { lexicons: opts.lexicons } : {}), paragraphOf });
+  const script = speechScript(blocks, {
+    ...(opts.title ? { title: opts.title } : {}),
+    ...(opts.lexicons ? { lexicons: opts.lexicons } : {}),
+    paragraphOf,
+    emphasis: domEmphasis(body),
+  });
   return { body, blocks, script };
 }
 

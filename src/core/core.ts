@@ -18,7 +18,7 @@ import { clearReports, type DiagnosticSummary, exportReports, listReports, recor
 import type { NativeHost } from './native-api.ts';
 import { htmlToBlocks, validateLexicon, type Lexicon } from '@v1tts/frontend.ts';
 import { emptyLexiconStore, lexiconsFor, paragraphMapper, speechScript, type LexiconStore, type SpeechScript } from './narration/speech-script.ts';
-import { narrationScript, type NarrationParagraph } from './narration/text.ts';
+import { htmlEmphasis, narrationScript, type NarrationParagraph } from './narration/text.ts';
 import { createNativePlatform, type NativePlatform } from './platform.ts';
 import { createGatedLoader, jsPluginsAllowed } from './sources/gate.ts';
 import { type CheckResult, Ota } from './ota/ota.ts';
@@ -180,7 +180,12 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
         chapterPath: ch.chapterPath,
         title: ch.title,
         paragraphs,
-        script: speechScript(blocks, { title: ch.title, lexicons, paragraphOf: paragraphMapper(blocks, paragraphs.map((p) => p.text)) }),
+        script: speechScript(blocks, {
+          title: ch.title,
+          lexicons,
+          paragraphOf: paragraphMapper(blocks, paragraphs.map((p) => p.text)),
+          emphasis: htmlEmphasis(ch.html),
+        }),
         ...(ch.next ? { next: ch.next } : {}),
         ...(ch.prev ? { prev: ch.prev } : {}),
       };
