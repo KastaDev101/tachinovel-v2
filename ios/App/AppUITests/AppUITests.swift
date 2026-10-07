@@ -58,11 +58,13 @@ final class AppUITests: XCTestCase {
             try tap(element(label: "Skip"), "\"Skip\"", timeout: 90, untilGone: true)
         }
         shot("01-library-first-launch")
+        checkControlsLabeled("Library")
 
         // 2. Restore the sample backup like a user: More › Backup & Restore › the backup › Restore… › Merge.
         try step("restore") {
             let backupRow = element(containing: "tachinovel-backup-2026-10-01-0900")
             try tapTab("More", until: element(label: "Backup & Restore"))
+            checkControlsLabeled("More")
             try tap(element(label: "Backup & Restore"), "\"Backup & Restore\"", until: backupRow)
             try tap(backupRow, "the sample backup", timeout: 30, until: app.buttons["Restore…"])
             try tapNative("Restore…", until: element(label: "Merge"))
@@ -81,6 +83,7 @@ final class AppUITests: XCTestCase {
             try toMoreRoot()
             try tap(element(label: "General"), "\"General\"", until: element(label: "Back to More"))
             shot("04-settings")
+            checkControlsLabeled("Settings")
             try tap(element(label: "Back to More"), "\"Back to More\"", untilGone: true)
         }
 
@@ -100,7 +103,13 @@ final class AppUITests: XCTestCase {
             attachTree(if: !started)
             XCTAssertTrue(started, "the narration mini player should show Pause/Play after Listen")
             shot("08-listening")
+            checkControlsLabeled("Reader with the mini player")
         }
+
+        // Reported at the end so one run shows every screen's findings (the flow stops at a failure).
+        let unlabeled = unlabeledControls.keys.sorted().flatMap { unlabeledControls[$0] ?? [] }
+        attachTree(if: !unlabeled.isEmpty)
+        XCTAssertTrue(unlabeled.isEmpty, "controls without a VoiceOver label:\n\(unlabeled.joined(separator: "\n"))")
     }
 
     private func readChapterOne() throws {
@@ -111,6 +120,7 @@ final class AppUITests: XCTestCase {
         try tap(novel, "\"Alpha Story…\"", timeout: 30, until: resume)
         try require(resume, "the Resume button", timeout: 60)
         shot("05-novel")
+        checkControlsLabeled("Novel")
         try tap(resume, "\"Resume…\"", until: text)
         try require(text, "chapter 1 text", timeout: 60)
         // First time in the reader: v1 shows its one-time Reading Tips sheet.
@@ -120,6 +130,42 @@ final class AppUITests: XCTestCase {
             try tap(gotIt, "\"Got It\"", untilGone: true)
         }
         shot("07-reader")
+        checkControlsLabeled("Reader")
+    }
+
+    // MARK: - Accessibility
+
+    /// Findings per screen (a repeated step replaces its screen's entry).
+    private var unlabeledControls: [String: [String]] = [:]
+
+    /// Every control on screen has a VoiceOver label (WebKit's accessibility tree for the web UI, UIKit's
+    /// for native views), so VoiceOver never announces a bare "button". One snapshot of the whole app per
+    /// screen, which stays fast with long web lists. tests/shell/a11y.shell.ts checks the same on the PC.
+    private func checkControlsLabeled(_ screen: String) {
+        guard let root = try? app.snapshot() else {
+            unlabeledControls[screen] = ["\(screen): no accessibility snapshot"]
+            return
+        }
+        let named: Set<XCUIElement.ElementType> = [.button, .link, .switch, .checkBox, .slider, .stepper, .segmentedControl, .tab]
+        let fields: Set<XCUIElement.ElementType> = [.textField, .secureTextField, .searchField, .textView]
+        let screenFrame = app.frame
+        var checked = 0
+        var found: [String] = []
+        func visit(_ e: XCUIElementSnapshot) {
+            let isField = fields.contains(e.elementType)
+            if named.contains(e.elementType) || isField, !e.frame.isEmpty, screenFrame.intersects(e.frame) {
+                checked += 1
+                let label = e.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                let placeholder = e.placeholderValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if label.isEmpty, !(isField && !placeholder.isEmpty) {
+                    found.append("\(screen): element type \(e.elementType.rawValue), id \"\(e.identifier)\", at \(e.frame.integral)")
+                }
+            }
+            e.children.forEach(visit)
+        }
+        visit(root)
+        if checked == 0 { found.append("\(screen): no controls in the accessibility tree") }
+        unlabeledControls[screen] = found
     }
 
     // MARK: - Steps and page reloads

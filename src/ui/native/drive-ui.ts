@@ -12,15 +12,16 @@
 import { callCore, observeCalls } from '../capacitor-client.ts';
 import { DRIVE_CHAPTER_CHOICES, driveLine, formatBytes, formatDuration, jobProgress, normalizeDriveStatus } from './drive-status.ts';
 import { Narration, type DriveStatus } from './narration.ts';
+import { fs } from './type.ts';
 import { esc, panel, toast } from './voices-ui.ts';
 
 const COUNT_KEY = 'tn.drive.chapters';
 
 const CSS = `
-.tn-drive-card .tn-drive-chev{color:var(--label-3,#8e8e93);font-size:20px;flex:none}
+.tn-drive-card .tn-drive-chev{color:var(--label-3,#8e8e93);font-size:${fs(20)};flex:none}
 .tn-v .prog{height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:8px}
 .tn-v .prog i{display:block;height:100%;background:#a8b4ff;transition:width .3s}
-.tn-v .row .meta{color:#a1a1aa;font-size:13px;flex:none;font-variant-numeric:tabular-nums}
+.tn-v .row .meta{color:#a1a1aa;font-size:${fs(13)};flex:none;font-variant-numeric:tabular-nums}
 `;
 
 const ICON_CAR =

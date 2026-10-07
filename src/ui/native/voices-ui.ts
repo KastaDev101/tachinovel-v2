@@ -17,30 +17,31 @@ import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { Narration, type CarButtons, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
+import { fs } from './type.ts';
 
 const CSS = `
 .tn-v{position:fixed;inset:0;z-index:90;background:#121215;color:#f2f2f7;display:flex;flex-direction:column;
   padding:env(safe-area-inset-top) max(16px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(16px,env(safe-area-inset-left));
-  font:16px -apple-system,system-ui;-webkit-user-select:none;user-select:none;transform:translateX(100%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+  font:${fs(16)} -apple-system,system-ui;-webkit-user-select:none;user-select:none;transform:translateX(100%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
 .tn-v.is-open{transform:none}
 .tn-v[hidden]{display:none}
 .tn-v button{font:inherit;color:inherit;background:transparent;border:0;-webkit-tap-highlight-color:transparent}
-.tn-v .hd{display:flex;align-items:center;gap:8px;height:52px;flex:none}
-.tn-v .hd h1{font-size:20px;font-weight:600;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tn-v .hd{display:flex;align-items:center;gap:8px;min-height:52px;flex:none}
+.tn-v .hd h1{font-size:${fs(20)};font-weight:600;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tn-v .x{width:44px;height:44px;border-radius:22px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex:none}
 .tn-v .body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:24px}
-.tn-v .sec{color:#a1a1aa;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin:18px 4px 6px}
+.tn-v .sec{color:#a1a1aa;font-size:${fs(13)};text-transform:uppercase;letter-spacing:.04em;margin:18px 4px 6px}
 .tn-v .card{background:#1c1c22;border-radius:14px;overflow:hidden}
 .tn-v .row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;min-height:52px;border-bottom:1px solid rgba(255,255,255,.06)}
 .tn-v .row:last-child{border-bottom:0}
 .tn-v .row:active{background:#26262d}
 .tn-v .row .main{flex:1;min-width:0}
 .tn-v .row b{display:block;font-weight:600}
-.tn-v .row span.sub{display:block;color:#a1a1aa;font-size:13px;margin-top:2px}
+.tn-v .row span.sub{display:block;color:#a1a1aa;font-size:${fs(13)};margin-top:2px}
 .tn-v .play{width:40px;height:40px;border-radius:20px;background:rgba(168,180,255,.16);color:#c7cdff;display:flex;align-items:center;justify-content:center;flex:none}
 .tn-v .play.is-busy{opacity:.6}
-.tn-v .check{color:#a8b4ff;font-size:20px;width:22px;text-align:center;flex:none}
-.tn-v .note{color:#a1a1aa;font-size:13px;line-height:1.4;margin:6px 4px 0}
+.tn-v .check{color:#a8b4ff;font-size:${fs(20)};width:22px;text-align:center;flex:none}
+.tn-v .note{color:#a1a1aa;font-size:${fs(13)};line-height:1.4;margin:6px 4px 0}
 .tn-v .warn{color:#ffd28a}
 .tn-v .btn{display:block;width:100%;padding:13px;border-radius:12px;background:#a8b4ff;color:#15151a;font-weight:600;margin-top:10px;text-align:center}
 .tn-v .btn.alt{background:rgba(255,255,255,.08);color:#f2f2f7}
@@ -48,14 +49,14 @@ const CSS = `
 .tn-v .sw:checked{background:#a8b4ff}
 .tn-v .sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:14px;background:#fff;transition:transform .2s}
 .tn-v .sw:checked::after{transform:translateX(20px)}
-.tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:16px -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
-.tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.tn-v input[type=text],.tn-v textarea{width:100%;box-sizing:border-box;background:#26262d;border:0;border-radius:10px;color:#f2f2f7;font:max(16px,${fs(16)}) -apple-system,system-ui;padding:10px 12px;margin-top:8px;-webkit-user-select:text;user-select:text}
+.tn-v textarea{min-height:110px;font-family:ui-monospace,Menlo,monospace;font-size:${fs(13)}}
 .tn-v .del{color:#ff8a8a;width:36px;height:36px;flex:none}
 .tn-v .chips{display:flex;gap:8px;flex:1}
 .tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
 .tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
 .tn-v .link{color:#a8b4ff;padding:6px 0;flex:none}
-.tn-v .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%);background:rgba(40,40,48,.95);color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;z-index:95;max-width:86%}
+.tn-v .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%);background:rgba(40,40,48,.95);color:#fff;padding:10px 16px;border-radius:12px;font-size:${fs(14)};z-index:95;max-width:86%}
 `;
 
 const ICON = {
