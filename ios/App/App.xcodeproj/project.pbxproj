@@ -43,6 +43,7 @@
 		766C9A19A88F37BE1CA24555 /* HDVoiceKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = 5A808D333E0AA77AAE90AA21 /* HDVoiceKokoro */; };
 		87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */; };
 		EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F88FB48C4F7B70FABE254E /* WebBundle.swift */; };
+		492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +95,7 @@
 		D7F3C92A13EB7D44431F05E9 /* KokoroModels */ = {isa = PBXFileReference; lastKnownFileType = folder; path = KokoroModels; sourceTree = "<group>"; };
 		A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/WebContentRecovery.swift"; sourceTree = "<group>"; };
 		82F88FB48C4F7B70FABE254E /* WebBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/WebBundle.swift"; sourceTree = "<group>"; };
+		08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFolder.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +183,7 @@
 				92EA18C07953ADCF54EC8F5C /* VoiceSettings.swift */,
 				A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */,
 				82F88FB48C4F7B70FABE254E /* WebBundle.swift */,
+				08988A230A4F95A7233A44CC /* DiagnosticsFolder.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -333,6 +336,7 @@
 				7C7495FBF7C8CAEEE58EF2F4 /* VoiceSettings.swift in Sources */,
 				87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */,
 				EBC0C66EF8532762B9C85552 /* WebBundle.swift in Sources */,
+				492BF5A1E631E8A872E96196 /* DiagnosticsFolder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
