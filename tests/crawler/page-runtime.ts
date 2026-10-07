@@ -96,6 +96,10 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
   function visible(el: Element): boolean {
     if (!(el instanceof HTMLElement) && !(el instanceof SVGElement)) return false;
     if (el.closest('[inert], [hidden], [aria-hidden="true"]') && !el.closest('.tn-car')) return false;
+    // Inside a closed <details> (other than its summary): WebKit hides it without display: none, so its
+    // boxes still measure, but nobody can reach it until the summary is tapped.
+    const disclosure = el.closest('details');
+    if (disclosure && !disclosure.open && !el.closest('summary')) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return false;
     const cs = getComputedStyle(el);
@@ -203,6 +207,10 @@ export function crawlerRuntime(cfg: RuntimeConfig): void {
       if (reader && !m) {
         if (reader.classList.contains('bars-visible')) sub.push('bars');
         if (reader.classList.contains('is-finding')) sub.push('find');
+      }
+      // An expanded disclosure is a state of its own (its controls replay through the summary tap).
+      for (const d of top.querySelectorAll('details[open][data-testid]')) {
+        if (visible(d)) sub.push(d.getAttribute('data-testid') ?? '');
       }
     }
     const crash = crashBox();
