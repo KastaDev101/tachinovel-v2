@@ -43,7 +43,8 @@ final class TextChunkerTests: XCTestCase {
 final class StyleMapperTests: XCTestCase {
     func testPocketTextKeepsEllipsesFromEndingTheLine() {
         XCTAssertEqual(StyleMapper.pocketText("Oh, is that how you hold a blade? Hmm... I've seen farmers do better."),
-                       "Oh, is that how you hold a blade? Hmm, I've seen farmers do better.")
+                       "Oh, is that how you hold a blade? Hm, I've seen farmers do better.")
+        XCTAssertEqual(StyleMapper.pocketText("Hmmm. HMM? Hmm…"), "Hm. HMM? Hm.")
         XCTAssertEqual(StyleMapper.pocketText("“Relax, little one. I don’t bite… often.”"), "“Relax, little one. I don’t bite, often.”")
         XCTAssertEqual(StyleMapper.pocketText("“I don’t know…” she said."), "“I don’t know.” she said.")
         XCTAssertEqual(StyleMapper.pocketText("…and then the lights went out..."), "and then the lights went out.")
