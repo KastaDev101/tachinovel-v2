@@ -13,7 +13,7 @@
 //  The decisions (policy, index, job walk) are platform-free in HDVoiceCore/DrivePrep.swift. Main thread.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 @preconcurrency import BackgroundTasks
 import Foundation
 import HDVoiceCore
@@ -35,7 +35,8 @@ enum DriveError: Error, LocalizedError {
 
 // MARK: - Prepared files
 
-final class DriveCache {
+/// Main-thread confined (DrivePrep and the controller use it on main).
+final class DriveCache: @unchecked Sendable {
     static let shared = DriveCache()
     static let changed = Notification.Name("tachinovel.driveCacheChanged")
 
@@ -130,7 +131,8 @@ final class DriveCache {
 
 /// Renders a chapter's sentence script with Kokoro into `<stem>.m4a` (AAC-LC, mono 24 kHz, 32 kbps,
 /// ~14 MB per hour) and `<stem>.json` (timestamp manifest). Main thread; file writes on a serial queue.
-final class ChapterRenderer {
+/// Driven on main; only the audio file is touched on its writer queue (`io`), one write at a time.
+final class ChapterRenderer: @unchecked Sendable {
     struct Output {
         let audioFile: String
         let manifestFile: String
@@ -173,13 +175,13 @@ final class ChapterRenderer {
     func start(_ completion: @escaping (Result<Output, Error>) -> Void) {
         self.completion = completion
         let url = folder.appendingPathComponent("\(stem).m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 24_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 32_000,
-        ]
         io.async {
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 24_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000,
+            ]
             do {
                 let f = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
                 DispatchQueue.main.async {
@@ -282,7 +284,8 @@ final class ChapterRenderer {
 
 // MARK: - Requests and the runner
 
-final class DrivePrep {
+/// Main-thread confined: requests, the runner and the system callbacks all hop to main.
+final class DrivePrep: @unchecked Sendable {
     static let shared = DrivePrep()
     static let taskId = "app.tachinovel.drive-prep"
     static let changed = Notification.Name("tachinovel.drivePrepChanged")
@@ -329,10 +332,10 @@ final class DrivePrep {
         guard !started else { return }
         started = true
         jobs = Self.loadJobs()
-        UIDevice.current.isBatteryMonitoringEnabled = true
+        MainThread.run { UIDevice.current.isBatteryMonitoringEnabled = true }
         monitor.pathUpdateHandler = { [weak self] path in
             let wifi = path.status == .satisfied && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard let self, self.wifi != wifi else { return }
                 self.wifi = wifi
                 self.kick()
@@ -414,7 +417,7 @@ final class DrivePrep {
     // MARK: Runner
 
     private func conditions() -> DriveConditions {
-        let battery = UIDevice.current.batteryState
+        let battery = MainThread.run { UIDevice.current.batteryState }
         let n = NarrationController.shared
         return DriveConditions(charging: battery == .charging || battery == .full, wifi: wifi,
                                lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
@@ -594,15 +597,18 @@ final class DrivePrep {
     /// app running anyway; otherwise this buys ~30 s, then the BGProcessingTask continues later).
     private func beginBackgroundWork() {
         guard appTask == .invalid, bgTask == nil else { return }
-        appTask = UIApplication.shared.beginBackgroundTask(withName: "drive-prep") { [weak self] in
-            self?.renderer?.stop("Continuing later")
-            self?.endBackgroundWork()
+        appTask = MainThread.run {
+            UIApplication.shared.beginBackgroundTask(withName: "drive-prep") { [weak self] in
+                self?.renderer?.stop("Continuing later")
+                self?.endBackgroundWork()
+            }
         }
     }
 
     private func endBackgroundWork() {
         if appTask != .invalid {
-            UIApplication.shared.endBackgroundTask(appTask)
+            let task = appTask
+            MainThread.run { UIApplication.shared.endBackgroundTask(task) }
             appTask = .invalid
         }
         if let task = bgTask, renderer == nil, runningKey == nil {
@@ -623,12 +629,13 @@ final class DrivePrep {
     private func runInBackground(_ task: BGProcessingTask) {
         bgTask = task
         task.expirationHandler = { [weak self] in
-            DispatchQueue.main.async {
-                self?.renderer?.stop("Continuing later")
-                if let t = self?.bgTask {
-                    self?.bgTask = nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.renderer?.stop("Continuing later")
+                if let t = self.bgTask {
+                    self.bgTask = nil
                     t.setTaskCompleted(success: false)
-                    self?.scheduleBackground()
+                    self.scheduleBackground()
                 }
             }
         }

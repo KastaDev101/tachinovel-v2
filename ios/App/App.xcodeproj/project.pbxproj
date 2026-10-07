@@ -44,6 +44,7 @@
 		87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */; };
 		97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D19C36D763DD38A51A524D7 /* CarAudio.swift */; };
 		047E190744D786077B79A114 /* DrivePrep.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */; };
+		ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB34A7C483D66F43B1D5815 /* Concurrency.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +97,7 @@
 		A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/WebContentRecovery.swift"; sourceTree = "<group>"; };
 		3D19C36D763DD38A51A524D7 /* CarAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/CarAudio.swift"; sourceTree = "<group>"; };
 		6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/DrivePrep.swift"; sourceTree = "<group>"; };
+		9AB34A7C483D66F43B1D5815 /* Concurrency.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/Concurrency.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -184,6 +186,7 @@
 				A0A39F8B317B23CA687BDA54 /* WebContentRecovery.swift */,
 				3D19C36D763DD38A51A524D7 /* CarAudio.swift */,
 				6FAAEE5FA5B46665D28F1F51 /* DrivePrep.swift */,
+				9AB34A7C483D66F43B1D5815 /* Concurrency.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -337,6 +340,7 @@
 				87B922B2230014F37615691E /* WebContentRecovery.swift in Sources */,
 				97170725DFE8A8076CBB320E /* CarAudio.swift in Sources */,
 				047E190744D786077B79A114 /* DrivePrep.swift in Sources */,
+				ABD2220981D52480D03459C2 /* Concurrency.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
