@@ -3,7 +3,7 @@
 //
 //  The model ships inside the app (tools/fetch-voices.ts → KokoroModels/, a folder reference in Copy
 //  Bundle Resources): FluidAudio's 7-stage Core ML chain (fp16 + int8-palettized "ANE" build), the
-//  English G2P, the Misaki lexicon and the six offered voices, pre-converted. Nothing is downloaded:
+//  English G2P, the Misaki lexicon and all 28 English voices, pre-converted. Nothing is downloaded:
 //  `ModelHub.offlineMode` is switched on, so a missing file is an error, never a silent 100 MB download.
 //
 //  Layout (models directory = KokoroAneManager's `directory`):
@@ -70,6 +70,11 @@ public actor KokoroRuntime {
     /// Wall time of the last successful load, and whether it was the first load of this process.
     public private(set) var lastLoad: (ms: Double, first: Bool)?
     private var manager: KokoroAneManager?
+    /// The manager's model store, kept to read voice packs and run the chain directly for voice mixes.
+    private var store: KokoroAneModelStore?
+    /// Blended packs (VoiceMix.swift), most recently used last; a few at 0.52 MB each.
+    private var blendCache: [(spec: String, pack: KokoroAneVoicePack)] = []
+    private static let blendCacheSize = 4
     private var loading: Task<Void, Error>?
     private var loadedOnce = false
     private let modelsDirectory: URL
@@ -123,9 +128,16 @@ public actor KokoroRuntime {
             ModelHub.offlineMode = true
             try KokoroRuntime.linkSharedAssets(from: dir)
             let t0 = Date()
-            let m = KokoroAneManager(variant: .english, defaultVoice: VoiceCatalog.defaultVoiceId, directory: dir, computeUnits: route.computeUnits)
-            try await m.initialize(preloadVoices: Set(VoiceCatalog.ids))
-            await self.didLoad(m, ms: Date().timeIntervalSince(t0) * 1000, first: first)
+            // Our own store (the manager would make the same one) so voice mixes can read packs and run the
+            // chain with a blended style (synthesizeBlend).
+            let s = KokoroAneModelStore(directory: dir, computeUnits: route.computeUnits, variant: .english)
+            let m = KokoroAneManager(variant: .english, defaultVoice: VoiceCatalog.defaultVoiceId, directory: dir, computeUnits: route.computeUnits,
+                                     modelStore: s)
+            // Only the default voice is read now; the others load on first use (0.52 MB from the bundle, a
+            // few ms), so 28 voices don't hold 14.6 MB of RAM while one is speaking. missingFiles has
+            // already checked that every voice is there.
+            try await m.initialize()
+            await self.didLoad(m, store: s, ms: Date().timeIntervalSince(t0) * 1000, first: first)
         }
         loading = task
         do {
@@ -138,8 +150,9 @@ public actor KokoroRuntime {
         }
     }
 
-    private func didLoad(_ m: KokoroAneManager, ms: Double, first: Bool) {
+    private func didLoad(_ m: KokoroAneManager, store s: KokoroAneModelStore, ms: Double, first: Bool) {
         manager = m
+        store = s
         loadedOnce = true
         lastLoad = (ms: ms, first: first)
         state = .ready
@@ -154,6 +167,8 @@ public actor KokoroRuntime {
     private func releaseNow() async {
         let m = manager
         manager = nil
+        store = nil
+        blendCache.removeAll()
         if state == .ready { state = .unloaded }
         await m?.cleanup()
         // The lexicon maps and Core ML buffers are freed, but malloc keeps the pages until asked: hand them
@@ -161,15 +176,24 @@ public actor KokoroRuntime {
         _ = malloc_zone_pressure_relief(nil, 0)
     }
 
-    /// One sentence. `runs` carries lexicon phoneme overrides (see PhonemeJoiner); without overrides the
-    /// plain text goes through Kokoro's own normalization + G2P.
+    /// One sentence. `voice` is a built-in id or a mix's blend string ("af_heart+bf_emma@35", VoiceMix.swift).
+    /// `runs` carries lexicon phoneme overrides (see PhonemeJoiner); without overrides the plain text goes
+    /// through Kokoro's own normalization + G2P.
     public func synthesize(text: String, runs: [SpeechRun]?, voice: String, speed: Float) async throws -> KokoroAudio {
         guard let m = manager, state == .ready else { throw KokoroRuntimeError.notLoaded }
         let t0 = Date()
         if injectedDelay > 0 { try await Task.sleep(nanoseconds: UInt64(injectedDelay * 1e9)) }
         if injectedFailure { throw KokoroRuntimeError.injected("synthesis") }
-        let result: KokoroAneSynthesisResult
-        if let runs, runs.contains(where: { if case .phonemes = $0 { return true } else { return false } }) {
+        let blend = VoiceBlend.parse(voice)
+        let overrides = runs?.contains(where: { if case .phonemes = $0 { return true } else { return false } }) ?? false
+        guard blend != nil || overrides else {
+            let r = try await m.synthesizeDetailed(text: text, voice: voice, speed: speed)
+            return KokoroAudio(samples: r.samples, sampleRate: r.sampleRate, synthMs: Date().timeIntervalSince(t0) * 1000)
+        }
+        // Phonemes first (overrides spliced in, or Kokoro's own normalization + G2P), then one pass per piece
+        // that fits, so long sentences keep their overrides and mixes work at any length.
+        let phonemes: String
+        if overrides, let runs {
             var parts: [(run: SpeechRun, phonemes: String)] = []
             for run in runs {
                 switch run {
@@ -185,17 +209,58 @@ public actor KokoroRuntime {
                     parts.append((run: run, phonemes: ph))
                 }
             }
-            let phonemes = PhonemeJoiner.join(parts)
-            if PhonemeJoiner.fits(phonemes), !phonemes.isEmpty {
-                result = try await m.synthesizeFromPhonemesDetailed(phonemes, voice: voice, speed: speed)
-            } else {
-                // Too long for one pass with overrides: the text path chunks by itself (overrides dropped).
-                result = try await m.synthesizeDetailed(text: text, voice: voice, speed: speed)
-            }
+            phonemes = PhonemeJoiner.join(parts)
         } else {
-            result = try await m.synthesizeDetailed(text: text, voice: voice, speed: speed)
+            phonemes = try await m.phonemes(for: text)
         }
-        return KokoroAudio(samples: result.samples, sampleRate: result.sampleRate, synthMs: Date().timeIntervalSince(t0) * 1000)
+        let pieces = PhonemeJoiner.chunks(phonemes)
+        guard !pieces.isEmpty else {
+            // Nothing to pronounce: whatever Kokoro's text path makes of it (the mix's main voice).
+            let r = try await m.synthesizeDetailed(text: text, voice: blend?.dominant ?? voice, speed: speed)
+            return KokoroAudio(samples: r.samples, sampleRate: r.sampleRate, synthMs: Date().timeIntervalSince(t0) * 1000)
+        }
+        var samples: [Float] = []
+        var sampleRate = KokoroAneConstants.sampleRate
+        for piece in pieces {
+            try Task.checkCancellation()
+            let r: KokoroAneSynthesisResult
+            if let blend {
+                r = try await synthesizeBlend(piece, blend: blend, speed: speed)
+            } else {
+                r = try await m.synthesizeFromPhonemesDetailed(piece, voice: voice, speed: speed)
+            }
+            samples += r.samples
+            sampleRate = r.sampleRate
+        }
+        return KokoroAudio(samples: samples, sampleRate: sampleRate, synthMs: Date().timeIntervalSince(t0) * 1000)
+    }
+
+    /// One piece (≤ 510 phonemes) with a blended style: what KokoroAneManager does for a named voice, with
+    /// the mixed pack's row for this length.
+    private func synthesizeBlend(_ phonemes: String, blend: VoiceBlend, speed: Float) async throws -> KokoroAneSynthesisResult {
+        guard let s = store else { throw KokoroRuntimeError.notLoaded }
+        let pack = try await blendedPack(blend, store: s)
+        let vocab = try await s.vocabulary()
+        let ids = try vocab.encode(phonemes)
+        let style = pack.slice(for: KokoroAneVocab.phonemeLength(phonemes))
+        return try await KokoroAneSynthesizer.synthesize(inputIds: ids, styleS: style.styleS, styleTimbre: style.styleTimbre, speed: speed, store: s)
+    }
+
+    /// The mixed pack, (1 − t)·A + t·B over all 510 × 256 values; the last few are kept.
+    private func blendedPack(_ blend: VoiceBlend, store s: KokoroAneModelStore) async throws -> KokoroAneVoicePack {
+        if let i = blendCache.firstIndex(where: { $0.spec == blend.spec }) {
+            let hit = blendCache.remove(at: i)
+            blendCache.append(hit)
+            return hit.pack
+        }
+        let a = try await s.voicePack(blend.a)
+        let b = try await s.voicePack(blend.b)
+        let pack = try KokoroAneVoicePack(storage: VoiceBlend.mix(a.storage, b.storage, t: blend.t))
+        if !blendCache.contains(where: { $0.spec == blend.spec }) {
+            blendCache.append((spec: blend.spec, pack: pack))
+            if blendCache.count > Self.blendCacheSize { blendCache.removeFirst() }
+        }
+        return pack
     }
 
     /// Symlink the G2P + lexicon into FluidAudio's fixed cache path (see the header).

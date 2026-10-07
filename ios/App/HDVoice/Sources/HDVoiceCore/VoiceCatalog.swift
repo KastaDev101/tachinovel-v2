@@ -1,9 +1,10 @@
 //
 //  VoiceCatalog.swift — the Kokoro voices TachiNovel offers, and the user's voice preferences.
 //
-//  Six English Kokoro-82M v1.0 voices, picked from the model card's grades (hexgrad/Kokoro-82M VOICES.md)
-//  and the PC lab's listening tests, balanced across US/UK and female/male. They are bundled with the app
-//  (tools/fetch-voices.ts VOICES must list the same ids).
+//  All 28 English Kokoro-82M v1.0 voices (20 American, 8 British), bundled with the app (tools/fetch-voices.ts
+//  VOICES must list the same ids). Each carries the model card's overall grade (hexgrad/Kokoro-82M
+//  VOICES.md, "Overall Grade", A best … F worst): the picker groups voices by accent and gender and lists
+//  the best first. Grades reflect the voice's training data, so the low ones sound rougher.
 //
 
 import Foundation
@@ -15,25 +16,53 @@ public struct KokoroVoice: Sendable, Equatable, Codable {
     /// BCP-47 accent: en-US or en-GB.
     public let language: String
     public let gender: Gender
+    /// Kokoro's own grade for the voice (A, A-, B-, C+, C, C-, D+, D, D-, F+).
+    public let grade: String
     public let blurb: String
 
-    public init(id: String, name: String, language: String, gender: Gender, blurb: String) {
+    public init(id: String, name: String, language: String, gender: Gender, grade: String, blurb: String) {
         self.id = id
         self.name = name
         self.language = language
         self.gender = gender
+        self.grade = grade
         self.blurb = blurb
     }
+
+    /// Higher is better (A = 13, A- = 12 … F = 1), for sorting.
+    public var gradeRank: Int { VoiceCatalog.gradeRank(grade) }
 }
 
 public enum VoiceCatalog {
     public static let voices: [KokoroVoice] = [
-        KokoroVoice(id: "af_heart", name: "Heart", language: "en-US", gender: .female, blurb: "Warm, expressive. The best Kokoro voice."),
-        KokoroVoice(id: "af_bella", name: "Bella", language: "en-US", gender: .female, blurb: "Bright and lively."),
-        KokoroVoice(id: "bf_emma", name: "Emma", language: "en-GB", gender: .female, blurb: "British, calm and clear."),
-        KokoroVoice(id: "am_michael", name: "Michael", language: "en-US", gender: .male, blurb: "Steady narrator."),
-        KokoroVoice(id: "am_fenrir", name: "Fenrir", language: "en-US", gender: .male, blurb: "Deep, dramatic."),
-        KokoroVoice(id: "bm_george", name: "George", language: "en-GB", gender: .male, blurb: "British, classic storyteller."),
+        KokoroVoice(id: "af_heart", name: "Heart", language: "en-US", gender: .female, grade: "A", blurb: "Warm, expressive. The best Kokoro voice."),
+        KokoroVoice(id: "af_bella", name: "Bella", language: "en-US", gender: .female, grade: "A-", blurb: "Bright and lively."),
+        KokoroVoice(id: "af_nicole", name: "Nicole", language: "en-US", gender: .female, grade: "B-", blurb: "Soft and close, almost a whisper."),
+        KokoroVoice(id: "af_aoede", name: "Aoede", language: "en-US", gender: .female, grade: "C+", blurb: ""),
+        KokoroVoice(id: "af_kore", name: "Kore", language: "en-US", gender: .female, grade: "C+", blurb: ""),
+        KokoroVoice(id: "af_sarah", name: "Sarah", language: "en-US", gender: .female, grade: "C+", blurb: ""),
+        KokoroVoice(id: "af_alloy", name: "Alloy", language: "en-US", gender: .female, grade: "C", blurb: ""),
+        KokoroVoice(id: "af_nova", name: "Nova", language: "en-US", gender: .female, grade: "C", blurb: ""),
+        KokoroVoice(id: "af_sky", name: "Sky", language: "en-US", gender: .female, grade: "C-", blurb: ""),
+        KokoroVoice(id: "af_jessica", name: "Jessica", language: "en-US", gender: .female, grade: "D", blurb: ""),
+        KokoroVoice(id: "af_river", name: "River", language: "en-US", gender: .female, grade: "D", blurb: ""),
+        KokoroVoice(id: "am_fenrir", name: "Fenrir", language: "en-US", gender: .male, grade: "C+", blurb: "Deep, dramatic."),
+        KokoroVoice(id: "am_michael", name: "Michael", language: "en-US", gender: .male, grade: "C+", blurb: "Steady narrator."),
+        KokoroVoice(id: "am_puck", name: "Puck", language: "en-US", gender: .male, grade: "C+", blurb: ""),
+        KokoroVoice(id: "am_echo", name: "Echo", language: "en-US", gender: .male, grade: "D", blurb: ""),
+        KokoroVoice(id: "am_eric", name: "Eric", language: "en-US", gender: .male, grade: "D", blurb: ""),
+        KokoroVoice(id: "am_liam", name: "Liam", language: "en-US", gender: .male, grade: "D", blurb: ""),
+        KokoroVoice(id: "am_onyx", name: "Onyx", language: "en-US", gender: .male, grade: "D", blurb: ""),
+        KokoroVoice(id: "am_santa", name: "Santa", language: "en-US", gender: .male, grade: "D-", blurb: "A novelty voice."),
+        KokoroVoice(id: "am_adam", name: "Adam", language: "en-US", gender: .male, grade: "F+", blurb: ""),
+        KokoroVoice(id: "bf_emma", name: "Emma", language: "en-GB", gender: .female, grade: "B-", blurb: "British, calm and clear."),
+        KokoroVoice(id: "bf_isabella", name: "Isabella", language: "en-GB", gender: .female, grade: "C", blurb: ""),
+        KokoroVoice(id: "bf_alice", name: "Alice", language: "en-GB", gender: .female, grade: "D", blurb: ""),
+        KokoroVoice(id: "bf_lily", name: "Lily", language: "en-GB", gender: .female, grade: "D", blurb: ""),
+        KokoroVoice(id: "bm_fable", name: "Fable", language: "en-GB", gender: .male, grade: "C", blurb: ""),
+        KokoroVoice(id: "bm_george", name: "George", language: "en-GB", gender: .male, grade: "C", blurb: "British, classic storyteller."),
+        KokoroVoice(id: "bm_lewis", name: "Lewis", language: "en-GB", gender: .male, grade: "D+", blurb: ""),
+        KokoroVoice(id: "bm_daniel", name: "Daniel", language: "en-GB", gender: .male, grade: "D", blurb: ""),
     ]
 
     public static let defaultVoiceId = "af_heart"
@@ -44,6 +73,35 @@ public enum VoiceCatalog {
     }
 
     public static var ids: [String] { voices.map(\.id) }
+
+    /// A letter grade with an optional + or − (A … F) as a number, higher is better.
+    public static func gradeRank(_ grade: String) -> Int {
+        let letters: [Character: Int] = ["A": 4, "B": 3, "C": 2, "D": 1, "F": 0]
+        guard let first = grade.first, let base = letters[first] else { return -1 }
+        let mod = grade.dropFirst().first
+        return base * 3 + 1 + (mod == "+" ? 1 : mod == "-" || mod == "\u{2212}" ? -1 : 0)
+    }
+
+    public enum Accent: String, Sendable, CaseIterable { case american = "en-US", british = "en-GB" }
+
+    public struct VoiceGroup: Sendable, Equatable {
+        public let accent: Accent
+        public let gender: KokoroVoice.Gender
+        public let voices: [KokoroVoice]
+    }
+
+    /// The picker's groups: accent, then gender; inside each, the best grade first (then by name).
+    public static func grouped() -> [VoiceGroup] {
+        var out: [VoiceGroup] = []
+        for accent in Accent.allCases {
+            for gender in [KokoroVoice.Gender.female, .male] {
+                let vs = voices.filter { $0.language == accent.rawValue && $0.gender == gender }
+                    .sorted { $0.gradeRank != $1.gradeRank ? $0.gradeRank > $1.gradeRank : $0.name < $1.name }
+                if !vs.isEmpty { out.append(VoiceGroup(accent: accent, gender: gender, voices: vs)) }
+            }
+        }
+        return out
+    }
 }
 
 /// Persisted voice settings (UserDefaults JSON in the app). Unknown/removed voice ids fall back to the default.
@@ -59,20 +117,28 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     public var route: String
     /// Sentences rendered ahead (2–3).
     public var ahead: Int
+    /// In the car › "Car buttons" (CarButtons raw value): chapters (default) or 15-second skips.
+    public var carButtons: String
     /// Listen player: speed (0.5–2.5) and "Voice volume" (0–1.5), for every voice.
     public var speed: Double
     public var volume: Double
+    /// "Your mixes": named blends of two voices (VoiceMix.swift). `defaultVoice` and `novelVoices` may hold
+    /// their ids.
+    public var customVoices: [CustomVoice]
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
-                route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue) {
+                route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
+                speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = []) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
         self.usePCAudio = usePCAudio
         self.route = route
         self.ahead = ahead
+        self.carButtons = carButtons
         self.speed = SpeechSpeed.clamp(speed)
         self.volume = VoiceVolume.clamp(volume)
+        self.customVoices = customVoices
     }
 
     /// Tolerant decoding: missing keys take their defaults (settings written by older builds).
@@ -85,19 +151,22 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         usePCAudio = (try? c.decode(Bool.self, forKey: .usePCAudio)) ?? d.usePCAudio
         route = (try? c.decode(String.self, forKey: .route)) ?? d.route
         ahead = (try? c.decode(Int.self, forKey: .ahead)) ?? d.ahead
+        carButtons = (try? c.decode(String.self, forKey: .carButtons)) ?? d.carButtons
         speed = SpeechSpeed.clamp((try? c.decode(Double.self, forKey: .speed)) ?? d.speed)
         volume = VoiceVolume.clamp((try? c.decode(Double.self, forKey: .volume)) ?? d.volume)
+        customVoices = (try? c.decode([CustomVoice].self, forKey: .customVoices)) ?? d.customVoices
     }
 
-    /// The voice for a novel: its own choice, else the global default, else Heart.
+    /// The voice a novel speaks with (its own choice, else the global default, else Heart): a built-in id,
+    /// or a mix's blend string ("af_heart+bf_emma@35"). The stored choice is `choice(forNovel:)`.
     public func voice(forNovel key: String?) -> String {
-        if let key, let v = novelVoices[key], VoiceCatalog.voice(v) != nil { return v }
-        return VoiceCatalog.voice(defaultVoice) != nil ? defaultVoice : VoiceCatalog.defaultVoiceId
+        engineVoice(choice(forNovel: key)) ?? VoiceCatalog.defaultVoiceId
     }
 
-    /// Set (or clear with nil) a novel's voice. Choosing the global default clears the override.
+    /// Set (or clear with nil) a novel's voice (a built-in id or a mix id). Choosing the global default
+    /// clears the override.
     public mutating func setVoice(_ voice: String?, forNovel key: String) {
-        if let voice, VoiceCatalog.voice(voice) != nil, voice != defaultVoice {
+        if let voice, isChoice(voice), voice != defaultVoice {
             novelVoices[key] = voice
         } else {
             novelVoices.removeValue(forKey: key)
@@ -105,6 +174,8 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     }
 
     public var clampedAhead: Int { min(3, max(2, ahead)) }
+
+    public var carButtonsChoice: CarButtons { CarButtons(rawValue: carButtons) ?? .chapters }
 }
 
 /// Where the Kokoro stages run. All routes keep Metal (GPU) out unless they say so: iOS doesn't allow GPU

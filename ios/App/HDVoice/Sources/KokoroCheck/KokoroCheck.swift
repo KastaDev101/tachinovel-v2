@@ -4,12 +4,14 @@
 //  Loads ios/App/App/KokoroModels exactly the way the app does (HDVoiceKokoro.KokoroRuntime, same compute
 //  route, same lexicon phoneme splicing), synthesizes the fixture sentences (tools/voice-fixtures.ts:
 //  short, long, dialogue, numbers/"Ch. 12", lexicon names, run through the app's narration front-end) with
-//  every offered voice, and checks the audio:
+//  every offered voice and two voice mixes (VoiceMix.swift), and checks the audio:
 //    - 24 kHz, non-empty, no NaN/Inf, no clipping, speech-level RMS,
 //    - duration within a plausible speaking rate (words per minute),
 //    - time to first audio and real-time factor (logged; fails only on gross regressions),
-//    - memory released after the model is dropped.
-//  Writes report.json and WAVs (af_heart, for the ASR round trip in ci/voice-asr.ts).
+//    - memory released after the model is dropped,
+//    - a mix sounds like neither of its two voices alone (the blend reached the model).
+//  Writes report.json and WAVs (af_heart, and "mix--" for the first mix, for the ASR round trip in
+//  ci/voice-asr.ts).
 //
 //  Usage: swift run -c release kokoro-check --models <dir> --fixtures <json> --out <dir> [--route ane-cpu]
 //
@@ -30,6 +32,10 @@ struct Fixture: Decodable {
     let runs: [Run]?
     let asr: Bool?
 }
+
+/// Voice mixes checked like a voice, on every fixture (blend strings, VoiceMix.swift). The first also goes
+/// through the ASR round trip.
+let checkedMixes = ["af_heart+am_michael@50", "bf_emma+am_fenrir@30"]
 
 struct FixtureFile: Decodable {
     let sentences: [Fixture]
@@ -96,8 +102,16 @@ struct KokoroCheck {
         for p in placement { print("placement: \(p.summary)") }
 
         var firstAudioMs: Double?
-        for voice in VoiceCatalog.ids {
-            for f in fixtures {
+        // Every bundled voice is checked; the well-graded ones (C+ and up) on every fixture, the rest on two
+        // (enough to catch a broken or silent voice pack) so the job stays a few minutes with 28 voices.
+        let fullRank = VoiceCatalog.gradeRank("C+")
+        let plan: [(voice: String, fixtures: [Fixture])] =
+            VoiceCatalog.voices.map { v in (v.id, v.gradeRank >= fullRank ? fixtures : fixtures.filter { $0.id == "plain" || $0.id == "names" }) }
+            + checkedMixes.map { ($0, fixtures) }
+        /// "voice/fixture" → samples of the "plain" fixture, to compare each mix with its two voices.
+        var plain: [String: [Float]] = [:]
+        for (voice, mine) in plan {
+            for f in mine {
                 let runs: [SpeechRun]? = f.runs?.compactMap { r in
                     if let p = r.p { return SpeechRun.phonemes(p) }
                     if let t = r.t { return SpeechRun.text(t) }
@@ -132,9 +146,25 @@ struct KokoroCheck {
                 if voice == VoiceCatalog.defaultVoiceId, f.asr == true {
                     try WAV.pcm16(s, sampleRate: audio.sampleRate).write(to: out.appendingPathComponent("\(f.id).wav"))
                 }
+                if voice == checkedMixes.first, f.asr == true {
+                    try WAV.pcm16(s, sampleRate: audio.sampleRate).write(to: out.appendingPathComponent("mix--\(f.id).wav"))
+                }
+                if f.id == "plain" { plain[voice] = s }
                 rows.append(["voice": voice, "id": f.id, "label": f.label, "seconds": seconds, "rms": Double(rms), "wpm": wpm,
                              "synthMs": audio.synthMs, "x": x, "clipped": clipped, "nonFinite": nonFinite])
                 print(String(format: "%-11@ %-10@ %5.2f s  rms %.3f  %3.0f wpm  synth %5.0f ms  %5.1f× RT", voice, f.id, seconds, rms, wpm, audio.synthMs, x))
+            }
+        }
+
+        // A mix must not come out as one of its voices (the blended style reached the chain).
+        for spec in checkedMixes {
+            guard let blend = VoiceBlend.parse(spec) else {
+                problems.append("\(spec): not a valid mix")
+                continue
+            }
+            guard let mixed = plain[spec] else { continue }
+            for one in [blend.a, blend.b] where plain[one] == mixed {
+                problems.append("\(spec)/plain: identical to \(one) alone (the blend was not applied)")
             }
         }
 

@@ -378,7 +378,7 @@ SOFTWARE.
 
 - License: Apache-2.0
 - Source: https://huggingface.co/hexgrad/Kokoro-82M
-- Used for: The on-device voice: model weights and the six bundled voice packs (af_heart, af_bella, bf_emma, am_michael, am_fenrir, bm_george). Downloaded at build time by tools/fetch-voices.ts (pinned revision + SHA-256, ios/kokoro-models.lock.json), never committed; the bundle keeps the model's LICENSE file.
+- Used for: The on-device voice: model weights and all 28 English voice packs (20 American, 8 British; ids in ios/kokoro-models.lock.json), with the model card's per-voice grades shown in the voice picker. Downloaded at build time by tools/fetch-voices.ts (pinned revision + SHA-256, ios/kokoro-models.lock.json), never committed; the bundle keeps the model's LICENSE file.
 
 ```text
 Kokoro-82M v1.0

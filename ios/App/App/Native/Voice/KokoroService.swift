@@ -166,6 +166,7 @@ final class KokoroService {
     }
 
     private func releaseNow(reason: String) {
+        dropWarm()
         guard let runtime, status == .ready || status == .loading else { return }
         log.info("voice: releasing the Kokoro model (\(reason, privacy: .public))")
         Task.detached { await runtime.release() }
@@ -193,8 +194,56 @@ final class KokoroService {
 
     // MARK: - Synthesis
 
+    // MARK: - Warm sentences (the next chapter's first ones, rendered while this chapter ends)
+
+    private var warm: [String: KokoroAudio] = [:]
+    private var warmOrder: [String] = []
+    private var warming = false
+
+    private static func warmKey(text: String, runs: [SpeechRun]?, voice: String, speed: Float) -> String {
+        let r = (runs ?? []).map { run -> String in
+            switch run {
+            case .text(let t): return "t:\(t)"
+            case .phonemes(let p): return "p:\(p)"
+            }
+        }
+        return "\(voice)|\(speed)|\(text)|\(r.joined(separator: "\u{1F}"))"
+    }
+
+    /// Render a sentence ahead into a small cache that `synthesize` answers from (no-op while another
+    /// warm-up runs, or before the model is ready). Completion on main.
+    func prewarm(text: String, runs: [SpeechRun]?, voice: String, speed: Float, completion: @escaping () -> Void) {
+        let key = Self.warmKey(text: text, runs: runs, voice: voice, speed: speed)
+        guard warm[key] == nil, !warming, status == .ready else { return completion() }
+        warming = true
+        render(text: text, runs: runs, voice: voice, speed: speed) { result in
+            self.warming = false
+            if case .success(let audio) = result {
+                self.warm[key] = audio
+                self.warmOrder.append(key)
+                while self.warmOrder.count > 4 { self.warm[self.warmOrder.removeFirst()] = nil }
+            }
+            completion()
+        }
+    }
+
+    private func dropWarm() {
+        warm.removeAll()
+        warmOrder.removeAll()
+    }
+
     /// One sentence, off the main thread; the result is delivered on main. Wrapped in the crash sentinel.
+    /// Sentences rendered ahead by `prewarm` come back at once.
     func synthesize(text: String, runs: [SpeechRun]?, voice: String, speed: Float, completion: @escaping (Result<KokoroAudio, Error>) -> Void) {
+        let key = Self.warmKey(text: text, runs: runs, voice: voice, speed: speed)
+        if let hit = warm.removeValue(forKey: key) {
+            warmOrder.removeAll { $0 == key }
+            return DispatchQueue.main.async { completion(.success(hit)) }
+        }
+        render(text: text, runs: runs, voice: voice, speed: speed, completion: completion)
+    }
+
+    private func render(text: String, runs: [SpeechRun]?, voice: String, speed: Float, completion: @escaping (Result<KokoroAudio, Error>) -> Void) {
         guard let runtime else { return completion(.failure(KokoroRuntimeError.notLoaded)) }
         let sentinel = self.sentinel
         let context = "\(voice) \(route.rawValue) \(text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"

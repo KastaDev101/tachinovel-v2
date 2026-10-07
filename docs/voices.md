@@ -64,11 +64,46 @@ right away on a memory warning. Compute placement (`KokoroRoute`): the RNN/atten
 doesn't allow GPU work in the background and narration must keep rendering on the lock screen. The Voice
 Lab can switch to FluidAudio's GPU placement for a foreground-only speed comparison.
 
+## In the car
+
+Kokoro, the Apple fallback, prepared chapters and PC audio all show in CarPlay's Now Playing screen and
+answer the car's buttons and Siri. Before a drive, a novel's **Prepare for the drive** renders the next
+chapters with Kokoro into local audio, so playback never waits on synthesis or the network. Details,
+settings and the on-phone car checklist: docs/car.md.
+
+## Voice mixer
+
+More › Voices › **Mix a voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
+a name. Saved mixes are listed under **Your mixes**, after the voices: in Settings › Voices (with Edit and
+Delete) and in a novel's voice picker (Listen player › Voice). So a mix can be the default voice or one
+novel's voice.
+
+- **How it blends:** each Kokoro voice is a style pack of 510 rows (one per phoneme-count bucket), each
+  128 timbre + 128 prosody values. A mix interpolates the two packs value by value, (1 − t)·A + t·B,
+  which is how Kokoro's own blended voices are made. It is computed once and cached (0.52 MB). FluidAudio
+  needs no changes: KokoroRuntime runs the chain with the blended style through FluidAudio's public
+  synthesizer.
+- **One voice string:** the app passes a mix as `af_heart+bf_emma@35` (35 % Emma), so everything that
+  takes a voice takes a mix:
+  - the speech engine;
+  - the Apple fallback, which matches the accent and gender of the voice heard most;
+  - Prepare for the drive, where editing a mix makes audio prepared with the old blend stale;
+  - Now Playing and the mini player, which show the mix's name.
+- **Kept on the phone** with the other voice settings (up to 50 mixes). Deleting a mix sends the default and
+  any novel using it back to Heart or the default.
+- **What sounds good:** two similar voices, or one voice clearly in front (20–40 % of the other). Halfway
+  between a female and a male voice, or between accents, can sound odd.
+
 ## The bundled model
 
 - **What:** FluidAudio's 7-stage Core ML build of Kokoro-82M v1.0 (fp16 + int8-palettized weights, the
-  "ANE" build), the English G2P (BART), the Misaki lexicon, and 6 voices: Heart, Bella (US female), Emma
-  (UK female), Michael, Fenrir (US male), George (UK male). These are 97.4 MB on disk.
+  "ANE" build), the English G2P (BART), the Misaki lexicon, and all 28 English voices (20 American, 8
+  British). These are 108.9 MB on disk: each voice pack is 0.52 MB (510 × 256 fp32), so the 22 voices added
+  to the first six cost +11.5 MB.
+- **Grades:** the picker (More › Voices, and a novel's voice) groups the voices by accent and gender and
+  lists the best first, with Kokoro's own grade from the model card (hexgrad/Kokoro-82M VOICES.md, "Overall
+  Grade"): Heart A, Bella A-, Nicole B-, Emma B-; most others C+ to D; Adam F+. The low grades reflect the
+  little training audio those voices had, so they sound rougher.
 - **Pinned:** `ios/kokoro-models.lock.json` holds the Hugging Face revision and a SHA-256 for every file
   and for every converted voice pack. A mismatch fails the build.
 - **Never committed:** `ios/App/App/KokoroModels/` is git-ignored. Xcode copies it into the app as a folder
@@ -99,7 +134,7 @@ Swift (`swift test --package-path ios/App/HDVoice`, the app build) needs a Mac, 
 |---|---|
 | `ios-compile + simulator smoke` | The app (with HDVoice + FluidAudio) compiles for the simulator and launches; keeps the simulator app for `voice-simulator` |
 | `ios-ipa (unsigned, for AltStore)` | Device build with the bundled model; the job summary lists the IPA size and the installed size |
-| `voice-quality (Kokoro on macOS + ASR)` | `swift test` for HDVoiceCore. Then `kokoro-check` loads the bundled model the way the app does and synthesizes the fixtures (short, long, dialogue, numbers/"Ch. 12", lexicon names) with all 6 voices. It checks: 24 kHz, no NaN/Inf, no clipping, speech-level RMS, words per minute, time to first audio, real-time factor (fails only on gross regressions), and memory released afterwards. Ends with a whisper.cpp v1.9.4 (base.en q8_0, pinned) ASR round trip on 3 sentences, WER ≤ 15% (skipped with a warning if whisper.cpp can't be built) |
+| `voice-quality (Kokoro on macOS + ASR)` | `swift test` for HDVoiceCore. Then `kokoro-check` loads the bundled model the way the app does and synthesizes the fixtures (short, long, dialogue, numbers/"Ch. 12", lexicon names) with all 28 voices (voices graded C+ and up on every fixture, the rest on two, to keep the job short) and two voice mixes (every fixture; a mix that comes out identical to one of its voices fails). It checks: 24 kHz, no NaN/Inf, no clipping, speech-level RMS, words per minute, time to first audio, real-time factor (fails only on gross regressions), and memory released afterwards. Ends with a whisper.cpp v1.9.4 (base.en q8_0, pinned) ASR round trip on 3 sentences, read by Heart and by a mix, WER ≤ 15% (skipped with a warning if whisper.cpp can't be built) |
 | `voice-simulator (Listen flow + fallback in the simulator)` | The Debug app runs `-tachiVoiceSelfTest`: a synthetic chapter through the real Listen path (script → native engine → Kokoro → progress → highlight), in three phases: normal, Kokoro slowed down (Apple must take over, and Kokoro must come back when the delay is lifted), Kokoro failing (Apple reads everything). There's no audio device on the runner, so output is rendered headless at real-time pace |
 
 Make `voice-quality` and `voice-simulator` required checks only after they have been stable for a while.
@@ -190,9 +225,9 @@ model. Anything above ~2× keeps the queue full.
 
 ## 5-minute check on the iPhone
 
-1. Install the IPA from the PR's `ios-ipa` artifact (about 90–100 MB now). Open the app and leave it on
+1. Install the IPA from the PR's `ios-ipa` artifact (about 100–110 MB with all 28 voices). Open the app and leave it on
    the Library for ~1 minute (background warm-up).
-2. **More › Voices**: tap ▶ on each of the 6 voices. The first one may take a while if the warm-up hasn't
+2. **More › Voices**: tap ▶ on a few voices in each group (best first). The first one may take a while if the warm-up hasn't
    finished; after that each should start in under ~1 s. Pick your favorite (✓). Check the Fallback line:
    if it says only basic Apple voices are installed, download a Premium voice later.
 3. Open a chapter and tap **Listen**. The mini player says "Kokoro · Heart"; the spoken sentence is

@@ -89,6 +89,10 @@ export function openVoiceLab(): void {
     const fallbacks = obj(ses.fallbacks);
     const lastFirst = first[first.length - 1];
     const placement = Array.isArray(lab.placement) ? (lab.placement as Obj[]) : [];
+    const car = obj(lab.car);
+    const np = obj(car.nowPlaying);
+    const cmds = obj(car.commands);
+    const gaps = Array.isArray(car.chapterGapsMs) ? (car.chapterGapsMs as number[]) : [];
     const tripped = crashes.disabled === true;
     const crashCount = typeof crashes.total === 'number' ? crashes.total : 0;
     body.innerHTML = `
@@ -128,6 +132,16 @@ export function openVoiceLab(): void {
         <span>Fallbacks</span><span>${Object.entries(fallbacks).map(([r, n]) => `${esc(r)} ${String(n)}`).join(', ') || 'none'}</span>
         <span>Back to Kokoro</span><span>${fmt(ses.returnsToKokoro)}</span>
         <span>Thermal throttling</span><span>${ses.throttled ? 'on' : 'off'}</span>
+      </div>
+      <h2>In the car (Now Playing)</h2>
+      <div class="kv">
+        <span>Showing</span><span>${np.title ? `${esc(str(np.title))} · ${esc(str(np.artist, ''))} · ${esc(str(np.album, ''))}` : 'nothing'}</span>
+        <span>Time / length</span><span>${fmt(np.shownNow ?? np.elapsed, 0, ' s')} / ${fmt(np.duration, 0, ' s')} at ${fmt(np.rate, 2, '×')}${np.artwork ? ' · cover' : ''}</span>
+        <span>Car buttons</span><span>${cmds.buttons === 'skip15' ? '±15 s' : 'chapters'} (${['nextTrack', 'previousTrack', 'skipForward', 'skipBackward', 'changePlaybackPosition'].filter((c) => cmds[c] === true).join(', ') || 'none yet'})</span>
+        <span>Last commands</span><span>${Array.isArray(cmds.recent) ? esc((cmds.recent as string[]).slice(-6).join(', ')) || '–' : '–'}</span>
+        <span>Chapter changes</span><span>${gaps.length > 0 ? `${gaps.map((g) => `${Math.round(g)} ms`).join(', ')} of silence` : '–'}</span>
+        <span>Prepared audio</span><span>${fmt(car.preparedChapters)} chapters · ${fmt(typeof car.preparedBytes === 'number' ? car.preparedBytes / 1e6 : undefined, 0, ' MB')}</span>
+        <span>CarPlay app</span><span>${car.carPlayTemplates === true ? 'on' : 'off (needs Apple’s CarPlay audio entitlement)'}</span>
       </div>
       <h2>Device</h2>
       <div class="kv">

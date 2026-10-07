@@ -208,4 +208,11 @@ final class HybridSchedulerTests: XCTestCase {
         var b = HybridScheduler(count: 3, start: 7, kokoro: .ready)
         XCTAssertEqual(b.decide(now: 0), .finished)
     }
+
+    func testAllRenderedWhenNothingIsPending() {
+        var s = HybridScheduler(count: 2, kokoro: .ready)
+        XCTAssertFalse(s.allRendered)
+        while let i = s.nextRender() { s.renderDone(i, ok: true) }
+        XCTAssertTrue(s.allRendered, "the next chapter's first sentences may be rendered now")
+    }
 }

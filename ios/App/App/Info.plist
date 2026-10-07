@@ -43,11 +43,17 @@
 	<array>
 		<string>audio</string>
 		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>app.tachinovel.refresh</string>
+		<string>app.tachinovel.drive-prep</string>
 	</array>
+	<!-- CarPlay templates app (Native/CarPlay): only with Apple's CarPlay audio entitlement. Set the build
+	     setting TN_CARPLAY_TEMPLATES = YES once it is granted (docs/car.md). -->
+	<key>TNCarPlayTemplates</key>
+	<string>$(TN_CARPLAY_TEMPLATES)</string>
 	<!-- iCloud Drive folder "TachiNovel" (backups, logs visible in Files and on the PC). Needs the iCloud
 	     Documents capability + container iCloud.<bundle id> (see App.full.entitlements.example). -->
 	<key>NSUbiquitousContainers</key>
@@ -83,15 +89,6 @@
 					<string>Default Configuration</string>
 					<key>UISceneDelegateClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
-				</dict>
-			</array>
-			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
-			<array>
-				<dict>
-					<key>UISceneConfigurationName</key>
-					<string>CarPlay</string>
-					<key>UISceneDelegateClassName</key>
-					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
 				</dict>
 			</array>
 		</dict>

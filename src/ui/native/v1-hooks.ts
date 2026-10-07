@@ -4,8 +4,10 @@
  *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
  *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
  *  - About: tap the version to copy it (for bug reports); 5 taps → the hidden Voice Lab (voice-lab.ts).
+ *  - Novel page: "Prepare for the drive" (drive-ui.ts) in place of v1's PC-narrator card (kept with PC audio on).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
+import { addDriveCard, installDrive } from './drive-ui.ts';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceLab } from './voice-lab.ts';
@@ -80,6 +82,7 @@ export function installV1Hooks(): void {
     try {
       addMoreRows();
       hookAboutVersion();
+      addDriveCard(pcAudio);
     } catch (err) {
       console.warn('v1 hooks', err);
     }
@@ -89,6 +92,7 @@ export function installV1Hooks(): void {
     queued = true;
     requestAnimationFrame(apply);
   };
+  installDrive();
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   const refresh = (): void =>
     void Narration.voiceSettings()

@@ -5,11 +5,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { htmlToBlocks, type Lexicon } from '@v1tts/frontend.ts';
 import { lexiconsFor, paragraphMapper, speechScript, emptyLexiconStore } from '../src/core/narration/speech-script.ts';
-import { checkSelfTest, type SelfTestReport } from '../ci/check-voice-selftest.ts';
+import { CAR_STEPS, checkSelfTest, type SelfTestReport } from '../ci/check-voice-selftest.ts';
 import { normalizeWords, wordErrorRate } from '../ci/voice-asr.ts';
 import { bundlePathFor, LOCK_PATH, sha256, VOICE_COLS, VOICE_ROWS, VOICES, voiceJsonToBin, verifyInstalled, type LockFile } from '../tools/fetch-voices.ts';
 import { buildFixtures } from '../tools/voice-fixtures-lib.ts';
 import { VOICE_PRODUCTS } from '../tools/ios-project.ts';
+import { gradeRank, groupVoices } from '../src/ui/native/voice-groups.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 
@@ -147,15 +148,23 @@ describe('CI voice checks', () => {
       ended: true,
       sentences: sources.length,
     });
+    const car = { steps: Object.fromEntries(CAR_STEPS.map((s) => [s, { ok: true }])), gapsMs: [240], warnings: [] };
     const good: SelfTestReport = {
-      ui: { sentences: 4, phases: [phase('kokoro', ['apple', 'kokoro', 'kokoro', 'kokoro']), phase('slow', ['kokoro', 'apple', 'apple', 'kokoro']), phase('fail', ['apple', 'apple', 'apple', 'apple'])] },
+      ui: { sentences: 4, phases: [phase('kokoro', ['apple', 'kokoro', 'kokoro', 'kokoro']), phase('slow', ['kokoro', 'apple', 'apple', 'kokoro']), phase('fail', ['apple', 'apple', 'apple', 'apple'])], car },
       output: { renderedFrames: 240000, audibleFrames: 120000, maxRMS: 0.2, manual: true },
     };
     expect(checkSelfTest(good).problems).toEqual([]);
-    const noReturn: SelfTestReport = { ...good, ui: { sentences: 4, phases: [phase('kokoro', ['kokoro']), phase('slow', ['kokoro', 'apple', 'apple']), phase('fail', ['apple'])] } };
+    expect(checkSelfTest(good).summary.join(' ')).toMatch(/car: 11\/11 steps, chapter change 240 ms/);
+    const noReturn: SelfTestReport = { ...good, ui: { sentences: 4, phases: [phase('kokoro', ['kokoro']), phase('slow', ['kokoro', 'apple', 'apple']), phase('fail', ['apple'])], car } };
     expect(checkSelfTest(noReturn).problems.join(' ')).toMatch(/never took over again/);
     const silent: SelfTestReport = { ...good, output: { renderedFrames: 1000, audibleFrames: 0, maxRMS: 0, manual: true } };
     expect(checkSelfTest(silent).problems.join(' ')).toMatch(/audible/);
+    // The car phase: every required step, and a crash in the phase itself.
+    const noNext: SelfTestReport = { ...good, ui: { ...good.ui, sentences: 4, phases: good.ui?.phases ?? [], car: { ...car, steps: { ...car.steps, next: { ok: false, detail: 'car/2' } } } } };
+    expect(checkSelfTest(noNext).problems).toEqual(['car: next failed (car/2)']);
+    const crashed: SelfTestReport = { ...good, ui: { sentences: 4, phases: good.ui?.phases ?? [], car: { steps: { car: { ok: false, detail: 'boom' } }, gapsMs: [], warnings: [] } } };
+    expect(checkSelfTest(crashed).problems).toContain('car: car (boom)');
+    expect(checkSelfTest({ ...good, ui: { sentences: 4, phases: good.ui?.phases ?? [] } }).problems).toEqual(['car phase missing']);
   });
 
   it('the Xcode project links the HDVoice package and bundles KokoroModels', () => {
@@ -174,5 +183,34 @@ describe('voice notices in THIRD_PARTY_NOTICES.md (the Licenses screen is built 
     for (const [name, license] of [['Kokoro-82M', 'Apache-2.0'], ['Kokoro Core ML conversion', 'Apache-2.0'], ['misaki', 'Apache-2.0'], ['FluidAudio', 'Apache-2.0'], ['fastcluster', 'BSD-2-Clause']] as const) {
       expect(md.replace(/\r\n/g, '\n'), name).toContain(`\n## ${name}\n\n- License: ${license}\n`);
     }
+  });
+});
+
+describe('voice picker order (src/ui/native/voice-groups.ts)', () => {
+  const v = (id: string, name: string, language: string, gender: 'female' | 'male', grade?: string) => ({ id, name, language, gender, blurb: '', ...(grade ? { grade } : {}) });
+
+  it('ranks grades like VoiceCatalog.swift', () => {
+    expect(gradeRank('A')).toBeGreaterThan(gradeRank('A-'));
+    expect(gradeRank('B-')).toBeGreaterThan(gradeRank('C+'));
+    expect(gradeRank('D-')).toBeGreaterThan(gradeRank('F+'));
+    expect(gradeRank(undefined)).toBe(-1);
+    const swift = readFileSync(path.join(root, 'ios', 'App', 'HDVoice', 'Sources', 'HDVoiceCore', 'VoiceCatalog.swift'), 'utf8');
+    const grades = [...swift.matchAll(/KokoroVoice\(id: "([a-z_]+)".*?grade: "([^"]+)"/g)].map((m) => m[2] ?? '');
+    expect(grades).toHaveLength(28);
+    expect(grades.every((g) => gradeRank(g) >= 0)).toBe(true);
+  });
+
+  it('groups by accent and gender, best grade first, then by name', () => {
+    const groups = groupVoices([
+      v('bm_george', 'George', 'en-GB', 'male', 'C'),
+      v('af_sky', 'Sky', 'en-US', 'female', 'C-'),
+      v('af_heart', 'Heart', 'en-US', 'female', 'A'),
+      v('am_puck', 'Puck', 'en-US', 'male', 'C+'),
+      v('am_fenrir', 'Fenrir', 'en-US', 'male', 'C+'),
+      v('bf_emma', 'Emma', 'en-GB', 'female', 'B-'),
+    ]);
+    expect(groups.map((g) => g.label)).toEqual(['American women', 'American men', 'British women', 'British men']);
+    expect(groups[0]?.voices.map((x) => x.id)).toEqual(['af_heart', 'af_sky']);
+    expect(groups[1]?.voices.map((x) => x.id)).toEqual(['am_fenrir', 'am_puck']);
   });
 });

@@ -175,7 +175,11 @@ BART fallback **and** the lexicon.
   iOS 26 adds list image row styles and `CPListTemplateDetailsHeader` (26.4).
 - **Without the entitlement** narration still plays through the car and shows in CarPlay's own Now
   Playing screen with steering-wheel controls (https://developer.apple.com/videos/play/wwdc2017/719).
-  That is the personal-build reality until Apple approves.
+  That is the personal-build reality until Apple approves. That path is now complete: Now Playing for
+  every source with a steady estimated length for live speech, Car buttons (chapters or ±15 s),
+  scrubbing, Siri, seamless chapter changes, and "Prepare for the drive" (chapters pre-rendered with Kokoro
+  for offline playback). See docs/car.md. The templates app is kept behind the `TNCarPlayTemplates` flag
+  until the entitlement exists.
 
 ## 6. Licensing for commercial use
 
