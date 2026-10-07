@@ -68,10 +68,11 @@ final class VoiceSettings {
         return AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    /// Map 0.5…2.0 onto AVSpeech's 0…1 scale around the default rate.
+    /// Map the Listen speed 0.5…2.5 onto AVSpeech's 0…1 scale around the default rate.
     static func avRate(_ r: Float) -> Float {
         let base = AVSpeechUtteranceDefaultSpeechRate
-        let rate = r >= 1 ? base + (AVSpeechUtteranceMaximumSpeechRate - base) * (r - 1) / 2 : base * max(0.5, r)
+        let span = Float(SpeechSpeed.range.upperBound - 1)
+        let rate = r >= 1 ? base + (AVSpeechUtteranceMaximumSpeechRate - base) * min(1, (r - 1) / span) : base * max(0.5, r)
         return max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
     }
 

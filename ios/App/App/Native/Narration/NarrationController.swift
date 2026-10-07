@@ -14,6 +14,8 @@
 //    pauses), so the reader can highlight the spoken sentence whichever voice speaks it.
 //  - PC-narrated chapter AUDIO (AudioLibrary + AudioChapterPlayer) only with Settings › Voices › Advanced
 //    › "Use PC audio when available" (off by default); a chapter without a file uses speech.
+//  - Speed (0.5–2.5×) and "Voice volume" (0–150 %) from the Listen player are persisted (VoiceSettings)
+//    and apply to every voice: all of them play through the app's own audio graph.
 //
 
 import AVFoundation
@@ -135,6 +137,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         engine.delegate = self
         // Simulator voice self-test (CI): no audio device, so render headless at real-time pace.
         if NarrationSelfTest.isActive { engine.useManualOutput() }
+        let prefs = VoiceSettings.shared.prefs
+        rate = Float(prefs.speed)
+        engine.volume = prefs.volume
+        audio.volume = prefs.volume
         audio.onTime = { [weak self] t in self?.audioTick(fileTime: t) }
         audio.onEnd = { [weak self] in self?.finishChapter() }
         audio.onFail = { [weak self] message in self?.audioFailed(message) }
@@ -468,15 +474,36 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + minutes * 60, execute: item)
     }
 
+    /// Listen speed 0.5–2.5× (persisted; the same for every voice).
     func applyRate(_ r: Float) {
-        rate = max(0.5, min(2, r))
+        let clamped = Float(SpeechSpeed.clamp(Double(r)))
+        let changed = abs(clamped - rate) > 0.001
+        rate = clamped
+        if abs(VoiceSettings.shared.prefs.speed - Double(clamped)) > 0.001 {
+            VoiceSettings.shared.update { $0.speed = Double(clamped) }
+        }
+        guard changed else { return }
         if mode == .audio {
-            audio.setRate(rate)
+            audio.setRate(rate) // time-stretched: instant
         } else if status == .playing {
-            restartFromCurrent()
+            // Speech is synthesized at the speed: re-render the sentence once the slider rests (it sends
+            // ~10 changes a second while dragged), not on every step.
+            rateRestart?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self, self.mode == .speech, self.status == .playing else { return }
+                self.restartFromCurrent()
+            }
+            rateRestart = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+        } else if status == .paused, mode == .speech {
+            // Resume speaks the sentence again at the new speed (not the paused one at the old speed).
+            generation += 1
+            engine.stop()
         }
         updateNowPlaying()
     }
+
+    private var rateRestart: DispatchWorkItem?
 
     func stateDict() -> [String: Any] {
         var d: [String: Any] = ["status": status.rawValue]
@@ -504,7 +531,18 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
         return d
     }
 
-    /// Which voice is speaking (for the mini player / Listen player subtitle).
+    /// "Voice volume" 0–1.5 (persisted; applied live to every voice).
+    func applyVolume(_ v: Double) {
+        let clamped = VoiceVolume.clamp(v)
+        engine.volume = clamped
+        audio.volume = clamped
+        if abs(VoiceSettings.shared.prefs.volume - clamped) > 0.0001 {
+            VoiceSettings.shared.update { $0.volume = clamped }
+        }
+    }
+
+    /// Which voice is speaking (for the mini player / Listen player subtitle): Kokoro with its name, or the
+    /// system voice standing in, and why.
     private func voiceDict() -> [String: Any] {
         let id = kokoroVoiceForCurrentNovel()
         var v: [String: Any] = ["kokoroVoice": id, "kokoroName": VoiceCatalog.voice(id)?.name ?? id]
@@ -513,6 +551,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             let apple = VoiceSettings.appleVoice(explicit: voiceIdentifier, kokoroVoice: id)
             v["appleName"] = apple?.name ?? "System voice"
             if let reason = engine.lastFallback { v["fallback"] = reason.rawValue }
+            v["kokoroStatus"] = KokoroService.shared.statusText
         }
         return v
     }
@@ -545,6 +584,10 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.
     @objc private func voiceSettingsChanged() {
         DispatchQueue.main.async {
+            // Speed and volume set elsewhere (Settings, the Listen player through setVoiceSettings).
+            let prefs = VoiceSettings.shared.prefs
+            if abs(Double(self.rate) - prefs.speed) > 0.001 { self.applyRate(Float(prefs.speed)) }
+            if abs(self.engine.volume - prefs.volume) > 0.0001 { self.applyVolume(prefs.volume) }
             guard self.mode == .speech, self.status == .playing || self.status == .paused, !self.items.isEmpty,
                   self.voiceKey() != self.appliedVoiceKey else {
                 self.onState?(self.stateDict())
@@ -857,7 +900,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate {
             self.seekAudio(toChapterTime: e.positionTime)
             return .success
         }
-        c.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
+        c.changePlaybackRateCommand.supportedPlaybackRates = SpeechSpeed.presets.map { NSNumber(value: $0) }
         c.changePlaybackRateCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
             self?.applyRate(e.playbackRate)

@@ -13,6 +13,7 @@
  */
 import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } from '@v1tts/frontend.ts';
 import { callCore } from '../capacitor-client.ts';
+import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { Narration, type KokoroVoiceInfo, type NarrationState, type VoiceSettingsInfo } from './narration.ts';
 
 const CSS = `
@@ -90,14 +91,7 @@ export function toast(msg: string): void {
 
 /** Subtitle for the mini player / Listen player: which voice is speaking. */
 export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>): string {
-  if (s.engine === 'audio') return 'PC audio';
-  const v = s.voice;
-  if (!v) return 'Kokoro';
-  if (v.source === 'apple') {
-    const why = v.fallback === 'modelLoading' || v.fallback === 'queueDry' ? ' · Kokoro catching up' : v.fallback === 'thermal' ? ' · phone is hot' : '';
-    return `Apple voice · ${v.appleName ?? 'System'}${why}`;
-  }
-  return `Kokoro · ${v.kokoroName}`;
+  return describeVoice(s);
 }
 
 /** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
@@ -114,6 +108,8 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     defaultVoice: typeof r.defaultVoice === 'string' && voices.some((v) => v.id === r.defaultVoice) ? r.defaultVoice : first.id,
     kokoroEnabled: r.kokoroEnabled !== false,
     usePCAudio: r.usePCAudio === true,
+    speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
+    volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
       bundled: k.bundled === true,
       status: typeof k.status === 'string' ? k.status : '',
@@ -133,6 +129,14 @@ function describe(v: KokoroVoiceInfo): string {
   return `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender} · ${v.blurb}`;
 }
 
+/** Close functions of the open panels (Settings › Voices, a novel's voice picker, the pronunciation editor). */
+const openPanels = new Set<() => void>();
+
+/** Close every Voices panel: the Listen player opening or closing must never leave one on top of it. */
+export function closeVoicePanels(): void {
+  for (const close of [...openPanels]) close();
+}
+
 /** A full-screen panel (slides in from the right). */
 function panel(title: string, testId: string): { root: HTMLElement; body: HTMLElement; close: () => void; setTitle: (t: string) => void } {
   ensureStyle();
@@ -144,12 +148,23 @@ function panel(title: string, testId: string): { root: HTMLElement; body: HTMLEl
   root.innerHTML = `<div class="hd"><button type="button" class="x" data-act="close" aria-label="Back">${ICON.back}</button><h1></h1></div><div class="body"></div>`;
   (root.querySelector('h1') as HTMLElement).textContent = title;
   document.body.append(root);
-  requestAnimationFrame(() => root.classList.add('is-open'));
+  requestAnimationFrame(() => {
+    root.classList.add('is-open');
+    root.querySelector<HTMLElement>('[data-act="close"]')?.focus({ preventScroll: true });
+  });
+  let closed = false;
   const close = (): void => {
+    if (closed) return;
+    closed = true;
+    openPanels.delete(close);
     root.classList.remove('is-open');
+    // Out of the way at once: while it slides out it must not catch taps meant for what's underneath.
+    root.inert = true;
+    root.style.pointerEvents = 'none';
     void Narration.stopSample().catch(() => undefined);
     setTimeout(() => root.remove(), 340);
   };
+  openPanels.add(close);
   root.addEventListener('click', (ev) => {
     if ((ev.target as Element).closest('[data-act="close"]')) close();
   });

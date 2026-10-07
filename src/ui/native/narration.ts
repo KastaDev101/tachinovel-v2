@@ -76,6 +76,8 @@ export interface SpeakingVoice {
   /** Apple voice name while it stands in for Kokoro, and why. */
   appleName?: string;
   fallback?: 'modelLoading' | 'modelUnavailable' | 'queueDry' | 'thermal' | 'segmentFailed' | 'disabled';
+  /** Kokoro's own status while the system voice stands in ("Turned off after crashing twice", …). */
+  kokoroStatus?: string;
 }
 
 export interface NarrationState {
@@ -146,6 +148,10 @@ export interface VoiceSettingsInfo {
   defaultVoice: string;
   kokoroEnabled: boolean;
   usePCAudio: boolean;
+  /** Listen player: speed 0.5–2.5 and "Voice volume" 0–1.5 (persisted, every voice). */
+  speed?: number;
+  volume?: number;
+  speedPresets?: number[];
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
   /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
   apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
@@ -183,6 +189,10 @@ export interface NarrationPlugin {
     novel?: { pluginId: string; novelPath: string; voice: string | null };
     usePCAudio?: boolean;
     kokoroEnabled?: boolean;
+    /** 0.5–2.5 (0.05 steps). */
+    speed?: number;
+    /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
+    volume?: number;
   }): Promise<void>;
   /** ▶ a sample: a Kokoro voice id, or 'apple'. Resolves when audio starts (ms = time to first audio). */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
