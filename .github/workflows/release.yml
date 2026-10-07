@@ -241,6 +241,7 @@ jobs:
             --notes=dist/release-notes.md --previous=previous.json --label="$VERSION" --out=apps.json
           gh release upload altstore-source apps.json --clobber --repo "$repo"
       - name: Signed web update (rolling release "ota"; skipped without the OTA_SIGNING_KEY secret)
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.verify.outputs.version }}
