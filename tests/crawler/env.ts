@@ -170,8 +170,26 @@ interface NarrationMockState {
   duration?: number;
 }
 
-function defaultVoicePrefs(): { defaultVoice: string; kokoroEnabled: boolean; usePCAudio: boolean; carButtons: string; novelVoices: Record<string, string> } {
-  return { defaultVoice: 'af_heart', kokoroEnabled: true, usePCAudio: false, carButtons: 'chapters', novelVoices: {} };
+function defaultVoicePrefs(): {
+  defaultVoice: string;
+  kokoroEnabled: boolean;
+  usePCAudio: boolean;
+  carButtons: string;
+  novelVoices: Record<string, string>;
+  /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
+  customVoices: { id: string; name: string; a: string; b: string; percent: number }[];
+  /** Narrator mode (Settings › Voices › Narrator mode). */
+  narrator: { enabled: boolean; dialogueVoice: string | null; secondDialogueVoice: string | null; pacing: boolean; jitter: boolean; polish: boolean; roomTone: boolean };
+} {
+  return {
+    defaultVoice: 'af_heart',
+    kokoroEnabled: true,
+    usePCAudio: false,
+    carButtons: 'chapters',
+    novelVoices: {},
+    customVoices: [],
+    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: true, polish: true, roomTone: false },
+  };
 }
 
 export class CrawlEnv {
@@ -501,6 +519,8 @@ export class CrawlEnv {
           const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
           return {
             voices: KOKORO_VOICES,
+            customVoices: v.customVoices,
+            narrator: { ...v.narrator },
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
             usePCAudio: v.usePCAudio,
@@ -516,12 +536,33 @@ export class CrawlEnv {
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
           if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
           if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
+          if (o.narrator && typeof o.narrator === 'object') {
+            const n = o.narrator as Record<string, unknown>;
+            for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
+            for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
+          }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
             const key = `${novel.pluginId}:${novel.novelPath}`;
             if (typeof novel.voice === 'string' && novel.voice !== v.defaultVoice) v.novelVoices[key] = novel.voice;
             else delete v.novelVoices[key];
           }
+          return {};
+        }
+        case 'saveCustomVoice': {
+          const v = this.voicePrefs;
+          const fields = { name: (typeof o.name === 'string' ? o.name.trim() : '') || 'Mix', a: typeof o.a === 'string' ? o.a : 'af_heart', b: typeof o.b === 'string' ? o.b : 'bf_emma', percent: Math.round(Number(o.percent ?? 50)) };
+          // Lenient: the screen never sends two equal voices (Save is disabled); an unknown id saves a new mix.
+          const old = typeof o.id === 'string' ? v.customVoices.find((m) => m.id === o.id) : undefined;
+          const mix = old ? Object.assign(old, fields) : { id: `mix_${(v.customVoices.length + 1).toString(16).padStart(8, '0')}`, ...fields };
+          if (!old) v.customVoices.push(mix);
+          return { mix };
+        }
+        case 'deleteCustomVoice': {
+          const v = this.voicePrefs;
+          v.customVoices = v.customVoices.filter((m) => m.id !== o.id);
+          if (v.defaultVoice === o.id) v.defaultVoice = 'af_heart';
+          for (const [k, id] of Object.entries(v.novelVoices)) if (id === o.id) delete v.novelVoices[k];
           return {};
         }
         case 'sampleVoice':
@@ -584,6 +625,17 @@ export class CrawlEnv {
       if (method === 'entitlements') return { pro: false, source: null };
       if (method === 'products') return { products: [] };
       return {};
+    }
+    // Settings › Voices › Expressive voices (ExpressiveVoicePlugin): two engines, not downloaded.
+    if (plugin === 'ExpressiveVoice' && method === 'status') {
+      return {
+        engines: [
+          { id: 'chatterbox-nano', title: 'Chatterbox Nano', installed: false, supported: true, bytes: 700_000_000, download: { state: 'idle' } },
+          { id: 'neutts-2e', title: 'NeuTTS-2E', installed: false, supported: true, bytes: 1_400_000_000, download: { state: 'idle' } },
+        ],
+        device: { memoryMB: 180, availableMB: 2600 },
+        storage: { freeMB: 40_000 },
+      };
     }
     if (plugin === 'StatusBar' && method === 'getInfo') return { visible: true, style: 'DARK', overlays: true };
     return {};

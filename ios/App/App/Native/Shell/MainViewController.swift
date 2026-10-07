@@ -20,6 +20,8 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(TachiNativePlugin())
         bridge?.registerPluginInstance(NarrationPlugin())
         bridge?.registerPluginInstance(StorePlugin())
+        // Experimental expressive voices, Voice Lab only (docs/expressive-tts.md).
+        bridge?.registerPluginInstance(ExpressiveVoicePlugin())
         // WebContent process killed by iOS → Capacitor reloads; the UI then restores its screen (WebContentRecovery.swift).
         if let webView, let capacitorDelegate = webView.navigationDelegate {
             let wrapper = WebContentRecovery(wrapping: capacitorDelegate)

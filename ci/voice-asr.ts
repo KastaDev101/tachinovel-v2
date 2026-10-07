@@ -4,9 +4,9 @@
  * and fails if the word error rate is above the limit. Missing transcripts (whisper.cpp couldn't be
  * built or run on the runner) are reported and skipped, never failed.
  *
- * Usage: node ci/voice-asr.ts <fixtures.json> <dir with <id>.txt> [maxWer=0.15]
+ * Usage: node ci/voice-asr.ts <fixtures.json> <dir with <id>.txt (and <voice>--<id>.txt)> [maxWer=0.15]
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export function normalizeWords(s: string): string[] {
@@ -36,6 +36,9 @@ export function wordErrorRate(reference: string, hypothesis: string): number {
   return (prev[h.length] ?? 0) / r.length;
 }
 
+/** Narrator mode's WER limit (kokoro-check writes its audio as "narrator--<id>.wav"). */
+export const NARRATOR_MAX_WER = 0.05;
+
 if (import.meta.main) {
   const [fixturesPath, dir, maxArg] = process.argv.slice(2);
   if (!fixturesPath || !dir) {
@@ -46,21 +49,29 @@ if (import.meta.main) {
   const { sentences } = JSON.parse(readFileSync(fixturesPath, 'utf8')) as { sentences: { id: string; text: string; asr?: boolean }[] };
   let failed = 0;
   let checked = 0;
+  // "<id>.txt" is the default voice; "<voice>--<id>.txt" another voice (kokoro-check: "mix--" = a voice mix).
+  const variants = readdirSync(dir)
+    .map((f) => /^(.+)--.+\.txt$/.exec(f)?.[1])
+    .filter((p): p is string => !!p);
   for (const s of sentences.filter((x) => x.asr)) {
-    const file = [path.join(dir, `${s.id}.txt`), path.join(dir, `${s.id}.wav.txt`)].find((f) => existsSync(f));
-    if (!file) {
-      console.log(`::warning::ASR: no transcript for ${s.id} (whisper.cpp unavailable?) — skipped`);
-      continue;
-    }
-    const heard = readFileSync(file, 'utf8').trim();
-    const wer = wordErrorRate(s.text, heard);
-    checked++;
-    const line = `${s.id}: WER ${(wer * 100).toFixed(1)}%\n  spoken: ${s.text}\n  heard:  ${heard}`;
-    if (wer > maxWer) {
-      failed++;
-      console.log(`::error::ASR ${line}`);
-    } else {
-      console.log(`ASR ${line}`);
+    for (const prefix of ['', ...new Set(variants)]) {
+      const base = prefix ? `${prefix}--${s.id}` : s.id;
+      const file = [path.join(dir, `${base}.txt`), path.join(dir, `${base}.wav.txt`)].find((f) => existsSync(f));
+      if (!file) {
+        if (!prefix) console.log(`::warning::ASR: no transcript for ${s.id} (whisper.cpp unavailable?) — skipped`);
+        continue;
+      }
+      const heard = readFileSync(file, 'utf8').trim();
+      const wer = wordErrorRate(s.text, heard);
+      checked++;
+      const line = `${base}: WER ${(wer * 100).toFixed(1)}%\n  spoken: ${s.text}\n  heard:  ${heard}`;
+      // Narrator mode is held to a stricter bar (dialogue voice, jitter and polish must not cost words).
+      if (wer > (prefix === 'narrator' ? Math.min(maxWer, NARRATOR_MAX_WER) : maxWer)) {
+        failed++;
+        console.log(`::error::ASR ${line}`);
+      } else {
+        console.log(`ASR ${line}`);
+      }
     }
   }
   console.log(`ASR round trip: ${checked} checked, ${failed} above ${(maxWer * 100).toFixed(0)}% WER`);

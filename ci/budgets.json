@@ -1,8 +1,8 @@
 {
   "ipa": {
-    "baselineBytes": 94521461,
+    "baselineBytes": 105338430,
     "maxGrowthPercent": 10,
-    "note": "Unsigned sideload IPA built by the ios-ipa job. Hard budget: a PR fails when it grows more than maxGrowthPercent over the baseline. Baseline: main after #7 (bundled Kokoro model), ios-ipa run 37542120127, build 133. Change it only on purpose: node tools/budgets.ts set-ipa <bytes>, with the reason in the PR."
+    "note": "Unsigned sideload IPA built by the ios-ipa job. Hard budget: a PR fails when it grows more than maxGrowthPercent over the baseline. Baseline: all 28 English Kokoro voices bundled (voices-28, +11.5 MB of voice packs over the 6 of #7), measured on the integration preview IPA (run 37552906373). Change it only on purpose: node tools/budgets.ts set-ipa <bytes>, with the reason in the PR."
   },
   "boot": {
     "metric": "process->library",

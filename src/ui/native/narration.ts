@@ -35,6 +35,8 @@ export interface PlayOptions {
   autoContinue?: boolean;
   /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
   engine?: 'audio' | 'speech';
+  /** Voice Lab A/B: narrator mode off, or on with the saved pieces, for this play only. */
+  narrator?: 'on' | 'off';
 }
 
 export interface NarrationVoice {
@@ -153,10 +155,39 @@ export interface KokoroVoiceInfo {
   language: string;
   gender: 'female' | 'male';
   blurb: string;
+  /** Kokoro's own grade for the voice (A best … F), and its rank (higher is better). */
+  grade?: string;
+  gradeRank?: number;
+}
+
+/** Narrator mode (HDVoiceCore Narrator.swift): each piece has its own switch; off by default. */
+export interface NarratorInfo {
+  enabled: boolean;
+  /** Quoted speech in this voice (a voice or mix id); null = the narrator's voice. */
+  dialogueVoice: string | null;
+  /** The other speaker of an exchange; null = one dialogue voice. */
+  secondDialogueVoice: string | null;
+  pacing: boolean;
+  jitter: boolean;
+  polish: boolean;
+  roomTone: boolean;
+}
+
+/** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */
+export interface CustomVoiceInfo {
+  /** "mix_" + 8 hex digits. */
+  id: string;
+  name: string;
+  a: string;
+  b: string;
+  /** The weight of `b`, 0–100. */
+  percent: number;
 }
 
 export interface VoiceSettingsInfo {
   voices: KokoroVoiceInfo[];
+  /** Saved mixes; `defaultVoice`, `novelVoice` and `effectiveVoice` may be one of their ids. */
+  customVoices?: CustomVoiceInfo[];
   defaultVoice: string;
   kokoroEnabled: boolean;
   usePCAudio: boolean;
@@ -165,6 +196,7 @@ export interface VoiceSettingsInfo {
   speed?: number;
   volume?: number;
   speedPresets?: number[];
+  narrator?: NarratorInfo;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
   /** The Apple voice that stands in for Kokoro; onlyDefault → suggest downloading a Premium voice. */
   apple: { id?: string; name: string; language?: string; quality: 'default' | 'enhanced' | 'premium'; onlyDefault: boolean };
@@ -246,8 +278,17 @@ export interface NarrationPlugin {
     speed?: number;
     /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
     volume?: number;
+    /** Narrator mode: only the keys sent change. */
+    narrator?: Partial<NarratorInfo>;
   }): Promise<void>;
-  /** ▶ a sample: a Kokoro voice id, or 'apple'. Resolves when audio starts (ms = time to first audio). */
+  /** Voice mixer: save a new mix (no id) or change one. */
+  saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;
+  /** Voice mixer: delete a mix (the default and novels using it go back to Heart / the default). */
+  deleteCustomVoice(opts: { id: string }): Promise<void>;
+  /**
+   * ▶ a sample: a Kokoro voice id, a mix id, a blend ("af_heart+bf_emma@35", the mixer's audition), or
+   * 'apple'. Resolves when audio starts (ms = time to first audio).
+   */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
   /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
