@@ -357,7 +357,15 @@ export function SearchField(props: {
             type="button"
             class="search-clear tap tap-dim"
             aria-label="Clear"
+            // Keep the field focused (and the keyboard up) while pressing.
             onPointerDown={(e) => e.preventDefault()}
+            // Touch: some engines skip the click after a prevented pointerdown, so clear on release too.
+            onPointerUp={(e) => {
+              if (e.pointerType !== 'mouse') {
+                props.onInput('');
+                input.current?.focus();
+              }
+            }}
             onClick={() => {
               props.onInput('');
               input.current?.focus();
