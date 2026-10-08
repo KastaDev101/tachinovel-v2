@@ -73,7 +73,7 @@ const CSS = `
 .tn-v .sub-sec{color:#a1a1aa;font-size:${fs(13)};margin:12px 4px 6px}
 .tn-v .grade{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;background:rgba(168,180,255,.16);color:#c7cdff;font-size:${fs(12)};font-weight:600;vertical-align:1px}
 .tn-v .chips{display:flex;gap:8px;flex:1}
-.tn-v .chip{flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
+.tn-v .chip{display:flex;align-items:center;justify-content:center;height:auto;flex:1;padding:11px 0;border-radius:12px;background:rgba(255,255,255,.08);text-align:center;font-weight:600}
 .tn-v .chip[aria-pressed="true"]{background:#a8b4ff;color:#15151a}
 .tn-v .link{color:#a8b4ff;padding:6px 0;flex:none}
 .tn-v select{flex:none;max-width:52%;background:#26262d;color:#f2f2f7;border:0;border-radius:10px;font:${fs(16)} -apple-system,system-ui;padding:9px 10px}
@@ -354,12 +354,21 @@ const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIA
   ['systemTone', 'System message voice', 'An interface tone for [System] lines'],
 ];
 
+/** Switches that change only the Narrator's reads: Nephis reads everything in her one voice. */
+const NARRATOR_ONLY = new Set<string>(['performed', 'moods', 'sceneAI', 'breaths']);
+
+/** Nephis is the voice reading chapters. */
+function nephisReads(info: VoiceSettingsInfo): boolean {
+  return info.delivery?.listenEngine === 'pocket-tts' && info.delivery.pocketVoice === 'nephis';
+}
+
 /** The Narrator's switches (natural delivery, acting, mood voices, AI scene reading, breaths, studio sound, …). */
 function deliveryCard(info: VoiceSettingsInfo): string {
   const d = { ...DELIVERY_DEFAULT, ...info.delivery };
+  const nephis = nephisReads(info);
   const rows = DELIVERY_SWITCHES.map(
     ([k, label, sub]) =>
-      `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${k !== 'natural' && !d.natural ? 'disabled' : ''} aria-label="${esc(label)}"></label>`,
+      `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(nephis && NARRATOR_ONLY.has(k) ? `Narrator only. ${sub}` : sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${k !== 'natural' && !d.natural ? 'disabled' : ''} aria-label="${esc(label)}"></label>`,
   ).join('');
   return `<div class="card" data-testid="voices-delivery">${rows}</div>`;
 }
@@ -408,7 +417,7 @@ function openNarratorSettings(onDone: () => void): void {
   let info: VoiceSettingsInfo | null = null;
   const render = (): void => {
     p.body.innerHTML = info
-      ? `${deliveryCard(info)}<p class="note">The Narrator is one voice: dialogue and thoughts are acted, narration stays calm, and the mood voices follow the scene.</p>`
+      ? `${nephisReads(info) ? '<p class="note">Nephis reads every line in her one calm voice, as one continuous read: the switches marked “Narrator only” change the Narrator’s reads, not hers.</p>' : ''}${deliveryCard(info)}<p class="note">The Narrator is one voice: dialogue and thoughts are acted, narration stays calm, and the mood voices follow the scene.</p>`
       : '<p class="note">Loading…</p>';
   };
   const load = async (): Promise<void> => {
@@ -518,7 +527,7 @@ export function openVoicesScreen(): void {
       ${engineCard(info)}
       ${NARRATOR_SETTINGS_ROW}
       <div class="sec">Backup voice (Kokoro)</div>
-      ${backupCard(info, info.defaultVoice)}
+      <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · reads when Kokoro is chosen, and stands in when the Narrator can’t keep up</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>

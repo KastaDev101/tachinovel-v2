@@ -41,8 +41,8 @@ const CSS = `
 .tn-car .ctl button{width:68px;height:68px;border-radius:34px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08)}
 .tn-car .ctl .pp{width:88px;height:88px;border-radius:44px;background:#a8b4ff;color:#15151a}
 .tn-car .ctl button:active{transform:scale(.94)}
-.tn-car .spd{display:flex;gap:6px;margin-top:8px;justify-content:space-between}
-.tn-car .spd button{flex:1;padding:8px 0;border-radius:14px;background:rgba(255,255,255,.08);font-size:${fs(15)};font-variant-numeric:tabular-nums}
+.tn-car .spd{display:flex;gap:6px;margin:8px 0 14px;justify-content:space-between}
+.tn-car .spd button{flex:1;padding:8px 0;text-align:center;border-radius:14px;background:rgba(255,255,255,.08);font-size:${fs(15)};font-variant-numeric:tabular-nums}
 .tn-car .spd button.on{background:#a8b4ff;color:#15151a}
 .tn-car .lc{background:#1f1f25;border-radius:20px;padding:12px 16px 14px;margin:0 0 12px}
 .tn-car .lc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px;font-size:${fs(15)}}

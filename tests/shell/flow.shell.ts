@@ -218,8 +218,8 @@ describe('v1 UI in the v2 shell (PC)', () => {
     await row.click();
     const screen = shell.page.getByTestId('screen-voices');
     await screen.waitFor({ timeout: 5000 });
-    // Narrator first, then Kokoro's three backups; every Kokoro voice is one tap further.
-    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Reads chapters[\s\S]*Narrator[\s\S]*Backup voice[\s\S]*Heart[\s\S]*All Kokoro voices/);
+    // Who reads first, then one row for Kokoro's voice; every Kokoro voice is one tap further.
+    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Reads chapters[\s\S]*Narrator[\s\S]*Backup voice[\s\S]*Kokoro voice[\s\S]*Heart/);
     const text = (await screen.textContent()) ?? '';
     expect(text).toContain('download a Premium voice');
     expect(text).toContain('Use PC audio when available');
