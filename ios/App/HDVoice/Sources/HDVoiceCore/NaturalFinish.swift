@@ -108,6 +108,9 @@ public struct NaturalFinish: Sendable {
         public var expressive: Bool
         /// A non-verbal to splice in front of a line (by index).
         public var nonVerbals: [Int: NonVerbalPack.Item]
+        /// Nephis's flow engine: the samples are one continuous stream that already holds the pause before the unit
+        /// and every join; nothing is trimmed, faded, padded, re-leveled or spliced (`renderFlow`).
+        public var flow = false
 
         public init(samples: [Float], chunkEnds: [Int] = [], lines: [Line], speed: Double = 1, expressive: Bool, nonVerbals: [Int: NonVerbalPack.Item] = [:]) {
             self.samples = samples
@@ -176,6 +179,7 @@ public struct NaturalFinish: Sendable {
 
     /// One buffer per line of the unit.
     public mutating func render(_ u: Unit) -> [Piece] {
+        if u.flow { return renderFlow(u) }
         var report = Report()
         let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
         let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
@@ -280,6 +284,42 @@ public struct NaturalFinish: Sendable {
         }
         lastReport = report
         return pieces
+    }
+
+    /// Fixed gain for the flow stream: Pocket TTS's speech sits near -22.5 dBFS; one gain for the whole read (never
+    /// per unit, which would step the level at every join), then the same -20 dBFS target as the rest.
+    public static let flowGainDB = 2.5
+
+    /// Nephis's continuous stream: the thump filter and her EQ, one fixed gain, the listener's speed, then the cut
+    /// into sentences for highlighting only. No trims, fades, pauses, breaths, non-verbals or per-line DSP: the
+    /// engine made the pauses and joins, and any of those would put a seam back.
+    mutating func renderFlow(_ u: Unit) -> [Piece] {
+        var report = Report()
+        let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
+        var speech = u.samples
+        guard !speech.isEmpty else { lastReport = report; return lines.map { _ in Piece(frames: [], speechSeconds: 0) } }
+        StartupSound.removeThump(&speech, sampleRate: sampleRate)
+        tilt?.apply(&speech, sampleRate: sampleRate)
+        let g = Float(pow(10, Self.flowGainDB / 20))
+        for i in speech.indices { speech[i] = max(-Self.peakCeiling, min(Self.peakCeiling, speech[i] * g)) }
+        let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
+        if abs(speed - 1) > 0.002 { speech = TimeStretch.wsola(speech, tempo: speed, sampleRate: sampleRate) }
+        let total = lines.reduce(0) { $0 + $1.letters }
+        var ends: [Double] = []
+        var before = 0
+        for line in lines.dropLast() {
+            before += line.letters
+            ends.append(Double(before) / Double(total))
+        }
+        let timing = lines.count > 1 ? ChunkAligner.align(speech, sampleRate: sampleRate, ends: ends) : ChunkTiming(cuts: [], confident: true)
+        report.confident = timing.confident
+        var bounds = [0] + timing.cuts + [speech.count]
+        for k in 1..<bounds.count { bounds[k] = max(bounds[k], bounds[k - 1]) }
+        lastReport = report
+        return lines.indices.map { k in
+            let p = Array(speech[bounds[k]..<bounds[k + 1]])
+            return Piece(frames: p, speechSeconds: Double(p.count) / Double(sampleRate))
+        }
     }
 
     /// A jump or a new chapter: the lung budget starts again.

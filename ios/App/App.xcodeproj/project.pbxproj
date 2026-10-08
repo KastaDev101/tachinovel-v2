@@ -56,6 +56,7 @@
 		D1540B823A8AD187E8276550 /* BuiltInVoices in Resources */ = {isa = PBXBuildFile; fileRef = 8E67B33F3B1C7A4BBED404C1 /* BuiltInVoices */; };
 		954A9335276DD2E8A9723180 /* SceneReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */; };
 		5E28A85DEC3FB9375166C166 /* NarrationPlugin+Scene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */; };
+		D3D11872C6EC5CA527BBC7D2 /* NephisSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -119,6 +120,7 @@
 		8E67B33F3B1C7A4BBED404C1 /* BuiltInVoices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = BuiltInVoices; sourceTree = "<group>"; };
 		DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/SceneReader.swift"; sourceTree = "<group>"; };
 		5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/NarrationPlugin+Scene.swift"; sourceTree = "<group>"; };
+		E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/NephisSpeech.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -219,6 +221,7 @@
 				F670066B4FE0D903C0BD3295 /* VoiceImport.swift */,
 				DD9D99E4333F4FBF9FFE6524 /* SceneReader.swift */,
 				5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */,
+				E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -385,6 +388,7 @@
 				6890DB3EF216F2AA3A325014 /* VoiceImport.swift in Sources */,
 				954A9335276DD2E8A9723180 /* SceneReader.swift in Sources */,
 				5E28A85DEC3FB9375166C166 /* NarrationPlugin+Scene.swift in Sources */,
+				D3D11872C6EC5CA527BBC7D2 /* NephisSpeech.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

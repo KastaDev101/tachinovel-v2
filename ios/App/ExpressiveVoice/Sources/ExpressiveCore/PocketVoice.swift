@@ -21,6 +21,8 @@ public struct PocketVoice: Sendable, Equatable {
     public static let narratorName = "narrator"
     /// Nephis (v2): designed from a description (Parler-TTS named speaker, "alive" read), one voice for every line.
     public static let nephisName = "nephis"
+    /// Her tense read (5 s), for the paragraphs the scene reader marks tense (the flow engine).
+    public static let nephisTenseName = "nephis-tense"
     /// The same voice, performing: dialogue and thoughts (from the performed reference ref-8A2-persona).
     public static let characterName = "character"
     public static let fileExtension = "pocketvoice"

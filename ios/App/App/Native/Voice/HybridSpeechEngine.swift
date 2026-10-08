@@ -65,6 +65,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private(set) var retakes = 0
     /// The sentence Kokoro is rendering in place of a late narrator-voice render, and how often that happened.
     private var standIn: Int?
+    /// Nephis's flow engine: one render at a time, in reading order; `flowNext` is the sentence the next call must
+    /// start at to continue the read (anything else starts the flow afresh: a seek, a failure).
+    private var flowBusy = false
+    private var flowNext = -1
     private(set) var standIns = 0
     /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
     /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
@@ -182,6 +186,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func stop() {
         gen += 1
         standIn = nil
+        flowBusy = false
+        flowNext = -1
         sceneMoods = [:]
         sceneNext = 0
         sceneBusy = false
@@ -285,11 +291,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
+            let flow = id == .pocketTts && ExpressiveService.shared.usesFlow
+            if flow, flowBusy { return }
             // The sentences of one breath-group chunk (a paragraph, or a same-speaker run of quote paragraphs; the
             // script plans them) go to the model together, up to its per-call limit (Pocket TTS 400 characters, a
             // whole paragraph; Nano 120). One call paces them as one thought: no "Relax, little one." [stop]
             // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
-            let group = chunkGroup(from: i, limit: id.maxCharactersPerCall)
+            let group = flow ? flowGroup(from: i, limit: id.maxCharactersPerCall) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
@@ -301,9 +309,22 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
             line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
             let syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
-            synthesizeExpressive(line, id: id, syllables: syllables, retry: true) { [weak self] result in
+            if flow {
+                line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
+                line.flowReset = i != flowNext
+                line.flowLast = members.last == segments.count - 1
+                line.takes = flowTakes(at: i)
+                flowBusy = true
+                flowNext = (members.last ?? i) + 1
+            }
+            // A retake would replay the flow's state twice: the flow engine checks its own takes instead.
+            synthesizeExpressive(line, id: id, syllables: syllables, retry: !flow) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
+                    if flow {
+                        self.flowBusy = false
+                        if case .failure = result { self.flowNext = -1 }
+                    }
                     switch result {
                     case .success(let a) where a.sampleRate == 24_000 && !a.samples.isEmpty:
                         let audio = KokoroAudio(samples: a.samples, sampleRate: a.sampleRate, synthMs: a.synthMs)
@@ -413,6 +434,41 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return out
     }
 
+    /// Nephis's flow: sentence i and the ones after it in the same paragraph (never across a paragraph break, so the
+    /// model never reads one as a comma), same read, up to `limit` characters.
+    private func flowGroup(from i: Int, limit: Int) -> [Int] {
+        var out = [i]
+        var length = Self.readText(segments[i], expressive: true).count
+        var j = i
+        while j + 1 < segments.count, (segments[j].naturalPause ?? segments[j].pauseAfter) < Self.paragraphPause, read(for: j) == read(for: j + 1) {
+            let next = Self.readText(segments[j + 1], expressive: true).count
+            guard length + 1 + next <= limit else { break }
+            length += 1 + next
+            j += 1
+            out.append(j)
+        }
+        return out
+    }
+
+    /// A pause this long or longer ends a paragraph (the script's paragraph and scene pauses).
+    static let paragraphPause = 0.7
+
+    /// The pause before a flow call: the script's natural pause after the sentence before it, kept in a narrator's
+    /// range (a beat between sentences, a breath between paragraphs, a held moment after "…").
+    static func flowPause(_ before: SpeechSegment) -> Double {
+        min(1.4, max(0.35, before.naturalPause ?? before.pauseAfter))
+    }
+
+    /// Takes to try for a flow call: more when playback is far ahead (best of 2–3 smooths the tone), one when it
+    /// isn't (never risk falling behind); one more at a change of read (a mood switch is where jumps happen).
+    private func flowTakes(at i: Int) -> Int {
+        let playing = scheduler?.playing ?? 0
+        let ahead = buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
+        let base = ahead > 45 ? 3 : ahead > 20 ? 2 : 1
+        let change = i > 0 && read(for: i) != read(for: i - 1)
+        return min(4, base + (change && ahead > 20 ? 1 : 0))
+    }
+
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
     /// planChunks), or for an older web bundle without them, no paragraph-length pause between them.
     private static func sameChunk(_ a: SpeechSegment, _ b: SpeechSegment) -> Bool {
@@ -441,7 +497,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // The next call starts now; this one's chain runs meanwhile, off the main thread.
         scheduler?.releaseSynth(members[0])
         pumpRender()
-        nf.render(NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)) { [weak self] pieces in
+        var unit = NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)
+        unit.flow = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+        nf.render(unit) { [weak self] pieces in
             guard let self, g == self.gen, self.scheduler != nil else { return }
             for (k, j) in members.enumerated() {
                 let buf = k < pieces.count ? self.makeBuffer(pieces[k].frames) : nil
@@ -501,8 +559,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 // so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump. It runs off the
                 // main thread while the next sentence synthesizes.
                 let expressive = voice == listenEngine?.rawValue
-                let unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
+                var unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
                                               speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
+                unit.flow = expressive && ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
                 scheduler?.releaseSynth(i)
                 pumpRender()
                 nf.render(unit) { [weak self] pieces in

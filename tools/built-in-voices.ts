@@ -97,6 +97,9 @@ export const POCKET_MANIFEST = 'narrator.json';
 const POCKET_EXT = '.pocketvoice';
 const POCKET_DIM = 1024;
 const POCKET_MAX_FRAMES = 125;
+/** Pocket TTS's speaker projection + latent normalization for Nephis's flow engine (ExpressiveCore/NephisFlow.swift). */
+export const POCKET_PROJECTION = 'speaker-projection';
+const POCKET_LATENT = 32;
 
 /** Every <name>.pocketvoice + <name>.json pair (the Narrator, and its performed read "character"); narrator required. */
 export function checkPocketVoice(dir: string): string[] {
@@ -104,12 +107,33 @@ export function checkPocketVoice(dir: string): string[] {
   const files = readdirSync(dir).sort();
   const names = new Set<string>();
   for (const f of files) {
+    if (f === `${POCKET_PROJECTION}.bin` || f === `${POCKET_PROJECTION}.json`) continue;
     if (f.endsWith(POCKET_EXT)) names.add(f.slice(0, -POCKET_EXT.length));
     else if (f.endsWith('.json')) names.add(f.slice(0, -'.json'.length));
     else problems.push(`${POCKET_DIR}/${f}: only <name>${POCKET_EXT} + <name>.json pairs belong in BuiltInVoices/${POCKET_DIR}/`);
   }
   if (!names.has('narrator')) problems.push(`${POCKET_DIR}/: needs ${POCKET_VOICE} and ${POCKET_MANIFEST}`);
   for (const name of names) problems.push(...checkPocketPair(dir, name));
+  if (existsSync(path.join(dir, `${POCKET_PROJECTION}.bin`)) || existsSync(path.join(dir, `${POCKET_PROJECTION}.json`))) {
+    problems.push(...checkProjection(dir));
+  }
+  return problems;
+}
+
+/** speaker-projection.bin: [1024 × 32] projection, then emb_std [32], emb_mean [32], float32, matching its manifest. */
+function checkProjection(dir: string): string[] {
+  const bin = path.join(dir, `${POCKET_PROJECTION}.bin`);
+  const manifest = path.join(dir, `${POCKET_PROJECTION}.json`);
+  if (!existsSync(bin) || !existsSync(manifest)) return [`${POCKET_DIR}/: ${POCKET_PROJECTION} needs .bin and .json`];
+  const problems: string[] = [];
+  const data = readFileSync(bin);
+  const m = JSON.parse(readFileSync(manifest, 'utf8')) as Record<string, unknown>;
+  const bytes = (POCKET_DIM * POCKET_LATENT + 2 * POCKET_LATENT) * 4;
+  if (m.embeddingDim !== POCKET_DIM || m.latentDim !== POCKET_LATENT) problems.push(`${POCKET_DIR}/${POCKET_PROJECTION}.json: dims must be ${POCKET_DIM} × ${POCKET_LATENT}`);
+  if (data.length !== bytes || m.bytes !== bytes) problems.push(`${POCKET_DIR}/${POCKET_PROJECTION}.bin: ${data.length} bytes, expected ${bytes}`);
+  if (typeof m.sha256 !== 'string' || createHash('sha256').update(data).digest('hex') !== m.sha256.toLowerCase()) {
+    problems.push(`${POCKET_DIR}/${POCKET_PROJECTION}.bin: doesn’t match the manifest’s sha256`);
+  }
   return problems;
 }
 

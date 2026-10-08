@@ -73,6 +73,13 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public static let performedRole = "performed"
     /// Sampling temperature for engines that take one per call (Pocket TTS); nil = the engine's default.
     public var temperature: Float?
+    /// Nephis flow (NephisFlowSynth): the pause before this call's first word (seconds; nil = 0.6), a fresh read
+    /// (a new chapter, a seek: nothing carries over), the read's last call (its trailing silence is played too), and
+    /// how many takes to try (best one kept; nil = 1).
+    public var pauseBefore: Double?
+    public var flowReset: Bool?
+    public var flowLast: Bool?
+    public var takes: Int?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
