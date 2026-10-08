@@ -26,7 +26,16 @@ public actor PocketTtsLatentDecoder {
         out.reserveCapacity(latents.count * PocketTtsConstants.samplesPerFrame)
         for latent in latents {
             var s = state
-            let samples = try await PocketTtsSynthesizer.runMimiDecoder(latent: latent, state: &s, model: model, mimiKeys: mimiKeys)
+            // One Mimi prediction at a time across decoders: they share one MLModel (a crash in the field, 2026-10-08).
+            await MimiGate.shared.acquire()
+            let samples: [Float]
+            do {
+                samples = try await PocketTtsSynthesizer.runMimiDecoder(latent: latent, state: &s, model: model, mimiKeys: mimiKeys)
+            } catch {
+                await MimiGate.shared.release()
+                throw error
+            }
+            await MimiGate.shared.release()
             state = s
             out.append(contentsOf: samples)
         }
@@ -48,5 +57,28 @@ extension PocketTtsSynthesizer {
         let repoDir = try await store.repoDir()
         let state = try loadMimiInitialState(from: repoDir, mimiKeys: mimiKeys)
         return try PocketTtsLatentDecoder(model: mimiModel, mimiKeys: mimiKeys, initialState: state)
+    }
+}
+
+/// TachiNovel: the latent decoders take turns on the shared Mimi model, one prediction at a time, in arrival order.
+actor MimiGate {
+    static let shared = MimiGate()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard busy else {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            busy = false
+        } else {
+            waiters.removeFirst().resume()
+        }
     }
 }

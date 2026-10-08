@@ -79,6 +79,16 @@ public actor PocketTtsSession {
     /// TachiNovel: false = frames carry latents only (no Mimi decode here; the caller decodes them).
     private var decodesAudio = true
 
+    /// TachiNovel: the pieces `enqueue(text)` would generate one after the other, each from a fresh cache that
+    /// starts again from the voice prompt (so a caller can generate them as pieces of its own instead).
+    public func plannedChunks(_ text: String) -> [PocketTtsSynthesizer.TextChunk] {
+        PocketTtsSynthesizer.chunkTextWithMetadata(
+            text.trimmingCharacters(in: .whitespacesAndNewlines), tokenizer: constants.tokenizer,
+            maxTokens: maxTokensPerChunk,
+            preferredMaxTokens: min(PocketTtsConstants.preferredTokensPerChunk, maxTokensPerChunk),
+            voiceCachePosition: voiceCachePosition, language: language)
+    }
+
     /// TachiNovel: latents only, from now on (call before enqueueing text).
     public func setDecodesAudio(_ on: Bool) {
         decodesAudio = on
@@ -378,7 +388,8 @@ public actor PocketTtsSession {
                     chunkIndex: chunkIndex,
                     chunkCount: chunkCount,
                     utteranceIndex: utteranceIndex,
-                    latent: latent
+                    latent: latent,
+                    afterEos: eosStep.map { step > $0 } ?? false
                 )
             )
 

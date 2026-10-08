@@ -27,6 +27,32 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(pause, pause.sorted())
     }
 
+    func testLeadingNoiseDropsAnUhButNeverAWord() {
+        // "uh" (-34 dB) for 3 latents, a dip, then speech at -20 dB.
+        var levels = [-60.0, -34, -33, -35, -55, -58] + [Double](repeating: -20, count: 12)
+        XCTAssertEqual(NephisFlow.leadingNoise(levels), 5)
+        // A real first word as loud as the speech after it ("I … think"): kept.
+        levels = [-60.0, -21, -20, -22, -55, -58] + [Double](repeating: -20, count: 12)
+        XCTAssertEqual(NephisFlow.leadingNoise(levels), 0)
+        // Silence straight into speech: nothing to drop.
+        XCTAssertEqual(NephisFlow.leadingNoise([-60, -60, -60] + [Double](repeating: -20, count: 12)), 0)
+    }
+
+    func testCleanTailQuietsAMumbleAfterTheLastWordDiedAway() {
+        // Word until 9, end of text at 8, rings out to 11, quiet 12-13, a mumble 14-16, quiet again.
+        var levels = [Double](repeating: -20, count: 10) + [-30, -45, -55, -58, -38, -36, -40, -57, -60]
+        var latents = levels.indices.map { lat(Float($0)) }
+        let n = NephisFlow.cleanTail(&latents, levels: &levels, endOfText: 8)
+        XCTAssertEqual(n, 3)
+        XCTAssertEqual(latents[14], lat(13))
+        XCTAssertEqual(latents[16], lat(13))
+        XCTAssertEqual(latents[9], lat(9), "the word itself is untouched")
+        // Never quiet after the end: nothing is touched.
+        var loud = [Double](repeating: -25, count: 12)
+        var l2 = loud.indices.map { lat(Float($0)) }
+        XCTAssertEqual(NephisFlow.cleanTail(&l2, levels: &loud, endOfText: 4), 0)
+    }
+
     func testLeadInCutWaitsForRealSilence() {
         // "…the dark water." then "Sunny lingered…": recognition says "water" ends at 1.0 s, but the word's sound
         // goes on to 1.2 s; silence 1.2–1.6 s; "Sunny" at 1.6 s.

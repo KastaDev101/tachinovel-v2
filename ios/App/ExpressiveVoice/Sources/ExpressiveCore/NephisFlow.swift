@@ -178,6 +178,43 @@ public enum NephisFlow {
         return (levels[0...dip].max() ?? levels[dip]) > levels[dip] + 6 ? dip : 0
     }
 
+    /// Latents of noise before a piece's first word inside a read (an "uh", a mumble): an audible sound in the first
+    /// second, at least 6 dB under the speech that follows and followed by a dip, never a word (words are as loud as
+    /// the speech after them). 0 = none.
+    public static func leadingNoise(_ levels: [Double]) -> Int {
+        guard let on = (0..<max(0, levels.count - 1)).first(where: { levels[$0] > speechDB && levels[$0 + 1] > speechDB }),
+              on > 1, on <= 14,
+              let sound = (0..<on).first(where: { levels[$0] > silenceDB }), sound + 1 < on else { return 0 }
+        let dip = (sound + 1..<on).min(by: { levels[$0] < levels[$1] }) ?? sound
+        let before = levels[sound..<dip].max() ?? -100
+        let after = levels[on..<min(levels.count, on + 10)]
+        let speech = after.reduce(0, +) / Double(after.count)
+        guard before > silenceDB, before > levels[dip] + 6, before < speech - 6 else { return 0 }
+        return dip
+    }
+
+    /// After a piece's last word: once the sound has died away (two latents under `quietDB`, at least `ring` latents
+    /// past the end of the text), anything louder again is the model mumbling into the pause. Each such latent
+    /// becomes the quiet latent before it. Returns how many were replaced.
+    @discardableResult
+    public static func cleanTail(_ latents: inout [[Float]], levels: inout [Double], endOfText: Int, ring: Int = 2) -> Int {
+        var k = max(0, endOfText + ring)
+        while k + 1 < levels.count, !(levels[k] < quietDB && levels[k + 1] < quietDB) { k += 1 }
+        guard k + 1 < levels.count else { return 0 }
+        var n = 0
+        var quiet = k + 1
+        for i in (k + 2)..<max(k + 2, levels.count) {
+            if levels[i] > quietDB {
+                latents[i] = latents[quiet]
+                levels[i] = levels[quiet]
+                n += 1
+            } else {
+                quiet = i
+            }
+        }
+        return n
+    }
+
     /// Inside a pause (latents lo..<hi), a lone latent or two above `quietDB` with quiet on both sides (a mouth click)
     /// becomes an interpolation of its quiet neighbours. Returns how many latents were replaced.
     @discardableResult

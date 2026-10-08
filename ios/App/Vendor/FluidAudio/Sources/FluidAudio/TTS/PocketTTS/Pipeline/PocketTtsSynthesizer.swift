@@ -161,6 +161,9 @@ public struct PocketTtsSynthesizer {
         /// denormalization). Set in session mode. Feed it to `PocketTtsLatentDecoder` to decode several sessions
         /// as one continuous stream, or edit the stream (silence, joins) before any audio exists.
         public var latent: [Float] = []
+        /// TachiNovel: generated after the model signalled the end of its text (the frames it adds to let the
+        /// last word ring out, where it sometimes mumbles). Set in session mode.
+        public var afterEos = false
     }
 
     /// Synthesize audio as a stream of 80ms frames.

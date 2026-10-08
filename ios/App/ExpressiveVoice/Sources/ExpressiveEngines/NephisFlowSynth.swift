@@ -158,12 +158,53 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var report = Report()
         let text = StyleMapper.pocketText(StyleMapper.plainText(line.text))
         let clip = line.role == "tense" ? (assets.tense ?? assets.calm).audioPrompt : assets.calm.audioPrompt
+        // Pocket generates long text in pieces of about 50 tokens, each started again from the voice prompt: every
+        // seam would be a restart nothing edits (an "uh", a mumble in the pause, the tone back at the clip). So the
+        // call is read piece by piece here, each one a flow piece of its own: carry-over, joins and clean-up.
+        let pieces = try await plan(manager, text: text, clip: clip)
+        var stream: [[Float]] = []
+        for (k, piece) in pieces.enumerated() {
+            try Task.checkCancellation()
+            let pause = k == 0 ? (line.pauseBefore ?? 0.6) : Self.sentencePause(after: pieces[k - 1])
+            stream += try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
+                                     seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+        }
+        return Prepared(stream: stream, reset: reset, started: t0, report: report)
+    }
+
+    /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
+    static func sentencePause(after piece: String) -> Double {
+        let t = piece.trimmingCharacters(in: .whitespaces)
+        return t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":") ? 0.8 : 0.45
+    }
+
+    /// The pieces Pocket would generate `text` in (a sentence split inside stays with the piece it belongs to).
+    private func plan(_ manager: PocketTtsManager, text: String, clip: [Float]) async throws -> [String] {
+        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry))
+        let session = try await manager.makeSession(voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
+        let chunks = await session.plannedChunks(text)
+        session.finish()
+        var out: [String] = []
+        for c in chunks {
+            if c.isMidSentence, !out.isEmpty {
+                out[out.count - 1] += " " + c.text
+            } else {
+                out.append(c.text)
+            }
+        }
+        return out.isEmpty ? [text] : out
+    }
+
+    /// One piece: its takes (with the lead-in for a call's first piece), the best one, its edits and its join to what
+    /// came before. Returns the latents to decode; the piece's trailing silence waits for the next join.
+    private func read(_ text: String, clip: [Float], line: ExpressiveLine, first: Bool, last: Bool, pause: Double, seed: UInt64?,
+                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws -> [[Float]] {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: lastClip.flatMap { $0 == clip ? nil : $0 },
                                        carry: assets.projection.condition(carry))
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
         let temperature = min(0.85, max(0.55, line.temperature ?? 0.7))
         let n = max(1, min(8, line.takes ?? 1))
-        let lead = started && transcriber != nil && line.leadIn != false ? lastText.map(Self.lastSentence) : nil
+        let lead = first && started && transcriber != nil && line.leadIn != false ? lastText.map(Self.lastSentence) : nil
         // Recognition only where it can change something (a lead-in cut, a choice between takes); the take score
         // only between takes. Otherwise the analysis decode only needs the take's ends.
         let listen = transcriber != nil && (lead != nil || n > 1)
@@ -174,16 +215,17 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             var latents: [[Float]]
             var levels: [Double]
             var audio: [Float]
+            var endOfText: Int?
             var match: Double
             var score: Double
         }
         var takes: [Take] = []
         for t in 0..<n {
             let said = lead.map { $0 + " " + text } ?? text
-            var take = try await render(manager, scratch: scratch, voice: voice, text: said, temperature: temperature,
-                                        seed: seed.map { $0 &+ UInt64(t) }, whole: listen || scoring, report: &report)
+            let r = try await render(manager, scratch: scratch, voice: voice, text: said, temperature: temperature,
+                                     seed: seed.map { $0 &+ UInt64(t) }, whole: listen || scoring, report: &report)
+            var take = Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0)
             report.takes += 1
-            var match = 1.0
             if listen, let transcriber {
                 let a0 = Date()
                 let words = await transcriber(take.audio, NephisFlow.sampleRate)
@@ -194,26 +236,27 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                     take.latents.removeFirst(cut)
                     take.levels.removeFirst(cut)
                     take.audio.removeFirst(min(take.audio.count, cut * NephisFlow.samplesPerLatent))
-                    match = NephisFlow.wordMatch(words, text: text, from: Double(cut) * NephisFlow.latentSeconds)
+                    take.endOfText = take.endOfText.map { $0 - cut }
+                    take.match = NephisFlow.wordMatch(words, text: text, from: Double(cut) * NephisFlow.latentSeconds)
                 } else if let words {
-                    match = NephisFlow.wordMatch(words, text: text)
+                    take.match = NephisFlow.wordMatch(words, text: text)
                 }
             }
-            let score = reference.map { NephisFlow.jumpScore(take: take.audio, reference: $0) } ?? 0
-            takes.append(Take(latents: take.latents, levels: take.levels, audio: take.audio, match: match, score: score))
+            take.score = reference.map { NephisFlow.jumpScore(take: take.audio, reference: $0) } ?? 0
+            takes.append(take)
         }
         if takes.isEmpty {
-            // No take with a clean lead-in cut: read the paragraph on its own.
-            let take = try await render(manager, scratch: scratch, voice: voice, text: text, temperature: temperature, seed: seed,
-                                        whole: false, report: &report)
+            // No take with a clean lead-in cut: read the piece on its own.
+            let r = try await render(manager, scratch: scratch, voice: voice, text: text, temperature: temperature, seed: seed,
+                                     whole: false, report: &report)
             report.takes += 1
-            takes = [Take(latents: take.latents, levels: take.levels, audio: take.audio, match: 1, score: 0)]
-        } else {
-            report.leadIn = lead != nil
+            takes = [Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0)]
+        } else if lead != nil {
+            report.leadIn = true
         }
         // A fresh read was asked for meanwhile: this call's audio is never played, and the read's state stays as is.
         try Task.checkCancellation()
-        report.usable = takes.count
+        report.usable += takes.count
         let exact = takes.filter { $0.match >= 0.98 }
         let best = (exact.isEmpty ? [takes.max { $0.match < $1.match }!] : exact).min { $0.score < $1.score }!
         report.wordMatch = report.listened ? best.match : nil
@@ -222,28 +265,29 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // Edit the stream before any audio exists.
         var latents = best.latents
         var levels = best.levels
-        if !started {
-            let drop = NephisFlow.openingDrop(levels)
-            latents.removeFirst(drop)
-            levels.removeFirst(drop)
-        }
+        // A mumble once the last word has died away (in the frames Pocket adds after the end of its text).
+        if let end = best.endOfText { NephisFlow.cleanTail(&latents, levels: &levels, endOfText: end) }
+        // Before the first word: the read's opening "uh", or a mumble before a later piece's first word.
+        let drop = started ? NephisFlow.leadingNoise(levels) : NephisFlow.openingDrop(levels)
+        latents.removeFirst(drop)
+        levels.removeFirst(drop)
         let silence = NephisFlow.silence(levels)
         if started { NephisFlow.cleanClicks(&latents, levels: &levels, from: 0, to: max(0, silence.head - 1)) }
         NephisFlow.cleanClicks(&latents, levels: &levels, from: min(levels.count, levels.count - silence.tail + 1), to: levels.count)
         var stream = started && !pendingTail.isEmpty
-            ? NephisFlow.join(tail: pendingTail, next: latents, head: silence.head, pause: line.pauseBefore ?? 0.6)
+            ? NephisFlow.join(tail: pendingTail, next: latents, head: silence.head, pause: pause)
             : latents
-        // This call's trailing silence waits for the next call's join (unless it is the read's last call).
-        let keep = line.flowLast == true ? 0 : min(silence.tail, stream.count)
+        // The trailing silence waits for the next piece's join (unless it is the read's very last piece).
+        let keep = last && line.flowLast == true ? 0 : min(silence.tail, stream.count)
         pendingTail = Array(stream.suffix(keep))
         stream.removeLast(keep)
 
-        carry = Array((carry + best.latents).suffix(NephisFlow.carryFrames))
+        carry = Array((carry + latents).suffix(NephisFlow.carryFrames))
         context = Array(best.audio.suffix(3 * NephisFlow.sampleRate))
         lastText = text
         lastClip = clip
         started = true
-        return Prepared(stream: stream, reset: reset, started: t0, report: report)
+        return stream
     }
 
     // MARK: - Stage 2: the sound
@@ -277,7 +321,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// the first `headEdge` latents and the last `tailEdge` (the middle's levels read as speech).
     private func render(_ manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, voice: PocketTtsVoiceData, text: String,
                         temperature: Float, seed: UInt64?, whole: Bool, report: inout Report)
-        async throws -> (latents: [[Float]], levels: [Double], audio: [Float]) {
+        async throws -> (latents: [[Float]], levels: [Double], audio: [Float], endOfText: Int?) {
         let r0 = Date()
         let session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         await session.setDecodesAudio(false)
@@ -296,7 +340,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                 return audio
             }
         }
+        // Where the last piece of text ended (the start of the frames after its end), if the take ends there.
+        var endOfText: Int?
+        var afterEnd = false
         for try await frame in session.frames where frame.latent.count == NephisFlow.latentDim {
+            if frame.afterEos, !afterEnd { endOfText = latents.count }
+            afterEnd = frame.afterEos
             latents.append(frame.latent)
             guard whole || latents.count <= Self.headEdge else { continue }
             batch.append(frame.latent)
@@ -306,25 +355,26 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             }
         }
         if !batch.isEmpty { send(batch) }
+        if !afterEnd { endOfText = nil }
         report.renderMs += Date().timeIntervalSince(r0) * 1000
         let a0 = Date()
         defer { report.analysisMs += Date().timeIntervalSince(a0) * 1000 }
         var audio = try await analysis?.value ?? []
         let n = latents.count
         if whole || n <= Self.headEdge {
-            return (latents, NephisFlow.levels(audio), audio)
+            return (latents, NephisFlow.levels(audio), audio, endOfText)
         }
         if n <= Self.headEdge + Self.tailEdge + Self.warmUp {
             // Short take: decoding the rest is about as cheap as the tail.
             audio += try await scratch.decode(Array(latents[Self.headEdge...]))
-            return (latents, NephisFlow.levels(audio), audio)
+            return (latents, NephisFlow.levels(audio), audio, endOfText)
         }
         let head = NephisFlow.levels(audio)
         try await scratch.reset()
         let tailAudio = Array(try await scratch.decode(Array(latents.suffix(Self.tailEdge + Self.warmUp)))
             .dropFirst(Self.warmUp * NephisFlow.samplesPerLatent))
         let middle = [Double](repeating: 0, count: n - Self.headEdge - Self.tailEdge)
-        return (latents, head + middle + NephisFlow.levels(tailAudio), tailAudio)
+        return (latents, head + middle + NephisFlow.levels(tailAudio), tailAudio, endOfText)
     }
 
     /// The last sentence of a text (the lead-in for the next call).
