@@ -185,15 +185,22 @@ describe('voice mixer (PC shell)', () => {
     const player = shell.page.getByTestId('car-player');
     await player.locator('[data-act="voice"]').click();
     const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
-    await picker.locator('.row[data-voice="mix_00000001"]').waitFor({ timeout: 5000 });
-    expect(await picker.locator('[data-act="mix-edit"], [data-act="mix-new"]').count()).toBe(0);
-    expect(await picker.textContent()).toContain('Using the default (Warm narrator)');
-    await picker.locator('[data-act="kokoro-all"]').click();
+    // Only who reads is listed; Kokoro's voices are one tap further.
+    await picker.locator('[data-act="novel-kokoro"]').waitFor({ timeout: 5000 });
+    expect(await picker.locator('.row[data-voice]').count()).toBe(0);
+    await picker.locator('[data-act="novel-kokoro"]').click();
+    const kokoro = shell.page.locator('[data-testid="novel-kokoro"]:not([inert])');
+    await kokoro.locator('.row[data-voice="mix_00000001"]').waitFor({ timeout: 5000 });
+    expect(await kokoro.locator('[data-act="mix-edit"], [data-act="mix-new"]').count()).toBe(0);
+    expect(await kokoro.textContent()).toContain('Using the default (Warm narrator)');
+    await kokoro.locator('[data-act="kokoro-all"]').click();
     const all = shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
     await all.locator('.row[data-voice="bf_emma"] [data-act="pick"]').click();
     await expect.poll(() => prefs.novelVoices[`${novel.pluginId}:${novel.novelPath}`]).toBe('bf_emma');
     await all.locator('[data-act="close"]').click();
     await all.waitFor({ state: 'hidden', timeout: 5000 });
+    await kokoro.locator('[data-act="close"]').click();
+    await kokoro.waitFor({ state: 'hidden', timeout: 5000 });
     await picker.locator('[data-act="close"]').click();
     await player.locator('[data-act="close"]').click();
     shell.pluginReplies.delete('Narration.state');
