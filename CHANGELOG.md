@@ -9,6 +9,17 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.6] - 2026-10-08
+
+### Changed
+
+- Nephis reads as one continuous narration: each paragraph continues from what she just said (her voice prompt
+  carries her last seconds), she arrives at a new paragraph from the sentence before it, the pauses fit the text and
+  every join between paragraphs is blended, never cut; her opening "uh" and stray clicks are gone. When there is time
+  she reads a paragraph more than once and keeps the take that reads every word and fits best. Word checks use speech
+  recognition on the iPhone only (it asks once).
+- Nephis's new voice: a blend of two designed voices baked into one, warm and clear, with softer "s" sounds.
+
 ## [2.0.0-alpha.5] - 2026-10-07
 
 ### Added
@@ -357,7 +368,8 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.6...HEAD
+[2.0.0-alpha.6]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...v2.0.0-alpha.6
 [2.0.0-alpha.5]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
 [2.0.0-alpha.4]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...v2.0.0-alpha.4
 [2.0.0-alpha.3]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
