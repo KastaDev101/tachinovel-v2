@@ -14,7 +14,7 @@
 //                      downloads with the same downloader the app uses, renders the Voice Lab samples,
 //                      measures load, time to first audio, real-time factor and memory, writes WAVs.
 //
-// FluidAudio is pinned to the SAME exact version as ios/App/HDVoice (one copy in the app; a test checks it).
+// FluidAudio is the SAME vendored copy as ios/App/HDVoice uses (one copy in the app; a test checks it).
 import PackageDescription
 
 let package = Package(
@@ -25,7 +25,8 @@ let package = Package(
         .executable(name: "expressive-bench", targets: ["ExpressiveBench"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5"),
+        // FluidAudio 0.17.5, vendored with TachiNovel's Pocket TTS changes (ios/App/Vendor/FluidAudio/README.md).
+        .package(path: "../Vendor/FluidAudio"),
     ],
     targets: [
         .target(name: "ExpressiveCore"),

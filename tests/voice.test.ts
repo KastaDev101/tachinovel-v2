@@ -173,7 +173,7 @@ describe('CI voice checks', () => {
     for (const p of VOICE_PRODUCTS) expect(pbx).toContain(`productName = ${p};`);
     expect(pbx).toMatch(/KokoroModels in Resources/);
     const pkg = readFileSync(path.join(root, 'ios', 'App', 'HDVoice', 'Package.swift'), 'utf8');
-    expect(pkg).toMatch(/FluidAudio\.git", exact: "0\.17\.5"/);
+    expect(pkg).toContain('.package(path: "../Vendor/FluidAudio")');
   });
 });
 
