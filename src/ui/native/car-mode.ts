@@ -244,7 +244,7 @@ export function installCarMode(): CarMode {
     const list = `
         ${folder}
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
-        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}`;
+        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : active() ? '' : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}`;
     const p = ensureParts();
     const now = nowHtml();
     // The bar and the clock change every second: compare without them and update them in place.

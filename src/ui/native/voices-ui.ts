@@ -527,7 +527,7 @@ export function openVoicesScreen(): void {
       ${engineCard(info)}
       ${NARRATOR_SETTINGS_ROW}
       <div class="sec">Backup voice (Kokoro)</div>
-      <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · reads when Kokoro is chosen, and stands in when the Narrator can’t keep up</span></div><span aria-hidden="true">›</span></button></div>
+      <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · ${nephisReads(info) ? 'reads when Kokoro is chosen (Nephis’s catch-up lines use her own Kokoro voice)' : 'reads when Kokoro is chosen, and stands in when the Narrator can’t keep up'}</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
@@ -782,7 +782,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
       ${engineCard(info)}
       <div class="card">
         <button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Narrator settings</b><span class="sub">Acting, mood voices, AI scene reading, breaths, studio sound</span></div><span aria-hidden="true">›</span></button>
-        <button type="button" class="row" data-act="novel-kokoro"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(kokoro)}${info.novelVoice ? ' (this novel)' : ''} · also the backup</span></div><span aria-hidden="true">›</span></button>
+        <button type="button" class="row" data-act="novel-kokoro"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(kokoro)}${info.novelVoice ? ' (this novel)' : ''} · ${nephisReads(info) ? 'when Kokoro reads (Nephis’s catch-up lines use her own Kokoro voice)' : 'also the backup'}</span></div><span aria-hidden="true">›</span></button>
       </div>
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
