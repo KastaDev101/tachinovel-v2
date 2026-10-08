@@ -25,6 +25,9 @@ interface ExpressiveVoicePlugin {
   unload(): Promise<Obj>;
   resetCrashes(): Promise<Obj>;
   resetStats(): Promise<Obj>;
+  recordStart(): Promise<{ recording: boolean }>;
+  recordStop(): Promise<{ saved: boolean; bytes: number }>;
+  shareRecording(): Promise<void>;
   importVoice(): Promise<Obj>;
   selectVoice(o: { id: string | null }): Promise<Obj>;
   renameVoice(o: { id: string; name: string }): Promise<Obj>;

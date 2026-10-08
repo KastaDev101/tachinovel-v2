@@ -947,6 +947,47 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
     }
 
+    // MARK: - Recording (Settings › Voices › Voice test)
+
+    private var recordURL: URL?
+    private var recordFile: AVAudioFile?
+    private var recordTapped = false
+
+    /// Record what plays (after the volume stage and the limiter) into a 16-bit WAV until `stopRecording`, so a test
+    /// can be listened to on the PC exactly as the phone played it.
+    func startRecording(to url: URL) {
+        stopRecording()
+        try? FileManager.default.removeItem(at: url)
+        recordURL = url
+        installRecordTap()
+    }
+
+    /// Stops recording; the file, if anything was recorded.
+    @discardableResult
+    func stopRecording() -> URL? {
+        if recordTapped {
+            limiter.removeTap(onBus: 0)
+            recordTapped = false
+        }
+        let url = recordFile != nil ? recordURL : nil
+        recordFile = nil
+        recordURL = nil
+        return url
+    }
+
+    private func installRecordTap() {
+        guard let url = recordURL, graphReady, !recordTapped else { return }
+        let fmt = limiter.outputFormat(forBus: 0)
+        if recordFile == nil {
+            let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: fmt.sampleRate, AVNumberOfChannelsKey: fmt.channelCount,
+                                           AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false]
+            recordFile = try? AVAudioFile(forWriting: url, settings: settings, commonFormat: fmt.commonFormat, interleaved: fmt.isInterleaved)
+        }
+        guard let file = recordFile else { return }
+        limiter.installTap(onBus: 0, bufferSize: 4096, format: fmt) { buffer, _ in try? file.write(from: buffer) }
+        recordTapped = true
+    }
+
     // MARK: - Audio graph
 
     /// Switch to manual rendering (no audio device: CI, headless simulator). Call before any playback.
@@ -971,6 +1012,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
         NotificationCenter.default.addObserver(self, selector: #selector(configurationChanged(_:)), name: .AVAudioEngineConfigurationChange, object: audioEngine)
         graphReady = true
+        installRecordTap()
     }
 
     private func teardownGraph() {
@@ -981,6 +1023,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
         manualTimer?.cancel()
         manualTimer = nil
+        recordTapped = false
         audioEngine = AVAudioEngine()
         player = AVAudioPlayerNode()
         gainStage = AudioGraphParts.gainStage()

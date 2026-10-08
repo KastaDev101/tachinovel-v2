@@ -8,7 +8,8 @@
  *   - other voice: sentences another voice read (the goal is none);
  *   - speed: × real time of the voice's work (the goal is 8×), stage by stage for Nephis;
  *   - phone heat at the start and the end, crashes, memory;
- *   - the listener's own notes (noises, wrong words), typed into the report.
+ *   - the listener's own notes (noises, wrong words), typed into the report;
+ *   - a recording of what played (after the volume stage and limiter), shared to the PC to compare with its renders.
  * The passage is long paragraphs (Pocket's ~50-token seams), dialogue, a pause after "…", a system line and numbers.
  */
 import { ExpressiveVoice } from './expressive-lab.ts';
@@ -65,6 +66,7 @@ export function openVoiceTest(): void {
   let report: Obj | null = null;
   let status = '';
   let notes = '';
+  let recorded = false;
 
   const render = (): void => {
     const result = report
@@ -74,7 +76,8 @@ export function openVoiceTest(): void {
          <div class="sec">What did you hear?</div>
          <div class="card" style="padding:4px 14px 14px"><textarea data-f="notes" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div>
          <button type="button" class="btn" data-act="copy">Copy report</button>
-         <p class="note">Paste it to your developer: it has every number behind these lines.</p>`
+         ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the recording</button>' : ''}
+         <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
       : '';
     p.body.innerHTML = `
       <p class="note">Reads a 2-minute test passage aloud with the voice you listen with, exactly like Listen does, then says how it went: breaks, voice switches, speed and phone heat.</p>
@@ -115,6 +118,8 @@ export function openVoiceTest(): void {
     const crashesBefore = Number(((before.crashes as Obj | undefined) ?? {}).total ?? 0);
     const thermalStart = ((before.device as Obj | undefined) ?? {}).thermal ?? null;
     const settings = await Narration.voiceSettings().catch(() => null);
+    recorded = false;
+    await ExpressiveVoice.recordStart().catch(() => undefined);
     try {
       await Narration.play({
         pluginId: 'voice-lab',
@@ -135,6 +140,8 @@ export function openVoiceTest(): void {
     const ended = state.status === 'ended';
     if (!ended) await Narration.stop().catch(() => undefined);
     for (const h of handles) void h.remove();
+    const rec = await ExpressiveVoice.recordStop().catch(() => ({ saved: false, bytes: 0 }));
+    recorded = rec.saved;
     const after = await ExpressiveVoice.status().catch((): Obj => ({}));
     const crashesAfter = Number(((after.crashes as Obj | undefined) ?? {}).total ?? 0);
     report = {
@@ -154,6 +161,7 @@ export function openVoiceTest(): void {
       flow: ((after.flow) ?? null),
       listen: (((after.flow as Obj | undefined) ?? {}).listen) ?? null,
       error: state.status === 'error' ? (state.error ?? 'error') : null,
+      recordingBytes: rec.bytes,
     };
     running = false;
     status = ended ? 'Done.' : 'Stopped.';
@@ -167,6 +175,9 @@ export function openVoiceTest(): void {
     if (el.dataset.act === 'stop') {
       running = false;
       void Narration.stop().catch(() => undefined);
+    }
+    if (el.dataset.act === 'share') {
+      void ExpressiveVoice.shareRecording().catch((err: unknown) => (el.textContent = err instanceof Error ? err.message : 'Couldn’t share'));
     }
     if (el.dataset.act === 'copy' && report) {
       const text = JSON.stringify({ ...report, notes: notes.trim() || null }, null, 2);
