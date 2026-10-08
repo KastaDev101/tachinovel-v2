@@ -25,7 +25,7 @@ import { installCarMode } from './car-mode.ts';
 import { alignChapter, clearPaint, HIGHLIGHT_CSS, paintRange, paintSegment, type ChapterAlignment } from './highlight.ts';
 import { Narration, type NarrationProgress, type NarrationState } from './narration.ts';
 import { chapterBody, locateReadingPoint, paragraphsOf, readerRoot } from './reader-dom.ts';
-import { domSpeechScript, rangeForSentence, type DomScript } from './speech-dom.ts';
+import { domSpeechScript, rangeForSentence, rememberListened, type DomScript } from './speech-dom.ts';
 import { voiceLabel } from './voices-ui.ts';
 import { fs } from './type.ts';
 
@@ -279,6 +279,7 @@ export function installNarrationOverlay(): void {
       try {
         script = domSpeechScript(body, { title: chapterName, lexicons });
         speechScripts.set(ref.chapterPath, script);
+        rememberListened(chapterName, script.script);
       } catch (err) {
         console.warn('speech script failed; native splits the paragraphs', err);
       }

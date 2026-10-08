@@ -59,6 +59,13 @@ export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexic
   return { body, blocks, script };
 }
 
+let listened: { chapter: string; script: SpeechScript } | null = null;
+/** The script of the chapter last started with Listen (Voice Lab › Test moods on it). */
+export function rememberListened(chapter: string, script: SpeechScript): void {
+  listened = { chapter, script };
+}
+export const lastListened = (): { chapter: string; script: SpeechScript } | null => listened;
+
 /** First sentence at or after a reader paragraph ("listen from the first visible paragraph"). */
 export function startItemForParagraph(script: SpeechScript, paragraph: number): number {
   const i = script.items.findIndex((it) => it.paragraph >= paragraph);
