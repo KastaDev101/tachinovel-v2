@@ -21,6 +21,7 @@ import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } fr
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
+import { openVoiceTest } from './voice-test.ts';
 import { groupVoices } from './voice-groups.ts';
 import { openExpressiveLab } from './expressive-lab.ts';
 import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
@@ -526,6 +527,7 @@ export function openVoicesScreen(): void {
       <div class="sec">Reads chapters</div>
       ${engineCard(info)}
       ${NARRATOR_SETTINGS_ROW}
+      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">2 minutes: breaks, voice switches, speed and phone heat, with a report to copy</span></div><span aria-hidden="true">›</span></button></div>
       <div class="sec">Backup voice (Kokoro)</div>
       <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · ${nephisReads(info) ? 'reads when Kokoro is chosen (Nephis’s catch-up lines use her own Kokoro voice)' : 'reads when Kokoro is chosen, and stands in when the Narrator can’t keep up'}</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
@@ -592,6 +594,9 @@ export function openVoicesScreen(): void {
         return;
       case 'narrator-settings':
         openNarratorSettings(() => undefined);
+        return;
+      case 'voice-test':
+        openVoiceTest();
         return;
       case 'kokoro-all':
         openKokoroVoices(null, () => void load());

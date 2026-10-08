@@ -673,6 +673,10 @@ final class ExpressiveService {
 
     private(set) var flowStats = FlowStats()
 
+    func resetFlowStats() {
+        flowStats = FlowStats()
+    }
+
     private func recordFlow(_ r: NephisFlowSynth.Report) {
         flowStats.calls += 1
         flowStats.takes += r.takes
@@ -799,6 +803,7 @@ final class ExpressiveService {
                 "os": ProcessInfo.processInfo.operatingSystemVersionString,
             ] as [String: Any],
             "kokoro": KokoroService.shared.statusText,
+            "app": "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))",
             "voices": voicesSnapshot(),
             "pocketVoice": VoiceSettings.shared.prefs.delivery.pocketVoice,
             "flow": flowSnapshot(),

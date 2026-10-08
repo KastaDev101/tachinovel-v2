@@ -24,6 +24,7 @@ interface ExpressiveVoicePlugin {
   cancelSpeedTest(): Promise<Obj>;
   unload(): Promise<Obj>;
   resetCrashes(): Promise<Obj>;
+  resetStats(): Promise<Obj>;
   importVoice(): Promise<Obj>;
   selectVoice(o: { id: string | null }): Promise<Obj>;
   renameVoice(o: { id: string; name: string }): Promise<Obj>;

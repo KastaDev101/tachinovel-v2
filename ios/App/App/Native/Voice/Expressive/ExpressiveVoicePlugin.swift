@@ -41,6 +41,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancelSpeedTest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "unload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resetCrashes", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "resetStats", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "importVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selectVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "renameVoice", returnType: CAPPluginReturnPromise),
@@ -287,6 +288,14 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             ExpressiveLabPlayer.shared.stop()
             ExpressiveService.shared.unload(reason: "Voice Lab")
+            call.resolve(Self.status())
+        }
+    }
+
+    /// Settings › Voices › Voice test: start counting Nephis's calls afresh (the report then covers the test only).
+    @objc func resetStats(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            ExpressiveService.shared.resetFlowStats()
             call.resolve(Self.status())
         }
     }
