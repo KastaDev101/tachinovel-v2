@@ -60,6 +60,8 @@ export interface Cue {
   keyWord?: string;
   /** The sentence has an ellipsis (reads a touch slower). */
   ellipsis?: boolean;
+  /** Narration that settles ("Luckily, …"): scene tension doesn't carry into it. */
+  settled?: boolean;
 }
 
 /** What the director needs to know about one sentence, in script order. */
@@ -76,6 +78,8 @@ export interface DirectorSentence {
   dialogueShare: number;
   /** The first sentence of a new scene (after a scene break, a title, a POV header, blank lines). */
   sceneStart?: boolean;
+  /** A character's thought ('…' in a chapter quoting speech with “…”): never teasing, it isn't said to anyone. */
+  thought?: boolean;
 }
 
 // ================================================================ the tables (tune here)
@@ -192,7 +196,7 @@ const MOOD_RULES: readonly [Mood, NonVerbal | undefined, RegExp][] = [
 /** Line classes from the attribution or beat ("she purred", "he ordered"); these win over the words. */
 const CLASS_TAG_RULES: readonly [LineClass, RegExp][] = [
   ['commanding', /\b(?:order(?:ed|s)|command(?:ed|s)|instruct(?:ed|s)|demand(?:ed|s))\b/i],
-  ['teasing', /\b(?:teas(?:ed|es|ing)|smirk(?:ed|s|ing)|purr(?:ed|s|ing)|hum(?:med|s)|teasingly|playfully|coyly|slyly)\b/i],
+  ['teasing', /\b(?:teas(?:ed|es|ing)|smirk(?:ed|s|ing)|purr(?:ed|s|ing)|hum(?:med|s)|teasingly|playfully|coyly|slyly|sneer(?:ed|s|ing)?|mock(?:ed|s|ing)|gloat(?:ed|s|ing)?|taunt(?:ed|s|ing)?|jeer(?:ed|s|ing)?|scoff(?:ed|s|ing)?)\b/i],
   ['tender', /\b(?:gently|tenderly|soothingly|warmly|lovingly|kindly|softly)\b/i],
 ];
 
@@ -207,7 +211,16 @@ const TEASING_OPENER = /^(?:h+m+|mm+|oh+|ah+|my my|well well)\b/i;
 const NON_VERBAL_OPENER = /^[\s"'“‘(]*(?:h+m+|mm+|ha(?:ha)*|heh|hah|hehe)\b/i;
 
 /** Narration that is plainly tense (a few action words; deliberately short, the voice shouldn't overact). */
-const TENSE_NARRATION = /\b(?:slammed|shattered|explod(?:ed|ing)|screamed|shrieked|crashed|lunged|froze|trembl(?:ed|ing)|terror|panic(?:ked)?|blood)\b/i;
+const TENSE_NARRATION =
+  /\b(?:slammed|shattered|explod(?:ed|ing)|scream(?:ed|ing|s)?|shriek(?:ed|ing)?|crashed|lunged|froze|frozen|trembl(?:ed|ing)|terror|terrif(?:ied|ying)|panic(?:ked)?|blood|dread|doom|fear(?:ed|ful)?|afraid|horror|horrif(?:ied|ying)|shiver(?:ed|ing)?|chill(?:ed)?|uneasy|danger(?:ous)?|inescapable|menacing|desperate(?:ly)?|helpless(?:ly)?|struck|slash(?:ed|ing)?|stabb(?:ed|ing)|flames|ablaze|shaking|frighten(?:ed|ing)|dodg(?:e|ed|ing)|ducked|impal(?:ed|ing)|bleed(?:ing)?|too (?:fast|late|many)|hopeless(?:ly)?|struggl(?:ed|ing|es)|crashing|thunder(?:ed|ing|ous)?|roar(?:ed|ing)?|stopped breathing|held (?:his|her|their|my) breath|heart (?:pounded|pounding|raced|racing|hammered|hammering|thudded)|backed (?:away|down|off|up)|crept|creeping|footsteps|dragging|stand(?:ing)? on end|something (?:moved|pale|dark|shifted))\b/i;
+/** Narration that settles even in a fight ("Luckily, …", "eerily beautiful", "grown somewhat confident"): calm. */
+const CALM_NARRATION = /\b(?:luckily|fortunately|confident(?:ly)?|beautiful|steady|steadily|manageable|calm(?:ly)?|peace(?:ful)?|relie(?:f|ved)|comfort(?:ing|ed)?|good partner|safe(?:ly)?|smiled|going well|grew still|disappeared|empty|emptiness|silen(?:ce|t|tly))\b/i;
+/** A thought or line that trails off is tense only when it says something alarming ("Curse it…", "not good…");
+ * otherwise it is wistful ("I wonder how Dale is doing…"). */
+const ALARM = /\b(?:curse|cursed|damn|damnation|hell|gods?|no+|not good|run|help|impossible|too (?:fast|many|late)|what)\b/i;
+/** Sentences either side within which tense narration makes a hesitant line ("What… is… going on?") dread, not
+ * a teasing drawl. */
+const TENSE_REACH = 3;
 
 /** Function words that are never the key word. */
 const STOP_WORDS = new Set(
@@ -509,18 +522,34 @@ function punctuationMood(display: string): Mood {
   return 'calm';
 }
 
-/** The class the spoken words suggest (an order, an endearment, a teasing opener or drawl), or null. */
-function speechClass(speech: string, mood: Mood): LineClass | null {
+/** The class the spoken words suggest (an order, an endearment, a teasing opener or drawl), or null. `dread`: in a
+ * tense stretch (or a thought) a drawl, an "Ah…"/"Hmm" opener or a question is hesitation, never teasing. */
+function speechClass(speech: string, mood: Mood, dread = false): LineClass | null {
   const words = speech.replace(/^[\s"'“”‘’(]+/u, '');
   const question = /\?/.test(words);
   if (!question && IMPERATIVE.test(words)) return 'commanding';
   if (TENDER_SPEECH.test(words)) return 'tender';
+  if (dread) return null;
   const relaxed = mood === 'calm' || mood === 'playful' || mood === 'soft';
   if (relaxed && TEASING_OPENER.test(words)) return 'teasing';
   // A drawl in the middle of a line ("cute when you're… flustered"); a trailing "…" is just trailing off.
   if (relaxed && /(?:…|\.\.\.)\s*\p{L}/u.test(words)) return 'teasing';
   if (mood === 'playful' && question) return 'teasing';
   return null;
+}
+
+/** "Damna… tion" → "Damnation" (a word broken by a trailing-off ellipsis), for word tests. */
+const joinBroken = (t: string): string => t.replace(/(\p{L})(?:…|\.\.\.)\s*(\p{Ll})/gu, '$1$2');
+
+/** The narration just before a dialogue paragraph that introduces it ("…the Sin of Solace sighed.", "…gloating:"),
+ * or -1: the previous sentence, in the previous block, narration, ending its paragraph with a colon or a speech verb. */
+function leadIn(list: readonly DirectorSentence[], i: number): number {
+  const s = list[i];
+  const p = list[i - 1];
+  const next = list[i + 1];
+  if (!s || !p || p.kind !== 'text' || p.block === s.block || p.dialogueShare > 0) return -1;
+  if (next && next.block === s.block && next.dialogueShare === 0) return -1; // the paragraph has its own narration
+  return /:$|\b(?:said|says|sighed|whispered|muttered|murmured|sneered|gloated|gloating|mocked|asked|replied|shouted|yelled|growled|hissed|snapped|laughed|chuckled|purred|ordered)\.?$/i.test(trimEnd(p.display)) ? i - 1 : -1;
 }
 
 /** The nearest index in the same paragraph (the following one first) for which `has` is true, or -1. */
@@ -550,6 +579,8 @@ function nearestInParagraph(list: readonly DirectorSentence[], i: number, has: (
  */
 export function direct(list: readonly DirectorSentence[], opts: { emphasis?: readonly Emphasis[] } = {}): Cue[] {
   const moodTag = list.map((s) => (s.kind === 'text' ? matchMood(s.narration) : null));
+  const tenseAt = list.map((s) => s.kind === 'text' && s.dialogueShare === 0 && TENSE_NARRATION.test(s.display));
+  const tenseNear = (i: number): boolean => tenseAt.some((t, j) => t && Math.abs(j - i) <= TENSE_REACH);
   const classTag = list.map((s) => (s.kind === 'text' ? matchClass(s.narration) : null));
   const marked = opts.emphasis?.length ? alignEmphasis(list.map((s) => s.display), opts.emphasis) : [];
   const usedNv = new Set<number>(); // sentences whose attribution spent its non-verbal
@@ -571,21 +602,44 @@ export function direct(list: readonly DirectorSentence[], opts: { emphasis?: rea
       // A whole italic sentence is a thought: softer, and kept as written (markup is as clear as a tag).
       if (stress === 'thought') return { mood: 'soft', dialogue, explicit: true, stress };
       const t = trimEnd(s.display);
-      const mood: Mood = /!$/.test(t) && stress !== 'sfx' ? 'intense' : TENSE_NARRATION.test(s.display) ? 'tense' : 'calm';
-      return withStress({ mood, dialogue });
+      const mood: Mood =
+        /!$/.test(t) && stress !== 'sfx' ? 'intense' : TENSE_NARRATION.test(s.display) && !CALM_NARRATION.test(s.display) ? 'tense' : 'calm';
+      return withStress({ mood, dialogue, ...(CALM_NARRATION.test(s.display) ? { settled: true } : {}) });
     }
     // Speech: its own tags, else the nearest ones in the paragraph.
-    const mFrom = nearestInParagraph(list, i, (j) => !!moodTag[j]);
-    const cFrom = nearestInParagraph(list, i, (j) => !!classTag[j]);
+    const lead = leadIn(list, i);
+    let mFrom = nearestInParagraph(list, i, (j) => !!moodTag[j]);
+    let cFrom = nearestInParagraph(list, i, (j) => !!classTag[j]);
+    if (mFrom < 0 && lead >= 0 && moodTag[lead]) mFrom = lead;
+    if (cFrom < 0 && lead >= 0 && classTag[lead]) cFrom = lead;
     const m = mFrom >= 0 ? moodTag[mFrom] : null;
+    const tense = tenseNear(i);
     let mood: Mood = m?.mood ?? punctuationMood(s.display);
+    // Trailing off in a tense stretch is dread when it says something alarming ("'Ah… not good…'"), else wistful.
+    let settledMood = false;
+    if (!m && tense && mood === 'soft' && ALARM.test(joinBroken(s.speech || s.display))) {
+      mood = 'tense';
+      settledMood = true;
+    }
+    // A plain thought surrounded by tense narration ("'Someone's up there.'") carries the tension.
+    if (!m && s.thought && mood === 'calm' && tenseAt.filter((t, j) => t && Math.abs(j - i) <= TENSE_REACH).length >= 2) {
+      mood = 'tense';
+      settledMood = true;
+    }
+    // A thought shouted inside a tense stretch is tense, not intense (it isn't excitement).
+    if (!m && tense && mood === 'intense' && s.thought) {
+      mood = 'tense';
+      settledMood = true;
+    }
     // Any spoken words can carry a class ("“Kneel!” she ordered." is mostly attribution but still an order).
-    const line: LineClass | null = (cFrom >= 0 ? classTag[cFrom] : null) ?? speechClass(s.speech ?? s.display, mood);
+    const line: LineClass | null = (cFrom >= 0 ? classTag[cFrom] : null) ?? speechClass(s.speech ?? s.display, mood, tense || !!s.thought);
     // A class sets the mood it reads in, unless a tag said how the line is spoken.
     const classMood = line ? CLASS_TABLE[line].mood : undefined;
     if (classMood && !m) mood = classMood;
-    if (line === 'commanding' && (mood === 'intense' || mood === 'tense')) mood = 'calm'; // quiet authority, never shouting
-    const cue: Cue = { mood, dialogue, ...(m || line ? { explicit: true } : {}), ...(line ? { line } : {}) };
+    // Quiet authority, never shouting; but an order in a fight ("Get inside! Now!") is urgent.
+    if (line === 'commanding' && (mood === 'intense' || mood === 'tense')) mood = tense ? 'tense' : 'calm';
+    else if (line === 'commanding' && tense && !m) mood = 'tense';
+    const cue: Cue = { mood, dialogue, ...(m || line || settledMood ? { explicit: true } : {}), ...(line ? { line } : {}) };
     // A non-verbal: the one the attribution names (laughed, chuckled), else a teasing line's chuckle or "hm" every
     // TEASING_CHUCKLE_EVERY teasing lines, a tender line's "mm"; sparingly, never twice the same in a row, never
     // where the line already says it ("Hmm, …", "Ha!").
@@ -651,7 +705,18 @@ export function smoothScenes(cues: readonly Cue[], list: readonly Pick<DirectorS
         top = w;
       }
     }
-    const mood = c.dialogue ? (best === 'whisper' ? 'soft' : best) : NARRATION_SCENE[best];
+    let mood = c.dialogue ? (best === 'whisper' ? 'soft' : best) : NARRATION_SCENE[best];
+    // Tension carries through narration: two tense or intense sentences within TENSE_REACH make it tense, however
+    // many calm ones are around (a fight is mostly description; it shouldn't be voted calm).
+    if (!c.dialogue && !c.settled && (mood === 'calm' || mood === c.mood)) {
+      let near = 0;
+      for (let j = Math.max(0, i - TENSE_REACH); j <= Math.min(cues.length - 1, i + TENSE_REACH); j++) {
+        const v = cues[j];
+        // Only narration carries a scene's tension: a shouted complaint ("Damn Imperials!") isn't danger.
+        if (v && !v.dialogue && scene[j] === scene[i] && (v.mood === 'tense' || v.mood === 'intense')) near++;
+      }
+      if (near >= 2 && (mood === 'calm' || mood === 'tense')) mood = 'tense';
+    }
     return mood === c.mood ? c : { ...c, mood };
   });
 }
@@ -855,8 +920,8 @@ export interface ChunkInput {
   quoteOpen: boolean;
   /** Nano's temperature for the sentence: a call has one, so very different lines don't share one. */
   t?: number;
-  /** Performed (dialogue, thoughts) rather than narrated: one call reads in one manner. */
-  performed?: boolean;
+  /** Which read of the narrator voice (narrator, performed, a mood): one call reads in one voice. */
+  voice?: string;
 }
 
 /**
@@ -878,7 +943,7 @@ export function planChunks(list: readonly ChunkInput[], maxChars = CHUNK_MAX_CHA
       s.kind !== 'text' ||
       prev.kind !== 'text' ||
       !continues ||
-      !!prev.performed !== !!s.performed ||
+      (prev.voice ?? 'narrator') !== (s.voice ?? 'narrator') ||
       Math.abs((prev.t ?? 0.7) - (s.t ?? 0.7)) > CHUNK_MAX_T_STEP ||
       (chars > 0 && chars + 1 + s.chars > maxChars);
     if (fresh) {

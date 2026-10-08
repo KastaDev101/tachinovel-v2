@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "embeddingDim": 1024,
+  "latentDim": 32,
+  "layout": "float32 LE: projection [embeddingDim, latentDim] row-major, then emb_std [latentDim], then emb_mean [latentDim]",
+  "use": "conditioning[f] = projection x (latent[f] * emb_std + emb_mean)",
+  "bytes": 131328,
+  "sha256": "ab5056a9210d4daf67a421423cb0302e6ae5d5e082bc4aa119a2431b12813e8f",
+  "source": "kyutai/pocket-tts flow_lm.speaker_proj_weight, emb_std, emb_mean (CC-BY-4.0)"
+}

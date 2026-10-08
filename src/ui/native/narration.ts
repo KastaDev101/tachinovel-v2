@@ -216,10 +216,18 @@ export interface DeliveryInfo {
   listenEngine: 'pocket-tts' | 'chatterbox-nano' | null;
   natural: boolean;
   performed: boolean;
+  moods: boolean;
+  /** The on-device AI director reads the scene (iOS 26 with Apple Intelligence); off = keyword rules only. */
+  sceneAI: boolean;
+  sceneAIAvailable?: boolean;
+  /** The Narrator voice's model (Pocket TTS) is downloaded. */
+  pocketInstalled?: boolean;
   breaths: boolean;
   studioSound: boolean;
   systemChime: boolean;
   systemTone: boolean;
+  /** Which Pocket TTS voice reads: the original Narrator, or Nephis (v2: deeper and clearer, one read for everything). */
+  pocketVoice?: 'narrator' | 'nephis';
 }
 
 /** One "Prepare for the drive" request. */
@@ -310,6 +318,8 @@ export interface NarrationPlugin {
    */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
+  /** Voice Lab › Test scene reading: the on-device AI director's moods for these sentences (null when unavailable). */
+  readScene(opts: { sentences: { text: string; kind: 'narration' | 'spoken' | 'system' }[] }): Promise<{ available: boolean; reason?: string; moods: string[] | null; ms: number }>;
   /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
   voiceLab(): Promise<Record<string, unknown>>;
   setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;

@@ -9,6 +9,48 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.6] - 2026-10-08
+
+### Changed
+
+- Nephis reads as one continuous narration: each paragraph continues from what she just said (her voice prompt
+  carries her last seconds), she arrives at a new paragraph from the sentence before it, the pauses fit the text and
+  every join between paragraphs is blended, never cut; her opening "uh" and stray clicks are gone. When there is time
+  she reads a paragraph more than once and keeps the take that reads every word and fits best. Word checks use speech
+  recognition on the iPhone only (it asks once).
+- Nephis's new voice: a blend of two designed voices baked into one, warm and clear, with softer "s" sounds.
+
+## [2.0.0-alpha.5] - 2026-10-07
+
+### Added
+
+- Nephis, a second narrator voice for Pocket TTS next to the original Narrator (Settings › Voices, or the Listen
+  player's Voice panel): deeper and clearer, one voice for every line, no breaths. Her sound filters out the
+  low thump each section used to start with and turns down the short sound before a section's first word without
+  cutting it or touching the word.
+- Mood voices: the Narrator voice also has tense, sad and tender reads, chosen from the scene's mood (dialogue and
+  thoughts line by line, narration only when a mood holds for two sentences or more). Settings › Voices › Narrator
+  voice › Mood voices.
+
+### Changed
+
+- Settings › Voices is built around the Narrator: who reads chapters (Narrator or Kokoro, one tap; a download row
+  until the Narrator voice is installed), Narrator settings, Kokoro's three backup voices (Heart, Bella, Nicole)
+  with every voice and the mixer one tap further, and the experimental models under Advanced › Voice models. The
+  Listen player's Voice panel has the same choice at the top.
+- Web updates from this release on need this IPA (native level 2).
+
+- When the narrator voice runs late or fails a sentence, Kokoro reads it instead of the Apple voice.
+- The director hears dread: a wider set of tense words, and a hesitant line ("What… is… going on?") in a tense
+  stretch or a thought is no longer read as teasing.
+- AI scene reading: Apple's on-device model (iOS 26, Apple Intelligence) reads ahead and picks each sentence's
+  mood in context; the rules cover the rest. Settings › Voices › Narrator voice › AI scene reading. Voice Lab ›
+  Test scene reading scores both on the phone.
+- Scene reading rules: tension carries through fight narration, suspense cues, mocking and taunts performed, orders
+  in a fight urgent; mood reads keep a lower temperature so tense never sounds excited.
+- Faster: the next sentence synthesizes while the last one's audio is finished (off the main thread); Kokoro on its
+  own renders 8 sentences ahead so it doesn't run dry with the screen locked.
+
 ## [2.0.0-alpha.4] - 2026-10-07
 
 ### Added
@@ -326,7 +368,9 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.6...HEAD
+[2.0.0-alpha.6]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...v2.0.0-alpha.6
+[2.0.0-alpha.5]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
 [2.0.0-alpha.4]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...v2.0.0-alpha.4
 [2.0.0-alpha.3]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
 [2.0.0-alpha.2]: https://github.com/KastaDev101/tachinovel-v2/releases/tag/v2.0.0-alpha.2

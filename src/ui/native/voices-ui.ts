@@ -335,32 +335,141 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   listenEngine: 'pocket-tts',
   natural: true,
   performed: true,
+  moods: true,
+  sceneAI: true,
   breaths: true,
   studioSound: true,
   systemChime: true,
   systemTone: true,
 };
 
-const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine'>, string, string][] = [
+const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice'>, string, string][] = [
   ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
   ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
+  ['moods', 'Mood voices', 'Tense, sad and tender reads where the scene calls for them'],
+  ['sceneAI', 'AI scene reading', 'Apple’s on-device model reads each scene (iOS 26, Apple Intelligence)'],
   ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
   ['studioSound', 'Studio sound', 'Clean, warm and even'],
   ['systemChime', 'System message chime', 'A soft chime before [System] lines'],
   ['systemTone', 'System message voice', 'An interface tone for [System] lines'],
 ];
 
+/** The Narrator's switches (natural delivery, acting, mood voices, AI scene reading, breaths, studio sound, …). */
 function deliveryCard(info: VoiceSettingsInfo): string {
   const d = { ...DELIVERY_DEFAULT, ...info.delivery };
-  const opt = (v: string, label: string): string => `<option value="${v}"${(d.listenEngine ?? 'kokoro') === v ? ' selected' : ''}>${label}</option>`;
   const rows = DELIVERY_SWITCHES.map(
     ([k, label, sub]) =>
       `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${k !== 'natural' && !d.natural ? 'disabled' : ''} aria-label="${esc(label)}"></label>`,
   ).join('');
-  return `<div class="card" data-testid="voices-delivery">
-      <label class="row"><div class="main"><b>Reads chapters</b><span class="sub">Pocket keeps reading with the screen locked and in CarPlay</span></div><select data-act="delivery-engine" aria-label="Reads chapters">${opt('pocket-tts', 'Narrator (Pocket TTS)')}${opt('chatterbox-nano', 'Narrator (Chatterbox Nano)')}${opt('kokoro', 'Kokoro')}</select></label>
-      ${d.listenEngine ? rows : ''}
+  return `<div class="card" data-testid="voices-delivery">${rows}</div>`;
+}
+
+/** Kokoro's three backup voices, shown first (the full list and the mixer are one tap further). */
+const BACKUP_VOICES = ['af_heart', 'af_bella', 'af_nicole'];
+
+/** Who reads chapters: the Narrator (Pocket TTS; a download row until it is installed) or Kokoro. One tap each. */
+function engineCard(info: VoiceSettingsInfo): string {
+  const d = { ...DELIVERY_DEFAULT, ...info.delivery };
+  // Pocket TTS reads with one of two shipped voices: each is its own row ("pocket-tts" + the voice).
+  const on = d.listenEngine === 'pocket-tts' ? `pocket-tts:${d.pocketVoice ?? 'narrator'}` : (d.listenEngine ?? 'kokoro');
+  const row = (v: string, title: string, sub: string): string =>
+    `<button type="button" class="row" data-act="engine" data-v="${v}" aria-pressed="${String(on === v)}"><div class="main"><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></div><span class="check" aria-hidden="true">${on === v ? '✓' : ''}</span></button>`;
+  const download =
+    info.delivery?.pocketInstalled === false
+      ? `<button type="button" class="row" data-act="expressive"><div class="main"><b>Download the Narrator voice</b><span class="sub">About 370 MB, on Wi-Fi. Until then Kokoro reads.</span></div><span aria-hidden="true">›</span></button>`
+      : '';
+  return `<div class="card" data-testid="voices-engine">
+      ${row('pocket-tts:narrator', 'Narrator', 'Acts the dialogue, follows the scene, reads with the screen locked')}
+      ${row('pocket-tts:nephis', 'Nephis', 'Deeper and clearer, one calm voice for everything (new)')}${download}
+      ${on === 'chatterbox-nano' ? row('chatterbox-nano', 'Narrator (Chatterbox Nano)', 'The earlier engine; only with the app open') : ''}
+      ${row('kokoro', 'Kokoro', 'Fast and light; also the backup when the Narrator can’t keep up')}
     </div>`;
+}
+
+/** Kokoro's backup voices (and the one in use, when it is another), plus the way to every voice and the mixer. */
+function backupCard(info: VoiceSettingsInfo, selected: string): string {
+  const ids = BACKUP_VOICES.includes(selected) ? BACKUP_VOICES : [...BACKUP_VOICES, selected];
+  const rows = ids.flatMap((id) => {
+    const v = info.voices.find((x) => x.id === id);
+    if (v) return [voiceRow(v, selected)];
+    const mix = info.customVoices?.find((m) => m.id === id);
+    return mix ? [mixRow(info, mix, selected, false)] : [];
+  });
+  return `<div class="card" data-testid="voices-backup">${rows.join('')}
+      <button type="button" class="row" data-act="kokoro-all"><div class="main"><b>All Kokoro voices</b><span class="sub">28 voices and your own mixes</span></div><span aria-hidden="true">›</span></button>
+    </div>`;
+}
+
+const NARRATOR_SETTINGS_ROW = `<div class="card"><button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Narrator settings</b><span class="sub">Acting, mood voices, AI scene reading, breaths, studio sound</span></div><span aria-hidden="true">›</span></button></div>`;
+
+/** Settings › Voices › Narrator settings: natural delivery's switches. */
+function openNarratorSettings(onDone: () => void): void {
+  const p = panel('Narrator settings', 'narrator-settings');
+  let info: VoiceSettingsInfo | null = null;
+  const render = (): void => {
+    p.body.innerHTML = info
+      ? `${deliveryCard(info)}<p class="note">The Narrator is one voice: dialogue and thoughts are acted, narration stays calm, and the mood voices follow the scene.</p>`
+      : '<p class="note">Loading…</p>';
+  };
+  const load = async (): Promise<void> => {
+    info = normalizeVoiceSettings(await Narration.voiceSettings().catch(() => null));
+    render();
+  };
+  p.body.addEventListener('change', (ev) => {
+    const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'delivery' && el.dataset.k) void Narration.setVoiceSettings({ delivery: { [el.dataset.k]: el.checked } }).then(load).then(onDone);
+  });
+  render();
+  void load();
+}
+
+/** Every Kokoro voice (and the mixer and Kokoro's narrator mode, for the default); for a novel, its own choice. */
+function openKokoroVoices(novel: { pluginId: string; novelPath: string } | null, onDone: () => void): void {
+  const p = panel('Kokoro voices', 'kokoro-voices');
+  let info: VoiceSettingsInfo | null = null;
+  const render = (): void => {
+    if (!info) {
+      p.body.innerHTML = '<p class="note">Loading…</p>';
+      return;
+    }
+    const selected = novel ? (info.effectiveVoice ?? info.defaultVoice) : info.defaultVoice;
+    p.body.innerHTML = `${voiceRows(info, selected, !novel)}${novel ? '' : `<div class="sec">Kokoro narrator mode</div>${narratorCard(info)}`}`;
+  };
+  const load = async (): Promise<void> => {
+    info = normalizeVoiceSettings(await Narration.voiceSettings(novel ?? undefined).catch(() => null));
+    render();
+  };
+  const done = (): Promise<void> => load().then(onDone);
+  p.body.addEventListener('click', (ev) => {
+    const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
+    if (!el || !info) return;
+    const act = el.dataset.act;
+    if (act === 'sample') void sample(el as HTMLButtonElement, el.dataset.voice ?? 'af_heart');
+    if (act === 'pick' && el.dataset.voice) {
+      void Narration.setVoiceSettings(novel ? { novel: { ...novel, voice: el.dataset.voice } } : { defaultVoice: el.dataset.voice }).then(done);
+    }
+    if (act === 'mix-new') openMixer(info, null, () => void done());
+    if (act === 'mix-edit') {
+      const mix = info.customVoices?.find((m) => m.id === el.dataset.mix);
+      if (mix) openMixer(info, mix, () => void done());
+    }
+    if (act === 'narrator-ab') void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch(() => undefined);
+  });
+  p.body.addEventListener('change', (ev) => {
+    const el = ev.target as HTMLInputElement;
+    if (el.dataset.act === 'narrator' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.checked } }).then(done);
+    if (el.dataset.act === 'narrator-pacing-style') void Narration.setVoiceSettings({ narrator: { pacingStyle: el.value === 'natural' ? 'natural' : 'relaxed' } }).then(done);
+    if (el.dataset.act === 'narrator-phrases') void Narration.setVoiceSettings({ narrator: { phraseBreaks: el.checked ? 'clauses' : 'off' } }).then(done);
+    if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(done);
+  });
+  render();
+  void load();
+}
+
+/** The engine row tapped: the Narrator or Nephis (Pocket TTS), Nano, or Kokoro (null), as delivery settings. */
+function engineValue(v: string | undefined): Partial<DeliveryInfo> {
+  if (v === 'pocket-tts:narrator' || v === 'pocket-tts:nephis') return { listenEngine: 'pocket-tts', pocketVoice: v === 'pocket-tts:nephis' ? 'nephis' : 'narrator' };
+  return { listenEngine: v === 'pocket-tts' || v === 'chatterbox-nano' ? v : null };
 }
 
 /** A voice's or a mix's name. */
@@ -403,25 +512,17 @@ export function openVoicesScreen(): void {
       ? '<p class="note warn">Kokoro isn’t included in this build: the Apple voice reads everything.</p>'
       : k.crashDisabled
         ? `<p class="note warn">Kokoro was turned off after it crashed twice (a known iOS Core ML issue). <button type="button" data-act="kokoro-on" style="color:#a8b4ff;padding:0">Turn it back on</button></p>`
-        : `<p class="note">Kokoro runs on this iPhone, built into the app${size}. No download, no internet needed.</p>
-           <p class="note">iOS 26.4 and later have a known Core ML crash that can hit Kokoro (FluidAudio #844). This build carries FluidAudio’s fix for it (0.17), not yet proven on an iPhone. If Kokoro still crashes twice in a row, the app switches to the Apple voice by itself and says so here.</p>`;
+        : `<p class="note">Kokoro is built into the app${size}: no download, no internet.</p>`;
     p.body.innerHTML = `
-      <div class="sec">Voice</div>
-      ${voiceRows(info, info.defaultVoice, true)}
+      <div class="sec">Reads chapters</div>
+      ${engineCard(info)}
+      ${NARRATOR_SETTINGS_ROW}
+      <div class="sec">Backup voice (Kokoro)</div>
+      ${backupCard(info, info.defaultVoice)}
       ${status}
-      <div class="sec">Narrator voice</div>
-      ${deliveryCard(info)}
-      <div class="sec">Narrator mode</div>
-      ${narratorCard(info)}
-      <div class="sec">Experimental</div>
-      <div class="card"><button type="button" class="row" data-act="expressive"><div class="main"><b>Expressive voices (experimental)</b><span class="sub">More emotion, much slower. Downloaded in the app on Wi-Fi when you try one; the size is shown first</span></div><span aria-hidden="true">›</span></button></div>
-      <div class="sec">Fallback</div>
-      ${appleCard(info)}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
       <p class="note">A novel’s own list: Listen player › Voice › Pronunciations.</p>
-      <div class="sec">Kokoro</div>
-      <div class="card"><label class="row"><div class="main"><b>Kokoro on device</b><span class="sub">Off: always use the Apple voice</span></div><input type="checkbox" class="sw" data-act="kokoro" ${info.kokoroEnabled ? 'checked' : ''} aria-label="Kokoro on device"></label></div>
       <div class="sec">In the car</div>
       <div class="card" data-testid="voices-car">
         <div class="row"><div class="main"><b>Car buttons</b><span class="sub">The two side buttons in CarPlay, on the lock screen, headphones and the steering wheel</span></div></div>
@@ -430,6 +531,9 @@ export function openVoicesScreen(): void {
       </div>
       <p class="note">CarPlay shows TachiNovel in its Now Playing screen (Siri: “pause”, “resume”, “next”). To listen without waiting on the voice or the internet, open a novel and tap Prepare for the drive.</p>
       <div class="sec">Advanced</div>
+      <div class="card"><button type="button" class="row" data-act="expressive"><div class="main"><b>Voice models</b><span class="sub">Download or remove the Narrator voice; experimental engines</span></div><span aria-hidden="true">›</span></button>
+      <label class="row"><div class="main"><b>Kokoro on device</b><span class="sub">Off: the Apple voice is the backup</span></div><input type="checkbox" class="sw" data-act="kokoro" ${info.kokoroEnabled ? 'checked' : ''} aria-label="Kokoro on device"></label></div>
+      ${appleCard(info)}
       <div class="card"><label class="row"><div class="main"><b>Use PC audio when available</b><span class="sub">Chapters narrated on the PC (“TachiNovel Audio” folder) play instead of Kokoro</span></div><input type="checkbox" class="sw" data-act="pcaudio" ${info.usePCAudio ? 'checked' : ''} aria-label="Use PC audio when available"></label>
       ${info.usePCAudio ? '<button type="button" class="row" data-act="folder"><div class="main"><b>Audio folder</b><span class="sub" data-folder>…</span></div><span aria-hidden="true">›</span></button>' : ''}</div>`;
     void Narration.driveStatus()
@@ -473,6 +577,15 @@ export function openVoicesScreen(): void {
         return;
       case 'expressive':
         openExpressiveLab();
+        return;
+      case 'engine':
+        void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load);
+        return;
+      case 'narrator-settings':
+        openNarratorSettings(() => undefined);
+        return;
+      case 'kokoro-all':
+        openKokoroVoices(null, () => void load());
         return;
       case 'narrator-ab':
         void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch((err: unknown) => toast(`Couldn't play: ${err instanceof Error ? err.message : String(err)}`));
@@ -655,15 +768,16 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     }
     const own = info.novelVoice ?? null;
     p.body.innerHTML = `
-      <div class="sec">Voice for this novel</div>
-      ${voiceRows(info, info.effectiveVoice ?? info.defaultVoice)}
-      <p class="note">${own ? 'This novel has its own voice.' : `Using the default voice (${esc(choiceName(info, info.defaultVoice))}).`}</p>
+      <div class="sec">Reads chapters</div>
+      ${engineCard(info)}
+      ${NARRATOR_SETTINGS_ROW}
+      <div class="sec">Kokoro voice for this novel</div>
+      ${backupCard(info, info.effectiveVoice ?? info.defaultVoice)}
+      <p class="note">${own ? 'This novel has its own Kokoro voice.' : `Using the default (${esc(choiceName(info, info.defaultVoice))}).`}</p>
       ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
       <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>
       <div class="sec">Pronunciations</div>
-      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>
-      <div class="sec">Fallback</div>
-      ${appleCard(info)}`;
+      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
   };
   const load = async (): Promise<void> => {
     info = normalizeVoiceSettings(await Narration.voiceSettings({ pluginId: novel.pluginId, novelPath: novel.novelPath }).catch(() => null));
@@ -687,6 +801,10 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
         .then(onChange);
     }
     if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This novel');
+    if (act === 'engine') void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load).then(onChange);
+    if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
+    if (act === 'kokoro-all') openKokoroVoices({ pluginId: novel.pluginId, novelPath: novel.novelPath }, () => void load().then(onChange));
+    if (act === 'expressive') openExpressiveLab();
   });
   render();
   void load();

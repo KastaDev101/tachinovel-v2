@@ -69,6 +69,8 @@ final class ExpressiveService {
 
     private(set) var loadedID: ExpressiveEngineID?
     private var synth: (any ExpressiveSynthesizer)?
+    /// The loaded engine is Nephis's flow engine: calls must come in reading order (HybridSpeechEngine).
+    private(set) var usesFlow = false
     private(set) var loadStates: [ExpressiveEngineID: LoadState] = [:]
     private(set) var lastLoad: [ExpressiveEngineID: (ms: Double, cold: Bool)] = [:]
     private var loadedThisLaunch: Set<ExpressiveEngineID> = []
@@ -84,19 +86,42 @@ final class ExpressiveService {
     /// Voices that ship in the app (BuiltInVoices/), checked on first use; one of them can be the default.
     let bundled = BundledVoices(directory: Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil))
     /// The Narrator voice for Pocket TTS (BuiltInVoices/pocket/), checked once (size, shape, sha256).
+    /// Nephis's flow engine assets: her clip, her tense clip, Pocket TTS's speaker projection. nil = not shipped or
+    /// not valid (she then reads with the plain Pocket engine).
+    lazy var nephisFlowAssets: NephisFlowSynth.Assets? = {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil),
+              let calm = try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisName),
+              let data = try? Data(contentsOf: dir.appendingPathComponent("\(PocketVoice.folder)/speaker-projection.bin")),
+              let projection = NephisFlow.Projection(data: data) else {
+            self.log.error("expressive: Nephis flow assets missing or invalid; plain Pocket engine")
+            return nil
+        }
+        return NephisFlowSynth.Assets(calm: calm, tense: try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisTenseName), projection: projection)
+    }()
+    /// Nephis (v2): her own file, one read for every line.
+    lazy var pocketNephis: Result<PocketVoice, Error> = Result {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
+            throw PocketVoice.Problem.missing("BuiltInVoices")
+        }
+        return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisName)
+    }
     lazy var pocketNarrator: Result<PocketVoice, Error> = Result {
         guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
             throw PocketVoice.Problem.missing("BuiltInVoices")
         }
         return try PocketVoice.narrator(builtInVoices: dir)
     }
-    /// The performed voice (dialogue, thoughts); a missing or invalid file only means narration reads those too.
-    lazy var pocketPerformed: PocketVoice? = {
-        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return nil }
-        do { return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.characterName) } catch {
-            self.log.error("expressive: pocket performed voice: \(error.localizedDescription, privacy: .public)")
-            return nil
+    /// The Narrator's other reads by role: performed (dialogue, thoughts) and the moods. A missing or invalid file
+    /// only means that read falls back (performed, then the Narrator).
+    lazy var pocketReads: [String: PocketVoice] = {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else { return [:] }
+        var out: [String: PocketVoice] = [:]
+        for (role, file) in PocketVoice.reads {
+            do { out[role] = try PocketVoice.load(builtInVoices: dir, name: file) } catch {
+                self.log.error("expressive: pocket \(role, privacy: .public) voice: \(error.localizedDescription, privacy: .public)")
+            }
         }
+        return out
     }()
     let chatterboxSlot: ChatterboxVoiceSlot?
     /// The chosen narrator voice for Chatterbox Nano: an imported ("v…") or shipped ("b…") voice's id, or
@@ -234,6 +259,8 @@ final class ExpressiveService {
 
     /// The voice Chatterbox Nano should load now ("builtin" or an imported voice's id); nil for other engines.
     private func voiceRequest(for id: ExpressiveEngineID) -> String? {
+        // Pocket TTS: the chosen shipped voice (Narrator or Nephis); a change reloads the engine with it.
+        if id == .pocketTts { return VoiceSettings.shared.prefs.delivery.pocketVoice }
         guard id == .chatterboxNano else { return nil }
         return sampleVoice ?? selectedVoice ?? defaultVoice
     }
@@ -269,15 +296,26 @@ final class ExpressiveService {
         guard isInstalled(id) else { return completion(.failure(ExpressiveEngineError.modelNotInstalled(id.title))) }
         // Pocket TTS reads with the Narrator voice; a voice file that fails its check is never used (Listen falls back).
         var pocketVoice: PocketVoice?
+        let nephis = id == .pocketTts && VoiceSettings.shared.prefs.delivery.isNephis
         if id == .pocketTts {
-            switch pocketNarrator {
+            switch nephis ? pocketNephis : pocketNarrator {
             case .success(let v): pocketVoice = v
             case .failure(let error):
                 log.error("expressive: pocket voice: \(error.localizedDescription, privacy: .public)")
                 return completion(.failure(error))
             }
         }
-        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketPerformed: id == .pocketTts ? pocketPerformed : nil) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        // Nephis reads as one continuous flow (NephisFlowSynth): carry-over, lead-ins, blended joins, best takes.
+        let flow: (any ExpressiveSynthesizer)? = nephis ? nephisFlowAssets.map { NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber()) } : nil
+        guard let engine = flow ?? ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketReads: id == .pocketTts && !nephis ? pocketReads : [:]) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        usesFlow = flow != nil
+        if let flowSynth = flow as? NephisFlowSynth {
+            // Word timings need speech recognition: ask once (the system prompt), then give it to the engine.
+            NephisSpeech.requestAccess { ok in
+                guard ok, let t = NephisSpeech.transcriber() else { return }
+                Task { await flowSynth.setTranscriber(t) }
+            }
+        }
         if loadedID != nil { unload(reason: "switching engine") }
         loadedID = id
         synth = engine
@@ -526,6 +564,7 @@ final class ExpressiveService {
         log.info("expressive: unloading \(id.rawValue, privacy: .public) (\(reason, privacy: .public))")
         let engine = synth
         synth = nil
+        usesFlow = false
         loadedID = nil
         loadStates[id] = .unloaded
         loadingVoiceRequest = nil

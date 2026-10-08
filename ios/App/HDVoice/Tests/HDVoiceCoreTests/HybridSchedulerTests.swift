@@ -84,6 +84,18 @@ final class HybridSchedulerTests: XCTestCase {
         XCTAssertFalse(s.isReady(0))
     }
 
+    func testTheNextRenderStartsWhileAudioIsBeingFinished() {
+        var s = HybridScheduler(count: 4, kokoro: .ready, config: .init(ahead: 3))
+        XCTAssertEqual(s.nextRender(), 0)
+        XCTAssertNil(s.nextRender(), "one synthesis at a time")
+        s.releaseSynth(0)
+        XCTAssertEqual(s.nextRender(), 1, "0's audio is still being finished: 1 may render")
+        XCTAssertFalse(s.isReady(0))
+        XCTAssertEqual(s.decide(now: 0), .wait(2.5), "nothing ready yet: the start grace")
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.decide(now: 0.1), .kokoro(0))
+    }
+
     func testWaitsLongerAtAParagraphStartBeforeTheAppleVoice() {
         var s = HybridScheduler(count: 4, kokoro: .ready, config: .init(ahead: 3, dryGrace: 0.25, paragraphGrace: 2))
         s.paragraphStarts = [2]

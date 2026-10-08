@@ -824,7 +824,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
 
     private func voiceKey() -> String {
         let p = VoiceSettings.shared.prefs
-        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")|\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)"
+        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")|\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)|\(p.delivery.pocketVoice)"
     }
 
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.

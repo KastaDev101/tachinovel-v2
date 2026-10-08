@@ -195,6 +195,12 @@ public struct HybridScheduler: Sendable {
     }
 
     /// A render finished. A segment Apple took in the meantime stays taken (the audio is discarded).
+    /// The synthesis of i is done but its audio is still being finished (the clean chain runs off the main thread):
+    /// the next render may start; i becomes ready with `renderDone` once its buffer exists.
+    public mutating func releaseSynth(_ i: Int) {
+        if rendering == i { rendering = nil }
+    }
+
     public mutating func renderDone(_ i: Int, ok: Bool) {
         if rendering == i { rendering = nil }
         guard slots.indices.contains(i) else { return }

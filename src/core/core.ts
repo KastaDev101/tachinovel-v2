@@ -67,6 +67,8 @@ export interface V2Methods {
   'ota.status': { args: void; result: ReturnType<Ota['status']> | null };
   /** Check now (force skips the 6-hour pacing); stages a newer signed bundle for the next launch. */
   'ota.check': { args: { force?: boolean } | undefined; result: CheckResult };
+  /** Restart Now: the app closes itself (the next launch opens the staged update); false when native can't. */
+  'ota.restart': { args: void; result: { quitting: boolean } };
 }
 
 /** iCloud (entitled builds), the app's Documents folder (free sideload, shown in Files), or device-only. */
@@ -277,6 +279,11 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       ota
         ? ota.check({ force: args?.force === true, now: Date.now() })
         : Promise.resolve({ status: 'not-configured' as const, message: 'Web updates are not part of this build.' }),
+    'ota.restart': () => {
+      if (typeof host.ui.quitApp !== 'function') return Promise.resolve({ quitting: false });
+      host.ui.quitApp();
+      return Promise.resolve({ quitting: true });
+    },
   };
   const table: Record<string, AnyHandler | undefined> = { ...v1, ...(v2 as unknown as Record<string, AnyHandler>) };
 

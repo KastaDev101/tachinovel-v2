@@ -49,10 +49,11 @@ describe('pinned expressive models', () => {
     }
   });
 
-  it('pins FluidAudio to the same exact version as HDVoice (one copy in the app)', () => {
-    const pin = (rel: string): string | undefined => /FluidAudio\.git", exact: "([^"]+)"/.exec(read(rel))?.[1];
-    expect(pin('ios/App/ExpressiveVoice/Package.swift')).toBe(FLUIDAUDIO_VERSION);
-    expect(pin('ios/App/HDVoice/Package.swift')).toBe(FLUIDAUDIO_VERSION);
+  it('uses the same vendored FluidAudio as HDVoice (one copy in the app), at the version the model sets match', () => {
+    const dep = (rel: string): string | undefined => /\.package\(path: "([^"]+\/FluidAudio)"\)/.exec(read(rel))?.[1];
+    expect(dep('ios/App/ExpressiveVoice/Package.swift')).toBe('../Vendor/FluidAudio');
+    expect(dep('ios/App/HDVoice/Package.swift')).toBe('../Vendor/FluidAudio');
+    expect(read('ios/App/Vendor/FluidAudio/Package.swift')).toContain(`FluidAudio ${FLUIDAUDIO_VERSION} (Apache-2.0`);
   });
 
   it('agrees with the Swift engine catalog', () => {
@@ -204,7 +205,7 @@ describe('wiring', () => {
     expect(lab).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
-    expect(voices).toContain('Expressive voices (experimental)');
+    expect(voices).toContain('Voice models'); // Settings › Voices › Advanced (the narrator-first cleanup)
     for (const f of ['src/ui/native/v1-hooks.ts', 'src/ui/native/narration-overlay.ts']) {
       expect(read(f), f).not.toContain('expressive-lab');
     }

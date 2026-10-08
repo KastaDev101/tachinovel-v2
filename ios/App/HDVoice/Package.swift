@@ -11,7 +11,7 @@
 //                  synthesizes a fixed sentence set with every offered voice and checks the audio.
 //
 // The app target links HDVoiceCore + HDVoiceKokoro as a local package (registered by tools/ios-project.ts).
-// FluidAudio is pinned to an exact version (Apache-2.0, https://github.com/FluidInference/FluidAudio).
+// FluidAudio 0.17.5 (Apache-2.0, https://github.com/FluidInference/FluidAudio), vendored in ios/App/Vendor/FluidAudio.
 import PackageDescription
 
 let package = Package(
@@ -23,7 +23,8 @@ let package = Package(
         .executable(name: "kokoro-check", targets: ["KokoroCheck"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5"),
+        // FluidAudio 0.17.5, vendored with TachiNovel's Pocket TTS changes (ios/App/Vendor/FluidAudio/README.md).
+        .package(path: "../Vendor/FluidAudio"),
     ],
     targets: [
         .target(name: "HDVoiceCore"),

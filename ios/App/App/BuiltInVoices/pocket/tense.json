@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Narrator (tense)",
+  "frames": 105,
+  "embeddingDim": 1024,
+  "bytes": 430080,
+  "sha256": "41f30c40315ef277c80f939362287313447c739353838ad8a4cc6bfa6e57f694",
+  "source": "take-tense-ex0.7-cfg0.4-s52.wav, first 8.32 s"
+}

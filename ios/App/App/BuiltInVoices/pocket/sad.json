@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Narrator (sad)",
+  "frames": 92,
+  "embeddingDim": 1024,
+  "bytes": 376832,
+  "sha256": "da0c2495d6c43f5d8637840c8616af53b41c0efb180a15237286502b1363b9eb",
+  "source": "take-sad-ex0.5-cfg0.5-s62.wav, first 7.33 s"
+}

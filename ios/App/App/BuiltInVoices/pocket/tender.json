@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Narrator (tender)",
+  "frames": 104,
+  "embeddingDim": 1024,
+  "bytes": 425984,
+  "sha256": "fcb4c6609c38c8cfadd7d0c4119d9d700d80b8504a71e38ff2ff0433cd6c051c",
+  "source": "take-tender-ex0.45-cfg0.5-s72.wav, first 8.29 s"
+}

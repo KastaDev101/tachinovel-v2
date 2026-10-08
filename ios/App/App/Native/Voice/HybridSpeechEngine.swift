@@ -50,14 +50,29 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
+    /// The AI director (SceneReader): moods the on-device model gave for sentences ahead, the next sentence to send,
+    /// and whether a window is being read.
+    private var sceneMoods: [Int: String] = [:]
+    private var sceneNext = 0
+    private var sceneBusy = false
+    static let sceneWindow = 10
+    static let sceneContext = 3
+
     /// The render-ahead window once the narrator voice is ready (smaller while it loads).
     private var fullAhead = 3
     /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
     private var completeness = CompletenessGuard()
     private(set) var retakes = 0
+    /// The sentence Kokoro is rendering in place of a late narrator-voice render, and how often that happened.
+    private var standIn: Int?
+    /// Nephis's flow engine: one render at a time, in reading order; `flowNext` is the sentence the next call must
+    /// start at to continue the read (anything else starts the flow afresh: a seek, a failure).
+    private var flowBusy = false
+    private var flowNext = -1
+    private(set) var standIns = 0
     /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
     /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
-    private var natural: NaturalFinish?
+    private var natural: NaturalFinisher?
 
     private(set) var currentSource: VoiceSource?
     private(set) var lastFallback: FallbackReason?
@@ -139,15 +154,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             var audio = DeliveryAudio()
             // The recorded inhales are unit-RMS snippets; −30 dB under the speech was the approved level (round 8).
             if !pack.isEmpty { audio.breathDB = -30 }
-            let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
-            natural = NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
-                                    tilt: listenEngine == .pocketTts ? .pocketTts : nil)
+            // Nephis: no breaths ("no breaths please", Kasta), her own sound, the start-up sound turned down.
+            let nephis = listenEngine == .pocketTts && d.isNephis
+            let source: (any BreathSource)? = d.breaths && !nephis ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
+            natural = NaturalFinisher(NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
+                                                    tilt: listenEngine == .pocketTts ? (nephis ? .nephis : .pocketTts) : nil, plain: nephis))
         } else {
             natural = nil
         }
         // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
         // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
-        let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : prefs.clampedAhead
+        // Kokoro alone renders 8 ahead (about 40 s): 2–3 ran dry with the screen locked on a drive (Kasta, 2026-10-07).
+        let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : max(prefs.clampedAhead, 8)
         fullAhead = ahead
         // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
@@ -167,6 +185,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     func stop() {
         gen += 1
+        standIn = nil
+        flowBusy = false
+        flowNext = -1
+        sceneMoods = [:]
+        sceneNext = 0
+        sceneBusy = false
         cancelWait()
         waiting = false
         if let s = scheduler { lastScheduler = s }
@@ -232,7 +256,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// Nothing is audible: pick the voice for the next sentence.
     private func advance() {
-        guard scheduler != nil, !paused, queued.isEmpty, appleSegment == nil else { return }
+        guard scheduler != nil, !paused, queued.isEmpty, appleSegment == nil, standIn == nil else { return }
         cancelWait()
         guard let d = scheduler?.decide(now: Date().timeIntervalSince1970) else { return }
         switch d {
@@ -241,6 +265,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             playKokoro(i)
         case .apple(let i, let reason):
             waiting = false
+            if kokoroCanStandIn(reason) { return standInWithKokoro(i, reason: reason) }
             speakApple(i, reason: reason, restart: false)
         case .wait(let t):
             waiting = true
@@ -262,28 +287,44 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     private func pumpRender() {
         guard !paused else { return }
+        pumpScene()
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
+            let flow = id == .pocketTts && ExpressiveService.shared.usesFlow
+            if flow, flowBusy { return }
             // The sentences of one breath-group chunk (a paragraph, or a same-speaker run of quote paragraphs; the
             // script plans them) go to the model together, up to its per-call limit (Pocket TTS 400 characters, a
             // whole paragraph; Nano 120). One call paces them as one thought: no "Relax, little one." [stop]
             // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
-            let group = chunkGroup(from: i, limit: id.maxCharactersPerCall)
+            let group = flow ? flowGroup(from: i, limit: id.maxCharactersPerCall) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
-            // Dialogue and thoughts in the performed read of the same voice (one call is all one or the other).
-            let performed = segments[i].natural?.performed == true && VoiceSettings.shared.prefs.delivery.performed
-            var line = ExpressiveLine(text: text, role: performed ? ExpressiveLine.performedRole : "narrator")
+            // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
+            // (tense, sad, tender); the script never puts two reads in one call.
+            var line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
             // One temperature per call: the letter-weighted mean of the director's (the script keeps calls similar).
             let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
             let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
             line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
             let syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
-            synthesizeExpressive(line, id: id, syllables: syllables, retry: true) { [weak self] result in
+            if flow {
+                line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
+                line.flowReset = i != flowNext
+                line.flowLast = members.last == segments.count - 1
+                line.takes = flowTakes(at: i)
+                flowBusy = true
+                flowNext = (members.last ?? i) + 1
+            }
+            // A retake would replay the flow's state twice: the flow engine checks its own takes instead.
+            synthesizeExpressive(line, id: id, syllables: syllables, retry: !flow) { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
+                    if flow {
+                        self.flowBusy = false
+                        if case .failure = result { self.flowNext = -1 }
+                    }
                     switch result {
                     case .success(let a) where a.sampleRate == 24_000 && !a.samples.isEmpty:
                         let audio = KokoroAudio(samples: a.samples, sampleRate: a.sampleRate, synthMs: a.synthMs)
@@ -328,6 +369,48 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
     }
 
+    /// The read of the narrator voice for sentence i (nil = the calm Narrator): the AI director's when it has read
+    /// the sentence, else the script's; then the settings (Act out dialogue, Mood voices).
+    private func read(for i: Int) -> String? {
+        guard segments.indices.contains(i) else { return nil }
+        let d = VoiceSettings.shared.prefs.delivery
+        let n = segments[i].natural
+        var voice = n?.voice
+        if d.usesAI {
+            let speaks = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.speaks == true }
+            let system = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.system == true }
+            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system) { voice = r }
+        }
+        return d.read(voice, speaks: n?.speaks ?? false)
+    }
+
+    /// Ask the on-device model to read the next window of sentences, up to about two windows ahead of the one playing
+    /// (renders happen there). Never waits: a sentence rendered before its answer keeps the script's read.
+    private func pumpScene() {
+        guard listenEngine != nil, natural != nil, VoiceSettings.shared.prefs.delivery.usesAI, !sceneBusy,
+              sceneNext < segments.count, SceneReader.shared.available else { return }
+        let playing = scheduler?.playing ?? 0
+        guard sceneNext <= playing + 2 * Self.sceneWindow + 12 else { return }
+        let start = sceneNext
+        let end = min(segments.count, start + Self.sceneWindow)
+        let context = segments[max(0, start - Self.sceneContext)..<start].map(sceneSentence)
+        let window = segments[start..<end].map(sceneSentence)
+        sceneBusy = true
+        let g = gen
+        SceneReader.shared.read(context: context, window: window) { [weak self] moods in
+            guard let self, g == self.gen else { return }
+            self.sceneBusy = false
+            if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }
+            self.sceneNext = end
+            self.pumpScene()
+        }
+    }
+
+    private func sceneSentence(_ s: SpeechSegment) -> SceneReader.Sentence {
+        let kind: SceneReader.Sentence.Kind = s.natural?.system == true ? .system : s.natural?.speaks == true ? .spoken : .narration
+        return SceneReader.Sentence(text: s.kokoroText, kind: kind)
+    }
+
     /// The text a voice reads: the director's shaped text for the expressive voice, the sentence for Kokoro.
     private static func readText(_ seg: SpeechSegment, expressive: Bool) -> String {
         expressive ? (seg.natural?.params.say ?? seg.kokoroText) : seg.kokoroText
@@ -341,7 +424,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         var out = [i]
         var length = Self.readText(segments[i], expressive: true).count
         var j = i
-        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]) {
+        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]), read(for: j) == read(for: j + 1) {
             let next = Self.readText(segments[j + 1], expressive: true).count
             guard length + 1 + next <= limit else { break }
             length += 1 + next
@@ -351,11 +434,46 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return out
     }
 
+    /// Nephis's flow: sentence i and the ones after it in the same paragraph (never across a paragraph break, so the
+    /// model never reads one as a comma), same read, up to `limit` characters.
+    private func flowGroup(from i: Int, limit: Int) -> [Int] {
+        var out = [i]
+        var length = Self.readText(segments[i], expressive: true).count
+        var j = i
+        while j + 1 < segments.count, (segments[j].naturalPause ?? segments[j].pauseAfter) < Self.paragraphPause, read(for: j) == read(for: j + 1) {
+            let next = Self.readText(segments[j + 1], expressive: true).count
+            guard length + 1 + next <= limit else { break }
+            length += 1 + next
+            j += 1
+            out.append(j)
+        }
+        return out
+    }
+
+    /// A pause this long or longer ends a paragraph (the script's paragraph and scene pauses).
+    static let paragraphPause = 0.7
+
+    /// The pause before a flow call: the script's natural pause after the sentence before it, kept in a narrator's
+    /// range (a beat between sentences, a breath between paragraphs, a held moment after "…").
+    static func flowPause(_ before: SpeechSegment) -> Double {
+        min(1.4, max(0.35, before.naturalPause ?? before.pauseAfter))
+    }
+
+    /// Takes to try for a flow call: more when playback is far ahead (best of 2–3 smooths the tone), one when it
+    /// isn't (never risk falling behind); one more at a change of read (a mood switch is where jumps happen).
+    private func flowTakes(at i: Int) -> Int {
+        let playing = scheduler?.playing ?? 0
+        let ahead = buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
+        let base = ahead > 45 ? 3 : ahead > 20 ? 2 : 1
+        let change = i > 0 && read(for: i) != read(for: i - 1)
+        return min(4, base + (change && ahead > 20 ? 1 : 0))
+    }
+
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
     /// planChunks), or for an older web bundle without them, no paragraph-length pause between them.
     private static func sameChunk(_ a: SpeechSegment, _ b: SpeechSegment) -> Bool {
         if let x = a.natural?.chunk, let y = b.natural?.chunk { return x == y }
-        return (a.naturalPause ?? a.pauseAfter) < 0.6 && a.natural?.performed == b.natural?.performed
+        return (a.naturalPause ?? a.pauseAfter) < 0.6 && a.natural?.voice == b.natural?.voice
     }
 
     /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.
@@ -368,7 +486,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// per sentence (the director's per-line controls apply when the cuts are confident).
     private func renderedGroup(_ members: [Int], gen g: Int, voice: String, audio: KokoroAudio) {
         guard g == gen, scheduler != nil else { return }
-        guard var nf = natural, audio.sampleRate == nf.sampleRate else {
+        guard let nf = natural, audio.sampleRate == nf.sampleRate else {
             // Natural delivery went away mid-call (a settings change restarts the session anyway).
             for j in members.dropFirst() { scheduler?.releaseRender(j) }
             return rendered(members[0], gen: g, voice: voice, result: .success(audio))
@@ -376,15 +494,21 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let chars = members.reduce(0) { $0 + segments[$1].kokoroText.count }
         KokoroService.shared.stats.record(SentenceStat(index: members[0], characters: chars, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
         let lines = members.map { naturalLine($0, expressive: true) }
-        let pieces = nf.render(NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true))
-        natural = nf
-        for (k, j) in members.enumerated() {
-            let buf = k < pieces.count ? makeBuffer(pieces[k].frames) : nil
-            scheduler?.renderDone(j, ok: buf != nil)
-            if let buf, scheduler?.isReady(j) == true { buffers[j] = buf }
-        }
+        // The next call starts now; this one's chain runs meanwhile, off the main thread.
+        scheduler?.releaseSynth(members[0])
         pumpRender()
-        if waiting { advance() } else { prefetch() }
+        var unit = NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)
+        unit.flow = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+        nf.render(unit) { [weak self] pieces in
+            guard let self, g == self.gen, self.scheduler != nil else { return }
+            for (k, j) in members.enumerated() {
+                let buf = k < pieces.count ? self.makeBuffer(pieces[k].frames) : nil
+                self.scheduler?.renderDone(j, ok: buf != nil)
+                if let buf, self.scheduler?.isReady(j) == true { self.buffers[j] = buf }
+            }
+            self.pumpRender()
+            if self.waiting { self.advance() } else { self.prefetch() }
+        }
     }
 
     /// Natural delivery's description of sentence i: the director's per-line controls only for the expressive voice;
@@ -429,19 +553,32 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         switch result {
         case .success(let audio):
             KokoroService.shared.stats.record(SentenceStat(index: i, characters: segments[i].kokoroText.count, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
+            if let nf = natural, audio.sampleRate == nf.sampleRate {
+                // Natural delivery: the clean-warm chain, rate leveling and the listener's speed (the expressive
+                // engine has no speed of its own), the pause after and a breath inside it when the lung budget says
+                // so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump. It runs off the
+                // main thread while the next sentence synthesizes.
+                let expressive = voice == listenEngine?.rawValue
+                var unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
+                                              speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
+                unit.flow = expressive && ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+                scheduler?.releaseSynth(i)
+                pumpRender()
+                nf.render(unit) { [weak self] pieces in
+                    guard let self, g == self.gen, self.scheduler != nil else { return }
+                    self.scheduler?.renderDone(i, ok: true)
+                    if self.scheduler?.isReady(i) == true {
+                        if let buf = self.makeBuffer(pieces.flatMap(\.frames)) { self.buffers[i] = buf } else { self.scheduler?.renderDone(i, ok: false) }
+                    }
+                    self.pumpRender()
+                    if self.waiting { self.advance() } else { self.prefetch() }
+                }
+                return
+            }
             scheduler?.renderDone(i, ok: true)
             if scheduler?.isReady(i) == true {
                 let frames: [Float]
-                if var nf = natural, audio.sampleRate == nf.sampleRate {
-                    // Natural delivery: the clean-warm chain, rate leveling and the listener's speed (the expressive
-                    // engine has no speed of its own), the pause after and a breath inside it when the lung budget
-                    // says so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump.
-                    let expressive = voice == listenEngine?.rawValue
-                    let unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
-                                                  speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
-                    frames = nf.render(unit).flatMap(\.frames)
-                    natural = nf
-                } else if var p = polish, audio.sampleRate == p.sampleRate {
+                if var p = polish, audio.sampleRate == p.sampleRate {
                     frames = p.prepareSentence(audio.samples, pause: segments[i].pauseAfter)
                     polish = p
                 } else {
@@ -513,6 +650,57 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             advance()
         }
         pumpRender()
+    }
+
+    // MARK: - Kokoro standing in for the narrator voice
+
+    /// The narrator voice (Pocket TTS) is late or failed a sentence: Kokoro reads it instead of the Apple voice,
+    /// which sounds far closer (Kasta's drive: the Apple voice was the abrupt part). Not when Kokoro itself is
+    /// what's missing, and not under thermal pressure (Kokoro would only add heat).
+    private func kokoroCanStandIn(_ reason: FallbackReason) -> Bool {
+        // Only while the narrator voice is the one rendering: when Kokoro itself renders (the narrator voice isn't
+        // installed or is still loading), a late sentence is Kokoro's own, and asking Kokoro again only waits longer.
+        guard expressiveUsable(), reason == .queueDry || reason == .segmentFailed else { return false }
+        let k = KokoroService.shared
+        return k.usable && k.status == .ready && !k.crashDisabled
+    }
+
+    /// One sentence by Kokoro, rendered now, through the same chain and pause as the narrator voice; the scheduler
+    /// still counts it as a fallback, so the narrator voice returns once it is a couple of sentences ahead again.
+    private func standInWithKokoro(_ i: Int, reason: FallbackReason) {
+        let g = gen
+        let seg = segments[i]
+        standIn = i
+        lastFallback = reason
+        standIns += 1
+        KokoroService.shared.synthesize(text: seg.kokoroText, runs: seg.runs, voice: kokoroVoice, speed: seg.rate) { [weak self] result in
+            self?.onMain {
+                guard let self, g == self.gen, self.standIn == i, self.scheduler != nil else { return }
+                guard case .success(let audio) = result else {
+                    self.standIn = nil
+                    return self.speakApple(i, reason: reason, restart: false)
+                }
+                guard let nf = self.natural, audio.sampleRate == nf.sampleRate else {
+                    let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: seg.pauseAfter, loudness: &self.loudness)
+                    return self.playStandIn(i, frames: frames, reason: reason)
+                }
+                let unit = NaturalFinish.Unit(samples: audio.samples, lines: [self.naturalLine(i, expressive: false)], speed: 1, expressive: false)
+                nf.render(unit) { [weak self] pieces in
+                    guard let self, g == self.gen, self.standIn == i, self.scheduler != nil else { return }
+                    self.playStandIn(i, frames: pieces.flatMap(\.frames), reason: reason)
+                }
+            }
+        }
+    }
+
+    private func playStandIn(_ i: Int, frames: [Float], reason: FallbackReason) {
+        standIn = nil
+        guard let buf = makeBuffer(frames), startOutput() else { return speakApple(i, reason: reason, restart: false) }
+        buffers[i] = buf
+        schedule(i)
+        // Paused meanwhile: it waits in the player, and resume() starts it.
+        if !paused, !player.isPlaying { player.play() }
+        began(i, .kokoro)
     }
 
     // MARK: - Apple voice
@@ -951,4 +1139,25 @@ private final class AppleRender: @unchecked Sendable {
 private final class RenderedDuration: @unchecked Sendable {
     var seconds: Double = 0
     var done = false
+}
+
+/// Natural delivery's audio finishing (NaturalFinish: the clean chain, leveling, breaths) off the main thread and in
+/// the order asked, so the next synthesis starts while this one is finished. Its state is only touched on `queue`.
+final class NaturalFinisher: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "app.tachinovel.natural-finish", qos: .userInitiated)
+    private var finish: NaturalFinish
+    let sampleRate: Int
+
+    init(_ finish: NaturalFinish) {
+        self.finish = finish
+        sampleRate = finish.sampleRate
+    }
+
+    /// One unit's buffers, delivered on the main queue.
+    func render(_ unit: NaturalFinish.Unit, completion: @escaping ([NaturalFinish.Piece]) -> Void) {
+        Self.queue.async {
+            let pieces = self.finish.render(unit)
+            DispatchQueue.main.async { completion(pieces) }
+        }
+    }
 }

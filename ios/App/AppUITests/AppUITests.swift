@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 //
 //  AppUITests.swift — end-to-end UI test on the iOS Simulator (run by ci/ios-ui-tests.sh, job
 //  "ios-ui-tests"): first launch → onboarding → restore the synthetic sample backup from Settings ›
@@ -66,8 +67,18 @@ final class AppUITests: XCTestCase {
             try tapTab("More", until: element(label: "Backup & Restore"))
             checkControlsLabeled("More")
             try tap(element(label: "Backup & Restore"), "\"Backup & Restore\"", until: backupRow)
-            try tap(backupRow, "the sample backup", timeout: 30, until: app.buttons["Restore…"])
-            try tapNative("Restore…", until: element(label: "Merge"))
+            // A tap that lands while the action sheet is still animating can close it without choosing Restore…
+            // (CI, 2026-10-07): reopen it from the backup row rather than waiting for a sheet that's gone.
+            var merged = false
+            for attempt in 1...3 where !merged {
+                try tap(backupRow, "the sample backup", timeout: 30, until: app.buttons["Restore…"])
+                if try waitForNative("Restore…", timeout: 20) {
+                    try tapOnce(nativeButton("Restore…"), "native button \"Restore…\"", timeout: 5)
+                    merged = try appears(element(label: "Merge"), timeout: 15)
+                }
+                if !merged { print("UITEST-RETRY restore sheet: attempt \(attempt) didn't reach Merge") }
+            }
+            if !merged { try tapNative("Restore…", until: element(label: "Merge")) }
             shot("02-restore-sheet")
             try tap(element(label: "Merge"), "\"Merge\"")
             // The backup lists the demo source: confirm reinstalling it from its site. (When the step runs
@@ -288,11 +299,29 @@ final class AppUITests: XCTestCase {
         return nil
     }
 
+    /// Scroll until the element's center is on screen (a button just below the fold never "settles" otherwise:
+    /// the flaky "never stopped moving, or stayed off screen" on Restore… with slower CI runners).
+    private func scrollIntoView(_ e: XCUIElement) {
+        let screen = app.frame
+        for _ in 0..<6 {
+            guard let f = try? e.snapshot().frame, !f.isEmpty else { return }
+            if f.midY > screen.maxY - 40 {
+                app.swipeUp(velocity: .slow)
+            } else if f.midY < screen.minY + 40 {
+                app.swipeDown(velocity: .slow)
+            } else {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+
     /// One tap once the element has settled: by element, or at its fresh frame's center when XCUITest
     /// calls it not hittable.
     private func tapOnce(_ e: XCUIElement, _ what: String, timeout: TimeInterval) throws {
         try require(e, what, timeout: timeout)
-        guard let frame = settledFrame(e) else {
+        scrollIntoView(e)
+        guard let frame = settledFrame(e, timeout: 15) else {
             try checkPage()
             attachTree(if: true)
             return XCTFail("\(what) never stopped moving, or stayed off screen")

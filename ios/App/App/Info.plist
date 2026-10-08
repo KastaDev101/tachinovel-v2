@@ -70,6 +70,8 @@
 			</dict>
 		</dict>
 	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Nephis checks her own reading on this iPhone (never online) so no word is skipped or slurred and sections join smoothly.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<!-- No custom encryption (only HTTPS via the OS): skips the export-compliance question on upload. -->

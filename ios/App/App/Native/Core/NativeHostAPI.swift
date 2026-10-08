@@ -403,6 +403,15 @@ final class NativeHostAPI {
         }
         set(o, "actionSheet", fn(actionSheet))
         set(o, "alert", fn(alert))
+        // App Update › Restart Now: to the home screen, then end; the next launch opens the staged web update
+        // (WebBundle decides at launch). iOS has no relaunch, so the user taps the icon.
+        let quitApp: @convention(block) () -> Void = {
+            DispatchQueue.main.async {
+                UIControl().sendAction(NSSelectorFromString("suspend"), to: UIApplication.shared, for: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { exit(0) }
+            }
+        }
+        set(o, "quitApp", fn(quitApp))
         set(o, "share", fn(share))
         set(o, "shareFile", fn(shareFile))
         set(o, "shareImage", fn(shareImage))

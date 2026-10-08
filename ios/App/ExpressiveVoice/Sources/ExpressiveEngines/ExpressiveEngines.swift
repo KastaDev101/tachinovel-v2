@@ -72,9 +72,9 @@ public enum ExpressiveEngines {
 
     /// A new, unloaded engine; nil if this OS can't run it (Chatterbox Nano and NeuTTS-2E need iOS 18).
     /// `pocketVoice`: Pocket TTS reads with this cloned voice (the shipped Narrator) instead of its default one;
-    /// `pocketPerformed`: the same voice performing, for lines whose role is "performed".
+    /// `pocketReads`: the same voice's other reads by role ("performed", "tense", "sad", "tender").
     public static func make(_ id: ExpressiveEngineID, narratorSpeaker: String = "emily", pocketVoice: PocketVoice? = nil,
-                            pocketPerformed: PocketVoice? = nil) -> (any ExpressiveSynthesizer)? {
+                            pocketReads: [String: PocketVoice] = [:]) -> (any ExpressiveSynthesizer)? {
         switch id {
         case .chatterboxNano:
             if #available(iOS 18.0, macOS 15.0, *) { return ChatterboxNanoSynth() }
@@ -83,7 +83,7 @@ public enum ExpressiveEngines {
             if #available(iOS 18.0, macOS 15.0, *) { return NeuTtsSynth(narrator: narratorSpeaker) }
             return nil
         case .pocketTts:
-            return PocketTtsSynth(voice: pocketVoice, performed: pocketPerformed)
+            return PocketTtsSynth(voice: pocketVoice, reads: pocketReads)
         }
     }
 }
@@ -175,15 +175,16 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
     private var manager: PocketTtsManager?
     /// The cloned voice (FluidAudio prepends Pocket's BOS itself); nil = Pocket's default voice.
     private let voiceData: PocketTtsVoiceData?
-    private let performedData: PocketTtsVoiceData?
+    /// The voice's other reads by line role ("performed", "tense", "sad", "tender").
+    private let readData: [String: PocketTtsVoiceData]
 
     /// CPU + Neural Engine for every transformer stage, CPU for the Mimi decoder (FluidAudio's own choice there).
     public static let backgroundSafeUnits = PocketTtsComputeUnits(conditioner: .cpuAndNeuralEngine, flowLM: .cpuAndNeuralEngine,
                                                                   flowDecoder: .cpuAndNeuralEngine, mimiDecoder: .cpuOnly)
 
-    public init(voice: PocketVoice? = nil, performed: PocketVoice? = nil) {
+    public init(voice: PocketVoice? = nil, reads: [String: PocketVoice] = [:]) {
         voiceData = voice.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
-        performedData = performed.map { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
+        readData = reads.mapValues { PocketTtsVoiceData(audioPrompt: $0.audioPrompt, promptLength: $0.frames) }
     }
 
     public func load() async throws -> Double {
@@ -205,9 +206,13 @@ public actor PocketTtsSynth: ExpressiveSynthesizer {
         // A session per call: the voice prefill (~125 tokens) runs once instead of once per ~50-token text chunk, and
         // the Mimi decoder state carries across chunks (no seams inside a paragraph).
         let session: PocketTtsSession
-        let voice = line.role == ExpressiveLine.performedRole ? (performedData ?? voiceData) : voiceData
+        // A mood read missing → the performed read for a role other than narration → the Narrator.
+        let voice = readData[line.role] ?? (line.role == "narrator" ? nil : readData[ExpressiveLine.performedRole]) ?? voiceData
         // The director's temperature (calm narration 0.7 … playful 0.85), kept inside Pocket's stable range.
-        let temperature = min(0.85, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
+        // A mood read (tense, sad, tender) already carries its emotion in the voice prompt; a high temperature on top
+        // made a tense fight line sound excited (Kasta, 2026-10-07), so those stay at 0.7 or below.
+        let ceiling: Float = readData[line.role] != nil && line.role != ExpressiveLine.performedRole ? 0.7 : 0.85
+        let temperature = min(ceiling, max(0.55, line.temperature ?? PocketTtsConstants.temperature))
         if let voice {
             session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         } else {

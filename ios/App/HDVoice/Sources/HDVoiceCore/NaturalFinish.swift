@@ -108,6 +108,9 @@ public struct NaturalFinish: Sendable {
         public var expressive: Bool
         /// A non-verbal to splice in front of a line (by index).
         public var nonVerbals: [Int: NonVerbalPack.Item]
+        /// Nephis's flow engine: the samples are one continuous stream that already holds the pause before the unit
+        /// and every join; nothing is trimmed, faded, padded, re-leveled or spliced (`renderFlow`).
+        public var flow = false
 
         public init(samples: [Float], chunkEnds: [Int] = [], lines: [Line], speed: Double = 1, expressive: Bool, nonVerbals: [Int: NonVerbalPack.Item] = [:]) {
             self.samples = samples
@@ -154,13 +157,18 @@ public struct NaturalFinish: Sendable {
 
     /// The expressive engine's own tonal correction (VoiceTilt.pocketTts), before the shared chain.
     public var tilt: VoiceTilt?
+    /// The voice exactly as approved on the PC (Nephis): the start-up sound before each call's first word turned
+    /// down (StartupSound), her own EQ (`tilt`), loudness matching; no polish EQ, no Studio chain.
+    public let plain: Bool
+    public private(set) var startupSoftened = 0.0
 
     public init(audio: DeliveryAudio, studioSound: Bool, breaths: (any BreathSource)?, sampleRate: Int = 24_000, seed: UInt64 = 1,
-                tilt: VoiceTilt? = nil) {
+                tilt: VoiceTilt? = nil, plain: Bool = false) {
         self.tilt = tilt
+        self.plain = plain
         self.sampleRate = sampleRate
         self.audio = audio
-        var chain = studioSound ? StudioSoundParams.cleanWarm : StudioSoundParams.levelOnly
+        var chain = studioSound && !plain ? StudioSoundParams.cleanWarm : StudioSoundParams.levelOnly
         chain.level?.speechRmsDB = audio.speechRmsDB
         studio = chain
         self.breaths = breaths
@@ -171,6 +179,7 @@ public struct NaturalFinish: Sendable {
 
     /// One buffer per line of the unit.
     public mutating func render(_ u: Unit) -> [Piece] {
+        if u.flow { return renderFlow(u) }
         var report = Report()
         let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
         let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
@@ -192,7 +201,12 @@ public struct NaturalFinish: Sendable {
             }
         }
 
-        var speech = PCM.joinChunks(u.samples, ends: u.chunkEnds, sampleRate: sampleRate, fade: audio.crossfade, gap: Self.callGap)
+        var raw = u.samples
+        if plain, u.expressive {
+            StartupSound.removeThump(&raw, sampleRate: sampleRate)
+            startupSoftened += StartupSound.softenCalls(&raw, callStarts: u.chunkEnds, sampleRate: sampleRate)
+        }
+        var speech = PCM.joinChunks(raw, ends: u.chunkEnds, sampleRate: sampleRate, fade: audio.crossfade, gap: Self.callGap)
         if u.expressive, !speech.isEmpty {
             SpeechShape.dropBlips(&speech, sampleRate: sampleRate, blip: audio.blip)
             report.microGapsClosed = SpeechShape.closeMicroGaps(&speech, sampleRate: sampleRate, microGap: audio.microGap, punctuation: punctuation, letters: totalLetters)
@@ -206,8 +220,8 @@ public struct NaturalFinish: Sendable {
             report.ellipsesPadded = SpeechShape.padEllipses(&speech, sampleRate: sampleRate, ellipses: ellipses, target: target)
         }
         if !speech.isEmpty {
-            if u.expressive, studio.fizz != nil, let tilt { tilt.apply(&speech, sampleRate: sampleRate) }
-            NarrationPolish.equalize(&speech, sampleRate: sampleRate)
+            if u.expressive, studio.fizz != nil || plain, let tilt { tilt.apply(&speech, sampleRate: sampleRate) }
+            if !plain { NarrationPolish.equalize(&speech, sampleRate: sampleRate) }
             StudioSound.process(&speech, params: studio, sampleRate: sampleRate)
         }
 
@@ -270,6 +284,49 @@ public struct NaturalFinish: Sendable {
         }
         lastReport = report
         return pieces
+    }
+
+    /// Fixed gain for the flow stream: one gain for the whole read (never per unit, which would step the level at
+    /// every join). Pocket TTS's speech sits near -22.5 dBFS and Nephis's EQ lifts it about 1.5 dB.
+    public static let flowGainDB = 0.0
+    /// Above this the flow stream is softly limited (never hard-clipped: that crackles), reaching at most `peakCeiling`.
+    public static let flowKnee: Float = 0.75
+
+    /// Nephis's continuous stream: the thump filter and her EQ, one fixed gain, the listener's speed, then the cut
+    /// into sentences for highlighting only. No trims, fades, pauses, breaths, non-verbals or per-line DSP: the
+    /// engine made the pauses and joins, and any of those would put a seam back.
+    mutating func renderFlow(_ u: Unit) -> [Piece] {
+        var report = Report()
+        let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
+        var speech = u.samples
+        guard !speech.isEmpty else { lastReport = report; return lines.map { _ in Piece(frames: [], speechSeconds: 0) } }
+        StartupSound.removeThump(&speech, sampleRate: sampleRate)
+        tilt?.apply(&speech, sampleRate: sampleRate)
+        let g = Float(pow(10, Self.flowGainDB / 20))
+        let room = Self.peakCeiling - Self.flowKnee
+        for i in speech.indices {
+            let v = speech[i] * g
+            let a = abs(v)
+            speech[i] = a <= Self.flowKnee ? v : (v < 0 ? -1 : 1) * (Self.flowKnee + room * Float(tanh(Double((a - Self.flowKnee) / room))))
+        }
+        let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
+        if abs(speed - 1) > 0.002 { speech = TimeStretch.wsola(speech, tempo: speed, sampleRate: sampleRate) }
+        let total = lines.reduce(0) { $0 + $1.letters }
+        var ends: [Double] = []
+        var before = 0
+        for line in lines.dropLast() {
+            before += line.letters
+            ends.append(Double(before) / Double(total))
+        }
+        let timing = lines.count > 1 ? ChunkAligner.align(speech, sampleRate: sampleRate, ends: ends) : ChunkTiming(cuts: [], confident: true)
+        report.confident = timing.confident
+        var bounds = [0] + timing.cuts + [speech.count]
+        for k in 1..<bounds.count { bounds[k] = max(bounds[k], bounds[k - 1]) }
+        lastReport = report
+        return lines.indices.map { k in
+            let p = Array(speech[bounds[k]..<bounds[k + 1]])
+            return Piece(frames: p, speechSeconds: Double(p.count) / Double(sampleRate))
+        }
     }
 
     /// A jump or a new chapter: the lung budget starts again.
