@@ -60,6 +60,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// The render-ahead window once the narrator voice is ready (smaller while it loads).
     private var fullAhead = 3
+    /// Nephis reads alone (Kasta, 2026-10-08: "the good Nephis voice always, no fallback"): the session waits for her
+    /// (loading, late, a sentence tried again) instead of handing sentences to Kokoro or the Apple voice. Only if her
+    /// model can't be used at all (not installed, failed to load, crashed, failing sentence after sentence) does the
+    /// fallback read, so a chapter never just stops.
+    private var nephisOnly = false
     /// Words dropped at the end of an expressive render: one retake (Pocket TTS).
     private var completeness = CompletenessGuard()
     private(set) var retakes = 0
@@ -173,8 +178,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         fullAhead = ahead
         // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
-        let bridging = listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false
-        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(), config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead))
+        nephisOnly = Self.nephisCanReadAlone(listenEngine)
+        let bridging = !nephisOnly && (listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false)
+        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(),
+                                config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead, patient: nephisOnly))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
         s.paragraphStarts = Set(segs.indices.dropFirst().filter { !Self.sameChunk(segs[$0 - 1], segs[$0]) })
@@ -248,6 +255,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     private func kokoroState() -> HybridScheduler.KokoroState {
         if expressiveUsable() { return .ready }
+        // Nephis alone: the scheduler's voice is her model; while it loads the session waits for it. If it can't be
+        // used at all, the session reads the usual way (Kokoro, in her matched voice).
+        if nephisOnly {
+            if Self.nephisCanReadAlone(listenEngine) { return .loading }
+            leaveNephisOnly(reason: "her model can't be used")
+        }
         let k = KokoroService.shared
         guard k.isBundled else { return .unavailable }
         guard VoiceSettings.shared.prefs.kokoroEnabled else { return .disabled }
@@ -293,6 +306,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func pumpRender() {
         guard !paused else { return }
         pumpScene()
+        if nephisOnly, scheduler?.kokoro != .unavailable, !expressiveUsable() {
+            // Released (memory pressure, idle) or still loading: load her again; the session waits.
+            if ExpressiveService.shared.loadState(.pocketTts) == .unloaded {
+                ExpressiveService.shared.ensureLoaded(.pocketTts) { [weak self] _ in self?.kokoroStatusChanged() }
+            }
+            return
+        }
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
@@ -302,7 +322,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             // script plans them) go to the model together, up to its per-call limit (Pocket TTS 400 characters, a
             // whole paragraph; Nano 120). One call paces them as one thought: no "Relax, little one." [stop]
             // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
-            let group = flow ? flowGroup(from: i, limit: id.maxCharactersPerCall) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
+            // Flow: with almost nothing buffered (the start, after a seek) the first sentence goes alone, so her voice
+            // starts sooner; then whole paragraphs.
+            let flowLimit = bufferedAhead() < 4 ? Self.readText(segments[i], expressive: true).count : id.maxCharactersPerCall
+            let group = flow ? flowGroup(from: i, limit: flowLimit) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
             let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
@@ -482,9 +505,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// fast as the Narrator), a lead-in (the sentence before read again, then cut: the tone carries over) from
     /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
     private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
+        // A warm phone: the lightest calls, so she keeps up without heating it further.
+        if ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue) { return (1, false) }
+        return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
+    }
+
+    /// Seconds of rendered audio waiting after the sentence playing.
+    private func bufferedAhead() -> Double {
         let playing = scheduler?.playing ?? 0
-        let ahead = buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
-        return Self.flowBudget(ahead: ahead, readChange: i > 0 && read(for: i) != read(for: i - 1))
+        return buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
     static let leadInAhead = 15.0
@@ -508,6 +537,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// The expressive voice couldn't make these: Kokoro renders the first now, the rest when their turn comes.
     private func expressiveFailed(_ members: [Int], gen g: Int) {
+        if nephisOnly {
+            // Nephis alone: she tries them again (a fresh read); failing again and again makes her unavailable and
+            // the scheduler's fallback reads.
+            for j in members.dropFirst() { scheduler?.releaseRender(j) }
+            scheduler?.renderDone(members[0], ok: false)
+            if scheduler?.kokoro == .unavailable {
+                leaveNephisOnly(reason: "sentences kept failing")
+                scheduler?.kokoro = kokoroState()
+            }
+            pumpRender()
+            if waiting { advance() }
+            return
+        }
         for j in members.dropFirst() { scheduler?.releaseRender(j) }
         renderWithKokoro(members[0], gen: g)
     }
@@ -1111,7 +1153,28 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let svc = ExpressiveService.shared
         guard !svc.crashDisabled, ExpressiveService.supported(id), svc.isInstalled(id), svc.loadState(id) == .ready, svc.loadedID == id else { return false }
         if id.usesGPU, UIApplication.shared.applicationState != .active { return false }
-        return !ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
+        // Nephis alone keeps reading when the phone is warm (lighter calls: one take, no lead-in); only at critical.
+        let thermal = ProcessInfo.processInfo.thermalState
+        if nephisOnly { return thermal != .critical }
+        return !ThermalPolicy.throttled(rawState: thermal.rawValue)
+    }
+
+    /// The session goes back to the usual fallbacks (Kokoro renders what Nephis can't).
+    private func leaveNephisOnly(reason: String) {
+        guard nephisOnly else { return }
+        nephisOnly = false
+        scheduler?.config.patient = false
+        log.error("voice: Nephis can't read alone (\(reason, privacy: .public)): Kokoro reads in her voice meanwhile")
+    }
+
+    /// Nephis is the chosen reader and her model can be used on this phone (installed, not turned off after crashes,
+    /// not failed to load).
+    static func nephisCanReadAlone(_ engine: ExpressiveEngineID?) -> Bool {
+        guard engine == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis else { return false }
+        let svc = ExpressiveService.shared
+        guard !svc.crashDisabled, ExpressiveService.supported(.pocketTts), svc.isInstalled(.pocketTts) else { return false }
+        if case .failed = svc.loadState(.pocketTts) { return false }
+        return true
     }
 
     @objc private func kokoroStatusChanged() {

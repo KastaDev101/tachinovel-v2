@@ -23,6 +23,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // requests resume a moment after the first paint.
         DrivePrep.register()
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { DrivePrep.shared.start() }
+        // Nephis as the reader: her model loads in the background now, so Listen starts with her (no stand-in voice).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { ExpressiveService.shared.warmNephis() }
         BackgroundRefresh.register()
         BackgroundRefresh.requestProvisionalNotifications()
         // With scenes, UIKit never calls applicationDidEnterBackground(_:); the app-level notification

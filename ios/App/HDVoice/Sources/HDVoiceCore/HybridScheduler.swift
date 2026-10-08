@@ -56,9 +56,15 @@ public struct HybridScheduler: Sendable {
         /// paragraphs sounds natural, a switch to the Apple voice doesn't (Kasta, 2026-10-07: "rather a 2 second
         /// pause than the Apple voice").
         public var paragraphGrace: TimeInterval
+        /// The voice is the only one wanted (Nephis, Kasta 2026-10-08: "the good Nephis voice always, no fallback"):
+        /// while it is loading, late or retrying a failed sentence, wait for it instead of handing the sentence to
+        /// another voice. Only a voice that is unavailable (failed to load, failed `maxConsecutiveFailures` sentences
+        /// in a row, turned off) still falls back, so the read never stops for good.
+        public var patient: Bool
 
         public init(ahead: Int = 3, returnAhead: Int = 2, startGrace: TimeInterval = 2.5, dryGrace: TimeInterval = 0.25, maxConsecutiveFailures: Int = 3,
-                    paragraphGrace: TimeInterval = 2) {
+                    paragraphGrace: TimeInterval = 2, patient: Bool = false) {
+            self.patient = patient
             self.ahead = max(1, ahead)
             self.returnAhead = max(1, returnAhead)
             self.startGrace = max(0, startGrace)
@@ -159,7 +165,7 @@ public struct HybridScheduler: Sendable {
 
     /// The next segment to render, marked as rendering; nil when nothing should be rendered now.
     public mutating func nextRender() -> Int? {
-        guard kokoro == .ready, !throttled, !paused, rendering == nil, cursor < count else { return nil }
+        guard kokoro == .ready, !throttled || config.patient, !paused, rendering == nil, cursor < count else { return nil }
         let base = playing ?? (cursor - 1)
         let upper = min(count - 1, base + config.ahead)
         guard cursor <= upper else { return nil }
@@ -240,6 +246,7 @@ public struct HybridScheduler: Sendable {
             return commitApple(i, lastFallback ?? .queueDry)
         case .rendering:
             if source == .kokoro {
+                if config.patient { return patientWait(now: now) }
                 if let w = waitRemaining(now: now) { return .wait(w) }
                 if started { underruns += 1 }
                 return fallBack(i, .queueDry)
@@ -249,12 +256,14 @@ public struct HybridScheduler: Sendable {
             guard source == .kokoro else { return commitApple(i, lastFallback ?? currentReason()) }
             switch kokoro {
             case .ready:
+                if config.patient { return patientWait(now: now) }
                 if throttled { return fallBack(i, .thermal) }
                 // Rendering is about to pick it up (session start, or a render was just discarded).
                 if let w = waitRemaining(now: now) { return .wait(w) }
                 if started { underruns += 1 }
                 return fallBack(i, .queueDry)
             case .loading:
+                if config.patient { return patientWait(now: now) }
                 // A warm load takes well under a second: give it the start grace before Apple begins.
                 if !started, let w = waitRemaining(now: now) { return .wait(w) }
                 return fallBack(i, .modelLoading)
@@ -264,6 +273,12 @@ public struct HybridScheduler: Sendable {
                 return fallBack(i, .disabled)
             }
         case .failed:
+            // Patient: the same voice tries the sentence again (renderDone counts failures in a row; too many make the
+            // voice unavailable, and the fallback below takes over).
+            if config.patient, kokoro == .ready, source == .kokoro {
+                slots[i] = .pending
+                return patientWait(now: now)
+            }
             // One bad sentence: Apple reads it, Kokoro carries on with the next.
             return commitApple(i, .segmentFailed)
         case .claimed:
@@ -305,6 +320,16 @@ public struct HybridScheduler: Sendable {
         case .disabled: return .disabled
         case .ready: return throttled ? .thermal : .queueDry
         }
+    }
+
+    /// Patient mode: keep waiting (the engine asks again when a render finishes, or after this long). A wait after the
+    /// read has started is an underrun, counted once per sentence.
+    private mutating func patientWait(now: TimeInterval) -> Decision {
+        if waitStart == nil {
+            waitStart = now
+            if started { underruns += 1 }
+        }
+        return .wait(0.5)
     }
 
     private mutating func waitRemaining(now: TimeInterval) -> TimeInterval? {

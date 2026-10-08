@@ -576,6 +576,18 @@ final class ExpressiveService {
         Task.detached { await engine?.unload() }
     }
 
+    /// Nephis is the reader: load her model shortly after launch (the first load after an app update compiles it for
+    /// this phone, which takes a while), so Listen starts with her voice instead of waiting. Released again after 3 idle
+    /// minutes unless narration is using it by then.
+    func warmNephis() {
+        guard NarrationController.listenEngine() == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis, isInstalled(.pocketTts),
+              !crashDisabled, Self.supported(.pocketTts), loadedID == nil else { return }
+        ensureLoaded(.pocketTts) { [weak self] result in
+            guard case .success = result, !NarrationController.shared.wantsKokoro else { return }
+            self?.scheduleIdleRelease()
+        }
+    }
+
     func scheduleIdleRelease(after seconds: TimeInterval = 180) {
         cancelIdleRelease()
         let item = DispatchWorkItem { [weak self] in self?.unload(reason: "idle") }
