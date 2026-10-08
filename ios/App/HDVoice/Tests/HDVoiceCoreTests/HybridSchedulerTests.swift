@@ -47,12 +47,14 @@ final class HybridSchedulerTests: XCTestCase {
         XCTAssertEqual(s.decide(now: 63), .wait(0.5))
         XCTAssertEqual(s.decide(now: 70), .wait(0.5))
         XCTAssertEqual(s.underruns, 1)
+        XCTAssertEqual(s.waitedSeconds, 0, "counted when the sentence finally plays")
         // A failed sentence is tried again by the same voice.
         s.renderDone(1, ok: false)
         XCTAssertEqual(s.decide(now: 71), .wait(0.5))
         XCTAssertEqual(s.nextRender(), 1, "the failed sentence renders again")
         s.renderDone(1, ok: true)
         XCTAssertEqual(s.decide(now: 72), .kokoro(1))
+        XCTAssertEqual(s.waitedSeconds, 9, accuracy: 0.001, "waited from 63 to 72 for sentence 1")
         // Throttled: patient voices keep rendering.
         s.throttled = true
         XCTAssertEqual(s.nextRender(), 2)

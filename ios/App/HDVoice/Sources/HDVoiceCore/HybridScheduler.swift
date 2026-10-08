@@ -133,6 +133,9 @@ public struct HybridScheduler: Sendable {
 
     // Statistics (Voice Lab).
     public private(set) var underruns = 0
+    /// Seconds the read waited for its voice after it had started (a break a listener hears; 0 is the goal).
+    public private(set) var waitedSeconds = 0.0
+    private var lastNow: TimeInterval = 0
     public private(set) var fallbacks: [FallbackReason: Int] = [:]
     public private(set) var returnsToKokoro = 0
     public private(set) var kokoroSentences = 0
@@ -237,6 +240,7 @@ public struct HybridScheduler: Sendable {
 
     /// The voice is idle (session start, or the previous segment just ended): what plays next?
     public mutating func decide(now: TimeInterval) -> Decision {
+        lastNow = now
         while cursor < count, slots[cursor] == .claimed { cursor += 1 }
         guard cursor < count else { return .finished }
         let i = cursor
@@ -347,6 +351,7 @@ public struct HybridScheduler: Sendable {
     }
 
     private mutating func commitApple(_ i: Int, _ reason: FallbackReason) -> Decision {
+        if started, let w = waitStart { waitedSeconds += max(0, lastNow - w) }
         slots[i] = .claimed
         cursor = i + 1
         playing = i
@@ -357,6 +362,7 @@ public struct HybridScheduler: Sendable {
     }
 
     private mutating func commitKokoro(_ i: Int) -> Decision {
+        if started, let w = waitStart { waitedSeconds += max(0, lastNow - w) }
         if source == .apple { returnsToKokoro += 1 }
         source = .kokoro
         lastFallback = nil

@@ -507,6 +507,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
         // A warm phone: the lightest calls, so she keeps up without heating it further.
         if ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue) { return (1, false) }
+        // Her last call came in under 1.5× real time (a busy or warm phone): the lightest calls until she is faster
+        // again, so the margin that keeps the read gapless is never spent on extras.
+        if let last = ExpressiveService.shared.flowStats.last, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
         return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
     }
 

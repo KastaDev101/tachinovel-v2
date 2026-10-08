@@ -836,6 +836,11 @@ final class ExpressiveService {
                                "call": Self.r2(f.totalMs / audio)],
             "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
         ]
+        // Breaks a listener heard in the last Listen session: waits for her, and sentences another voice read.
+        if let s = NarrationController.shared.speechEngine.snapshot {
+            out["listen"] = ["breaks": s.underruns, "breakSeconds": Self.r1(s.waitedSeconds), "otherVoiceSentences": s.appleSentences,
+                             "fallbacks": Dictionary(uniqueKeysWithValues: s.fallbacks.map { ($0.key.rawValue, $0.value) })] as [String: Any]
+        }
         if let r = f.last {
             out["last"] = ["takes": r.takes, "usable": r.usable, "leadIn": r.leadIn, "wordMatch": r.wordMatch.map { Self.r2($0) } ?? NSNull(),
                            "jumpScore": r.jumpScore.map { Self.r2($0) } ?? NSNull(), "renderMs": Self.r1(r.renderMs),
