@@ -9,6 +9,13 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.7] - 2026-10-08
+
+### Changed
+
+- Listen player › Voice lists only who reads (Narrator, Nephis, Kokoro). Kokoro's voices moved one tap further:
+  tap Kokoro, or Kokoro voice.
+
 ## [2.0.0-alpha.6] - 2026-10-08
 
 ### Changed
@@ -368,7 +375,8 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.6...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.7...HEAD
+[2.0.0-alpha.7]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.6...v2.0.0-alpha.7
 [2.0.0-alpha.6]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...v2.0.0-alpha.6
 [2.0.0-alpha.5]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
 [2.0.0-alpha.4]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.3...v2.0.0-alpha.4

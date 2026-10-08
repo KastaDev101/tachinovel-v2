@@ -766,16 +766,15 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
       p.body.innerHTML = failed ? UNAVAILABLE : '<p class="note">Loading…</p>';
       return;
     }
-    const own = info.novelVoice ?? null;
+    // Kokoro's own voices are one tap further (tap Kokoro, or Kokoro voice): the list here is only who reads.
+    const kokoro = choiceName(info, info.effectiveVoice ?? info.defaultVoice);
     p.body.innerHTML = `
       <div class="sec">Reads chapters</div>
       ${engineCard(info)}
-      ${NARRATOR_SETTINGS_ROW}
-      <div class="sec">Kokoro voice for this novel</div>
-      ${backupCard(info, info.effectiveVoice ?? info.defaultVoice)}
-      <p class="note">${own ? 'This novel has its own Kokoro voice.' : `Using the default (${esc(choiceName(info, info.defaultVoice))}).`}</p>
-      ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
-      <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>
+      <div class="card">
+        <button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Narrator settings</b><span class="sub">Acting, mood voices, AI scene reading, breaths, studio sound</span></div><span aria-hidden="true">›</span></button>
+        <button type="button" class="row" data-act="novel-kokoro"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(kokoro)}${info.novelVoice ? ' (this novel)' : ''} · also the backup</span></div><span aria-hidden="true">›</span></button>
+      </div>
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
   };
@@ -784,27 +783,62 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     failed = !info;
     render();
   };
+  const kokoroPanel = (): void => openNovelKokoro(novel, () => void load().then(onChange));
+  p.body.addEventListener('click', (ev) => {
+    const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
+    if (el?.dataset.act === 'retry') return void load();
+    if (!el || !info) return;
+    const act = el.dataset.act;
+    if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This novel');
+    if (act === 'engine') {
+      void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load).then(onChange);
+      if (el.dataset.v === 'kokoro') kokoroPanel();
+    }
+    if (act === 'novel-kokoro') kokoroPanel();
+    if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
+    if (act === 'expressive') openExpressiveLab();
+  });
+  render();
+  void load();
+}
+
+/** Listen player › Voice › Kokoro voice: this novel's Kokoro voice (three first, every voice one tap further). */
+function openNovelKokoro(novel: { pluginId: string; novelPath: string; name: string }, onChange: () => void): void {
+  const p = panel('Kokoro voice', 'novel-kokoro');
+  const key = { pluginId: novel.pluginId, novelPath: novel.novelPath };
+  let info: VoiceSettingsInfo | null = null;
+  let failed = false;
+  const render = (): void => {
+    if (!info) {
+      p.body.innerHTML = failed ? UNAVAILABLE : '<p class="note">Loading…</p>';
+      return;
+    }
+    const own = info.novelVoice ?? null;
+    p.body.innerHTML = `
+      <div class="sec">Kokoro voice for this novel</div>
+      ${backupCard(info, info.effectiveVoice ?? info.defaultVoice)}
+      <p class="note">${own ? 'This novel has its own Kokoro voice.' : `Using the default (${esc(choiceName(info, info.defaultVoice))}).`} Kokoro also stands in when the Narrator can’t keep up.</p>
+      ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
+      <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>`;
+  };
+  const load = async (): Promise<void> => {
+    info = normalizeVoiceSettings(await Narration.voiceSettings(key).catch(() => null));
+    failed = !info;
+    render();
+  };
+  const done = (): Promise<void> => load().then(onChange);
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (el?.dataset.act === 'retry') return void load();
     if (!el || !info) return;
     const act = el.dataset.act;
     if (act === 'sample') return void sample(el as HTMLButtonElement, el.dataset.voice ?? 'af_heart');
-    if (act === 'pick' && el.dataset.voice) {
-      void Narration.setVoiceSettings({ novel: { pluginId: novel.pluginId, novelPath: novel.novelPath, voice: el.dataset.voice } }).then(load).then(onChange);
-    }
-    if (act === 'use-default') void Narration.setVoiceSettings({ novel: { pluginId: novel.pluginId, novelPath: novel.novelPath, voice: null } }).then(load).then(onChange);
+    if (act === 'pick' && el.dataset.voice) void Narration.setVoiceSettings({ novel: { ...key, voice: el.dataset.voice } }).then(done);
+    if (act === 'use-default') void Narration.setVoiceSettings({ novel: { ...key, voice: null } }).then(done);
     if (act === 'make-default' && info.effectiveVoice) {
-      const voice = info.effectiveVoice;
-      void Narration.setVoiceSettings({ defaultVoice: voice, novel: { pluginId: novel.pluginId, novelPath: novel.novelPath, voice: null } })
-        .then(load)
-        .then(onChange);
+      void Narration.setVoiceSettings({ defaultVoice: info.effectiveVoice, novel: { ...key, voice: null } }).then(done);
     }
-    if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This novel');
-    if (act === 'engine') void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load).then(onChange);
-    if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
-    if (act === 'kokoro-all') openKokoroVoices({ pluginId: novel.pluginId, novelPath: novel.novelPath }, () => void load().then(onChange));
-    if (act === 'expressive') openExpressiveLab();
+    if (act === 'kokoro-all') openKokoroVoices(key, () => void done());
   });
   render();
   void load();
