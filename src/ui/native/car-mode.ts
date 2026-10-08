@@ -162,7 +162,7 @@ export function installCarMode(): CarMode {
         <button type="button" data-act="fwd" aria-label="Forward 15 seconds">${ICON.fwd15}</button>
         <button type="button" data-act="next" aria-label="Next chapter">${ICON.next}</button>
       </div>
-      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(state.voice?.kokoroName ?? 'Kokoro')} ›</span></button>` : ''}
+      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(state.voice?.reader ?? state.voice?.kokoroName ?? 'Kokoro')} ›</span></button>` : ''}
     </div>`;
   }
 

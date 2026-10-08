@@ -405,7 +405,7 @@ function backupCard(info: VoiceSettingsInfo, selected: string): string {
     return mix ? [mixRow(info, mix, selected, false)] : [];
   });
   return `<div class="card" data-testid="voices-backup">${rows.join('')}
-      <button type="button" class="row" data-act="kokoro-all"><div class="main"><b>All Kokoro voices</b><span class="sub">28 voices and your own mixes</span></div><span aria-hidden="true">›</span></button>
+      <button type="button" class="row" data-act="kokoro-all"><div class="main"><b>All Kokoro voices</b><span class="sub">${info.voices.length} voices and your own mixes</span></div><span aria-hidden="true">›</span></button>
     </div>`;
 }
 

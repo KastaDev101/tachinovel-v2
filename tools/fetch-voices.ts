@@ -42,6 +42,15 @@ export const VOICES = [
   'bf_emma', 'bf_isabella', 'bf_alice', 'bf_lily', 'bm_fable', 'bm_george', 'bm_lewis', 'bm_daniel',
 ] as const;
 
+/**
+ * Voices made for this app, committed under ios/kokoro-voices/ in the same flat fp32 layout
+ * ([510, 256]) and copied next to the downloaded ones. af_nephis: Kokoro matched to Nephis's voice (speaker
+ * similarity 0.94 to her Pocket TTS reads, a random walk from Kokoro's own voices; docs/voices.md), so she can
+ * read fast, and Kokoro stand-ins for her sound like her.
+ */
+export const OWN_VOICES: readonly { name: string; sha256: string }[] = [{ name: 'af_nephis', sha256: 'b8c6b59d39737b5fa328817640af3ca28f3b0cd0700ffb838d4246cc0442da7e' }];
+export const OWN_VOICES_DIR = path.join(root, 'ios', 'kokoro-voices');
+
 /** Paths (relative to the HF repo root) that make up the bundle. Directories are expanded recursively. */
 const CHAIN_BUNDLES = [
   'ANE/KokoroAlbert.mlmodelc',
@@ -170,11 +179,17 @@ async function install(): Promise<void> {
     writeFileSync(path.join(staging, bundlePathFor(`ANE/${v.name}.bin`)), bin);
     bytes += bin.length;
   }
+  for (const v of OWN_VOICES) {
+    const bin = readFileSync(path.join(OWN_VOICES_DIR, `${v.name}.bin`));
+    if (sha256(bin) !== v.sha256) throw new Error(`own voice ${v.name}.bin does not match OWN_VOICES (${sha256(bin)} != ${v.sha256})`);
+    writeFileSync(path.join(staging, bundlePathFor(`ANE/${v.name}.bin`)), bin);
+    bytes += bin.length;
+  }
   const problems = checkChainBundles(staging);
   if (problems.length > 0) throw new Error(`bundled chain is not usable read-only:\n  ${problems.join('\n  ')}`);
   writeFileSync(
     path.join(staging, 'model-info.json'),
-    JSON.stringify({ repo: lock.repo, revision: lock.revision, license: lock.license, voices: [...VOICES], bytes }, null, 2) + '\n',
+    JSON.stringify({ repo: lock.repo, revision: lock.revision, license: lock.license, voices: [...VOICES, ...OWN_VOICES.map((v) => v.name)], bytes }, null, 2) + '\n',
   );
   rmSync(OUT_DIR, { recursive: true, force: true });
   renameSync(staging, OUT_DIR);
@@ -194,6 +209,11 @@ export function verifyInstalled(dir = OUT_DIR, lock: LockFile = readLock()): str
     const p = path.join(dir, bundlePathFor(`ANE/${v.name}.bin`));
     if (!existsSync(p)) problems.push(`missing voice ${v.name}.bin`);
     else if (sha256(readFileSync(p)) !== v.binSha256) problems.push(`checksum voice ${v.name}.bin`);
+  }
+  for (const v of OWN_VOICES) {
+    const p = path.join(dir, bundlePathFor(`ANE/${v.name}.bin`));
+    if (!existsSync(p)) problems.push(`missing voice ${v.name}.bin`);
+    else if (sha256(readFileSync(p)) !== v.sha256) problems.push(`checksum voice ${v.name}.bin`);
   }
   return [...problems, ...checkChainBundles(dir)];
 }

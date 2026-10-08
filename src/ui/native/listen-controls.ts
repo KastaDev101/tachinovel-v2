@@ -54,7 +54,7 @@ export function fallbackReason(v: Pick<SpeakingVoice, 'fallback' | 'kokoroStatus
   }
 }
 
-/** Which voice is speaking: "Kokoro · Heart", or "System voice (fallback) · <reason>". */
+/** Which voice is speaking: "Nephis", "Kokoro · Heart", or "System voice (fallback) · <reason>". */
 export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>): string {
   if (s.engine === 'audio') return 'PC audio';
   const v = s.voice;
@@ -63,5 +63,6 @@ export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'
     const why = fallbackReason(v);
     return `System voice (fallback)${why ? ` · ${why}` : ''}`;
   }
+  if (v.reader) return v.reader;
   return `Kokoro · ${v.kokoroName}`;
 }

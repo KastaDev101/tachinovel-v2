@@ -7,7 +7,7 @@ import { htmlToBlocks, type Lexicon } from '@v1tts/frontend.ts';
 import { lexiconsFor, paragraphMapper, speechScript, emptyLexiconStore } from '../src/core/narration/speech-script.ts';
 import { CAR_STEPS, checkSelfTest, type SelfTestReport } from '../ci/check-voice-selftest.ts';
 import { normalizeWords, wordErrorRate } from '../ci/voice-asr.ts';
-import { bundlePathFor, LOCK_PATH, sha256, VOICE_COLS, VOICE_ROWS, VOICES, voiceJsonToBin, verifyInstalled, type LockFile } from '../tools/fetch-voices.ts';
+import { bundlePathFor, LOCK_PATH, OWN_VOICES, OWN_VOICES_DIR, sha256, VOICE_COLS, VOICE_ROWS, VOICES, voiceJsonToBin, verifyInstalled, type LockFile } from '../tools/fetch-voices.ts';
 import { buildFixtures } from '../tools/voice-fixtures-lib.ts';
 import { VOICE_PRODUCTS } from '../tools/ios-project.ts';
 import { gradeRank, groupVoices } from '../src/ui/native/voice-groups.ts';
@@ -90,7 +90,17 @@ describe('bundled model pinning (tools/fetch-voices.ts)', () => {
   it('the offered voices are the app catalog (VoiceCatalog.swift)', () => {
     const swift = readFileSync(path.join(root, 'ios', 'App', 'HDVoice', 'Sources', 'HDVoiceCore', 'VoiceCatalog.swift'), 'utf8');
     const ids = [...swift.matchAll(/KokoroVoice\(id: "([a-z_]+)"/g)].map((m) => m[1]);
-    expect(ids.sort()).toEqual([...VOICES].sort());
+    expect(ids.sort()).toEqual([...VOICES, ...OWN_VOICES.map((v) => v.name)].sort());
+  });
+
+  it('our own voices are committed in the flat fp32 layout with the listed checksum', () => {
+    for (const v of OWN_VOICES) {
+      const bin = readFileSync(path.join(OWN_VOICES_DIR, `${v.name}.bin`));
+      expect(bin.length).toBe(VOICE_ROWS * VOICE_COLS * 4);
+      expect(sha256(bin)).toBe(v.sha256);
+      const f = new Float32Array(bin.buffer, bin.byteOffset, bin.length / 4);
+      expect(f.every((x) => Number.isFinite(x) && Math.abs(x) < 50)).toBe(true);
+    }
   });
 
   it('converts a Kokoro v1.0 voice JSON to the flat fp32 layout (row k = key "k+1")', () => {
@@ -196,7 +206,7 @@ describe('voice picker order (src/ui/native/voice-groups.ts)', () => {
     expect(gradeRank(undefined)).toBe(-1);
     const swift = readFileSync(path.join(root, 'ios', 'App', 'HDVoice', 'Sources', 'HDVoiceCore', 'VoiceCatalog.swift'), 'utf8');
     const grades = [...swift.matchAll(/KokoroVoice\(id: "([a-z_]+)".*?grade: "([^"]+)"/g)].map((m) => m[2] ?? '');
-    expect(grades).toHaveLength(28);
+    expect(grades).toHaveLength(29);
     expect(grades.every((g) => gradeRank(g) >= 0)).toBe(true);
   });
 

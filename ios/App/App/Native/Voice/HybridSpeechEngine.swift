@@ -75,6 +75,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var natural: NaturalFinisher?
 
     private(set) var currentSource: VoiceSource?
+    /// The expressive engine that rendered the sentence playing now (nil: Kokoro or the Apple voice).
+    private(set) var currentExpressive: ExpressiveEngineID?
     private(set) var lastFallback: FallbackReason?
 
     private var audioEngine = AVAudioEngine()
@@ -97,6 +99,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Bumped when the audio graph is restarted: completions of buffers from before are ignored.
     private var epoch = 0
     private var buffers: [Int: AVAudioPCMBuffer] = [:]
+    /// Which voice rendered each buffer (a Kokoro voice id, or an expressive engine's id).
+    private var bufferVoices: [Int: String] = [:]
     /// Kokoro segments scheduled on the player node, in play order (first = audible).
     private var queued: [Int] = []
     private var appleSegment: Int?
@@ -199,6 +203,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
         queued.removeAll()
         buffers.removeAll()
+        bufferVoices.removeAll()
         appleSegment = nil
         appleUtterance = nil
         appleRender = nil
@@ -529,7 +534,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             for (k, j) in members.enumerated() {
                 let buf = k < pieces.count ? self.makeBuffer(pieces[k].frames) : nil
                 self.scheduler?.renderDone(j, ok: buf != nil)
-                if let buf, self.scheduler?.isReady(j) == true { self.buffers[j] = buf }
+                if let buf, self.scheduler?.isReady(j) == true {
+                    self.buffers[j] = buf
+                    self.bufferVoices[j] = voice
+                }
             }
             self.pumpRender()
             if self.waiting { self.advance() } else { self.prefetch() }
@@ -593,7 +601,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     self.scheduler?.renderDone(i, ok: true)
                     if self.scheduler?.isReady(i) == true {
-                        if let buf = self.makeBuffer(pieces.flatMap(\.frames)) { self.buffers[i] = buf } else { self.scheduler?.renderDone(i, ok: false) }
+                        if let buf = self.makeBuffer(pieces.flatMap(\.frames)) {
+                            self.buffers[i] = buf
+                            self.bufferVoices[i] = voice
+                        } else {
+                            self.scheduler?.renderDone(i, ok: false)
+                        }
                     }
                     self.pumpRender()
                     if self.waiting { self.advance() } else { self.prefetch() }
@@ -854,6 +867,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func began(_ i: Int, _ source: VoiceSource) {
         scheduler?.started(i)
         currentSource = source
+        currentExpressive = source == .kokoro ? bufferVoices[i].flatMap(ExpressiveEngineID.init(rawValue:)) : nil
         if source == .kokoro { lastFallback = nil }
         if !firstAudioLogged {
             firstAudioLogged = true

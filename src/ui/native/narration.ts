@@ -78,6 +78,8 @@ export interface SpeakingVoice {
   kokoroName: string;
   /** Who spoke the current sentence. */
   source?: VoiceSource;
+  /** The expressive voice that read the current sentence ("Nephis", "Narrator"); absent when Kokoro did. */
+  reader?: string;
   /** Apple voice name while it stands in for Kokoro, and why. */
   appleName?: string;
   fallback?: 'modelLoading' | 'modelUnavailable' | 'queueDry' | 'thermal' | 'segmentFailed' | 'disabled';
