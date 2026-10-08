@@ -343,7 +343,7 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   systemTone: true,
 };
 
-const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable'>, string, string][] = [
+const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice'>, string, string][] = [
   ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
   ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
   ['moods', 'Mood voices', 'Tense, sad and tender reads where the scene calls for them'],
@@ -370,7 +370,8 @@ const BACKUP_VOICES = ['af_heart', 'af_bella', 'af_nicole'];
 /** Who reads chapters: the Narrator (Pocket TTS; a download row until it is installed) or Kokoro. One tap each. */
 function engineCard(info: VoiceSettingsInfo): string {
   const d = { ...DELIVERY_DEFAULT, ...info.delivery };
-  const on = d.listenEngine ?? 'kokoro';
+  // Pocket TTS reads with one of two shipped voices: each is its own row ("pocket-tts" + the voice).
+  const on = d.listenEngine === 'pocket-tts' ? `pocket-tts:${d.pocketVoice ?? 'narrator'}` : (d.listenEngine ?? 'kokoro');
   const row = (v: string, title: string, sub: string): string =>
     `<button type="button" class="row" data-act="engine" data-v="${v}" aria-pressed="${String(on === v)}"><div class="main"><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></div><span class="check" aria-hidden="true">${on === v ? '✓' : ''}</span></button>`;
   const download =
@@ -378,7 +379,8 @@ function engineCard(info: VoiceSettingsInfo): string {
       ? `<button type="button" class="row" data-act="expressive"><div class="main"><b>Download the Narrator voice</b><span class="sub">About 370 MB, on Wi-Fi. Until then Kokoro reads.</span></div><span aria-hidden="true">›</span></button>`
       : '';
   return `<div class="card" data-testid="voices-engine">
-      ${row('pocket-tts', 'Narrator', 'Acts the dialogue, follows the scene, reads with the screen locked')}${download}
+      ${row('pocket-tts:narrator', 'Narrator', 'Acts the dialogue, follows the scene, reads with the screen locked')}
+      ${row('pocket-tts:nephis', 'Nephis', 'Deeper and clearer, one calm voice for everything (new)')}${download}
       ${on === 'chatterbox-nano' ? row('chatterbox-nano', 'Narrator (Chatterbox Nano)', 'The earlier engine; only with the app open') : ''}
       ${row('kokoro', 'Kokoro', 'Fast and light; also the backup when the Narrator can’t keep up')}
     </div>`;
@@ -464,9 +466,10 @@ function openKokoroVoices(novel: { pluginId: string; novelPath: string } | null,
   void load();
 }
 
-/** The engine row tapped: the Narrator (Pocket TTS or Nano) or Kokoro (null). */
-function engineValue(v: string | undefined): DeliveryInfo['listenEngine'] {
-  return v === 'pocket-tts' || v === 'chatterbox-nano' ? v : null;
+/** The engine row tapped: the Narrator or Nephis (Pocket TTS), Nano, or Kokoro (null), as delivery settings. */
+function engineValue(v: string | undefined): Partial<DeliveryInfo> {
+  if (v === 'pocket-tts:narrator' || v === 'pocket-tts:nephis') return { listenEngine: 'pocket-tts', pocketVoice: v === 'pocket-tts:nephis' ? 'nephis' : 'narrator' };
+  return { listenEngine: v === 'pocket-tts' || v === 'chatterbox-nano' ? v : null };
 }
 
 /** A voice's or a mix's name. */
@@ -576,7 +579,7 @@ export function openVoicesScreen(): void {
         openExpressiveLab();
         return;
       case 'engine':
-        void Narration.setVoiceSettings({ delivery: { listenEngine: engineValue(el.dataset.v) } }).then(load);
+        void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load);
         return;
       case 'narrator-settings':
         openNarratorSettings(() => undefined);
@@ -798,7 +801,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
         .then(onChange);
     }
     if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This novel');
-    if (act === 'engine') void Narration.setVoiceSettings({ delivery: { listenEngine: engineValue(el.dataset.v) } }).then(load).then(onChange);
+    if (act === 'engine') void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load).then(onChange);
     if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
     if (act === 'kokoro-all') openKokoroVoices({ pluginId: novel.pluginId, novelPath: novel.novelPath }, () => void load().then(onChange));
     if (act === 'expressive') openExpressiveLab();

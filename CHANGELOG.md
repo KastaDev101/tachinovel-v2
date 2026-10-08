@@ -13,6 +13,10 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ### Added
 
+- Nephis, a second narrator voice for Pocket TTS next to the original Narrator (Settings › Voices, or the Listen
+  player's Voice panel): deeper and clearer, one voice for every line, no breaths. Her sound filters out the
+  low thump each section used to start with and turns down the short sound before a section's first word without
+  cutting it or touching the word.
 - Mood voices: the Narrator voice also has tense, sad and tender reads, chosen from the scene's mood (dialogue and
   thoughts line by line, narration only when a mood holds for two sentences or more). Settings › Voices › Narrator
   voice › Mood voices.

@@ -150,9 +150,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             var audio = DeliveryAudio()
             // The recorded inhales are unit-RMS snippets; −30 dB under the speech was the approved level (round 8).
             if !pack.isEmpty { audio.breathDB = -30 }
-            let source: (any BreathSource)? = d.breaths ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
+            // Nephis: no breaths ("no breaths please", Kasta), her own sound, the start-up sound turned down.
+            let nephis = listenEngine == .pocketTts && d.isNephis
+            let source: (any BreathSource)? = d.breaths && !nephis ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
             natural = NaturalFinisher(NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
-                                                    tilt: listenEngine == .pocketTts ? .pocketTts : nil))
+                                                    tilt: listenEngine == .pocketTts ? (nephis ? .nephis : .pocketTts) : nil, plain: nephis))
         } else {
             natural = nil
         }

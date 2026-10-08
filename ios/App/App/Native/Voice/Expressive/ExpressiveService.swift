@@ -84,6 +84,13 @@ final class ExpressiveService {
     /// Voices that ship in the app (BuiltInVoices/), checked on first use; one of them can be the default.
     let bundled = BundledVoices(directory: Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil))
     /// The Narrator voice for Pocket TTS (BuiltInVoices/pocket/), checked once (size, shape, sha256).
+    /// Nephis (v2): her own file, one read for every line.
+    lazy var pocketNephis: Result<PocketVoice, Error> = Result {
+        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
+            throw PocketVoice.Problem.missing("BuiltInVoices")
+        }
+        return try PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisName)
+    }
     lazy var pocketNarrator: Result<PocketVoice, Error> = Result {
         guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
             throw PocketVoice.Problem.missing("BuiltInVoices")
@@ -238,6 +245,8 @@ final class ExpressiveService {
 
     /// The voice Chatterbox Nano should load now ("builtin" or an imported voice's id); nil for other engines.
     private func voiceRequest(for id: ExpressiveEngineID) -> String? {
+        // Pocket TTS: the chosen shipped voice (Narrator or Nephis); a change reloads the engine with it.
+        if id == .pocketTts { return VoiceSettings.shared.prefs.delivery.pocketVoice }
         guard id == .chatterboxNano else { return nil }
         return sampleVoice ?? selectedVoice ?? defaultVoice
     }
@@ -273,15 +282,16 @@ final class ExpressiveService {
         guard isInstalled(id) else { return completion(.failure(ExpressiveEngineError.modelNotInstalled(id.title))) }
         // Pocket TTS reads with the Narrator voice; a voice file that fails its check is never used (Listen falls back).
         var pocketVoice: PocketVoice?
+        let nephis = id == .pocketTts && VoiceSettings.shared.prefs.delivery.isNephis
         if id == .pocketTts {
-            switch pocketNarrator {
+            switch nephis ? pocketNephis : pocketNarrator {
             case .success(let v): pocketVoice = v
             case .failure(let error):
                 log.error("expressive: pocket voice: \(error.localizedDescription, privacy: .public)")
                 return completion(.failure(error))
             }
         }
-        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketReads: id == .pocketTts ? pocketReads : [:]) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
+        guard let engine = ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketReads: id == .pocketTts && !nephis ? pocketReads : [:]) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         if loadedID != nil { unload(reason: "switching engine") }
         loadedID = id
         synth = engine

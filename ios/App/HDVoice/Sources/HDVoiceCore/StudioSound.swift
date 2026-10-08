@@ -149,19 +149,60 @@ extension Biquad {
 /// chain already brings 4.5–9 kHz to target. +3.5 dB at 3 kHz and −4 dB above 9 kHz put air on target and close
 /// most of the presence gap without harshness.
 public struct VoiceTilt: Sendable, Equatable {
+    /// A shelf: frequency, Q (RBJ, as Biquad.lowShelf/highShelf), gain.
+    public struct Shelf: Sendable, Equatable {
+        public var hz: Double
+        public var q: Double
+        public var db: Double
+        public init(hz: Double, q: Double, db: Double) {
+            self.hz = hz
+            self.q = q
+            self.db = db
+        }
+    }
+
     public var presenceDB: Double
     public var presenceHz: Double
     public var airDB: Double
     public var airHz: Double
+    public var lowShelf: Shelf?
+    public var highShelf: Shelf?
+
+    public init(presenceDB: Double, presenceHz: Double, airDB: Double, airHz: Double, lowShelf: Shelf? = nil, highShelf: Shelf? = nil) {
+        self.presenceDB = presenceDB
+        self.presenceHz = presenceHz
+        self.airDB = airDB
+        self.airHz = airHz
+        self.lowShelf = lowShelf
+        self.highShelf = highShelf
+    }
 
     public static let pocketTts = VoiceTilt(presenceDB: 3.5, presenceHz: 3000, airDB: -4, airHz: 9000)
+    /// Nephis, "Deeper + clear" (Kasta's pick, 2026-10-07): the model's output loses ~7 dB above 2 kHz against her
+    /// design clip, so +5.95 dB from 2.5 kHz brings the clarity back, and +2 dB under 180 Hz keeps the depth he liked
+    /// in the muffled version (a low-mid cut made her sound lighter). Slope 0.7 shelves (Q 0.586 / 0.591 at these
+    /// gains), the same as the approved PC render.
+    public static let nephis = VoiceTilt(presenceDB: 0, presenceHz: 3000, airDB: 0, airHz: 9000,
+                                         lowShelf: Shelf(hz: 180, q: 0.591, db: 2), highShelf: Shelf(hz: 2500, q: 0.586, db: 5.95))
 
     public func apply(_ x: inout [Float], sampleRate: Int) {
         let fs = Double(sampleRate)
-        var p = Biquad.peaking(frequency: presenceHz, q: 0.8, gainDB: presenceDB, sampleRate: fs)
-        var h = Biquad.highShelf(frequency: airHz, q: 0.707, gainDB: airDB, sampleRate: fs)
-        p.process(&x)
-        h.process(&x)
+        if presenceDB != 0 {
+            var p = Biquad.peaking(frequency: presenceHz, q: 0.8, gainDB: presenceDB, sampleRate: fs)
+            p.process(&x)
+        }
+        if airDB != 0 {
+            var h = Biquad.highShelf(frequency: airHz, q: 0.707, gainDB: airDB, sampleRate: fs)
+            h.process(&x)
+        }
+        if let s = highShelf {
+            var h = Biquad.highShelf(frequency: s.hz, q: s.q, gainDB: s.db, sampleRate: fs)
+            h.process(&x)
+        }
+        if let s = lowShelf {
+            var l = Biquad.lowShelf(frequency: s.hz, q: s.q, gainDB: s.db, sampleRate: fs)
+            l.process(&x)
+        }
     }
 }
 

@@ -47,7 +47,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// settings allow. Dialogue and thoughts (`speaks`): calm without acting, "performed" without moods, else the
     /// script's read. Narration: its mood read (tense, sad) only with moods on.
     public func read(_ voice: String?, speaks: Bool) -> String? {
-        guard natural, let voice else { return nil }
+        guard natural, !isNephis, let voice else { return nil }
         if speaks { return performed ? (moods ? voice : "performed") : nil }
         return moods && voice != "performed" ? voice : nil
     }
@@ -63,6 +63,11 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     public static let rulesAI = "rules+ai"
     public static let chunks = "chunks"
     public static let sentences = "sentences"
+    /// Pocket TTS voices shipped in the app (BuiltInVoices/pocket): the original Narrator, and Nephis (v2: a designed
+    /// voice, deeper and clearer, one read for everything).
+    public static let narrator = "narrator"
+    public static let nephis = "nephis"
+    public static let pocketVoices: Set<String> = [narrator, nephis]
 
     public var version: Int
     /// Listen reads chapters with this expressive engine when it is downloaded: Pocket TTS with the built-in
@@ -89,10 +94,15 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// LitRPG system messages: an interface chime before them, and the voice in an interface tone.
     public var systemChime: Bool
     public var systemTone: Bool
+    /// Which shipped Pocket TTS voice reads: "narrator" (default) or "nephis".
+    public var pocketVoice: String
+
+    /// Nephis is one voice for everything: no mood or performed reads, her own sound (VoiceTilt.nephis), no breaths.
+    public var isNephis: Bool { pocketVoice == Self.nephis }
 
     public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rulesAI, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true, moods: Bool = true,
-                systemChime: Bool = true, systemTone: Bool = true) {
+                systemChime: Bool = true, systemTone: Bool = true, pocketVoice: String = DeliverySettings.narrator) {
         version = Self.currentVersion
         self.listenEngine = listenEngine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
         self.natural = natural
@@ -105,6 +115,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         self.moods = moods
         self.systemChime = systemChime
         self.systemTone = systemTone
+        self.pocketVoice = Self.pocketVoices.contains(pocketVoice) ? pocketVoice : Self.narrator
     }
 
     /// Tolerant decoding: missing or unknown values take their defaults.
@@ -137,10 +148,12 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         moods = (try? c.decode(Bool.self, forKey: .moods)) ?? d.moods
         systemChime = (try? c.decode(Bool.self, forKey: .systemChime)) ?? d.systemChime
         systemTone = (try? c.decode(Bool.self, forKey: .systemTone)) ?? d.systemTone
+        let voice = try? c.decode(String.self, forKey: .pocketVoice)
+        pocketVoice = voice.flatMap { Self.pocketVoices.contains($0) ? $0 : nil } ?? d.pocketVoice
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed, moods, systemChime, systemTone
+        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed, moods, systemChime, systemTone, pocketVoice
     }
 
     /// listenEngine is written even when nil (Kokoro chosen), so a missing key always means "the default".
@@ -158,6 +171,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         try c.encode(moods, forKey: .moods)
         try c.encode(systemChime, forKey: .systemChime)
         try c.encode(systemTone, forKey: .systemTone)
+        try c.encode(pocketVoice, forKey: .pocketVoice)
     }
 
     public var usesAI: Bool { natural && director == Self.rulesAI }

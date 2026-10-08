@@ -304,6 +304,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "studioSound": prefs.delivery.studioSound,
                     "systemChime": prefs.delivery.systemChime,
                     "systemTone": prefs.delivery.systemTone,
+                    "pocketVoice": prefs.delivery.pocketVoice,
                 ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
@@ -377,6 +378,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = delivery["studioSound"] as? Bool { d.studioSound = v }
                     if let v = delivery["systemChime"] as? Bool { d.systemChime = v }
                     if let v = delivery["systemTone"] as? Bool { d.systemTone = v }
+                    if let v = delivery["pocketVoice"] as? String, DeliverySettings.pocketVoices.contains(v) { d.pocketVoice = v }
                     p.delivery = d
                 }
             }

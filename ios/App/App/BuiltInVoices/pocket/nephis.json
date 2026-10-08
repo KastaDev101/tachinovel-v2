@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "engine": "pocket-tts",
+  "name": "Nephis",
+  "frames": 94,
+  "embeddingDim": 1024,
+  "bytes": 385024,
+  "sha256": "cdcbf80934d8b05e82161949be416e7c3ea1e16edd38e32541bb05c4059f3f9b",
+  "source": "Brenda-alive-s4.wav, first 7.51 s"
+}

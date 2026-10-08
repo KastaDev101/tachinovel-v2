@@ -154,13 +154,18 @@ public struct NaturalFinish: Sendable {
 
     /// The expressive engine's own tonal correction (VoiceTilt.pocketTts), before the shared chain.
     public var tilt: VoiceTilt?
+    /// The voice exactly as approved on the PC (Nephis): the start-up sound before each call's first word turned
+    /// down (StartupSound), her own EQ (`tilt`), loudness matching; no polish EQ, no Studio chain.
+    public let plain: Bool
+    public private(set) var startupSoftened = 0.0
 
     public init(audio: DeliveryAudio, studioSound: Bool, breaths: (any BreathSource)?, sampleRate: Int = 24_000, seed: UInt64 = 1,
-                tilt: VoiceTilt? = nil) {
+                tilt: VoiceTilt? = nil, plain: Bool = false) {
         self.tilt = tilt
+        self.plain = plain
         self.sampleRate = sampleRate
         self.audio = audio
-        var chain = studioSound ? StudioSoundParams.cleanWarm : StudioSoundParams.levelOnly
+        var chain = studioSound && !plain ? StudioSoundParams.cleanWarm : StudioSoundParams.levelOnly
         chain.level?.speechRmsDB = audio.speechRmsDB
         studio = chain
         self.breaths = breaths
@@ -192,7 +197,12 @@ public struct NaturalFinish: Sendable {
             }
         }
 
-        var speech = PCM.joinChunks(u.samples, ends: u.chunkEnds, sampleRate: sampleRate, fade: audio.crossfade, gap: Self.callGap)
+        var raw = u.samples
+        if plain, u.expressive {
+            StartupSound.removeThump(&raw, sampleRate: sampleRate)
+            startupSoftened += StartupSound.softenCalls(&raw, callStarts: u.chunkEnds, sampleRate: sampleRate)
+        }
+        var speech = PCM.joinChunks(raw, ends: u.chunkEnds, sampleRate: sampleRate, fade: audio.crossfade, gap: Self.callGap)
         if u.expressive, !speech.isEmpty {
             SpeechShape.dropBlips(&speech, sampleRate: sampleRate, blip: audio.blip)
             report.microGapsClosed = SpeechShape.closeMicroGaps(&speech, sampleRate: sampleRate, microGap: audio.microGap, punctuation: punctuation, letters: totalLetters)
@@ -206,8 +216,8 @@ public struct NaturalFinish: Sendable {
             report.ellipsesPadded = SpeechShape.padEllipses(&speech, sampleRate: sampleRate, ellipses: ellipses, target: target)
         }
         if !speech.isEmpty {
-            if u.expressive, studio.fizz != nil, let tilt { tilt.apply(&speech, sampleRate: sampleRate) }
-            NarrationPolish.equalize(&speech, sampleRate: sampleRate)
+            if u.expressive, studio.fizz != nil || plain, let tilt { tilt.apply(&speech, sampleRate: sampleRate) }
+            if !plain { NarrationPolish.equalize(&speech, sampleRate: sampleRate) }
             StudioSound.process(&speech, params: studio, sampleRate: sampleRate)
         }
 

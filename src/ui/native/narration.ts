@@ -226,6 +226,8 @@ export interface DeliveryInfo {
   studioSound: boolean;
   systemChime: boolean;
   systemTone: boolean;
+  /** Which Pocket TTS voice reads: the original Narrator, or Nephis (v2: deeper and clearer, one read for everything). */
+  pocketVoice?: 'narrator' | 'nephis';
 }
 
 /** One "Prepare for the drive" request. */

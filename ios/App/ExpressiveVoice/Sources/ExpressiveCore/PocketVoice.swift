@@ -19,6 +19,8 @@ public struct PocketVoice: Sendable, Equatable {
     public static let maxFrames = 125
     public static let folder = "pocket"
     public static let narratorName = "narrator"
+    /// Nephis (v2): designed from a description (Parler-TTS named speaker, "alive" read), one voice for every line.
+    public static let nephisName = "nephis"
     /// The same voice, performing: dialogue and thoughts (from the performed reference ref-8A2-persona).
     public static let characterName = "character"
     public static let fileExtension = "pocketvoice"
