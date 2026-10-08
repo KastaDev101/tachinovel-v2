@@ -9,6 +9,30 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
 
 ## [Unreleased]
 
+## [2.0.0-alpha.8] - 2026-10-08
+
+### Added
+
+- Nephis as a Kokoro voice (af_nephis): Kokoro matched to her voice (similarity 0.94, her pitch). While Nephis
+  reads, sentences Kokoro has to stand in for are read in her voice instead of Heart's, and she can be picked as
+  the Kokoro voice for a fast read.
+
+### Changed
+
+- Nephis keeps up on the phone: her next paragraph is generated while the last one decodes, the check decode
+  runs alongside generation and only covers the ends a join edits, and lead-ins, speech recognition and extra
+  takes are used only when playback is far enough ahead. Voice Lab's report shows her per-stage timings.
+
+### Fixed
+
+- The mini player and the Listen player's Voice button said "Kokoro · Heart" while Nephis or the Narrator was
+  reading: they now name the voice reading the sentence.
+- Settings › Voices: Kokoro's voice is one row (every voice one tap further), like the Listen player. Narrator
+  settings mark the switches that only change the Narrator when Nephis reads. Voice models explains Pocket TTS
+  instead of calling every engine experimental. Speed and car-button chips center their labels.
+- Voice Lab: the first line no longer goes to Kokoro with "The model isn't loaded" while the engine is loading.
+- Listen player: no "Open a chapter…" hint under a chapter that is playing.
+
 ## [2.0.0-alpha.7] - 2026-10-08
 
 ### Changed
@@ -375,7 +399,8 @@ Pull requests don't edit this file: each adds a fragment in [changelog.d/](chang
   navigations to non-web schemes are refused; core log lines are private in the Release system log;
   cookie copies use RFC 6265 domain matching; deep-link paths must stay on the source's own site.
 
-[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.7...HEAD
+[Unreleased]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.8...HEAD
+[2.0.0-alpha.8]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.7...v2.0.0-alpha.8
 [2.0.0-alpha.7]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.6...v2.0.0-alpha.7
 [2.0.0-alpha.6]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.5...v2.0.0-alpha.6
 [2.0.0-alpha.5]: https://github.com/KastaDev101/tachinovel-v2/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
