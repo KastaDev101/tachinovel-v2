@@ -26,11 +26,12 @@ public typealias NephisTranscriber = @Sendable ([Float], Int) async -> [NephisFl
 public actor NephisFlowSynth: ExpressiveSynthesizer {
     public struct Assets: Sendable {
         public let calm: PocketVoice
-        public let tense: PocketVoice?
+        /// Her mood reads by line role ("tense", "sad", "tender", "playful", "intense"); a missing one reads calm.
+        public let moods: [String: PocketVoice]
         public let projection: NephisFlow.Projection
-        public init(calm: PocketVoice, tense: PocketVoice?, projection: NephisFlow.Projection) {
+        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection) {
             self.calm = calm
-            self.tense = tense
+            self.moods = moods
             self.projection = projection
         }
     }
@@ -157,7 +158,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         if reset { forget() }
         var report = Report()
         let text = StyleMapper.pocketText(StyleMapper.plainText(line.text))
-        let clip = line.role == "tense" ? (assets.tense ?? assets.calm).audioPrompt : assets.calm.audioPrompt
+        // The line's mood read (a mood change blends half the old clip and half the new one: NephisFlow.prompt).
+        let clip = (assets.moods[line.role] ?? assets.calm).audioPrompt
         // Pocket generates long text in pieces of about 50 tokens, each started again from the voice prompt: every
         // seam would be a restart nothing edits (an "uh", a mumble in the pause, the tone back at the clip). So the
         // call is read piece by piece here, each one a flow piece of its own: carry-over, joins and clean-up.

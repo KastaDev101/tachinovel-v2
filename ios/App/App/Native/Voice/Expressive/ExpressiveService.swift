@@ -96,7 +96,11 @@ final class ExpressiveService {
             self.log.error("expressive: Nephis flow assets missing or invalid; plain Pocket engine")
             return nil
         }
-        return NephisFlowSynth.Assets(calm: calm, tense: try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisTenseName), projection: projection)
+        var moods: [String: PocketVoice] = [:]
+        for mood in PocketVoice.nephisMoods {
+            if let v = try? PocketVoice.load(builtInVoices: dir, name: "nephis-\(mood)") { moods[mood] = v }
+        }
+        return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection)
     }()
     /// Nephis (v2): her own file, one read for every line.
     lazy var pocketNephis: Result<PocketVoice, Error> = Result {

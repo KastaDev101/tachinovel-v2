@@ -421,7 +421,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if d.usesAI {
             let speaks = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.speaks == true }
             let system = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.system == true }
-            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system) { voice = r }
+            let all = listenEngine == .pocketTts && d.isNephis
+            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system, allMoods: all) { voice = r }
         }
         return d.read(voice, speaks: n?.speaks ?? false)
     }

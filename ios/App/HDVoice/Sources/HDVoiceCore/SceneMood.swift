@@ -13,7 +13,8 @@ public enum SceneMood {
     public static let moods: Set<String> = ["calm", "tense", "sad", "tender", "playful", "intense"]
 
     /// The mood's read for a spoken line or thought, or for narration (nil = calm / the Narrator).
-    static func moodRead(_ mood: String) -> String? {
+    static func moodRead(_ mood: String, allMoods: Bool = false) -> String? {
+        if allMoods, mood == "playful" || mood == "intense" { return mood }
         switch mood {
         case "tense", "intense": return "tense"
         case "sad": return "sad"
@@ -24,14 +25,16 @@ public enum SceneMood {
 
     /// The read for sentence i from the model's moods, or `.none` when the model hasn't read it (use the script's).
     /// `speaks`: dialogue or a thought; `system`: a LitRPG system message.
-    public static func read(at i: Int, moods: [Int: String], speaks: (Int) -> Bool, system: (Int) -> Bool) -> String?? {
+    /// `allMoods`: the voice has playful and intense reads of its own (Nephis).
+    public static func read(at i: Int, moods: [Int: String], speaks: (Int) -> Bool, system: (Int) -> Bool,
+                            allMoods: Bool = false) -> String?? {
         guard let mood = moods[i], !system(i) else { return .none }
-        let r = moodRead(mood)
+        let r = moodRead(mood, allMoods: allMoods)
         if speaks(i) { return .some(r ?? "performed") }
         guard let r, r == "tense" || r == "sad" else { return .some(nil) }
         let agrees = [i - 1, i + 1].contains { j in
             guard let m = moods[j], !speaks(j), !system(j) else { return false }
-            return moodRead(m) == r
+            return moodRead(m, allMoods: allMoods) == r
         }
         return .some(agrees ? r : nil)
     }
