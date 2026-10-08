@@ -75,11 +75,13 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var temperature: Float?
     /// Nephis flow (NephisFlowSynth): the pause before this call's first word (seconds; nil = 0.6), a fresh read
     /// (a new chapter, a seek: nothing carries over), the read's last call (its trailing silence is played too), and
-    /// how many takes to try (best one kept; nil = 1).
+    /// how many takes to try (best one kept; nil = 1), and whether to read the sentence before as a lead-in (costs
+    /// about half a take more plus speech recognition: only when playback is far enough ahead; nil = yes).
     public var pauseBefore: Double?
     public var flowReset: Bool?
     public var flowLast: Bool?
     public var takes: Int?
+    public var leadIn: Bool?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text

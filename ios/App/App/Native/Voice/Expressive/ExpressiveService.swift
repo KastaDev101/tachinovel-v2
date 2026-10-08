@@ -616,6 +616,65 @@ final class ExpressiveService {
         }
     }
 
+    /// Nephis's flow (Listen): `prepared` (on main) as soon as the call's latents are ready, so the next call can start
+    /// generating while this one decodes; then `completion` (on main) with the audio. Calls must come in reading
+    /// order and be prepared one at a time.
+    func synthesizeFlow(_ line: ExpressiveLine, prepared: @escaping () -> Void, completion: @escaping (Result<ExpressiveAudio, Error>) -> Void) {
+        guard loadedID == .pocketTts, loadState(.pocketTts) == .ready, let flow = synth as? NephisFlowSynth else {
+            return completion(.failure(ExpressiveEngineError.notLoaded))
+        }
+        let sentinel = self.sentinel
+        let context = "nephis \(line.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        Task.detached(priority: .userInitiated) { [weak self] in
+            sentinel.begin(context)
+            let result: Result<ExpressiveAudio, Error>
+            do {
+                let p = try await flow.prepare(line, seed: nil)
+                DispatchQueue.main.async(execute: prepared)
+                result = .success(try await flow.decode(p))
+            } catch {
+                result = .failure(error)
+            }
+            sentinel.end(success: (try? result.get()) != nil)
+            let report = await flow.lastReport
+            DispatchQueue.main.async {
+                if case .success = result { self?.recordFlow(report) }
+                completion(result)
+            }
+        }
+    }
+
+    /// Nephis's flow in this session (Voice Lab report): what her calls cost, stage by stage.
+    struct FlowStats {
+        var calls = 0
+        var takes = 0
+        var leadIns = 0
+        var listened = 0
+        var audioMs = 0.0
+        var totalMs = 0.0
+        var renderMs = 0.0
+        var analysisMs = 0.0
+        var recognizeMs = 0.0
+        var decodeMs = 0.0
+        var last: NephisFlowSynth.Report?
+    }
+
+    private(set) var flowStats = FlowStats()
+
+    private func recordFlow(_ r: NephisFlowSynth.Report) {
+        flowStats.calls += 1
+        flowStats.takes += r.takes
+        flowStats.leadIns += r.leadIn ? 1 : 0
+        flowStats.listened += r.listened ? 1 : 0
+        flowStats.audioMs += r.audioMs
+        flowStats.totalMs += r.totalMs
+        flowStats.renderMs += r.renderMs
+        flowStats.analysisMs += r.analysisMs
+        flowStats.recognizeMs += r.recognizeMs
+        flowStats.decodeMs += r.decodeMs
+        flowStats.last = r
+    }
+
     func resetCrashes() {
         sentinel.reset()
     }
@@ -729,6 +788,8 @@ final class ExpressiveService {
             ] as [String: Any],
             "kokoro": KokoroService.shared.statusText,
             "voices": voicesSnapshot(),
+            "pocketVoice": VoiceSettings.shared.prefs.delivery.pocketVoice,
+            "flow": flowSnapshot(),
         ]
         if let t = speedTest {
             let sorted = t.xs.sorted()
@@ -744,6 +805,30 @@ final class ExpressiveService {
                 "thermal": ["start": t.thermalStart, "end": t.thermalEnd.isEmpty ? Self.thermalName() : t.thermalEnd],
                 "error": t.error ?? NSNull(),
             ] as [String: Any]
+        }
+        return out
+    }
+
+    /// Nephis's flow numbers (NephisFlowSynth.Report summed): × real time end to end, and where the time goes.
+    private func flowSnapshot() -> Any {
+        let f = flowStats
+        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0] as [String: Any] }
+        let audio = max(1, f.audioMs)
+        var out: [String: Any] = [
+            "active": usesFlow, "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened,
+            "audioSeconds": Self.r1(f.audioMs / 1000),
+            // Seconds of work per second of audio, stage by stage (render overlaps the analysis decode; the
+            // stream decode overlaps the next call's render in Listen).
+            "perAudioSecond": ["render": Self.r2(f.renderMs / audio), "analysis": Self.r2(f.analysisMs / audio),
+                               "recognize": Self.r2(f.recognizeMs / audio), "decode": Self.r2(f.decodeMs / audio),
+                               "call": Self.r2(f.totalMs / audio)],
+            "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
+        ]
+        if let r = f.last {
+            out["last"] = ["takes": r.takes, "usable": r.usable, "leadIn": r.leadIn, "wordMatch": r.wordMatch.map { Self.r2($0) } ?? NSNull(),
+                           "jumpScore": r.jumpScore.map { Self.r2($0) } ?? NSNull(), "renderMs": Self.r1(r.renderMs),
+                           "analysisMs": Self.r1(r.analysisMs), "recognizeMs": Self.r1(r.recognizeMs), "decodeMs": Self.r1(r.decodeMs),
+                           "totalMs": Self.r1(r.totalMs), "audioMs": Self.r1(r.audioMs)] as [String: Any]
         }
         return out
     }

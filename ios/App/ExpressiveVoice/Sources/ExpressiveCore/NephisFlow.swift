@@ -254,23 +254,32 @@ public enum NephisFlow {
         let lo = sampleRate / 400, hi = sampleRate / 70
         guard audio.count > n + hi else { return nil }
         var found: [Double] = []
-        var i = 0
-        while i + n < audio.count {
-            let frame = audio[i..<i + n]
-            let mean = frame.reduce(0, +) / Float(n)
-            let x = frame.map { $0 - mean }
-            let energy = x.reduce(0) { $0 + $1 * $1 }
-            if 10 * log10(max(Double(energy) / Double(n), 1e-12)) >= -32 {
-                var best = 0.0, lag = 0
-                for l in lo..<min(hi, n - 1) {
-                    var acc: Float = 0
-                    for j in 0..<(n - l) { acc += x[j] * x[j + l] }
-                    let r = Double(acc / max(energy, 1e-9))
-                    if r > best { best = r; lag = l }
+        var x = [Float](repeating: 0, count: n)
+        audio.withUnsafeBufferPointer { a in
+            x.withUnsafeMutableBufferPointer { x in
+                var i = 0
+                while i + n < audio.count {
+                    var mean: Float = 0
+                    for j in 0..<n { mean += a[i + j] }
+                    mean /= Float(n)
+                    var energy: Float = 0
+                    for j in 0..<n {
+                        x[j] = a[i + j] - mean
+                        energy += x[j] * x[j]
+                    }
+                    if 10 * log10(max(Double(energy) / Double(n), 1e-12)) >= -32 {
+                        var best = 0.0, lag = 0
+                        for l in lo..<min(hi, n - 1) {
+                            var acc: Float = 0
+                            for j in 0..<(n - l) { acc += x[j] * x[j + l] }
+                            let r = Double(acc / max(energy, 1e-9))
+                            if r > best { best = r; lag = l }
+                        }
+                        if best > 0.5, lag > 0 { found.append(Double(sampleRate) / Double(lag)) }
+                    }
+                    i += hop * 2
                 }
-                if best > 0.5, lag > 0 { found.append(Double(sampleRate) / Double(lag)) }
             }
-            i += hop * 2
         }
         guard !found.isEmpty else { return nil }
         return found.sorted()[found.count / 2]
@@ -291,10 +300,25 @@ public enum NephisFlow {
         return levels.isEmpty ? -60 : levels.reduce(0, +) / Double(levels.count)
     }
 
+    /// What a take is scored against: the pitch and speech level of what she just said.
+    public struct VoiceFeatures: Sendable, Equatable {
+        public var pitch: Double?
+        public var level: Double
+    }
+
+    public static func voiceFeatures(_ audio: [Float]) -> VoiceFeatures {
+        VoiceFeatures(pitch: pitch(audio), level: speechLevel(audio))
+    }
+
     /// A take's score against what she just said (lower is better): the pitch jump in semitones plus 0.3 × the
     /// loudness jump in dB.
     public static func jumpScore(take: [Float], context: [Float]) -> Double {
-        guard let p = pitch(take), let q = pitch(context) else { return 9 }
-        return abs(12 * log2(p / q)) + 0.3 * abs(speechLevel(take) - speechLevel(context))
+        jumpScore(take: take, reference: voiceFeatures(context))
+    }
+
+    /// The same, against features measured once per call (every take is scored against the same context).
+    public static func jumpScore(take: [Float], reference: VoiceFeatures) -> Double {
+        guard let p = pitch(take), let q = reference.pitch else { return 9 }
+        return abs(12 * log2(p / q)) + 0.3 * abs(speechLevel(take) - reference.level)
     }
 }
