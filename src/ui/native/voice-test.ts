@@ -111,7 +111,7 @@ export function openVoiceTest(): void {
         }
       }),
     ];
-    const before = await ExpressiveVoice.resetStats().catch(() => ({}));
+    const before = await ExpressiveVoice.resetStats().catch((): Obj => ({}));
     const crashesBefore = Number(((before.crashes as Obj | undefined) ?? {}).total ?? 0);
     const thermalStart = ((before.device as Obj | undefined) ?? {}).thermal ?? null;
     const settings = await Narration.voiceSettings().catch(() => null);
@@ -135,7 +135,7 @@ export function openVoiceTest(): void {
     const ended = state.status === 'ended';
     if (!ended) await Narration.stop().catch(() => undefined);
     for (const h of handles) void h.remove();
-    const after = await ExpressiveVoice.status().catch(() => ({}));
+    const after = await ExpressiveVoice.status().catch((): Obj => ({}));
     const crashesAfter = Number(((after.crashes as Obj | undefined) ?? {}).total ?? 0);
     report = {
       kind: 'voice-test',
@@ -151,7 +151,7 @@ export function openVoiceTest(): void {
       thermalEnd: ((after.device as Obj | undefined) ?? {}).thermal ?? null,
       crashesDuringTest: crashesAfter - crashesBefore,
       lastCrash: crashesAfter > crashesBefore ? after.crashes : null,
-      flow: ((after.flow as Obj | undefined) ?? null),
+      flow: ((after.flow) ?? null),
       listen: (((after.flow as Obj | undefined) ?? {}).listen) ?? null,
       error: state.status === 'error' ? (state.error ?? 'error') : null,
     };
