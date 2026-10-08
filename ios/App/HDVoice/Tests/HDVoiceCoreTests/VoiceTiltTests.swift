@@ -31,9 +31,26 @@ final class NephisSoundTests: XCTestCase {
     }
 
     func testNephisIsClearerAndKeepsHerDepth() {
-        XCTAssertEqual(gainDB(8000, .nephis), 5.95, accuracy: 0.8)  // the clarity back
-        XCTAssertEqual(gainDB(60, .nephis), 2, accuracy: 0.6)       // the depth kept
-        XCTAssertEqual(gainDB(700, .nephis), 0, accuracy: 1.2)      // the middle of her voice left alone
+        let eq = VoiceTilt(bands: VoiceTilt.nephis.bands)  // the EQ alone (sibilance has its own test)
+        XCTAssertEqual(gainDB(8000, eq), 5.95, accuracy: 0.8)  // the clarity back
+        XCTAssertEqual(gainDB(60, eq), 4, accuracy: 0.8)       // depth and warmth (two low shelves)
+        XCTAssertEqual(gainDB(1000, eq), 1, accuracy: 1.2)     // the middle of her voice barely touched
+    }
+
+    func testSibilanceIsSoftenedOnlyWhereItSticksOut() {
+        let fs = 24_000
+        // A voiced tone with no "s": untouched.
+        var voiced = (0..<fs).map { Float(sin(2 * Double.pi * 180 * Double($0) / Double(fs))) * 0.1 }
+        let before = voiced
+        VoiceTilt.softenSibilance(&voiced, sampleRate: fs)
+        XCTAssertEqual(zip(voiced, before).map { abs($0 - $1) }.max() ?? 1, 0, accuracy: 0.002)
+        // A pure "s" (7 kHz): turned down, gently.
+        var s = (0..<fs).map { Float(sin(2 * Double.pi * 7000 * Double($0) / Double(fs))) * 0.1 }
+        VoiceTilt.softenSibilance(&s, sampleRate: fs)
+        let rms = (s[12_000...].reduce(Float(0)) { $0 + $1 * $1 } / 12_000).squareRoot()
+        let db = 20 * log10(Double(rms) / (0.1 / 2.0.squareRoot()))
+        XCTAssertLessThan(db, -0.3)
+        XCTAssertGreaterThan(db, -8)
     }
 
     func testThumpGoesVoiceStays() {

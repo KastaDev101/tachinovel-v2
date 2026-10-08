@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "engine": "pocket-tts",
   "name": "Nephis",
-  "frames": 94,
+  "frames": 81,
   "embeddingDim": 1024,
-  "bytes": 385024,
-  "sha256": "cdcbf80934d8b05e82161949be416e7c3ea1e16edd38e32541bb05c4059f3f9b",
-  "source": "Brenda-alive-s4.wav, first 7.51 s"
+  "bytes": 331776,
+  "sha256": "ce0c83bde48c2531edac8aa19d5855b90d9ec3e27b11b286f57b00cd754f186c",
+  "source": "baked blend: Parler-TTS mini 'Brenda' (65%) + 'Lea' (35%) as one prompt, read once by Pocket TTS (best of 8 takes), first 6.48 s"
 }

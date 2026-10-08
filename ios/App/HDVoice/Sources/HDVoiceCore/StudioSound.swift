@@ -149,59 +149,84 @@ extension Biquad {
 /// chain already brings 4.5–9 kHz to target. +3.5 dB at 3 kHz and −4 dB above 9 kHz put air on target and close
 /// most of the presence gap without harshness.
 public struct VoiceTilt: Sendable, Equatable {
-    /// A shelf: frequency, Q (RBJ, as Biquad.lowShelf/highShelf), gain.
-    public struct Shelf: Sendable, Equatable {
-        public var hz: Double
-        public var q: Double
-        public var db: Double
-        public init(hz: Double, q: Double, db: Double) {
-            self.hz = hz
-            self.q = q
-            self.db = db
-        }
+    /// One EQ band (RBJ biquads; Q as in Biquad.lowShelf/highShelf/peaking).
+    public enum Band: Sendable, Equatable {
+        case peak(hz: Double, q: Double, db: Double)
+        case lowShelf(hz: Double, q: Double, db: Double)
+        case highShelf(hz: Double, q: Double, db: Double)
     }
 
-    public var presenceDB: Double
-    public var presenceHz: Double
-    public var airDB: Double
-    public var airHz: Double
-    public var lowShelf: Shelf?
-    public var highShelf: Shelf?
+    public var bands: [Band]
+    /// Gentler sibilance: the 5.5–9 kHz band turned down only where it sticks out of the voice (`softenSibilance`).
+    public var softSibilance: Bool
 
-    public init(presenceDB: Double, presenceHz: Double, airDB: Double, airHz: Double, lowShelf: Shelf? = nil, highShelf: Shelf? = nil) {
-        self.presenceDB = presenceDB
-        self.presenceHz = presenceHz
-        self.airDB = airDB
-        self.airHz = airHz
-        self.lowShelf = lowShelf
-        self.highShelf = highShelf
+    public init(bands: [Band], softSibilance: Bool = false) {
+        self.bands = bands
+        self.softSibilance = softSibilance
+    }
+
+    public init(presenceDB: Double, presenceHz: Double, airDB: Double, airHz: Double) {
+        self.init(bands: [.peak(hz: presenceHz, q: 0.8, db: presenceDB), .highShelf(hz: airHz, q: 0.707, db: airDB)])
     }
 
     public static let pocketTts = VoiceTilt(presenceDB: 3.5, presenceHz: 3000, airDB: -4, airHz: 9000)
-    /// Nephis, "Deeper + clear" (Kasta's pick, 2026-10-07): the model's output loses ~7 dB above 2 kHz against her
-    /// design clip, so +5.95 dB from 2.5 kHz brings the clarity back, and +2 dB under 180 Hz keeps the depth he liked
-    /// in the muffled version (a low-mid cut made her sound lighter). Slope 0.7 shelves (Q 0.586 / 0.591 at these
-    /// gains), the same as the approved PC render.
-    public static let nephis = VoiceTilt(presenceDB: 0, presenceHz: 3000, airDB: 0, airHz: 9000,
-                                         lowShelf: Shelf(hz: 180, q: 0.591, db: 2), highShelf: Shelf(hz: 2500, q: 0.586, db: 5.95))
+
+    /// Nephis (Kasta's picks, 2026-10-07), the same chain as the approved PC renders:
+    ///  - "Deeper + clear": the model loses ~7 dB above 2 kHz, so +5.95 dB from 2.5 kHz, and +2 dB under 180 Hz for
+    ///    the depth he liked (shelves of slope 0.7: Q 0.586 / 0.591 at these gains);
+    ///  - "warm + clear": +2 dB of body around 300 Hz and +1 dB of presence at 3 kHz (warmth without the muffle a
+    ///    top cut gives);
+    ///  - "soothing tone" (A): 1.5 dB less edge at 3.5 kHz and softer sibilance.
+    public static let nephis = VoiceTilt(bands: [
+        .highShelf(hz: 2500, q: 0.586, db: 5.95), .lowShelf(hz: 180, q: 0.591, db: 2),
+        .lowShelf(hz: 300, q: 0.591, db: 2), .peak(hz: 3000, q: 0.8, db: 1), .peak(hz: 3500, q: 0.9, db: -1.5),
+    ], softSibilance: true)
 
     public func apply(_ x: inout [Float], sampleRate: Int) {
         let fs = Double(sampleRate)
-        if presenceDB != 0 {
-            var p = Biquad.peaking(frequency: presenceHz, q: 0.8, gainDB: presenceDB, sampleRate: fs)
-            p.process(&x)
+        for band in bands {
+            var f: Biquad
+            switch band {
+            case let .peak(hz, q, db):
+                guard db != 0 else { continue }
+                f = Biquad.peaking(frequency: hz, q: q, gainDB: db, sampleRate: fs)
+            case let .lowShelf(hz, q, db):
+                guard db != 0 else { continue }
+                f = Biquad.lowShelf(frequency: hz, q: q, gainDB: db, sampleRate: fs)
+            case let .highShelf(hz, q, db):
+                guard db != 0 else { continue }
+                f = Biquad.highShelf(frequency: hz, q: q, gainDB: db, sampleRate: fs)
+            }
+            f.process(&x)
         }
-        if airDB != 0 {
-            var h = Biquad.highShelf(frequency: airHz, q: 0.707, gainDB: airDB, sampleRate: fs)
-            h.process(&x)
+        if softSibilance { Self.softenSibilance(&x, sampleRate: sampleRate) }
+    }
+
+    /// The 5.5–9 kHz band, turned down by as much as it sticks out of the whole voice beyond -6 dB (at most 6 dB),
+    /// over 5 ms windows with a 10 ms smoothed gain: "s" sounds get gentler, everything else is untouched.
+    public static func softenSibilance(_ x: inout [Float], sampleRate: Int) {
+        let fs = Double(sampleRate)
+        guard 9000 < fs / 2, !x.isEmpty else { return }
+        var band = x
+        var h1 = Biquad.highPass(frequency: 5500, q: 0.707, sampleRate: fs), h2 = h1
+        var l1 = Biquad.lowPass(frequency: 9000, q: 0.707, sampleRate: fs), l2 = l1
+        h1.process(&band); h2.process(&band); l1.process(&band); l2.process(&band)
+        let n = max(1, Int(0.005 * fs))
+        var sb = 0.0, sx = 0.0
+        var gain = [Float](repeating: 1, count: x.count)
+        for i in x.indices {
+            sb += Double(band[i] * band[i]); sx += Double(x[i] * x[i])
+            if i >= n { sb -= Double(band[i - n] * band[i - n]); sx -= Double(x[i - n] * x[i - n]) }
+            let over = 10 * log10(max(sb, 1e-12) / max(sx, 1e-12)) + 6
+            gain[i] = Float(pow(10, -min(6, max(0, over)) / 20))
         }
-        if let s = highShelf {
-            var h = Biquad.highShelf(frequency: s.hz, q: s.q, gainDB: s.db, sampleRate: fs)
-            h.process(&x)
-        }
-        if let s = lowShelf {
-            var l = Biquad.lowShelf(frequency: s.hz, q: s.q, gainDB: s.db, sampleRate: fs)
-            l.process(&x)
+        let m = 2 * n
+        var acc: Float = 0
+        for i in x.indices {
+            acc += gain[i]
+            if i >= m { acc -= gain[i - m] }
+            let g = acc / Float(min(i + 1, m))
+            x[i] = x[i] - band[i] + band[i] * g
         }
     }
 }

@@ -286,9 +286,11 @@ public struct NaturalFinish: Sendable {
         return pieces
     }
 
-    /// Fixed gain for the flow stream: Pocket TTS's speech sits near -22.5 dBFS; one gain for the whole read (never
-    /// per unit, which would step the level at every join), then the same -20 dBFS target as the rest.
-    public static let flowGainDB = 2.5
+    /// Fixed gain for the flow stream: one gain for the whole read (never per unit, which would step the level at
+    /// every join). Pocket TTS's speech sits near -22.5 dBFS and Nephis's EQ lifts it about 1.5 dB.
+    public static let flowGainDB = 0.0
+    /// Above this the flow stream is softly limited (never hard-clipped: that crackles), reaching at most `peakCeiling`.
+    public static let flowKnee: Float = 0.75
 
     /// Nephis's continuous stream: the thump filter and her EQ, one fixed gain, the listener's speed, then the cut
     /// into sentences for highlighting only. No trims, fades, pauses, breaths, non-verbals or per-line DSP: the
@@ -301,7 +303,12 @@ public struct NaturalFinish: Sendable {
         StartupSound.removeThump(&speech, sampleRate: sampleRate)
         tilt?.apply(&speech, sampleRate: sampleRate)
         let g = Float(pow(10, Self.flowGainDB / 20))
-        for i in speech.indices { speech[i] = max(-Self.peakCeiling, min(Self.peakCeiling, speech[i] * g)) }
+        let room = Self.peakCeiling - Self.flowKnee
+        for i in speech.indices {
+            let v = speech[i] * g
+            let a = abs(v)
+            speech[i] = a <= Self.flowKnee ? v : (v < 0 ? -1 : 1) * (Self.flowKnee + room * Float(tanh(Double((a - Self.flowKnee) / room))))
+        }
         let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
         if abs(speed - 1) > 0.002 { speech = TimeStretch.wsola(speech, tempo: speed, sampleRate: sampleRate) }
         let total = lines.reduce(0) { $0 + $1.letters }

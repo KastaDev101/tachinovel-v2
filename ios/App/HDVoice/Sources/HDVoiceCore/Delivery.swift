@@ -48,8 +48,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// script's read. Narration: its mood read (tense, sad) only with moods on.
     public func read(_ voice: String?, speaks: Bool) -> String? {
         guard natural, let voice else { return nil }
-        // Nephis: one voice, with her tense read for tense narration (blended in and out by her flow engine).
-        if isNephis { return !speaks && moods && voice == "tense" ? voice : nil }
+        // Nephis is one voice for now (her flow engine can blend mood reads in and out once she has them).
+        if isNephis { return nil }
         if speaks { return performed ? (moods ? voice : "performed") : nil }
         return moods && voice != "performed" ? voice : nil
     }
@@ -99,8 +99,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// Which shipped Pocket TTS voice reads: "narrator" (default) or "nephis".
     public var pocketVoice: String
 
-    /// Nephis is one voice: no performed reads, only her tense read for tense narration; her own sound
-    /// (VoiceTilt.nephis), no breaths, read by her flow engine.
+    /// Nephis is one voice (no performed or mood reads yet); her own sound (VoiceTilt.nephis), no breaths, read by
+    /// her flow engine.
     public var isNephis: Bool { pocketVoice == Self.nephis }
 
     public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rulesAI, breaths: Bool = true, studioSound: Bool = true,
