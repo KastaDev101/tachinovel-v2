@@ -76,10 +76,10 @@ final class VoicePreferencesTests: XCTestCase {
         XCTAssertEqual(round, p)
     }
 
-    func testCatalogHasAll28EnglishVoicesWithGrades() {
-        XCTAssertEqual(VoiceCatalog.voices.count, 28)
-        XCTAssertEqual(Set(VoiceCatalog.ids).count, 28)
-        XCTAssertEqual(VoiceCatalog.voices.filter { $0.language == "en-US" }.count, 20)
+    func testCatalogHasAll28EnglishVoicesAndNephisWithGrades() {
+        XCTAssertEqual(VoiceCatalog.voices.count, 29)
+        XCTAssertEqual(Set(VoiceCatalog.ids).count, 29)
+        XCTAssertEqual(VoiceCatalog.voices.filter { $0.language == "en-US" }.count, 21)
         XCTAssertEqual(VoiceCatalog.voices.filter { $0.language == "en-GB" }.count, 8)
         XCTAssertNotNil(VoiceCatalog.voice(VoiceCatalog.defaultVoiceId))
         XCTAssertTrue(VoiceCatalog.voices.allSatisfy { $0.gradeRank >= 0 }, "every voice has a known grade")
@@ -93,7 +93,7 @@ final class VoicePreferencesTests: XCTestCase {
         XCTAssertEqual(VoiceCatalog.gradeRank("?"), -1)
         let groups = VoiceCatalog.grouped()
         XCTAssertEqual(groups.map { "\($0.accent.rawValue) \($0.gender.rawValue)" }, ["en-US female", "en-US male", "en-GB female", "en-GB male"])
-        XCTAssertEqual(groups.reduce(0) { $0 + $1.voices.count }, 28)
+        XCTAssertEqual(groups.reduce(0) { $0 + $1.voices.count }, 29)
         XCTAssertEqual(groups.first?.voices.first?.id, "af_heart", "the best voice first")
         for g in groups {
             XCTAssertEqual(g.voices.map(\.gradeRank), g.voices.map(\.gradeRank).sorted(by: >), "\(g.accent) \(g.gender) sorted best first")

@@ -138,6 +138,14 @@ Settings › Voices › **Narrator mode** (on by default, with Kasta's picks fro
   "ANE" build), the English G2P (BART), the Misaki lexicon, and all 28 English voices (20 American, 8
   British). These are 108.9 MB on disk: each voice pack is 0.52 MB (510 × 256 fp32), so the 22 voices added
   to the first six cost +11.5 MB.
+- **Our own voice, Nephis (`af_nephis`):** a Kokoro voice pack matched to Nephis (the Pocket TTS narrator),
+  committed in `ios/kokoro-voices/` and copied in by `tools/fetch-voices.ts` (OWN_VOICES, with its
+  SHA-256). Made on the PC: the best Kokoro voices and blends by speaker similarity (Resemblyzer) to her reads,
+  then a random walk over the 256 style values kept only when the similarity rose (KVoiceWalk's method), the last
+  800 steps with her pitch held. Held-out text: similarity 0.94 to her (two of her own reads score 0.95–0.96; the
+  closest stock voice, Sky, 0.78), median pitch 158 Hz (hers 161 Hz), every word read back by Whisper. While Nephis reads, Kokoro's stand-ins and
+  fallbacks use it, so a sentence she couldn't render in time still sounds like her; it can also be picked as the
+  Kokoro voice (fast Nephis: Kokoro's speed, less of her expression).
 - **Grades:** the picker (More › Voices, and a novel's voice) groups the voices by accent and gender and
   lists the best first, with Kokoro's own grade from the model card (hexgrad/Kokoro-82M VOICES.md, "Overall
   Grade"): Heart A, Bella A-, Nicole B-, Emma B-; most others C+ to D; Adam F+. The low grades reflect the

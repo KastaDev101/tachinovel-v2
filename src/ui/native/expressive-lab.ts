@@ -122,8 +122,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
   root.className = 'tn-xlab';
   root.dataset.testid = 'expressive-lab';
   root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-label', 'Experimental engines');
-  root.innerHTML = '<div class="hd"><h1>Experimental engines</h1><button type="button" data-act="close">Close</button></div><div class="body"></div>';
+  root.setAttribute('aria-label', 'Voice models');
+  root.innerHTML = '<div class="hd"><h1>Voice models</h1><button type="button" data-act="close">Close</button></div><div class="body"></div>';
   document.body.append(root);
   const body = root.querySelector('.body') as HTMLElement;
 
@@ -246,9 +246,9 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     const engines = arr(st.engines);
     const current = lines();
     body.innerHTML = `
-      <div class="muted" style="margin:4px 2px 8px">Voices that act: emotions, laughs and sighs, character voices. Experimental: the models are big
-        (downloaded here, never bundled), the GPU ones only render while the app is open, and Kokoro reads any sentence they
-        can't deliver in time. Narration is unchanged.</div>
+      <div class="muted" style="margin:4px 2px 8px">Pocket TTS reads as the Narrator and as Nephis: download it once here (on Wi-Fi), then
+        pick the voice in Settings › Voices. The other engines are experiments: big downloads, and the GPU ones only render while
+        the app is open. Kokoro reads any sentence a voice can't deliver in time.</div>
       ${unavailable ? '<div class="card err">Experimental engines aren’t available in this build.</div>' : ''}
       ${message ? `<div class="card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}">${esc(message)}</div>` : ''}
       ${voices?.view() ?? ''}

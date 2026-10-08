@@ -35,8 +35,11 @@ enum NephisSpeech {
         return { samples, sampleRate in await recognize(samples, sampleRate: sampleRate) }
     }
 
+    /// One recognizer for every take (making one loads the on-device model's settings each time).
+    private static let shared = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+
     private static func recognize(_ samples: [Float], sampleRate: Int) async -> [NephisFlow.Word]? {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.supportsOnDeviceRecognition,
+        guard let recognizer = shared, recognizer.supportsOnDeviceRecognition,
               let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(sampleRate), channels: 1, interleaved: false),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
               let channel = buffer.floatChannelData?[0] else { return nil }

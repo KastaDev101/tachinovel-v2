@@ -75,6 +75,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var natural: NaturalFinisher?
 
     private(set) var currentSource: VoiceSource?
+    /// The expressive engine that rendered the sentence playing now (nil: Kokoro or the Apple voice).
+    private(set) var currentExpressive: ExpressiveEngineID?
     private(set) var lastFallback: FallbackReason?
 
     private var audioEngine = AVAudioEngine()
@@ -97,6 +99,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Bumped when the audio graph is restarted: completions of buffers from before are ignored.
     private var epoch = 0
     private var buffers: [Int: AVAudioPCMBuffer] = [:]
+    /// Which voice rendered each buffer (a Kokoro voice id, or an expressive engine's id).
+    private var bufferVoices: [Int: String] = [:]
     /// Kokoro segments scheduled on the player node, in play order (first = audible).
     private var queued: [Int] = []
     private var appleSegment: Int?
@@ -199,6 +203,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
         queued.removeAll()
         buffers.removeAll()
+        bufferVoices.removeAll()
         appleSegment = nil
         appleUtterance = nil
         appleRender = nil
@@ -313,16 +318,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
                 line.flowReset = i != flowNext
                 line.flowLast = members.last == segments.count - 1
-                line.takes = flowTakes(at: i)
+                let budget = flowBudget(at: i)
+                line.takes = budget.takes
+                line.leadIn = budget.leadIn
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }
-            // A retake would replay the flow's state twice: the flow engine checks its own takes instead.
-            synthesizeExpressive(line, id: id, syllables: syllables, retry: !flow) { [weak self] result in
+            // A flow call frees the next one when its latents are ready (`prepared`), or here if it failed before.
+            let prepared = FlowCall()
+            let handle: (Result<ExpressiveAudio, Error>) -> Void = { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     if flow {
-                        self.flowBusy = false
+                        if !prepared.done { self.flowBusy = false }
                         if case .failure = result { self.flowNext = -1 }
                     }
                     switch result {
@@ -341,6 +349,17 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         self.expressiveFailed(members, gen: g)
                     }
                 }
+            }
+            if flow {
+                // The next call starts generating as soon as this one's latents are ready (it decodes meanwhile).
+                ExpressiveService.shared.synthesizeFlow(line, prepared: { [weak self] in
+                    prepared.done = true
+                    guard let self, g == self.gen, self.scheduler != nil else { return }
+                    self.flowBusy = false
+                    self.pumpRender()
+                }, completion: handle)
+            } else {
+                synthesizeExpressive(line, id: id, syllables: syllables, retry: true, completion: handle)
             }
             return
         }
@@ -459,14 +478,25 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         min(1.4, max(0.35, before.naturalPause ?? before.pauseAfter))
     }
 
-    /// Takes to try for a flow call: more when playback is far ahead (best of 2–3 smooths the tone), one when it
-    /// isn't (never risk falling behind); one more at a change of read (a mood switch is where jumps happen).
-    private func flowTakes(at i: Int) -> Int {
+    /// What a flow call may cost, from the audio buffered ahead of playback: one plain take when it is short (as
+    /// fast as the Narrator), a lead-in (the sentence before read again, then cut: the tone carries over) from
+    /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
+    private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
         let playing = scheduler?.playing ?? 0
         let ahead = buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
-        let base = ahead > 45 ? 3 : ahead > 20 ? 2 : 1
-        let change = i > 0 && read(for: i) != read(for: i - 1)
-        return min(4, base + (change && ahead > 20 ? 1 : 0))
+        return Self.flowBudget(ahead: ahead, readChange: i > 0 && read(for: i) != read(for: i - 1))
+    }
+
+    static let leadInAhead = 15.0
+
+    /// Whether a flow call got as far as its latents (main thread only).
+    private final class FlowCall {
+        var done = false
+    }
+
+    static func flowBudget(ahead: Double, readChange: Bool) -> (takes: Int, leadIn: Bool) {
+        let base = ahead > 60 ? 3 : ahead > 35 ? 2 : 1
+        return (min(4, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
     }
 
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
@@ -504,7 +534,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             for (k, j) in members.enumerated() {
                 let buf = k < pieces.count ? self.makeBuffer(pieces[k].frames) : nil
                 self.scheduler?.renderDone(j, ok: buf != nil)
-                if let buf, self.scheduler?.isReady(j) == true { self.buffers[j] = buf }
+                if let buf, self.scheduler?.isReady(j) == true {
+                    self.buffers[j] = buf
+                    self.bufferVoices[j] = voice
+                }
             }
             self.pumpRender()
             if self.waiting { self.advance() } else { self.prefetch() }
@@ -568,7 +601,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     self.scheduler?.renderDone(i, ok: true)
                     if self.scheduler?.isReady(i) == true {
-                        if let buf = self.makeBuffer(pieces.flatMap(\.frames)) { self.buffers[i] = buf } else { self.scheduler?.renderDone(i, ok: false) }
+                        if let buf = self.makeBuffer(pieces.flatMap(\.frames)) {
+                            self.buffers[i] = buf
+                            self.bufferVoices[i] = voice
+                        } else {
+                            self.scheduler?.renderDone(i, ok: false)
+                        }
                     }
                     self.pumpRender()
                     if self.waiting { self.advance() } else { self.prefetch() }
@@ -829,6 +867,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func began(_ i: Int, _ source: VoiceSource) {
         scheduler?.started(i)
         currentSource = source
+        currentExpressive = source == .kokoro ? bufferVoices[i].flatMap(ExpressiveEngineID.init(rawValue:)) : nil
         if source == .kokoro { lastFallback = nil }
         if !firstAudioLogged {
             firstAudioLogged = true

@@ -244,6 +244,9 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     }
 
     private func pumpRender() {
+        // While the engine is still loading, a call would fail at once ("The model isn't loaded") and the first line
+        // would go to Kokoro (Kasta's report, 2026-10-08): wait, primaryStatusChanged pumps again when it is ready.
+        if let id = primary, ExpressiveService.shared.loadState(id) == .loading { return }
         guard !paused, let i = scheduler?.nextRender() else { return }
         let g = gen
         let done: (Result<Rendered, Error>) -> Void = { [weak self] result in self?.rendered(i, gen: g, result: result) }

@@ -51,6 +51,9 @@ describe('which voice is speaking', () => {
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } })).toBe('System voice (fallback) · Kokoro is catching up');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple' } })).toBe('System voice (fallback)');
     expect(voiceLabel({ status: 'playing', engine: 'audio' })).toBe('PC audio');
+    // The expressive voice that read the sentence (Nephis, the Narrator), never Kokoro's name for it.
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro', reader: 'Nephis' } })).toBe('Nephis');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', reader: 'Nephis' } })).toBe('System voice (fallback)');
   });
 
   it('every fallback reason has words', () => {

@@ -777,9 +777,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     /// Which voice is speaking (for the mini player / Listen player subtitle): Kokoro with its name, or the
     /// system voice standing in, and why.
     private func voiceDict() -> [String: Any] {
-        let id = kokoroVoiceForCurrentNovel()
+        let id = kokoroVoiceForSpeech()
         var v: [String: Any] = ["kokoroVoice": id, "kokoroName": VoiceSettings.shared.prefs.displayName(id)]
         if let speechSource { v["source"] = speechSource.rawValue }
+        // The expressive voice reading this sentence (Nephis, the Narrator): Kokoro's name would be wrong there.
+        if speechSource == .kokoro, let e = engine.currentExpressive {
+            v["reader"] = e == .pocketTts ? (VoiceSettings.shared.prefs.delivery.isNephis ? "Nephis" : "Narrator") : e.title
+        }
         if speechSource == .apple {
             let apple = VoiceSettings.appleVoice(explicit: voiceIdentifier, kokoroVoice: id)
             v["appleName"] = apple?.name ?? "System voice"
@@ -792,6 +796,14 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private func kokoroVoiceForCurrentNovel() -> String {
         let key = chapter.map { VoiceSettings.novelKey(pluginId: $0.pluginId, novelPath: $0.novelPath) }
         return VoiceSettings.shared.prefs.voice(forNovel: key)
+    }
+
+    /// The Kokoro voice the speech engine uses: the novel's, except while Nephis reads, when Kokoro's sentences
+    /// (a stand-in while she catches up, a fallback) are read in her matched voice (af_nephis), not another one.
+    private func kokoroVoiceForSpeech() -> String {
+        let d = VoiceSettings.shared.prefs.delivery
+        if Self.listenEngine() == .pocketTts, d.isNephis, VoiceCatalog.voice("af_nephis") != nil { return "af_nephis" }
+        return kokoroVoiceForCurrentNovel()
     }
 
     /// Narration that would use Kokoro is active (KokoroService reloads after memory pressure only then).
@@ -883,7 +895,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
             speechSegment(it, id: generation * 100_000 + current + offset, speed: speed)
         }
         engine.narrator = narrator
-        engine.kokoroVoice = kokoroVoiceForCurrentNovel()
+        engine.kokoroVoice = kokoroVoiceForSpeech()
         engine.explicitAppleVoice = voiceIdentifier
         engine.listenEngine = Self.listenEngine()
         appliedVoiceKey = voiceKey()

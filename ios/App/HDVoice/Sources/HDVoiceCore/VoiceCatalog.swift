@@ -36,6 +36,8 @@ public struct KokoroVoice: Sendable, Equatable, Codable {
 public enum VoiceCatalog {
     public static let voices: [KokoroVoice] = [
         KokoroVoice(id: "af_heart", name: "Heart", language: "en-US", gender: .female, grade: "A", blurb: "Warm, expressive. The best Kokoro voice."),
+        // Ours (tools/fetch-voices.ts OWN_VOICES): Kokoro matched to Nephis's voice.
+        KokoroVoice(id: "af_nephis", name: "Nephis", language: "en-US", gender: .female, grade: "B", blurb: "Nephis's voice, read fast by Kokoro."),
         KokoroVoice(id: "af_bella", name: "Bella", language: "en-US", gender: .female, grade: "A-", blurb: "Bright and lively."),
         KokoroVoice(id: "af_nicole", name: "Nicole", language: "en-US", gender: .female, grade: "B-", blurb: "Soft and close, almost a whisper."),
         KokoroVoice(id: "af_aoede", name: "Aoede", language: "en-US", gender: .female, grade: "C+", blurb: ""),
