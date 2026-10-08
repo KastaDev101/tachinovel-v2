@@ -30,6 +30,46 @@ final class HybridSchedulerTests: XCTestCase {
         XCTAssertEqual(s.extendRender(3, through: 99), [4, 5], "never past the window's pending sentences or the end")
     }
 
+    func testPatientModeWaitsForItsVoiceInsteadOfFallingBack() {
+        var s = HybridScheduler(count: 4, kokoro: .loading, config: .init(ahead: 3, patient: true))
+        // Loading, long past the start grace: still waiting, never the other voice.
+        XCTAssertEqual(s.decide(now: 0), .wait(0.5))
+        XCTAssertEqual(s.decide(now: 60), .wait(0.5))
+        s.kokoro = .ready
+        XCTAssertEqual(s.nextRender(), 0)
+        XCTAssertEqual(s.decide(now: 61), .wait(0.5), "rendering: wait for it")
+        s.renderDone(0, ok: true)
+        XCTAssertEqual(s.decide(now: 62), .kokoro(0))
+        s.started(0)
+        // Late (the next sentence still rendering when this one ends): wait, counted as one underrun.
+        XCTAssertEqual(s.nextRender(), 1)
+        s.finished(0)
+        XCTAssertEqual(s.decide(now: 63), .wait(0.5))
+        XCTAssertEqual(s.decide(now: 70), .wait(0.5))
+        XCTAssertEqual(s.underruns, 1)
+        XCTAssertEqual(s.waitedSeconds, 0, "counted when the sentence finally plays")
+        // A failed sentence is tried again by the same voice.
+        s.renderDone(1, ok: false)
+        XCTAssertEqual(s.decide(now: 71), .wait(0.5))
+        XCTAssertEqual(s.nextRender(), 1, "the failed sentence renders again")
+        s.renderDone(1, ok: true)
+        XCTAssertEqual(s.decide(now: 72), .kokoro(1))
+        XCTAssertEqual(s.waitedSeconds, 9, accuracy: 0.001, "waited from 63 to 72 for sentence 1")
+        // Throttled: patient voices keep rendering.
+        s.throttled = true
+        XCTAssertEqual(s.nextRender(), 2)
+        XCTAssertEqual(s.fallbacks, [:], "never fell back")
+        // Unavailable (failed to load, or failed too often): the fallback still saves the read.
+        s.renderDone(2, ok: true)
+        s.started(1)
+        s.finished(1)
+        s.kokoro = .unavailable
+        XCTAssertEqual(s.decide(now: 80), .kokoro(2), "rendered audio still plays")
+        s.started(2)
+        s.finished(2)
+        XCTAssertEqual(s.decide(now: 81), .apple(3, .modelUnavailable))
+    }
+
     func testRendersOnlyAheadWindowAndOneAtATime() {
         var s = HybridScheduler(count: 10, kokoro: .ready, config: .init(ahead: 3))
         XCTAssertEqual(s.nextRender(), 0)

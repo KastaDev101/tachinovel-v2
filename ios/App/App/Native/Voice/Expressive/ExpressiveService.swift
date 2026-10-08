@@ -576,6 +576,18 @@ final class ExpressiveService {
         Task.detached { await engine?.unload() }
     }
 
+    /// Nephis is the reader: load her model shortly after launch (the first load after an app update compiles it for
+    /// this phone, which takes a while), so Listen starts with her voice instead of waiting. Released again after 3 idle
+    /// minutes unless narration is using it by then.
+    func warmNephis() {
+        guard NarrationController.listenEngine() == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis, isInstalled(.pocketTts),
+              !crashDisabled, Self.supported(.pocketTts), loadedID == nil else { return }
+        ensureLoaded(.pocketTts) { [weak self] result in
+            guard case .success = result, !NarrationController.shared.wantsKokoro else { return }
+            self?.scheduleIdleRelease()
+        }
+    }
+
     func scheduleIdleRelease(after seconds: TimeInterval = 180) {
         cancelIdleRelease()
         let item = DispatchWorkItem { [weak self] in self?.unload(reason: "idle") }
@@ -660,6 +672,10 @@ final class ExpressiveService {
     }
 
     private(set) var flowStats = FlowStats()
+
+    func resetFlowStats() {
+        flowStats = FlowStats()
+    }
 
     private func recordFlow(_ r: NephisFlowSynth.Report) {
         flowStats.calls += 1
@@ -787,6 +803,7 @@ final class ExpressiveService {
                 "os": ProcessInfo.processInfo.operatingSystemVersionString,
             ] as [String: Any],
             "kokoro": KokoroService.shared.statusText,
+            "app": "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))",
             "voices": voicesSnapshot(),
             "pocketVoice": VoiceSettings.shared.prefs.delivery.pocketVoice,
             "flow": flowSnapshot(),
@@ -824,6 +841,11 @@ final class ExpressiveService {
                                "call": Self.r2(f.totalMs / audio)],
             "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
         ]
+        // Breaks a listener heard in the last Listen session: waits for her, and sentences another voice read.
+        if let s = NarrationController.shared.speechEngine.snapshot {
+            out["listen"] = ["breaks": s.underruns, "breakSeconds": Self.r1(s.waitedSeconds), "otherVoiceSentences": s.appleSentences,
+                             "fallbacks": Dictionary(uniqueKeysWithValues: s.fallbacks.map { ($0.key.rawValue, $0.value) })] as [String: Any]
+        }
         if let r = f.last {
             out["last"] = ["takes": r.takes, "usable": r.usable, "leadIn": r.leadIn, "wordMatch": r.wordMatch.map { Self.r2($0) } ?? NSNull(),
                            "jumpScore": r.jumpScore.map { Self.r2($0) } ?? NSNull(), "renderMs": Self.r1(r.renderMs),

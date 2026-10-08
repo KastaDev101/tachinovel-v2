@@ -41,6 +41,10 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "cancelSpeedTest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "unload", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resetCrashes", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "resetStats", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "recordStart", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "recordStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "shareRecording", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "importVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selectVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "renameVoice", returnType: CAPPluginReturnPromise),
@@ -288,6 +292,45 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             ExpressiveLabPlayer.shared.stop()
             ExpressiveService.shared.unload(reason: "Voice Lab")
             call.resolve(Self.status())
+        }
+    }
+
+    /// Settings › Voices › Voice test: start counting Nephis's calls afresh (the report then covers the test only).
+    @objc func resetStats(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            ExpressiveService.shared.resetFlowStats()
+            call.resolve(Self.status())
+        }
+    }
+
+    /// Voice test recording: Documents/voice-test.wav (also visible in Files › On My iPhone › TachiNovel).
+    static var recordingURL: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("voice-test.wav")
+    }
+
+    @objc func recordStart(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let url = Self.recordingURL else { return call.resolve(["recording": false]) }
+            NarrationController.shared.speechEngine.startRecording(to: url)
+            call.resolve(["recording": true])
+        }
+    }
+
+    @objc func recordStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let url = NarrationController.shared.speechEngine.stopRecording()
+            let bytes = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size] as? NSNumber }?.intValue ?? 0
+            call.resolve(["saved": url != nil && bytes > 44, "bytes": bytes])
+        }
+    }
+
+    /// The share sheet with the last recording (Save to Files › iCloud Drive reaches the PC).
+    @objc func shareRecording(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let url = Self.recordingURL, FileManager.default.fileExists(atPath: url.path) else {
+                return call.reject("No recording yet: run the test first.")
+            }
+            NativeUI.shared.share([url]) { call.resolve() }
         }
     }
 
