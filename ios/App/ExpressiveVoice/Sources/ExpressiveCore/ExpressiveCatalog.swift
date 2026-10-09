@@ -165,7 +165,8 @@ public enum StyleMapper {
         var spelled = out as NSString
         for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
             let word = ns.substring(with: m.range)
-            guard !shoutedWords.contains(word) else { continue }
+            // Shouted words, and sounds in capitals ("HMM", "AAAH", "SHH": a letter doubled) stay words.
+            guard !shoutedWords.contains(word), word.range(of: #"(.)"#, options: .regularExpression) == nil else { continue }
             spelled = spelled.replacingCharacters(in: m.range, with: word.map(String.init).joined(separator: " ")) as NSString
         }
         return spelled as String
