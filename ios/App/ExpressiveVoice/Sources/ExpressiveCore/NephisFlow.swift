@@ -99,9 +99,34 @@ public enum NephisFlow {
         }
     }
 
+    /// Chain settings a Nephis model pack carries (pack.json "chain"), tuned on the PC for that model; any field it
+    /// leaves out keeps the default here.
+    public struct Chain: Codable, Sendable, Equatable {
+        /// Pause between the pieces of one paragraph, and after a piece ending in "…" or ":" (seconds).
+        public var pieceGap = 0.45
+        public var ellipsisGap = 0.8
+        /// Scales the pause before a paragraph (the director's natural pause).
+        public var paragraphGapScale = 1.0
+        /// Voice-prompt frames from her mood clip, and from what she just said (carry-over); at most 125 together.
+        public var clipFrames = NephisFlow.clipFrames
+        /// Carry-over used in her prompt: 12 (1 s) beat 62, 25 and none in the PC chain test (likeness 0.962, follows moods best).
+        public var carryFrames = 12
+
+        public init() {}
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pieceGap = try c.decodeIfPresent(Double.self, forKey: .pieceGap) ?? pieceGap
+            ellipsisGap = try c.decodeIfPresent(Double.self, forKey: .ellipsisGap) ?? ellipsisGap
+            paragraphGapScale = try c.decodeIfPresent(Double.self, forKey: .paragraphGapScale) ?? paragraphGapScale
+            clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
+            carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
+        }
+    }
+
     /// The voice prompt for a paragraph: her clip (its first `clipFrames`), half the previous mood's clip and half
     /// this one's at a mood change, then the carry-over (the conditioning of the last latents she said).
-    public static func prompt(clip: [Float], previousClip: [Float]?, carry: [Float]) -> (frames: [Float], count: Int) {
+    public static func prompt(clip: [Float], previousClip: [Float]?, carry: [Float], clipFrames: Int = clipFrames) -> (frames: [Float], count: Int) {
         let dim = embeddingDim
         func head(_ c: [Float], _ frames: Int) -> [Float] { Array(c.prefix(min(c.count / dim, frames) * dim)) }
         var out: [Float]
@@ -197,13 +222,16 @@ public enum NephisFlow {
     /// past the end of the text), anything louder again is the model mumbling into the pause. Each such latent
     /// becomes the quiet latent before it. Returns how many were replaced.
     @discardableResult
-    public static func cleanTail(_ latents: inout [[Float]], levels: inout [Double], endOfText: Int, ring: Int = 2) -> Int {
+    public static func cleanTail(_ latents: inout [[Float]], levels: inout [Double], endOfText: Int, ring: Int = 4, hold: Int = 4) -> Int {
+        // The end of the text is an estimate and a last word can dip quiet inside it (a stop before "-ed", a soft
+        // final consonant): 2 quiet latents after 2 of ring clipped last syllables on the phone (Voice test
+        // 2026-10-09, "cutting sentences short"). Now the sound must stay quiet for `hold` latents (320 ms).
         var k = max(0, endOfText + ring)
-        while k + 1 < levels.count, !(levels[k] < quietDB && levels[k + 1] < quietDB) { k += 1 }
-        guard k + 1 < levels.count else { return 0 }
+        while k + hold <= levels.count, !(k..<(k + hold)).allSatisfy({ levels[$0] < quietDB }) { k += 1 }
+        guard k + hold <= levels.count else { return 0 }
         var n = 0
-        var quiet = k + 1
-        for i in (k + 2)..<max(k + 2, levels.count) {
+        var quiet = k + hold - 1
+        for i in (k + hold)..<max(k + hold, levels.count) {
             if levels[i] > quietDB {
                 latents[i] = latents[quiet]
                 levels[i] = levels[quiet]

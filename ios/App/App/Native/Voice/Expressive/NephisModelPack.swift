@@ -16,7 +16,7 @@ enum NephisModelPack {
     static let fileExtension = "tnmodel"
     static let didInstall = Notification.Name("TachiNovelNephisModelInstalled")
     private static let log = Logger(subsystem: "app.tachinovel", category: "voice-expressive")
-    private static let language = "Models/pocket-tts-coreml/v2.1/english"
+    private static let language = "Models/pocket-tts/v2.1/english"  // FluidAudio's folder for Repo.pocketTts
 
     /// Files a pack must hold (relative to its root) before it replaces anything.
     static let required = [

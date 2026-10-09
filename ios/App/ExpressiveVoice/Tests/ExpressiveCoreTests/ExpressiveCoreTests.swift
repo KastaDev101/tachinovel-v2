@@ -53,6 +53,9 @@ final class StyleMapperTests: XCTestCase {
         XCTAssertEqual(StyleMapper.pocketText("He paused, …, then went on."), "He paused, then went on.")
         XCTAssertEqual(StyleMapper.pocketText("'Damna... tion...'"), "'Damnation.'")
         XCTAssertEqual(StyleMapper.pocketText("It's imposs… ible!"), "It's impossible!")
+        XCTAssertEqual(StyleMapper.pocketText("There are 312 steps, 1,500 lanterns and a 3rd gate."),
+                       "There are three hundred twelve steps, one thousand five hundred lanterns and a third gate.")
+        XCTAssertEqual(StyleMapper.spokenNumbers("Chapter 7. It cost 2.5 coins."), "Chapter seven. It cost 2.5 coins.")
         XCTAssertEqual(StyleMapper.pocketText("What... is... going on?"), "What, is, going on?")
         XCTAssertEqual(StyleMapper.pocketText("Ah... not good..."), "Ah, not good.")
     }

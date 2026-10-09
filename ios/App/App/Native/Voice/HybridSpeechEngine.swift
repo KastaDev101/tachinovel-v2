@@ -508,7 +508,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
     private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
         // A warm phone: the lightest calls, so she keeps up without heating it further.
-        if ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue) { return (1, false) }
+        // From "fair" on (not only when throttled): extras cost heat, and her 3x target leaves no need for them then
+        // (Voice test 2026-10-09: fair to serious in 90 s with redos and lead-ins; Kasta wants it a tad cooler).
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
         // Her last call came in under 1.5× real time (a busy or warm phone): the lightest calls until she is faster
         // again, so the margin that keeps the read gapless is never spent on extras.
         if let last = ExpressiveService.shared.flowStats.last, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
@@ -521,7 +523,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
-    static let leadInAhead = 15.0
+    static let leadInAhead = 25.0
 
     /// Whether a flow call got as far as its latents (main thread only).
     private final class FlowCall {
@@ -529,8 +531,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static func flowBudget(ahead: Double, readChange: Bool) -> (takes: Int, leadIn: Bool) {
-        let base = ahead > 60 ? 3 : ahead > 35 ? 2 : 1
-        return (min(4, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
+        // At most 2 takes: with the trained model a second take rarely wins, and each one is a whole extra render.
+        let base = ahead > 60 ? 2 : 1
+        return (min(2, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
     }
 
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts

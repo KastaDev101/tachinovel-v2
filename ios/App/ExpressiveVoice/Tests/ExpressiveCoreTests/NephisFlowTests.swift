@@ -39,18 +39,27 @@ final class NephisFlowTests: XCTestCase {
     }
 
     func testCleanTailQuietsAMumbleAfterTheLastWordDiedAway() {
-        // Word until 9, end of text at 8, rings out to 11, quiet 12-13, a mumble 14-16, quiet again.
-        var levels = [Double](repeating: -20, count: 10) + [-30, -45, -55, -58, -38, -36, -40, -57, -60]
+        // Word until 9, end of text at 8, rings out to 11, quiet 12-15 (320 ms), a mumble 16-18, quiet again.
+        var levels = [Double](repeating: -20, count: 10) + [-30, -45, -55, -58, -57, -59, -38, -36, -40, -57, -60]
         var latents = levels.indices.map { lat(Float($0)) }
         let n = NephisFlow.cleanTail(&latents, levels: &levels, endOfText: 8)
         XCTAssertEqual(n, 3)
-        XCTAssertEqual(latents[14], lat(13))
-        XCTAssertEqual(latents[16], lat(13))
+        XCTAssertEqual(latents[16], lat(15))
+        XCTAssertEqual(latents[18], lat(15))
         XCTAssertEqual(latents[9], lat(9), "the word itself is untouched")
         // Never quiet after the end: nothing is touched.
         var loud = [Double](repeating: -25, count: 12)
         var l2 = loud.indices.map { lat(Float($0)) }
         XCTAssertEqual(NephisFlow.cleanTail(&l2, levels: &loud, endOfText: 4), 0)
+    }
+
+    func testCleanTailKeepsALastSyllableAfterAShortDip() {
+        // The end-of-text estimate is early (6) and the last word dips quiet for 2 latents (a stop) before its
+        // final syllable at 12-13: that syllable is speech, not a mumble.
+        var levels = [Double](repeating: -20, count: 10) + [-55, -56, -24, -26, -50, -57, -58, -59, -60]
+        var latents = levels.indices.map { lat(Float($0)) }
+        XCTAssertEqual(NephisFlow.cleanTail(&latents, levels: &levels, endOfText: 6), 0)
+        XCTAssertEqual(latents[12], lat(12))
     }
 
     func testLeadInCutWaitsForRealSilence() {

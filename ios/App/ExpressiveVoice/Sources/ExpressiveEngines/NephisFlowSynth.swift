@@ -32,11 +32,15 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Pocket TTS models trained on her (a Nephis model pack: `<dir>/Models/pocket-tts-coreml/v2.1/english/…`);
         /// nil = Kyutai's released models (downloaded once, cached).
         public let modelsDirectory: URL?
-        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil) {
+        /// The pack's chain settings (pauses, prompt sizes), tuned with its model; defaults without a pack.
+        public let chain: NephisFlow.Chain
+        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil,
+                    chain: NephisFlow.Chain = .init()) {
             self.calm = calm
             self.moods = moods
             self.projection = projection
             self.modelsDirectory = modelsDirectory
+            self.chain = chain
         }
     }
 
@@ -171,7 +175,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var stream: [[Float]] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
-            let pause = k == 0 ? (line.pauseBefore ?? 0.6) : Self.sentencePause(after: pieces[k - 1])
+            let pause = k == 0 ? (line.pauseBefore ?? 0.6) * assets.chain.paragraphGapScale
+                : Self.sentencePause(after: pieces[k - 1], chain: assets.chain)
             stream += try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
                                      seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
         }
@@ -179,14 +184,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
-    static func sentencePause(after piece: String) -> Double {
+    static func sentencePause(after piece: String, chain: NephisFlow.Chain = .init()) -> Double {
         let t = piece.trimmingCharacters(in: .whitespaces)
-        return t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":") ? 0.8 : 0.45
+        return t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":") ? chain.ellipsisGap : chain.pieceGap
     }
 
     /// The pieces Pocket would generate `text` in (a sentence split inside stays with the piece it belongs to).
     private func plan(_ manager: PocketTtsManager, text: String, clip: [Float]) async throws -> [String] {
-        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry))
+        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
         // Planning needs only the tokenizer and the prompt's length: no session, so no voice prefill spent on it.
         let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
         var out: [String] = []
@@ -205,7 +210,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private func read(_ text: String, clip: [Float], line: ExpressiveLine, first: Bool, last: Bool, pause: Double, seed: UInt64?,
                       manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws -> [[Float]] {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: lastClip.flatMap { $0 == clip ? nil : $0 },
-                                       carry: assets.projection.condition(carry))
+                                       carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
         let temperature = min(0.85, max(0.55, line.temperature ?? 0.7))
         let n = max(1, min(8, line.takes ?? 1))
@@ -287,7 +292,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         pendingTail = Array(stream.suffix(keep))
         stream.removeLast(keep)
 
-        carry = Array((carry + latents).suffix(NephisFlow.carryFrames))
+        carry = Array((carry + latents).suffix(assets.chain.carryFrames))
         context = Array(best.audio.suffix(3 * NephisFlow.sampleRate))
         lastText = text
         lastClip = clip

@@ -118,7 +118,7 @@ public enum StyleMapper {
         let dots = #"(?:\.\s?\.\s?\.|…)"#
         // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
         // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
-        var out = joinBrokenWords(text).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
+        var out = spokenNumbers(joinBrokenWords(text)).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
         let rules: [(String, String)] = [
             (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
             (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
@@ -133,6 +133,23 @@ public enum StyleMapper {
             out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Numbers in words: Pocket reads digits badly ("312 steps" came out "three or two steps" on the phone, Voice
+    /// test 2026-10-09). Whole numbers (with or without thousands commas) and ordinals ("3rd"), below a billion.
+    public static func spokenNumbers(_ text: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(st|nd|rd|th)?(?!\d|[.,]\d)"#) else { return text }
+        let cardinal = NumberFormatter(), ordinal = NumberFormatter()
+        cardinal.locale = Locale(identifier: "en_US"); cardinal.numberStyle = .spellOut
+        ordinal.locale = Locale(identifier: "en_US"); ordinal.numberStyle = .spellOutOrdinal
+        let ns = text as NSString
+        var out = text as NSString
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            guard let n = Int(ns.substring(with: m.range(at: 1)).replacingOccurrences(of: ",", with: "")), n < 1_000_000_000,
+                  let words = (m.range(at: 2).location != NSNotFound ? ordinal : cardinal).string(from: NSNumber(value: n)) else { continue }
+            out = out.replacingCharacters(in: m.range, with: words.replacingOccurrences(of: "-", with: " ")) as NSString
+        }
+        return out as String
     }
 
     /// Word endings that, after a trailing-off "…", finish the word before it ("Damna… tion" → "Damnation"); a
