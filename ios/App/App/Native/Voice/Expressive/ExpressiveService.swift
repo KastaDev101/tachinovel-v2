@@ -215,6 +215,8 @@ final class ExpressiveService {
     }
 
     func isInstalled(_ id: ExpressiveEngineID) -> Bool {
+        // Nephis with a model pack: the pack carries the whole Pocket model, so it counts without the download.
+        if id == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis, NephisModelPack.modelsDirectory != nil { return true }
         guard let store, let m = id.pinned else { return false }
         return store.isInstalled(m)
     }
