@@ -572,7 +572,21 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private func preparedChapter(pluginId: String, novelPath: String, chapterPath: String) -> PreparedChapter? {
         guard !Self.isSynthetic(pluginId) || NarrationSelfTest.shared.hasChapters else { return nil }
         let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
+        if Self.preparesNephis, let p = DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: Self.preparedNephisKey) { return p }
         return DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(forNovel: key))
+    }
+
+    /// Nephis reads chapters and her model can be used: "Prepare for the drive" renders in her voice.
+    static var preparesNephis: Bool {
+        VoiceSettings.shared.prefs.delivery.isNephis && listenEngine() == .pocketTts && HybridSpeechEngine.nephisCanReadAlone(.pocketTts)
+    }
+
+    /// What her prepared chapters are filed under: her model pack (a new pack is a new voice, so old files aren't
+    /// played in a voice that changed).
+    static var preparedNephisKey: String {
+        let info = NephisModelPack.info
+        let sha = (info?["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? "shipped"
+        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")"
     }
 
     private func playPrepared(_ p: PreparedChapter, pluginId: String, novelPath: String, novelName: String, startParagraph: Int) {

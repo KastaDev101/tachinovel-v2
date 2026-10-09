@@ -18,6 +18,8 @@
 
 ### Added
 
+- Prepare for the drive reads in Nephis's voice when she is your voice: chapters are rendered ahead (best of two
+  takes, her moods, pauses and EQ), so in the car the phone only plays files.
 - Voice test › 15-minute test with your own chapter: records what plays while you listen the usual way, with the
   phone's heat, the voice's speed and any break or voice switch every 15 seconds.
 - Long LitRPG lists ("Memories: [A], [B]…", six or more items) are read as a summary: how many, and what's new since
