@@ -59,6 +59,7 @@ final class StyleMapperTests: XCTestCase {
         XCTAssertEqual(StyleMapper.pocketText("The APC rolled past gate L0-49."), "The A P C rolled past gate L zero forty nine.")
         XCTAssertEqual(StyleMapper.spokenCodes("NO! RUN, the NPC said."), "NO! RUN, the N P C said.")
         XCTAssertEqual(StyleMapper.spokenCodes("GET DOWN, NOW!"), "GET DOWN, NOW!", "a shouted sentence stays words")
+        XCTAssertEqual(StyleMapper.spokenNumbers("the 21st and 40th floors"), "the twenty first and fortieth floors")
         XCTAssertEqual(StyleMapper.pocketText("What... is... going on?"), "What, is, going on?")
         XCTAssertEqual(StyleMapper.pocketText("Ah... not good..."), "Ah, not good.")
     }
