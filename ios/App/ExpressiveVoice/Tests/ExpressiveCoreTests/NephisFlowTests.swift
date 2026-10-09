@@ -67,6 +67,17 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(out[0], 0.5)
     }
 
+    func testLongPauseDecodesOnlyHerFadeOutAndLeadIn() {
+        let q = [Float](repeating: 0, count: 32), w = [Float](repeating: 1, count: 32)
+        // 6 silence latents after the last word, 4 before the next word: at 1.04 s (13 latents) only 3 + 2 are
+        // decoded and 8 latents (0.64 s) are silence spliced in after the fade-out.
+        let r = NephisFlow.joinPadded(tail: [[Float]](repeating: q, count: 6), next: [[Float]](repeating: q, count: 4) + [w, w], head: 4, pause: 1.04)
+        XCTAssertEqual(r.padAt, 3)
+        XCTAssertEqual(r.padSeconds, 8 * NephisFlow.latentSeconds, accuracy: 1e-9)
+        XCTAssertEqual(r.latents.count, 3 + 2 + 2)
+        XCTAssertEqual(r.latents.last, w, "the next word itself is untouched")
+    }
+
     func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)

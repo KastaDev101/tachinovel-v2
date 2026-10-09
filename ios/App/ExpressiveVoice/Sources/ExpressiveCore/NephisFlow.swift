@@ -329,6 +329,10 @@ public enum NephisFlow {
     /// "du du du" 11-18 dB over her real pauses (PC test 2026-10-09: 80 ms periodicity 0.78-0.92), heard on the phone
     /// before system lines (the longest pauses) and at long paragraph pauses.
     public static let maxBridge = 3
+    /// Silence latents decoded around a long pause: her fade-out after the last word (240 ms) and the lead-in before
+    /// the next (160 ms); everything between them is true silence.
+    public static let keepTail = 3
+    public static let keepHead = 2
 
     /// `join`, but a pause longer than its bridge is decoded with only `maxBridge` morph latents; `padAt` is where in
     /// the returned latents `padSeconds` of silence go in the decoded audio (the middle of the bridge).
@@ -337,6 +341,14 @@ public enum NephisFlow {
         var a = tail, b = next
         let ov = max(0, min(overlap, a.count - 1, head - 1))
         let want = max(2, Int((pause / latentSeconds).rounded()))
+        // A pause longer than her fade-out + lead-in: decode only those (the first `keepTail` latents after the last
+        // word, the last `keepHead` before the next) and make all the rest silence. The model's own quiet latents buzz
+        // too, not just a morph between them (phone Voice test 2026-10-09, after the bridge cap: shorter, still there).
+        let keepTail = min(a.count, Self.keepTail), keepHead = min(head, Self.keepHead)
+        if maxBridge != .max, want > keepTail + keepHead, a.count + head > keepTail + keepHead {
+            return (Array(a.prefix(keepTail)) + Array(b.dropFirst(head - keepHead)), keepTail,
+                    Double(want - keepTail - keepHead) * latentSeconds)
+        }
         let have = a.count + head - ov
         var headLeft = head
         if have > want {
