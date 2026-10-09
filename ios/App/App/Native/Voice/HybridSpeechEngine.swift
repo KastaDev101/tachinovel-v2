@@ -180,7 +180,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
         nephisOnly = Self.nephisCanReadAlone(listenEngine)
         let bridging = !nephisOnly && (listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false)
-        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(),
+        let kokoro = kokoroState()  // may leave Nephis-only, so before the config reads it
+        var s = HybridScheduler(count: segs.count, kokoro: kokoro,
                                 config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead, patient: nephisOnly))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
@@ -548,7 +549,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             scheduler?.renderDone(members[0], ok: false)
             if scheduler?.kokoro == .unavailable {
                 leaveNephisOnly(reason: "sentences kept failing")
-                scheduler?.kokoro = kokoroState()
+                let state = kokoroState()  // reads (and may change) the scheduler: never inside a write to it
+                scheduler?.kokoro = state
             }
             pumpRender()
             if waiting { advance() }
@@ -1227,7 +1229,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     @objc private func kokoroStatusChanged() {
         DispatchQueue.main.async {
             guard self.scheduler != nil else { return }
-            self.scheduler?.kokoro = self.kokoroState()
+            // kokoroState() can leave Nephis-only, which writes the scheduler: computed before the write, not inside it
+            // (overlapping access to the scheduler aborts the app)
+            let state = self.kokoroState()
+            self.scheduler?.kokoro = state
             if self.expressiveUsable(), let s = self.scheduler, s.config.ahead < self.fullAhead { self.scheduler?.config.ahead = self.fullAhead }
             self.pumpRender()
             if self.waiting { self.advance() }
