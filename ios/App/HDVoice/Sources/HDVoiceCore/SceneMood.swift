@@ -10,7 +10,7 @@ import Foundation
 
 public enum SceneMood {
     /// The moods the scene reader may answer with.
-    public static let moods: Set<String> = ["calm"].union(nephisMoods)
+    public static let moods: Set<String> = nephisMoods.union(["calm"])
     /// Nephis's mood reads (a voice of her own for each; BuiltInVoices/pocket/nephis-<mood>.pocketvoice).
     public static let nephisMoods: Set<String> = ["wry", "playful", "tense", "dread", "intense", "sad", "tender", "awe",
                                                   "hushed", "triumph", "cold"]
