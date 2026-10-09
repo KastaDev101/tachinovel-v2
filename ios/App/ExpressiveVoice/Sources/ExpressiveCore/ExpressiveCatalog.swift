@@ -118,7 +118,7 @@ public enum StyleMapper {
         let dots = #"(?:\.\s?\.\s?\.|…)"#
         // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
         // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
-        var out = spokenNumbers(joinBrokenWords(text)).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
+        var out = spokenNumbers(spokenCodes(joinBrokenWords(text))).replacingOccurrences(of: #"\b([Hh])m{2,}\b"#, with: "$1m", options: .regularExpression)
         let rules: [(String, String)] = [
             (#"(^|[“"‘'(\[]\s*)\#(dots)+\s*"#, "$1"), // leading: "…and then", "“…what"
             (#"\#(dots)+(?=[?!])"#, ""), // "what…?" → "what?"
@@ -133,6 +133,42 @@ public enum StyleMapper {
             out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Capitals shouted as words, never spelled out ("NO!", "RUN"), and everyday short words.
+    static let shoutedWords: Set<String> = [
+        "I", "A", "OK", "NO", "YES", "GO", "NOW", "STOP", "RUN", "HELP", "WHAT", "WHY", "WHO", "HOW", "HEY", "OH", "AH",
+        "UH", "UM", "HM", "OW", "OKAY", "DIE", "ME", "YOU", "HIM", "HER", "WE", "US", "NOT", "ALL", "GET", "OUT", "DOWN",
+        "BACK", "MOVE", "KILL", "THE", "AND", "IS", "IT", "MY", "BE", "DO", "SO", "UP", "ON", "IN", "OF", "TO", "AT",
+        "AN", "OR", "IF", "BY", "HE", "SHE", "THEY", "WAS", "ARE", "CAN", "WILL", "HIS", "ITS", "NEVER", "DONT",
+        "WAIT", "LOOK", "COME", "HERE", "THERE", "THIS", "THAT", "GOD", "GODS", "DEAD", "FIRE", "HOLD", "FAST",
+    ]
+
+    /// Codes read the way people say them (Kasta, 2026-10-09: "APC" came out "aps", "L0-49" "low forty nine"):
+    /// letters stuck to digits come apart ("L0" → "L 0"), a dash between digit groups becomes a space, and a short
+    /// all-capitals word that isn't a shouted everyday word is spelled out ("APC" → "A P C"), unless the whole
+    /// sentence is in capitals (shouting). The novel's Pronunciations entries still win: they reach this text first.
+    public static func spokenCodes(_ text: String) -> String {
+        var out = text
+        let rules: [(String, String)] = [
+            (#"(?<=\b[A-Za-z]{1,4})(?=\d)"#, " "), // "L0" → "L 0"
+            (#"(?<=\d)(?=[A-Za-z]{1,4}\b)(?!(?:st|nd|rd|th)\b)"#, " "), // "49B" → "49 B" (not "3rd")
+            (#"(?<=\d)\s?[-–]\s?(?=\d)"#, " "), // "0-49" → "0 49"
+        ]
+        for (pattern, template) in rules {
+            out = out.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        }
+        let letters = out.filter(\.isLetter)
+        guard !letters.isEmpty, Double(letters.filter(\.isUppercase).count) / Double(letters.count) < 0.6,
+              let re = try? NSRegularExpression(pattern: #"\b[A-Z]{2,5}\b"#) else { return out }
+        let ns = out as NSString
+        var spelled = out as NSString
+        for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let word = ns.substring(with: m.range)
+            guard !shoutedWords.contains(word) else { continue }
+            spelled = spelled.replacingCharacters(in: m.range, with: word.map(String.init).joined(separator: " ")) as NSString
+        }
+        return spelled as String
     }
 
     /// Numbers in words: Pocket reads digits badly ("312 steps" came out "three or two steps" on the phone, Voice
