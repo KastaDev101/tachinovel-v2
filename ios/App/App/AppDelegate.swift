@@ -23,6 +23,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // requests resume a moment after the first paint.
         DrivePrep.register()
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { DrivePrep.shared.start() }
+        // A Nephis model pack copied into Documents (file sharing) is installed first (NephisModelPack.swift).
+        NephisModelPack.installFromDocuments()
         // Nephis as the reader: her model loads in the background now, so Listen starts with her (no stand-in voice).
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { ExpressiveService.shared.warmNephis() }
         BackgroundRefresh.register()

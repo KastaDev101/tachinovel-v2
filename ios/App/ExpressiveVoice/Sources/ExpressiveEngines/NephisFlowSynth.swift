@@ -29,10 +29,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Her mood reads by line role (PocketVoice.nephisMoods); a missing one reads calm.
         public let moods: [String: PocketVoice]
         public let projection: NephisFlow.Projection
-        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection) {
+        /// Pocket TTS models trained on her (a Nephis model pack: `<dir>/Models/pocket-tts-coreml/v2.1/english/…`);
+        /// nil = Kyutai's released models (downloaded once, cached).
+        public let modelsDirectory: URL?
+        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil) {
             self.calm = calm
             self.moods = moods
             self.projection = projection
+            self.modelsDirectory = modelsDirectory
         }
     }
 
@@ -97,7 +101,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func load() async throws -> Double {
         if manager != nil { return 0 }
         let t0 = Date()
-        let m = PocketTtsManager(placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
+        let m = PocketTtsManager(directory: assets.modelsDirectory, placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
         try await m.initialize()
         decoder = try await m.makeLatentDecoder()
         scratch = try await m.makeLatentDecoder()

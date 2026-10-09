@@ -88,8 +88,18 @@ final class ExpressiveService {
     /// The Narrator voice for Pocket TTS (BuiltInVoices/pocket/), checked once (size, shape, sha256).
     /// Nephis's flow engine assets: her clip, her tense clip, Pocket TTS's speaker projection. nil = not shipped or
     /// not valid (she then reads with the plain Pocket engine).
-    lazy var nephisFlowAssets: NephisFlowSynth.Assets? = {
-        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil),
+    /// From an installed Nephis model pack (NephisModelPack: her trained model + her voice files for it) when there
+    /// is one, else the shipped files with Kyutai's model. Cached; `reloadNephisModel()` drops it.
+    var nephisFlowAssets: NephisFlowSynth.Assets? {
+        if let cached = nephisFlowAssetsCache { return cached }
+        let a = loadNephisFlowAssets()
+        nephisFlowAssetsCache = .some(a)
+        return a
+    }
+    private var nephisFlowAssetsCache: NephisFlowSynth.Assets??
+    private func loadNephisFlowAssets() -> NephisFlowSynth.Assets? {
+        let pack = NephisModelPack.voicesDirectory
+        guard let dir = pack ?? Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil),
               let calm = try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisName),
               let data = try? Data(contentsOf: dir.appendingPathComponent("\(PocketVoice.folder)/speaker-projection.bin")),
               let projection = NephisFlow.Projection(data: data) else {
@@ -100,8 +110,16 @@ final class ExpressiveService {
         for mood in PocketVoice.nephisMoods {
             if let v = try? PocketVoice.load(builtInVoices: dir, name: "nephis-\(mood)") { moods[mood] = v }
         }
-        return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection)
-    }()
+        if pack != nil { log.info("expressive: Nephis reads with her trained model pack (\(moods.count) moods)") }
+        return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
+                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory)
+    }
+
+    /// A Nephis model pack was installed or removed: forget her assets; a loaded Nephis engine reloads on next use.
+    func reloadNephisModel() {
+        nephisFlowAssetsCache = nil
+        if loadedID == .pocketTts, usesFlow { unload(reason: "new Nephis model") }
+    }
     /// Nephis (v2): her own file, one read for every line.
     lazy var pocketNephis: Result<PocketVoice, Error> = Result {
         guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
