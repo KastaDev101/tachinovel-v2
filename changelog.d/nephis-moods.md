@@ -7,6 +7,8 @@
 
 ### Fixed
 
+- Listen no longer goes silent when the phone gets critically hot while Nephis reads: the backup voice takes over
+  until it cools (it used to wait for her model indefinitely).
 - Listen shows the novel's cover on the lock screen, in Control Center and in CarPlay when you start from the reader.
 - Nephis: no buzz in long pauses, no clipped endings on words that trail off, numbers and codes read as people say
   them ("312", "3rd", "APC", "L0-49"), and her phone stays cooler (fewer redo takes while it is warm).

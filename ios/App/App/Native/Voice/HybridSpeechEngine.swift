@@ -259,8 +259,16 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // Nephis alone: the scheduler's voice is her model; while it loads the session waits for it. If it can't be
         // used at all, the session reads the usual way (Kokoro, in her matched voice).
         if nephisOnly {
-            if Self.nephisCanReadAlone(listenEngine) { return .loading }
-            leaveNephisOnly(reason: "her model can't be used")
+            // Too hot for her model (critical: expressiveUsable says no until it cools): waiting for her would be
+            // silence for as long as the phone stays hot (Kasta, Texas drive 2026-10-09: the read stopped at 80% of a
+            // chapter and a restart didn't bring it back). The usual fallbacks read instead; she is back next read.
+            if ProcessInfo.processInfo.thermalState == .critical {
+                leaveNephisOnly(reason: "the phone is too hot")
+            } else if Self.nephisCanReadAlone(listenEngine) {
+                return .loading
+            } else {
+                leaveNephisOnly(reason: "her model can't be used")
+            }
         }
         let k = KokoroService.shared
         guard k.isBundled else { return .unavailable }
@@ -1221,6 +1229,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard nephisOnly else { return }
         nephisOnly = false
         scheduler?.config.patient = false
+        // The fallback has to be there to take over (a Nephis-only read never loaded it).
+        if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
         log.error("voice: Nephis can't read alone (\(reason, privacy: .public)): Kokoro reads in her voice meanwhile")
     }
 
@@ -1250,7 +1260,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     @objc private func thermalChanged() {
         DispatchQueue.main.async {
             let throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
-            guard self.scheduler != nil, self.scheduler?.throttled != throttled else { return }
+            guard self.scheduler != nil else { return }
+            // Critical heat takes her out of a Nephis-only read (kokoroState): the fallbacks take over at once.
+            if ProcessInfo.processInfo.thermalState == .critical, self.nephisOnly { self.kokoroStatusChanged() }
+            guard self.scheduler?.throttled != throttled else { return }
             self.scheduler?.throttled = throttled
             self.log.info("voice: thermal throttling \(throttled ? "on" : "off", privacy: .public)")
             self.pumpRender()
