@@ -163,7 +163,7 @@ export function sceneKinds(items: readonly Pick<SpeechItem, 'kind' | 'role' | 'p
   return items.map((i) => (i.kind === 'system' ? 'system' : i.role === 'dialogue' || i.parts?.some((p) => p.role === 'dialogue') ? 'spoken' : 'narration'));
 }
 
-const MOOD_READ: Readonly<Record<string, NarratorVoice | undefined>> = { tense: 'tense', intense: 'tense', sad: 'sad', tender: 'tender' };
+const MOOD_READ: Readonly<Record<string, NarratorVoice | undefined>> = { tense: 'tense', intense: 'tense', dread: 'tense', sad: 'sad', tender: 'tender' };
 
 /**
  * Reads from the on-device model's moods, as native plays them (HDVoiceCore SceneMood.swift; keep the two in

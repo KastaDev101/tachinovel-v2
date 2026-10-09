@@ -9,3 +9,7 @@
 
 - Voice Lab › Test moods: the on-device AI director over the chapter you last started with Listen, next to the
   rules' moods, with a report to copy.
+- Eleven moods for Nephis (calm plus wry, playful, tense, dread, intense, sad, tender, awe, hushed, triumph, cold):
+  the on-device AI director now picks from all of them. Wry, for dry humor, can carry a single line (a joke is
+  often one sentence); the other moods need a neighbouring sentence to agree, so her voice doesn't flicker. The
+  Narrator reads dread as tense.

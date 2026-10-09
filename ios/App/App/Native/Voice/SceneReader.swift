@@ -1,7 +1,7 @@
 //
 //  SceneReader.swift — natural delivery's AI director ("rules+ai"): Apple's on-device model (iOS 26, Apple
-//  Intelligence on) reads the upcoming sentences in context and says how each should be read (calm, tense, sad,
-//  tender, playful, intense). Keyword rules can't hear suspense without suspense words ("She stopped breathing."
+//  Intelligence on) reads the upcoming sentences in context and says how each should be read (calm or one of
+//  Nephis's eleven moods: wry, playful, tense, dread, intense, sad, tender, awe, hushed, triumph, cold). Keyword rules can't hear suspense without suspense words ("She stopped breathing."
 //  could be either); the model reads the scene. Everything stays on the phone.
 //
 //  It never holds playback up: HybridSpeechEngine asks for windows of sentences ahead of the render cursor and uses
@@ -81,7 +81,7 @@ final class SceneReader {
     @available(iOS 26.0, *)
     @Generable
     enum Mood {
-        case calm, tense, sad, tender, playful, intense
+        case calm, wry, playful, tense, dread, intense, sad, tender, awe, hushed, triumph, cold
     }
 
     @available(iOS 26.0, *)
@@ -102,13 +102,20 @@ final class SceneReader {
 
     static let instructions = """
         You direct an audiobook narrator. For each numbered sentence of a novel passage, choose how it should be read:
-        calm: neutral narration, explanation, reflection, ordinary conversation.
-        tense: danger, fear, suspense, dread, urgency, a fight in progress, something going wrong.
+        calm: neutral narration, explanation, backstory, reflection, ordinary conversation. The default.
+        wry: dry humor said straight: irony, sarcasm, understatement, a deadpan aside, a character grumbling.
+        playful: teasing, banter, light fun said to someone.
+        tense: suspense, danger close, urgency, alarm, a fight about to start; quick and tight.
+        dread: quiet horror or menace, something deeply wrong, an ominous realization; slow and cold.
+        intense: battle in full motion, fury, a battle cry, peak action.
         sad: grief, loss, regret, despair.
-        tender: comfort, affection, gentle or quiet loving words.
-        playful: teasing, joking, mocking, banter, amusement.
-        intense: shouting, fury, a battle cry, overwhelming emotion.
-        Judge from the scene and what is happening, not from single words. Description inside a fight is tense when \
+        tender: comfort, affection, gentle caring words.
+        awe: wonder at something vast or beautiful, a great revelation.
+        hushed: whispering, sneaking, secrets.
+        triumph: victory, relief, hope, joy.
+        cold: cold authority, a command, a threat, contempt.
+        Judge from the scene and what is happening, not from single words. Most sentences are calm; pick another \
+        mood only when a listener would clearly hear it. Description inside a fight is intense or tense when \
         danger is immediate and calm when it explains or reflects. A quiet moment after danger is calm or tender. \
         Lines marked [spoken] are said aloud; lines marked [thought] or in single quotes are a character's thoughts.
         """
@@ -141,11 +148,17 @@ final class SceneReader {
     private static func name(_ m: Mood) -> String {
         switch m {
         case .calm: return "calm"
+        case .wry: return "wry"
+        case .playful: return "playful"
         case .tense: return "tense"
+        case .dread: return "dread"
+        case .intense: return "intense"
         case .sad: return "sad"
         case .tender: return "tender"
-        case .playful: return "playful"
-        case .intense: return "intense"
+        case .awe: return "awe"
+        case .hushed: return "hushed"
+        case .triumph: return "triumph"
+        case .cold: return "cold"
         }
     }
     #endif

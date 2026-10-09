@@ -10,13 +10,17 @@ import Foundation
 
 public enum SceneMood {
     /// The moods the scene reader may answer with.
-    public static let moods: Set<String> = ["calm", "tense", "sad", "tender", "playful", "intense"]
+    public static let moods: Set<String> = ["calm"].union(nephisMoods)
+    /// Nephis's mood reads (a voice of her own for each; BuiltInVoices/pocket/nephis-<mood>.pocketvoice).
+    public static let nephisMoods: Set<String> = ["wry", "playful", "tense", "dread", "intense", "sad", "tender", "awe",
+                                                  "hushed", "triumph", "cold"]
 
-    /// The mood's read for a spoken line or thought, or for narration (nil = calm / the Narrator).
+    /// The mood's read for a spoken line or thought, or for narration (nil = calm / the Narrator). The Narrator has
+    /// tense, sad and tender reads; Nephis (`allMoods`) has one per mood.
     static func moodRead(_ mood: String, allMoods: Bool = false) -> String? {
-        if allMoods, mood == "playful" || mood == "intense" { return mood }
+        if allMoods { return nephisMoods.contains(mood) ? mood : nil }
         switch mood {
-        case "tense", "intense": return "tense"
+        case "tense", "intense", "dread": return "tense"
         case "sad": return "sad"
         case "tender": return "tender"
         default: return nil
@@ -30,8 +34,10 @@ public enum SceneMood {
                             allMoods: Bool = false) -> String?? {
         guard let mood = moods[i], !system(i) else { return .none }
         let r = moodRead(mood, allMoods: allMoods)
-        if speaks(i) { return .some(r ?? "performed") }
-        guard let r, r == "tense" || r == "sad" else { return .some(nil) }
+        if speaks(i) { return .some(r ?? (allMoods ? nil : "performed")) }
+        // Nephis: any mood in narration, with the same no-flicker rule, except a dry aside (a joke is often one line).
+        if allMoods, r == "wry" { return .some(r) }
+        guard let r, allMoods || r == "tense" || r == "sad" else { return .some(nil) }
         let agrees = [i - 1, i + 1].contains { j in
             guard let m = moods[j], !speaks(j), !system(j) else { return false }
             return moodRead(m, allMoods: allMoods) == r

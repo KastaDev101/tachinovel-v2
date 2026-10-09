@@ -26,7 +26,7 @@ public typealias NephisTranscriber = @Sendable ([Float], Int) async -> [NephisFl
 public actor NephisFlowSynth: ExpressiveSynthesizer {
     public struct Assets: Sendable {
         public let calm: PocketVoice
-        /// Her mood reads by line role ("tense", "sad", "tender", "playful", "intense"); a missing one reads calm.
+        /// Her mood reads by line role (PocketVoice.nephisMoods); a missing one reads calm.
         public let moods: [String: PocketVoice]
         public let projection: NephisFlow.Projection
         public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection) {

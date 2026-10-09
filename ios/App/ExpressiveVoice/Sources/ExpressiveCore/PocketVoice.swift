@@ -25,7 +25,7 @@ public struct PocketVoice: Sendable, Equatable {
     public static let nephisTenseName = "nephis-tense"
     /// Nephis's mood reads (BuiltInVoices/pocket/nephis-<mood>.pocketvoice): her own voice, each prompt her base
     /// sentence flowing into lines spoken in that mood.
-    public static let nephisMoods = ["tense", "sad", "tender", "playful", "intense"]
+    public static let nephisMoods = ["wry", "playful", "tense", "dread", "intense", "sad", "tender", "awe", "hushed", "triumph", "cold"]
     /// The same voice, performing: dialogue and thoughts (from the performed reference ref-8A2-persona).
     public static let characterName = "character"
     public static let fileExtension = "pocketvoice"

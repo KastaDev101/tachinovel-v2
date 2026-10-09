@@ -103,7 +103,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     /// her flow engine.
     public var isNephis: Bool { pocketVoice == Self.nephis }
     /// The mood reads Nephis has (BuiltInVoices/pocket/nephis-<mood>.pocketvoice).
-    public static let nephisMoods: Set<String> = ["tense", "sad", "tender", "playful", "intense"]
+    public static let nephisMoods: Set<String> = SceneMood.nephisMoods
 
     public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rulesAI, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true, moods: Bool = true,
