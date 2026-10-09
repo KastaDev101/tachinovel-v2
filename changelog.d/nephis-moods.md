@@ -15,6 +15,8 @@
 
 ### Added
 
+- Voice test › 15-minute test with your own chapter: records what plays while you listen the usual way, with the
+  phone's heat, the voice's speed and any break or voice switch every 15 seconds.
 - Long LitRPG lists ("Memories: [A], [B]…", six or more items) are read as a summary: how many, and what's new since
   the novel's previous chapter that had the list ("Memories: 32. New: …"), or the first few the first time. The
   reader still shows the whole list.
