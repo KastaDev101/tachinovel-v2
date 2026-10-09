@@ -102,6 +102,8 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(pack.moods["intense"]?.paragraph, 3, "clamped")
         XCTAssertEqual(pack.moods["calm"], NephisFlow.herMoods["calm"], "moods the pack leaves out keep hers")
         XCTAssertNil(pack.highShelfDB, "no lift given: the shipped EQ")
+        XCTAssertNil(pack.softSibilance)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"softSibilance": false}"#.utf8)).softSibilance, false)
         let toned = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"moods": {"tender": {"sentence": 0.7, "trail": 0.5, "paragraph": 0.8, "gainDB": 0, "toneDB": -9}}}"#.utf8))
         XCTAssertEqual(toned.moods["tender"]?.toneDB, -4, "clamped")
         // A shelf lifts a 6 kHz tone and leaves 200 Hz alone.

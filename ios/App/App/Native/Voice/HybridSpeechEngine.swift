@@ -527,7 +527,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// Her EQ, with the top lift her installed pack asks for.
     private static var nephisTilt: VoiceTilt {
-        ExpressiveService.shared.nephisHighShelfDB.map { VoiceTilt.nephisTilt(highShelfDB: $0) } ?? .nephis
+        let svc = ExpressiveService.shared
+        guard svc.nephisHighShelfDB != nil || svc.nephisSoftSibilance != nil else { return .nephis }
+        return VoiceTilt.nephisTilt(highShelfDB: svc.nephisHighShelfDB ?? 5.95, softSibilance: svc.nephisSoftSibilance ?? true)
     }
 
     /// Seconds of rendered audio waiting after the sentence playing.

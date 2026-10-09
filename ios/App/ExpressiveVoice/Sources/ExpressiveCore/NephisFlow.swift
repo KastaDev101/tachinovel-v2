@@ -115,6 +115,10 @@ public enum NephisFlow {
         public var moods: [String: Mood] = NephisFlow.herMoods
         /// Her EQ's lift above 2.5 kHz for this pack's decoder (dB); nil = the shipped +5.95 (VoiceTilt.nephis).
         public var highShelfDB: Double?
+        /// Her EQ's gentler sibilance (5.5-9 kHz turned down where it sticks out); nil = on. Off for a pack whose
+        /// decoder already matches her S sounds: on the phone it pulled them to 6.1 kHz, hers sit at 6.35-6.4 (duller,
+        /// a little lispy; Voice test 2026-10-09).
+        public var softSibilance: Bool?
 
         /// What she does in one mood: pauses after a sentence, after "…"/":", after a paragraph (seconds), and the
         /// level change against calm that the model doesn't make by itself (dB).
@@ -149,6 +153,7 @@ public enum NephisFlow {
             clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
             highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
+            softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
             // A pack's moods replace these one by one, clamped to sane values.
             for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
                 moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
