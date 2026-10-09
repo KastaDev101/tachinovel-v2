@@ -166,7 +166,7 @@ public enum StyleMapper {
         for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)).reversed() {
             let word = ns.substring(with: m.range)
             // Shouted words, and sounds in capitals ("HMM", "AAAH", "SHH": a letter doubled) stay words.
-            guard !shoutedWords.contains(word), word.range(of: #"(.)"#, options: .regularExpression) == nil else { continue }
+            guard !shoutedWords.contains(word), word.range(of: #"(.)\1"#, options: .regularExpression) == nil else { continue }
             spelled = spelled.replacingCharacters(in: m.range, with: word.map(String.init).joined(separator: " ")) as NSString
         }
         return spelled as String
