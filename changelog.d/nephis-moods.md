@@ -13,3 +13,6 @@
   the on-device AI director now picks from all of them. Wry, for dry humor, can carry a single line (a joke is
   often one sentence); the other moods need a neighbouring sentence to agree, so her voice doesn't flicker. The
   Narrator reads dread as tense.
+- Nephis model packs (personal flavor): a ".tnmodel" made on the PC holds her trained Pocket TTS model and her voice
+  files for it; open it in TachiNovel (Files, share sheet) or copy it into the app's Documents and she reads with it.
+- Planning a paragraph's pieces no longer prepares her voice just to count tokens (one voice prefill less per call).
