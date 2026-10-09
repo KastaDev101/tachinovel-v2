@@ -336,10 +336,32 @@ public enum NephisFlow {
     /// the next (160 ms); everything between them is true silence.
     public static let keepTail = 3
     public static let keepHead = 2
+    /// With the latents' levels known, the silence starts only once her fade-out is under `fadeDB` (two latents in a
+    /// row), and the lead-in keeps everything over it: a fixed 240 ms cut the end of a long-trailing word while it was
+    /// still audible ("...steadied in her hand", Voice test 2026-10-09: -55 dB at the cut).
+    public static let fadeDB = -68.0
+    public static let maxTail = 10
+    public static let maxHead = 6
+
+    /// Latents of fade-out to decode after the last word: up to and including the first of two quiet ones.
+    public static func fadeOut(_ levels: [Double]) -> Int {
+        var i = 0
+        while i + 1 < levels.count, !(levels[i] < fadeDB && levels[i + 1] < fadeDB) { i += 1 }
+        return min(maxTail, max(keepTail, i + 1))
+    }
+
+    /// Latents of lead-in to decode before the next word (`levels`: the silence before it): back to the first of two
+    /// quiet ones.
+    public static func leadIn(_ levels: [Double]) -> Int {
+        var i = levels.count - 1
+        while i > 0, !(levels[i] < fadeDB && levels[i - 1] < fadeDB) { i -= 1 }
+        return min(maxHead, max(keepHead, levels.count - i))
+    }
 
     /// `join`, but a pause longer than its bridge is decoded with only `maxBridge` morph latents; `padAt` is where in
     /// the returned latents `padSeconds` of silence go in the decoded audio (the middle of the bridge).
-    public static func joinPadded(tail: [[Float]], next: [[Float]], head: Int, pause: Double, maxBridge: Int = NephisFlow.maxBridge)
+    public static func joinPadded(tail: [[Float]], next: [[Float]], head: Int, pause: Double, maxBridge: Int = NephisFlow.maxBridge,
+                                  tailLevels: [Double]? = nil, headLevels: [Double]? = nil)
         -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
         var a = tail, b = next
         let ov = max(0, min(overlap, a.count - 1, head - 1))
@@ -347,7 +369,7 @@ public enum NephisFlow {
         // A pause longer than her fade-out + lead-in: decode only those (the first `keepTail` latents after the last
         // word, the last `keepHead` before the next) and make all the rest silence. The model's own quiet latents buzz
         // too, not just a morph between them (phone Voice test 2026-10-09, after the bridge cap: shorter, still there).
-        let keepTail = min(a.count, Self.keepTail), keepHead = min(head, Self.keepHead)
+        let keepTail = min(a.count, tailLevels.map(fadeOut) ?? Self.keepTail), keepHead = min(head, headLevels.map(leadIn) ?? Self.keepHead)
         if maxBridge != .max, want > keepTail + keepHead, a.count + head > keepTail + keepHead {
             return (Array(a.prefix(keepTail)) + Array(b.dropFirst(head - keepHead)), keepTail,
                     Double(want - keepTail - keepHead) * latentSeconds)

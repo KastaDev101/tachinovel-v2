@@ -86,6 +86,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     // The read so far.
     private var carry: [[Float]] = []
     private var pendingTail: [[Float]] = []
+    /// The levels of `pendingTail` (where her fade-out dies away).
+    private var pendingTailLevels: [Double] = []
     private var context: [Float] = []
     private var lastText: String?
     private var lastClip: [Float]?
@@ -135,6 +137,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private func forget() {
         carry = []
         pendingTail = []
+        pendingTailLevels = []
         context = []
         lastText = nil
         lastClip = nil
@@ -305,12 +308,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         NephisFlow.cleanClicks(&latents, levels: &levels, from: min(levels.count, levels.count - silence.tail + 1), to: levels.count)
         var joined: (latents: [[Float]], padAt: Int?, padSeconds: Double) = (latents, nil, 0)
         if started && !pendingTail.isEmpty {
-            joined = NephisFlow.joinPadded(tail: pendingTail, next: latents, head: silence.head, pause: pause)
+            joined = NephisFlow.joinPadded(tail: pendingTail, next: latents, head: silence.head, pause: pause,
+                                           tailLevels: pendingTailLevels, headLevels: Array(levels.prefix(silence.head)))
         }
         var stream = joined.latents
         // The trailing silence waits for the next piece's join (unless it is the read's very last piece).
         let keep = last && line.flowLast == true ? 0 : min(silence.tail, stream.count)
         pendingTail = Array(stream.suffix(keep))
+        pendingTailLevels = Array(levels.suffix(keep))
         stream.removeLast(keep)
 
         carry = Array((carry + latents).suffix(assets.chain.carryFrames))

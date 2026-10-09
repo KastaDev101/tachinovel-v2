@@ -78,6 +78,20 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(r.latents.last, w, "the next word itself is untouched")
     }
 
+    func testALongTrailingWordKeepsItsWholeFadeOut() {
+        // Her fade-out is still audible for 6 latents (-40 .. -66), then quiet: all 7 are decoded, not just 3.
+        XCTAssertEqual(NephisFlow.fadeOut([-40, -48, -55, -60, -63, -66, -75, -80, -85, -85]), 7)
+        XCTAssertEqual(NephisFlow.fadeOut([-80, -85, -85]), NephisFlow.keepTail, "never under the minimum")
+        XCTAssertEqual(NephisFlow.fadeOut([Double](repeating: -40, count: 20)), NephisFlow.maxTail, "never over the maximum")
+        // A breath-in 3 latents before the word: those 3 and the quiet one before them.
+        XCTAssertEqual(NephisFlow.leadIn([-85, -85, -85, -85, -60, -55, -50]), 4)
+        let q = [Float](repeating: 0, count: 32)
+        let r = NephisFlow.joinPadded(tail: [[Float]](repeating: q, count: 10), next: [[Float]](repeating: q, count: 4) + [q], head: 4, pause: 1.04,
+                                      tailLevels: [-40, -48, -55, -60, -63, -66, -75, -80, -85, -85], headLevels: [-85, -85, -85, -85])
+        XCTAssertEqual(r.padAt, 7)
+        XCTAssertEqual(r.padSeconds, Double(13 - 7 - 2) * NephisFlow.latentSeconds, accuracy: 1e-9)
+    }
+
     func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)
