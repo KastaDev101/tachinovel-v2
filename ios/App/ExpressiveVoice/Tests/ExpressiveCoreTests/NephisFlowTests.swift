@@ -53,6 +53,20 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(NephisFlow.cleanTail(&l2, levels: &loud, endOfText: 4), 0)
     }
 
+    func testLongPausesAreSilenceNotDecodedQuietLatents() {
+        let q = [Float](repeating: 0, count: 32)
+        // A 1.04 s pause from 2 tail + 2 head silence latents (1 blended): 13 wanted, 3 decoded as a bridge, the rest silence.
+        let r = NephisFlow.joinPadded(tail: [q, q], next: [q, q] + [[Float]](repeating: [Float](repeating: 1, count: 32), count: 5), head: 2, pause: 1.04)
+        XCTAssertNotNil(r.padAt)
+        XCTAssertEqual(r.padSeconds, Double(13 - 3 - 3) * NephisFlow.latentSeconds, accuracy: 1e-9)  // 3 already there, 3 bridge
+        XCTAssertEqual(NephisFlow.join(tail: [q, q], next: [q, q], head: 2, pause: 0.2).count, NephisFlow.joinPadded(tail: [q, q], next: [q, q], head: 2, pause: 0.2).latents.count)
+        let audio = [Float](repeating: 0.5, count: 4 * NephisFlow.samplesPerLatent)
+        let out = NephisFlow.insertSilence(audio, pads: [(at: 2, seconds: 0.5)])
+        XCTAssertEqual(out.count, audio.count + NephisFlow.sampleRate / 2)
+        XCTAssertEqual(out[2 * NephisFlow.samplesPerLatent + 100], 0)
+        XCTAssertEqual(out[0], 0.5)
+    }
+
     func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)

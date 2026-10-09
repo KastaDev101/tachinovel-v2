@@ -70,6 +70,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var report: Report
         /// Her level for this call's mood (dB against calm), reached during the pause the call starts with.
         var gainDB = 0.0
+        /// True silence spliced into the decoded audio: (latent index in `stream`, seconds). Long pauses aren't
+        /// decoded through, which buzzes (NephisFlow.maxBridge).
+        var pads: [(at: Int, seconds: Double)] = []
     }
 
     private let assets: Assets
@@ -185,14 +188,17 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let director = (line.pauseBefore ?? 0.6) * chain.paragraphGapScale
         let paragraphPause = lastMood.flatMap { chain.moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
         var stream: [[Float]] = []
+        var pads: [(at: Int, seconds: Double)] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
             let pause = k == 0 ? paragraphPause : chain.gap(after: pieces[k - 1], mood: mood)
-            stream += try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
-                                     seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+            let r = try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
+                                   seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+            if let at = r.padAt { pads.append((at: stream.count + at, seconds: r.padSeconds)) }
+            stream += r.latents
         }
         lastMood = mood
-        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0)
+        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -220,7 +226,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// One piece: its takes (with the lead-in for a call's first piece), the best one, its edits and its join to what
     /// came before. Returns the latents to decode; the piece's trailing silence waits for the next join.
     private func read(_ text: String, clip: [Float], line: ExpressiveLine, first: Bool, last: Bool, pause: Double, seed: UInt64?,
-                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws -> [[Float]] {
+                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws
+        -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: lastClip.flatMap { $0 == clip ? nil : $0 },
                                        carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
@@ -296,9 +303,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let silence = NephisFlow.silence(levels)
         if started { NephisFlow.cleanClicks(&latents, levels: &levels, from: 0, to: max(0, silence.head - 1)) }
         NephisFlow.cleanClicks(&latents, levels: &levels, from: min(levels.count, levels.count - silence.tail + 1), to: levels.count)
-        var stream = started && !pendingTail.isEmpty
-            ? NephisFlow.join(tail: pendingTail, next: latents, head: silence.head, pause: pause)
-            : latents
+        var joined: (latents: [[Float]], padAt: Int?, padSeconds: Double) = (latents, nil, 0)
+        if started && !pendingTail.isEmpty {
+            joined = NephisFlow.joinPadded(tail: pendingTail, next: latents, head: silence.head, pause: pause)
+        }
+        var stream = joined.latents
         // The trailing silence waits for the next piece's join (unless it is the read's very last piece).
         let keep = last && line.flowLast == true ? 0 : min(silence.tail, stream.count)
         pendingTail = Array(stream.suffix(keep))
@@ -309,7 +318,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         lastText = text
         lastClip = clip
         started = true
-        return stream
+        // The pad sits in the pause; the latents kept back for the next join come from the end, after it.
+        let padAt = joined.padAt.flatMap { $0 <= stream.count ? $0 : nil }
+        return (stream, padAt, padAt == nil ? 0 : joined.padSeconds)
     }
 
     // MARK: - Stage 2: the sound
@@ -327,7 +338,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         decodes = Task { _ = try? await job.value }
         let (decoded, ms) = try await job.value
-        var samples = decoded
+        var samples = NephisFlow.insertSilence(decoded, pads: p.pads)
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))

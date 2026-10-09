@@ -321,6 +321,19 @@ public enum NephisFlow {
     /// `overlap` latents where they meet, and, for a longer pause, morphs from one into the other. Returns the
     /// latents to decode, starting with the trimmed tail.
     public static func join(tail: [[Float]], next: [[Float]], head: Int, pause: Double) -> [[Float]] {
+        joinPadded(tail: tail, next: next, head: head, pause: pause, maxBridge: .max).latents
+    }
+
+    /// Latents a long pause may be decoded through (240 ms); the rest of it is true silence spliced into the audio.
+    /// Decoding a pause from near-identical quiet latents makes Mimi buzz at its frame rate: a periodic 12.5 Hz
+    /// "du du du" 11-18 dB over her real pauses (PC test 2026-10-09: 80 ms periodicity 0.78-0.92), heard on the phone
+    /// before system lines (the longest pauses) and at long paragraph pauses.
+    public static let maxBridge = 3
+
+    /// `join`, but a pause longer than its bridge is decoded with only `maxBridge` morph latents; `padAt` is where in
+    /// the returned latents `padSeconds` of silence go in the decoded audio (the middle of the bridge).
+    public static func joinPadded(tail: [[Float]], next: [[Float]], head: Int, pause: Double, maxBridge: Int = NephisFlow.maxBridge)
+        -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
         var a = tail, b = next
         let ov = max(0, min(overlap, a.count - 1, head - 1))
         let want = max(2, Int((pause / latentSeconds).rounded()))
@@ -347,14 +360,36 @@ public enum NephisFlow {
             out = a
         }
         let now = out.count + max(0, headLeft - ov)
+        var padAt: Int?
+        var padSeconds = 0.0
         if now < want, let last = out.last, let first = b.first {
             let nb = want - now
-            out += (0..<nb).map { k in
-                let w = Float(k + 1) / Float(nb + 1)
+            let decoded = min(nb, maxBridge)
+            if decoded < nb {
+                padAt = out.count + decoded / 2
+                padSeconds = Double(nb - decoded) * latentSeconds
+            }
+            out += (0..<decoded).map { k in
+                let w = Float(k + 1) / Float(decoded + 1)
                 return zip(last, first).map { (1 - w) * $0 + w * $1 }
             }
         }
-        return out + b
+        return (out + b, padAt, padSeconds)
+    }
+
+    /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with 10 ms fades
+    /// into and out of each so the level never steps.
+    public static func insertSilence(_ samples: [Float], pads: [(at: Int, seconds: Double)], sampleRate: Int = sampleRate) -> [Float] {
+        guard !pads.isEmpty else { return samples }
+        var out = samples
+        let fade = sampleRate / 100
+        for pad in pads.sorted(by: { $0.at > $1.at }) {
+            let i = min(out.count, pad.at * samplesPerLatent)
+            for k in 0..<min(fade, i) { out[i - 1 - k] *= Float(k) / Float(fade) }
+            for k in 0..<min(fade, out.count - i) { out[i + k] *= Float(k) / Float(fade) }
+            out.insert(contentsOf: [Float](repeating: 0, count: Int(pad.seconds * Double(sampleRate))), at: i)
+        }
+        return out
     }
 
     // MARK: - Takes
