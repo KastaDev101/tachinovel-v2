@@ -66,10 +66,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public struct Prepared: Sendable {
         let stream: [[Float]]
         let reset: Bool
-        /// Her level for this call's mood (dB against calm), reached during the pause the call starts with.
-        var gainDB = 0.0
         let started: Date
         var report: Report
+        /// Her level for this call's mood (dB against calm), reached during the pause the call starts with.
+        var gainDB = 0.0
     }
 
     private let assets: Assets
@@ -326,7 +326,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             return (samples, Date().timeIntervalSince(d0) * 1000)
         }
         decodes = Task { _ = try? await job.value }
-        var (samples, ms) = try await job.value
+        let (decoded, ms) = try await job.value
+        var samples = decoded
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
