@@ -1,5 +1,7 @@
 ### Changed
 
+- Nephis keeps about three minutes rendered ahead, built at a steady pace once a minute is banked (cooler than
+  bursts, and a cushion for hot stretches).
 - Nephis is the app's one voice: Settings › Voices shows her, her settings and the Voice test; the Narrator, the
   Kokoro voice lists and the experimental engines are gone from the menus. Her backup voice (when the phone is too
   hot for her) is re-matched to how she sounds now.

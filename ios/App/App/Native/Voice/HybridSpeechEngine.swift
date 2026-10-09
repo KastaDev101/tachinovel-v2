@@ -115,6 +115,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The Apple sentence is spoken directly by AVSpeechSynthesizer (its voice couldn't render to buffers).
     private var appleDirect = false
     private var waitItem: DispatchWorkItem?
+    /// Nephis's paced render: the next call once the gap after the last one has passed.
+    private var paceItem: DispatchWorkItem?
+    /// When her last call's latents were ready (the pacing gap counts from there).
+    private var lastFlowDone: Date?
     private var waiting = false
     private var paused = false
     private var loudness = LoudnessMatcher()
@@ -174,7 +178,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
         // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
         // Kokoro alone renders 8 ahead (about 40 s): 2–3 ran dry with the screen locked on a drive (Kasta, 2026-10-07).
-        let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : max(prefs.clampedAhead, 8)
+        // Nephis renders about three minutes ahead, at a steady pace once a minute is banked (pumpRender's pacing):
+        // the same work as a burst, lower peaks on the chip, and a cushion that carries her through a hot stretch.
+        let nephisReads = listenEngine == .pocketTts && prefs.delivery.isNephis
+        let ahead = listenEngine != nil ? max(prefs.clampedAhead, nephisReads ? 36 : 12) : max(prefs.clampedAhead, 8)
         fullAhead = ahead
         // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
@@ -197,6 +204,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     func stop() {
         gen += 1
+        paceItem?.cancel()
+        paceItem = nil
+        lastFlowDone = nil
         standIn = nil
         flowBusy = false
         flowNext = -1
@@ -322,6 +332,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
             return
         }
+        if nephisOnly, let wait = paceWait() {
+            if paceItem == nil {
+                let g = gen
+                let item = DispatchWorkItem { [weak self] in
+                    guard let self, g == self.gen else { return }
+                    self.paceItem = nil
+                    self.pumpRender()
+                }
+                paceItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
+            }
+            return
+        }
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
@@ -388,6 +411,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     prepared.done = true
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     self.flowBusy = false
+                    self.lastFlowDone = Date()
                     self.pumpRender()
                 }, completion: handle)
             } else {
@@ -532,6 +556,21 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return VoiceTilt.nephisTilt(highShelfDB: svc.nephisHighShelfDB ?? 5.95, softSibilance: svc.nephisSoftSibilance ?? true)
     }
 
+    /// Audio banked before her renders slow to a steady pace (seconds).
+    static let paceFrom = 60.0
+
+    /// How long to wait before her next call: none while less than `paceFrom` is banked (she renders flat out to
+    /// build the cushion), then a gap after each call (1.5 s, 3 s past two minutes, doubled from "fair" heat), so the
+    /// chip runs at part duty instead of bursting.
+    private func paceWait() -> TimeInterval? {
+        let buffered = bufferedAhead()
+        guard buffered > Self.paceFrom, let done = lastFlowDone else { return nil }
+        var gap = buffered > 2 * Self.paceFrom ? 3.0 : 1.5
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { gap *= 2 }
+        let left = gap - Date().timeIntervalSince(done)
+        return left > 0.05 ? left : nil
+    }
+
     /// Seconds of rendered audio waiting after the sentence playing.
     private func bufferedAhead() -> Double {
         let playing = scheduler?.playing ?? 0
@@ -546,8 +585,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static func flowBudget(ahead: Double, readChange: Bool) -> (takes: Int, leadIn: Bool) {
-        // At most 2 takes: with the trained model a second take rarely wins, and each one is a whole extra render.
-        let base = ahead > 60 ? 2 : 1
+        // At most 2 takes: with the trained model a second take rarely wins, and each one is a whole extra render. With
+        // her three-minute cushion, a second take only once more than two and a half minutes are banked.
+        let base = ahead > 150 ? 2 : 1
         return (min(2, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
     }
 
