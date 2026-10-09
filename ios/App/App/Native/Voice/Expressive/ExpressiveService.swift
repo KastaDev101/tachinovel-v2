@@ -122,6 +122,9 @@ final class ExpressiveService {
                                       modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain)
     }
 
+    /// Her EQ's top lift for the installed pack's decoder (nil: the shipped one).
+    var nephisHighShelfDB: Double? { nephisFlowAssets?.chain.highShelfDB }
+
     /// A Nephis model pack was installed or removed: forget her assets; a loaded Nephis engine reloads on next use.
     func reloadNephisModel() {
         nephisFlowAssetsCache = nil

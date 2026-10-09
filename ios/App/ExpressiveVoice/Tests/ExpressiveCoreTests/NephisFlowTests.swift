@@ -87,6 +87,8 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(pack.moods["intense"]?.sentence, 0.3)
         XCTAssertEqual(pack.moods["intense"]?.paragraph, 3, "clamped")
         XCTAssertEqual(pack.moods["calm"], NephisFlow.herMoods["calm"], "moods the pack leaves out keep hers")
+        XCTAssertNil(pack.highShelfDB, "no lift given: the shipped EQ")
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"highShelfDB": 4}"#.utf8)).highShelfDB, 4)
     }
 
     func testCleanTailKeepsALastSyllableAfterAShortDip() {

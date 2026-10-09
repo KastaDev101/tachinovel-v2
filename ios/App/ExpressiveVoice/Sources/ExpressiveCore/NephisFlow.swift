@@ -113,6 +113,8 @@ public enum NephisFlow {
         public var carryFrames = 12
         /// Her timing and level per mood (the director's mood names); a mood not listed uses the gaps above.
         public var moods: [String: Mood] = NephisFlow.herMoods
+        /// Her EQ's lift above 2.5 kHz for this pack's decoder (dB); nil = the shipped +5.95 (VoiceTilt.nephis).
+        public var highShelfDB: Double?
 
         /// What she does in one mood: pauses after a sentence, after "…"/":", after a paragraph (seconds), and the
         /// level change against calm that the model doesn't make by itself (dB).
@@ -143,6 +145,7 @@ public enum NephisFlow {
             paragraphGapScale = try c.decodeIfPresent(Double.self, forKey: .paragraphGapScale) ?? paragraphGapScale
             clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
+            highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
             // A pack's moods replace these one by one, clamped to sane values.
             for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
                 moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),

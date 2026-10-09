@@ -167,7 +167,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let nephis = listenEngine == .pocketTts && d.isNephis
             let source: (any BreathSource)? = d.breaths && !nephis ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
             natural = NaturalFinisher(NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
-                                                    tilt: listenEngine == .pocketTts ? (nephis ? .nephis : .pocketTts) : nil, plain: nephis))
+                                                    tilt: listenEngine == .pocketTts ? (nephis ? Self.nephisTilt : .pocketTts) : nil, plain: nephis))
         } else {
             natural = nil
         }
@@ -515,6 +515,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // again, so the margin that keeps the read gapless is never spent on extras.
         if let last = ExpressiveService.shared.flowStats.last, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
         return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
+    }
+
+    /// Her EQ, with the top lift her installed pack asks for.
+    private static var nephisTilt: VoiceTilt {
+        ExpressiveService.shared.nephisHighShelfDB.map { VoiceTilt.nephisTilt(highShelfDB: $0) } ?? .nephis
     }
 
     /// Seconds of rendered audio waiting after the sentence playing.
