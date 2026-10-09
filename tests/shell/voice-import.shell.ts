@@ -85,7 +85,8 @@ const reject = (message: string, code: string): never => {
   throw Object.assign(new Error(message), { code });
 };
 
-describe('narrator voices: shipped and imported (PC shell)', () => {
+// Not reachable from the menus since Nephis became the app's one voice (2026-10-09); kept for when it returns.
+describe.skip('narrator voices: shipped and imported (PC shell)', () => {
   beforeAll(async () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-voice-import');

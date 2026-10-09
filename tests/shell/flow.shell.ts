@@ -184,7 +184,7 @@ describe('v1 UI in the v2 shell (PC)', () => {
       .toBe('novel/alpha/1');
   });
 
-  it('More › Voices lists the Kokoro voices, the Apple fallback hint, and keeps PC audio under Advanced (off)', async () => {
+  it('More › Voices shows Nephis, her settings and the Voice test, and keeps PC audio under Advanced (off)', async () => {
     shell.pluginReplies.set('Narration.voiceSettings', () => ({
       voices: [
         { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' },
@@ -218,22 +218,15 @@ describe('v1 UI in the v2 shell (PC)', () => {
     await row.click();
     const screen = shell.page.getByTestId('screen-voices');
     await screen.waitFor({ timeout: 5000 });
-    // Who reads first, then one row for Kokoro's voice; every Kokoro voice is one tap further.
-    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Reads chapters[\s\S]*Narrator[\s\S]*Backup voice[\s\S]*Kokoro voice[\s\S]*Heart/);
+    // Nephis is the app's one voice (2026-10-09): her card, her settings, the Voice test; no voice lists.
+    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Voice[\s\S]*Nephis[\s\S]*Voice settings[\s\S]*Voice test/);
     const text = (await screen.textContent()) ?? '';
-    expect(text).toContain('download a Premium voice');
+    expect(text).not.toMatch(/Reads chapters|Kokoro voice|Narrator settings|Voice models/);
     expect(text).toContain('Use PC audio when available');
     expect(await screen.locator('input[data-act="pcaudio"]').isChecked()).toBe(false);
     expect(text).not.toContain('Audio folder');
     await shell.page.waitForTimeout(450); // slide-in
     await shell.page.screenshot({ path: path.join(shots, '7-voices.png') });
-    await screen.locator('[data-act="kokoro-all"]').click();
-    const all = shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
-    await expect.poll(() => all.textContent(), { timeout: 5000 }).toMatch(/Heart[\s\S]*George/);
-    await all.locator('[data-act="sample"][data-voice="bm_george"]').click();
-    await expect.poll(() => shell.pluginCalls.find((c) => c.methodName === 'sampleVoice')?.options).toMatchObject({ voice: 'bm_george' });
-    await all.locator('[data-act="close"]').click();
-    await all.waitFor({ state: 'hidden', timeout: 5000 });
     await screen.locator('[data-act="close"]').click();
   });
 

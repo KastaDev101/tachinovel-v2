@@ -49,7 +49,8 @@ const voices = [
 ];
 const novel = { pluginId: 'demo-library', novelPath: 'novel/alpha' };
 
-describe('voice mixer (PC shell)', () => {
+// Not reachable from the menus since Nephis became the app's one voice (2026-10-09); kept for when it returns.
+describe.skip('voice mixer (PC shell)', () => {
   beforeAll(async () => {
     const www = path.join(root, '.cache', 'shell-www-mixer');
     await buildAll({ flavor: 'store', ads: false, dev: false, outDir: www });
