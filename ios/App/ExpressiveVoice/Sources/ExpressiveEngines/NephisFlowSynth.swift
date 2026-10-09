@@ -183,9 +183,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// The pieces Pocket would generate `text` in (a sentence split inside stays with the piece it belongs to).
     private func plan(_ manager: PocketTtsManager, text: String, clip: [Float]) async throws -> [String] {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry))
-        let session = try await manager.makeSession(voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
-        let chunks = await session.plannedChunks(text)
-        session.finish()
+        // Planning needs only the tokenizer and the prompt's length: no session, so no voice prefill spent on it.
+        let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
         var out: [String] = []
         for c in chunks {
             if c.isMidSentence, !out.isEmpty {

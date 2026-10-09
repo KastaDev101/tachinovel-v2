@@ -323,6 +323,27 @@ public actor PocketTtsManager {
         )
     }
 
+    /// TachiNovel: the pieces a session with `voiceData` would generate `text` in (`PocketTtsSession.plannedChunks`),
+    /// without building the session: chunking only needs the tokenizer and the prompt's length, not its prefill.
+    public func plannedChunks(
+        _ text: String,
+        voiceData: PocketTtsVoiceData,
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+    ) async throws -> [PocketTtsSynthesizer.TextChunk] {
+        guard isInitialized else {
+            throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
+        }
+        let constants = try await modelStore.constants()
+        let position = PocketTtsSynthesizer.voiceCachePosition(for: voiceData)
+        let maxTokens = try PocketTtsSynthesizer.effectiveMaxTokensPerChunk(
+            requested: maxTokensPerChunk, voiceCachePosition: position)
+        return PocketTtsSynthesizer.chunkTextWithMetadata(
+            text.trimmingCharacters(in: .whitespacesAndNewlines), tokenizer: constants.tokenizer,
+            maxTokens: maxTokens,
+            preferredMaxTokens: min(PocketTtsConstants.preferredTokensPerChunk, maxTokens),
+            voiceCachePosition: position, language: language)
+    }
+
     /// TachiNovel: one Mimi decoder whose state carries across everything fed to it, so latents from several
     /// sessions (one per paragraph, each with its own voice prompt) decode as one continuous stream.
     public func makeLatentDecoder() async throws -> PocketTtsLatentDecoder {
