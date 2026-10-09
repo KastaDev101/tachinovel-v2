@@ -5,7 +5,18 @@
   ("was… is") in a question, or in a line not said to someone, is hesitation now, not teasing, so grim dialogue no
   longer reads playful.
 
+### Fixed
+
+- Listen shows the novel's cover on the lock screen, in Control Center and in CarPlay when you start from the reader.
+- Nephis: no buzz in long pauses, no clipped endings on words that trail off, numbers and codes read as people say
+  them ("312", "3rd", "APC", "L0-49"), and her phone stays cooler (fewer redo takes while it is warm).
+
 ### Added
+
+- Long LitRPG lists ("Memories: [A], [B]…", six or more items) are read as a summary: how many, and what's new since
+  the novel's previous chapter that had the list ("Memories: 32. New: …"), or the first few the first time. The
+  reader still shows the whole list.
+- Nephis model packs can carry her timing, level and tone per mood and her EQ for that model.
 
 - Voice Lab › Test moods: the on-device AI director over the chapter you last started with Listen, next to the
   rules' moods, with a report to copy.

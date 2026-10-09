@@ -10,6 +10,7 @@
 import { blockRange, domBlocks, type DomBlock } from '@v1tts/player/dom-blocks.ts';
 import type { Lexicon } from '@v1tts/frontend.ts';
 import type { Emphasis } from '../../core/narration/delivery.ts';
+import type { ListMemory } from '../../core/narration/lists.ts';
 import { speechScript, type SpeechScript } from '../../core/narration/speech-script.ts';
 
 /** Index of the reader paragraph (`.rd-body > *`) that contains a node. */
@@ -43,7 +44,7 @@ export function domEmphasis(body: HTMLElement): Emphasis[] {
 }
 
 /** Script for a rendered chapter body. `title` helps the front-end recognise the title line. */
-export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexicons?: Lexicon[] } = {}): DomScript {
+export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexicons?: Lexicon[]; lists?: ListMemory } = {}): DomScript {
   const blocks = domBlocks(body);
   const paragraphOf = (b: number): number => {
     const blk = blocks[b];
@@ -55,8 +56,43 @@ export function domSpeechScript(body: HTMLElement, opts: { title?: string; lexic
     ...(opts.lexicons ? { lexicons: opts.lexicons } : {}),
     paragraphOf,
     emphasis: domEmphasis(body),
+    ...(opts.lists ? { lists: opts.lists } : {}),
   });
   return { body, blocks, script };
+}
+
+/**
+ * The novel's LitRPG lists as last read (lists.ts), kept on this device: a status screen's long list is read as
+ * what changed since the previous chapter that had it. Re-listening to the same chapter compares with the one
+ * before it, not with itself.
+ */
+export function listMemory(novelKey: string, chapterKey: string): ListMemory {
+  const key = `tn.lists.${novelKey}`;
+  type Rec = { chapter: string; items: string[]; prev?: string[] };
+  const load = (): Record<string, Rec> => {
+    try {
+      return JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, Rec>;
+    } catch {
+      return {};
+    }
+  };
+  return {
+    previous(label) {
+      const rec = load()[label];
+      return rec ? (rec.chapter === chapterKey ? rec.prev : rec.items) : undefined;
+    },
+    remember(label, items) {
+      const all = load();
+      const rec = all[label];
+      const prev = rec ? (rec.chapter === chapterKey ? rec.prev : rec.items) : undefined;
+      all[label] = { chapter: chapterKey, items: [...items], ...(prev ? { prev } : {}) };
+      try {
+        localStorage.setItem(key, JSON.stringify(all));
+      } catch {
+        // storage full or blocked: the next read summarizes instead of saying what's new
+      }
+    },
+  };
 }
 
 let listened: { chapter: string; script: SpeechScript } | null = null;

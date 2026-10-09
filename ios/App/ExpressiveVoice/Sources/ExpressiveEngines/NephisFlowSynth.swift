@@ -73,6 +73,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// True silence spliced into the decoded audio: (latent index in `stream`, seconds). Long pauses aren't
         /// decoded through, which buzzes (NephisFlow.maxBridge).
         var pads: [(at: Int, seconds: Double)] = []
+        /// Her tone for the call's mood (NephisFlow.Chain.Mood.toneDB).
+        var toneDB = 0.0
     }
 
     private let assets: Assets
@@ -201,7 +203,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             stream += r.latents
         }
         lastMood = mood
-        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads)
+        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
+                        toneDB: chain.moods[mood]?.toneDB ?? 0)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -344,6 +347,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         decodes = Task { _ = try? await job.value }
         let (decoded, ms) = try await job.value
         var samples = NephisFlow.insertSilence(decoded, pads: p.pads)
+        NephisFlow.highShelf(&samples, db: p.toneDB)
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))

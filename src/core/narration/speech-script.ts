@@ -35,6 +35,7 @@
  *
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
+import { compactLists, type ListMemory } from './lists.ts';
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
 import {
   alternateSpeakers,
@@ -138,6 +139,8 @@ export interface SpeechScriptOptions extends FrontendOptions {
   paragraphOf?: (block: number) => number;
   /** Italic and bold text of the chapter, in document order (natural delivery's emphasis). */
   emphasis?: readonly Emphasis[];
+  /** The novel's previous LitRPG lists (lists.ts): a long list is read as what changed. Absent: a short summary. */
+  lists?: ListMemory;
 }
 
 /** The front-end's scene-break pause (frontend.ts DEFAULT_PAUSES.scene): a new scene starts after it. */
@@ -252,7 +255,9 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
     const rate = rateJitter(it.hash);
     if (rate !== 1) it.rate = rate;
   });
-  return { frontendVersion: script.frontendVersion, textHash: script.textHash, items, delivery: DELIVERY_HEADER };
+  // Long LitRPG lists ("Memories: [A], [B]…", 6+ items) as a summary, not item by item (lists.ts).
+  const spoken = compactLists(items, (b) => blocks[b]?.text ?? '', opts.lists);
+  return { frontendVersion: script.frontendVersion, textHash: script.textHash, items: spoken, delivery: DELIVERY_HEADER };
 }
 
 /** A sentence this much inside single quotation marks is a thought; in a chapter quoting speech with them (where

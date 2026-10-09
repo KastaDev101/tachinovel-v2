@@ -123,8 +123,11 @@ public enum NephisFlow {
             public var trail: Double
             public var paragraph: Double
             public var gainDB: Double
-            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double) {
-                self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB
+            /// Her tone in this mood against calm, as a 2.5 kHz shelf (dB; nil = none): the model makes tender and
+            /// awe brighter than she is, sad and dread duller (PC chain, r13: 0.95 dB off on average, 0.10 with it).
+            public var toneDB: Double?
+            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double, toneDB: Double? = nil) {
+                self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB; self.toneDB = toneDB
             }
         }
 
@@ -149,7 +152,8 @@ public enum NephisFlow {
             // A pack's moods replace these one by one, clamped to sane values.
             for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
                 moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
-                                   paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)))
+                                   paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)),
+                                   toneDB: m.toneDB.map { min(4, max(-4, $0)) })
             }
         }
     }
@@ -412,6 +416,23 @@ public enum NephisFlow {
             }
         }
         return (out + b, padAt, padSeconds)
+    }
+
+    /// A high shelf (RBJ) over `x`, from a fresh filter state: one call's mood tone (the call starts in a pause).
+    public static func highShelf(_ x: inout [Float], db: Double, hz: Double = 2500, q: Double = 0.586, sampleRate: Int = sampleRate) {
+        guard db != 0, !x.isEmpty else { return }
+        let a = pow(10, db / 40), w = 2 * Double.pi * hz / Double(sampleRate), c = cos(w), s = sin(w)
+        let sq = 2 * sqrt(a) * s / (2 * q)
+        let a0 = (a + 1) - (a - 1) * c + sq
+        let b0 = a * ((a + 1) + (a - 1) * c + sq) / a0, b1 = -2 * a * ((a - 1) + (a + 1) * c) / a0
+        let b2 = a * ((a + 1) + (a - 1) * c - sq) / a0, a1 = 2 * ((a - 1) - (a + 1) * c) / a0, a2 = ((a + 1) - (a - 1) * c - sq) / a0
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        for i in x.indices {
+            let v = Double(x[i])
+            let y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = v; y2 = y1; y1 = y
+            x[i] = Float(y)
+        }
     }
 
     /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with 10 ms fades
