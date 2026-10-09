@@ -53,6 +53,17 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(NephisFlow.cleanTail(&l2, levels: &loud, endOfText: 4), 0)
     }
 
+    func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)
+        XCTAssertEqual(chain.gap(after: "They waited:", mood: "calm"), 0.9)
+        XCTAssertEqual(chain.gap(after: "They ran.", mood: "unknown"), chain.pieceGap)
+        let pack = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"moods": {"intense": {"sentence": 0.3, "trail": 0.3, "paragraph": 9, "gainDB": 2}}}"#.utf8))
+        XCTAssertEqual(pack.moods["intense"]?.sentence, 0.3)
+        XCTAssertEqual(pack.moods["intense"]?.paragraph, 3, "clamped")
+        XCTAssertEqual(pack.moods["calm"], NephisFlow.herMoods["calm"], "moods the pack leaves out keep hers")
+    }
+
     func testCleanTailKeepsALastSyllableAfterAShortDip() {
         // The end-of-text estimate is early (6) and the last word dips quiet for 2 latents (a stop) before its
         // final syllable at 12-13: that syllable is speech, not a mumble.

@@ -111,6 +111,28 @@ public enum NephisFlow {
         public var clipFrames = NephisFlow.clipFrames
         /// Carry-over used in her prompt: 12 (1 s) beat 62, 25 and none in the PC chain test (likeness 0.962, follows moods best).
         public var carryFrames = 12
+        /// Her timing and level per mood (the director's mood names); a mood not listed uses the gaps above.
+        public var moods: [String: Mood] = NephisFlow.herMoods
+
+        /// What she does in one mood: pauses after a sentence, after "…"/":", after a paragraph (seconds), and the
+        /// level change against calm that the model doesn't make by itself (dB).
+        public struct Mood: Codable, Sendable, Equatable {
+            public var sentence: Double
+            public var trail: Double
+            public var paragraph: Double
+            public var gainDB: Double
+            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double) {
+                self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB
+            }
+        }
+
+        /// The pause after a piece ending `piece`, in `mood`.
+        public func gap(after piece: String, mood: String?) -> Double {
+            let t = piece.trimmingCharacters(in: .whitespaces)
+            let trailing = t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":")
+            if let m = mood.flatMap({ moods[$0] }) { return trailing ? m.trail : m.sentence }
+            return trailing ? ellipsisGap : pieceGap
+        }
 
         public init() {}
 
@@ -121,8 +143,32 @@ public enum NephisFlow {
             paragraphGapScale = try c.decodeIfPresent(Double.self, forKey: .paragraphGapScale) ?? paragraphGapScale
             clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
+            // A pack's moods replace these one by one, clamped to sane values.
+            for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
+                moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
+                                   paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)))
+            }
         }
     }
+
+    /// Measured on her real ElevenLabs reading (v4 chunks, word-aligned, 2026-10-09, her_style.py): median pauses per
+    /// mood, and the level she adds against calm minus what the trained model already adds (PC chain sim, r9).
+    /// Intense halves her pauses (0.46 s after a sentence, 0.54 s between paragraphs; calm 0.84 / 1.04); triumph and
+    /// playful are much louder than the model makes them.
+    public static let herMoods: [String: Chain.Mood] = [
+        "calm": .init(sentence: 0.84, trail: 0.9, paragraph: 1.04, gainDB: 0),
+        "wry": .init(sentence: 0.58, trail: 0.42, paragraph: 0.66, gainDB: 1.0),
+        "playful": .init(sentence: 0.48, trail: 0.51, paragraph: 0.70, gainDB: 3.0),
+        "tense": .init(sentence: 0.58, trail: 0.52, paragraph: 0.64, gainDB: 0.5),
+        "dread": .init(sentence: 0.64, trail: 0.52, paragraph: 0.62, gainDB: -0.4),
+        "intense": .init(sentence: 0.46, trail: 0.41, paragraph: 0.54, gainDB: 1.4),
+        "sad": .init(sentence: 0.68, trail: 0.56, paragraph: 0.64, gainDB: -0.6),
+        "tender": .init(sentence: 0.70, trail: 0.48, paragraph: 0.78, gainDB: -0.3),
+        "awe": .init(sentence: 0.66, trail: 0.42, paragraph: 0.71, gainDB: 0),
+        "hushed": .init(sentence: 0.50, trail: 0.42, paragraph: 0.65, gainDB: 0),
+        "triumph": .init(sentence: 0.48, trail: 0.5, paragraph: 0.65, gainDB: 3.8),
+        "cold": .init(sentence: 0.54, trail: 0.6, paragraph: 0.72, gainDB: 1.6),
+    ]
 
     /// The voice prompt for a paragraph: her clip (its first `clipFrames`), half the previous mood's clip and half
     /// this one's at a mood change, then the carry-over (the conditioning of the last latents she said).

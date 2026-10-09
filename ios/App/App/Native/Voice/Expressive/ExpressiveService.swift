@@ -111,8 +111,15 @@ final class ExpressiveService {
             if let v = try? PocketVoice.load(builtInVoices: dir, name: "nephis-\(mood)") { moods[mood] = v }
         }
         if pack != nil { log.info("expressive: Nephis reads with her trained model pack (\(moods.count) moods)") }
+        // The pack's chain settings (pack.json "chain": pauses, carry-over, her per-mood timing), tuned on the PC for
+        // its model; anything it leaves out keeps the defaults.
+        var chain = NephisFlow.Chain()
+        if pack != nil, let c = NephisModelPack.info?["chain"], let d = try? JSONSerialization.data(withJSONObject: c),
+           let decoded = try? JSONDecoder().decode(NephisFlow.Chain.self, from: d) {
+            chain = decoded
+        }
         return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
-                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory)
+                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain)
     }
 
     /// A Nephis model pack was installed or removed: forget her assets; a loaded Nephis engine reloads on next use.

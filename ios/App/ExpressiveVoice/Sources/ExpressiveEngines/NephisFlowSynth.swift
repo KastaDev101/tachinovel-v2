@@ -66,6 +66,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public struct Prepared: Sendable {
         let stream: [[Float]]
         let reset: Bool
+        /// Her level for this call's mood (dB against calm), reached during the pause the call starts with.
+        var gainDB = 0.0
         let started: Date
         var report: Report
     }
@@ -84,6 +86,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var context: [Float] = []
     private var lastText: String?
     private var lastClip: [Float]?
+    /// The mood of the paragraph just read (its paragraph pause follows it), and the level it played at.
+    private var lastMood: String?
+    private var lastGainDB = 0.0
     private var started = false
     public private(set) var lastReport = Report()
 
@@ -130,6 +135,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         context = []
         lastText = nil
         lastClip = nil
+        lastMood = nil
         started = false
     }
 
@@ -172,15 +178,21 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // seam would be a restart nothing edits (an "uh", a mumble in the pause, the tone back at the clip). So the
         // call is read piece by piece here, each one a flow piece of its own: carry-over, joins and clean-up.
         let pieces = try await plan(manager, text: text, clip: clip)
+        let mood = assets.moods[line.role] != nil ? line.role : "calm"
+        let chain = assets.chain
+        // Before a paragraph: her pause after the paragraph before, in its mood; the director's own when it asks for
+        // more (a scene break, a title) or there is no paragraph before.
+        let director = (line.pauseBefore ?? 0.6) * chain.paragraphGapScale
+        let paragraphPause = lastMood.flatMap { chain.moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
         var stream: [[Float]] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
-            let pause = k == 0 ? (line.pauseBefore ?? 0.6) * assets.chain.paragraphGapScale
-                : Self.sentencePause(after: pieces[k - 1], chain: assets.chain)
+            let pause = k == 0 ? paragraphPause : chain.gap(after: pieces[k - 1], mood: mood)
             stream += try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
                                      seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
         }
-        return Prepared(stream: stream, reset: reset, started: t0, report: report)
+        lastMood = mood
+        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -314,7 +326,15 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             return (samples, Date().timeIntervalSince(d0) * 1000)
         }
         decodes = Task { _ = try? await job.value }
-        let (samples, ms) = try await job.value
+        var (samples, ms) = try await job.value
+        // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
+        // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
+        let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
+        if from != 1 || to != 1 {
+            let ramp = min(samples.count, NephisFlow.sampleRate / 5)
+            for i in samples.indices { samples[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
+        }
+        lastGainDB = p.gainDB
         var report = p.report
         report.decodeMs = ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
