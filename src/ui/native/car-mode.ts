@@ -146,7 +146,7 @@ export function installCarMode(): CarMode {
   }
 
   function nowHtml(): string {
-    if (!active()) return `<div class="now"><div class="t1">Nothing playing</div><div class="t2">Pick a novel below to continue where you stopped.</div></div>`;
+    if (!active()) return `<div class="now"><div class="t1">Nothing playing</div><div class="t2">${recent.length > 0 ? 'Pick a novel below to continue where you stopped.' : 'Open a chapter and tap the headphones to start.'}</div></div>`;
     const pos = state.position;
     const dur = state.duration;
     const pct = pos !== undefined && dur ? Math.min(100, (pos / dur) * 100) : 0;
@@ -244,7 +244,7 @@ export function installCarMode(): CarMode {
     const list = `
         ${folder}
         ${audioRows ? `<div class="sec">Narrated on the PC</div>${audioRows}` : usePCAudio && linked ? '<p class="note">No narrated chapters in the folder yet.</p>' : ''}
-        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : active() ? '' : '<p class="note">Open a chapter and tap the headphones to start listening.</p>'}`;
+        ${recentRows ? `<div class="sec">Continue listening</div>${recentRows}` : ''}`;
     const p = ensureParts();
     const now = nowHtml();
     // The bar and the clock change every second: compare without them and update them in place.

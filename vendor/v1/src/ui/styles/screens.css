@@ -791,6 +791,9 @@
 .about-version {
   font-size: var(--fs-subhead);
   color: var(--label-2);
+  padding: 0 24px;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .license-text {

@@ -250,9 +250,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     const engines = arr(st.engines);
     const current = lines();
     body.innerHTML = `
-      <div class="muted" style="margin:4px 2px 8px">Pocket TTS reads as the Narrator and as Nephis: download it once here (on Wi-Fi), then
-        pick the voice in Settings › Voices. The other engines are experiments: big downloads, and the GPU ones only render while
-        the app is open. Kokoro reads any sentence a voice can't deliver in time.</div>
+      <div class="muted" style="margin:4px 2px 8px">Pocket TTS is the Narrator’s and Nephis’s voice: download it once (Wi-Fi).
+        The other engines are experiments.</div>
       ${unavailable ? '<div class="card err">Experimental engines aren’t available in this build.</div>' : ''}
       ${message ? `<div class="card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}">${esc(message)}</div>` : ''}
       ${voices?.view() ?? ''}

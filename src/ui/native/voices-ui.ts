@@ -347,16 +347,17 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
 const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice'>, string, string][] = [
   ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
   ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
-  ['moods', 'Mood voices', 'Tense, sad and tender reads where the scene calls for them'],
-  ['sceneAI', 'AI scene reading', 'Apple’s on-device model reads each scene (iOS 26, Apple Intelligence)'],
+  ['moods', 'Mood voices', 'Tense, sad, tender and more where the scene calls for them'],
+  ['sceneAI', 'AI scene reading', 'Apple Intelligence picks the mood of each scene'],
   ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
   ['studioSound', 'Studio sound', 'Clean, warm and even'],
   ['systemChime', 'System message chime', 'A soft chime before [System] lines'],
   ['systemTone', 'System message voice', 'An interface tone for [System] lines'],
 ];
 
-/** Switches that change only the Narrator's reads: Nephis reads everything in her one voice. */
-const NARRATOR_ONLY = new Set<string>(['performed', 'moods', 'sceneAI', 'breaths']);
+/** Switches that change only the Narrator's reads (Nephis has no acted voice and no added breaths; her moods and the
+ * AI scene reading apply to her too: Delivery.read). */
+const NARRATOR_ONLY = new Set<string>(['performed', 'breaths']);
 
 /** Nephis is the voice reading chapters. */
 function nephisReads(info: VoiceSettingsInfo): boolean {
@@ -390,7 +391,7 @@ function engineCard(info: VoiceSettingsInfo): string {
       : '';
   return `<div class="card" data-testid="voices-engine">
       ${row('pocket-tts:narrator', 'Narrator', 'Acts the dialogue, follows the scene, reads with the screen locked')}
-      ${row('pocket-tts:nephis', 'Nephis', 'Deeper and clearer, one calm voice for everything (new)')}${download}
+      ${row('pocket-tts:nephis', 'Nephis', 'Her own voice, with moods for the scene')}${download}
       ${on === 'chatterbox-nano' ? row('chatterbox-nano', 'Narrator (Chatterbox Nano)', 'The earlier engine; only with the app open') : ''}
       ${row('kokoro', 'Kokoro', 'Fast and light; also the backup when the Narrator can’t keep up')}
     </div>`;
@@ -418,7 +419,7 @@ function openNarratorSettings(onDone: () => void): void {
   let info: VoiceSettingsInfo | null = null;
   const render = (): void => {
     p.body.innerHTML = info
-      ? `${nephisReads(info) ? '<p class="note">Nephis reads every line in her one calm voice, as one continuous read: the switches marked “Narrator only” change the Narrator’s reads, not hers.</p>' : ''}${deliveryCard(info)}<p class="note">The Narrator is one voice: dialogue and thoughts are acted, narration stays calm, and the mood voices follow the scene.</p>`
+      ? `${nephisReads(info) ? '<p class="note">Nephis reads in her own voice and follows the mood of the scene. Switches marked “Narrator only” don’t change her.</p>' : ''}${deliveryCard(info)}<p class="note">The Narrator is one voice: dialogue and thoughts are acted, narration stays calm, and the mood voices follow the scene.</p>`
       : '<p class="note">Loading…</p>';
   };
   const load = async (): Promise<void> => {
@@ -522,14 +523,14 @@ export function openVoicesScreen(): void {
       ? '<p class="note warn">Kokoro isn’t included in this build: the Apple voice reads everything.</p>'
       : k.crashDisabled
         ? `<p class="note warn">Kokoro was turned off after it crashed twice (a known iOS Core ML issue). <button type="button" data-act="kokoro-on" style="color:#a8b4ff;padding:0">Turn it back on</button></p>`
-        : `<p class="note">Kokoro is built into the app${size}: no download, no internet.</p>`;
+        : `<p class="note">Built in${size}, works offline.</p>`;
     p.body.innerHTML = `
       <div class="sec">Reads chapters</div>
       ${engineCard(info)}
       ${NARRATOR_SETTINGS_ROW}
       <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">2 minutes: breaks, voice switches, speed and phone heat, with a report to copy</span></div><span aria-hidden="true">›</span></button></div>
       <div class="sec">Backup voice (Kokoro)</div>
-      <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · ${nephisReads(info) ? 'reads when Kokoro is chosen (Nephis’s catch-up lines use her own Kokoro voice)' : 'reads when Kokoro is chosen, and stands in when the Narrator can’t keep up'}</span></div><span aria-hidden="true">›</span></button></div>
+      <div class="card" data-testid="voices-backup"><button type="button" class="row" data-act="kokoro-all"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(choiceName(info, info.defaultVoice) || 'Heart')} · ${nephisReads(info) ? 'when Kokoro reads' : 'when Kokoro reads, and as the backup'}</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
@@ -787,7 +788,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
       ${engineCard(info)}
       <div class="card">
         <button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Narrator settings</b><span class="sub">Acting, mood voices, AI scene reading, breaths, studio sound</span></div><span aria-hidden="true">›</span></button>
-        <button type="button" class="row" data-act="novel-kokoro"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(kokoro)}${info.novelVoice ? ' (this novel)' : ''} · ${nephisReads(info) ? 'when Kokoro reads (Nephis’s catch-up lines use her own Kokoro voice)' : 'also the backup'}</span></div><span aria-hidden="true">›</span></button>
+        <button type="button" class="row" data-act="novel-kokoro"><div class="main"><b>Kokoro voice</b><span class="sub">${esc(kokoro)}${info.novelVoice ? ' (this novel)' : ''} · ${nephisReads(info) ? 'when Kokoro reads' : 'also the backup'}</span></div><span aria-hidden="true">›</span></button>
       </div>
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;

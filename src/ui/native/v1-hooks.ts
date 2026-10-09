@@ -7,6 +7,8 @@
  *  - Novel page: "Prepare for the drive" (drive-ui.ts) in place of v1's PC-narrator card (kept with PC audio on).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
+import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
+import { symbols } from '@v1/ui/state/store.ts';
 import { addDriveCard, installDrive } from './drive-ui.ts';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
@@ -44,7 +46,10 @@ function addMoreRows(): void {
   }
   if (listen) listen.style.display = pcAudio ? 'none' : '';
   if (!more.querySelector('[data-testid="more-voices"]')) {
-    (listen ?? anchor).after(cloneRow(anchor, 'more-voices', 'Voices', openVoicesScreen));
+    const voices = cloneRow(anchor, 'more-voices', 'Voices', openVoicesScreen);
+    // Its own icon: Listen keeps the headphones (both used to show them).
+    voices.querySelector<HTMLElement>('.mrow-icon')?.style.setProperty('--icon', `url("${symbols.value.waveform ?? fallbackIconUrl('waveform')}")`);
+    (listen ?? anchor).after(voices);
   }
 }
 
