@@ -55,6 +55,11 @@ export function SettingsScreen({ page }: { page: SettingsPage }) {
 
 // ---------- general / downloads / backup ----------
 
+/** "Version 2.0.0 (abc1234)": the build hash once, even when the version string already carries it. */
+export function aboutVersion(version: string, hash: string): string {
+  return version.includes(hash) ? `Version ${version}` : `Version ${version} (${hash})`;
+}
+
 function GeneralPage() {
   const s = settings.value;
   return (
@@ -595,7 +600,7 @@ function AboutPage() {
         </span>
         <h2 class="about-name">TachiNovel</h2>
         <p class="about-version tabular">
-          Version {buildVersion.value || __BUILD_VERSION__} ({__BUILD_HASH__})
+          {aboutVersion(buildVersion.value || __BUILD_VERSION__, __BUILD_HASH__)}
         </p>
       </div>
       <div class="grouped">

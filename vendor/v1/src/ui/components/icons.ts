@@ -96,6 +96,7 @@ const ICONS: Record<string, string> = {
   'sun.max': '<circle cx="12" cy="12" r="4.1"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M5.3 18.7l1.5-1.5M17.2 6.8l1.5-1.5"/>',
   'sun.min': '<circle cx="12" cy="12" r="3.4"/><path d="M12 5.4v.8M12 17.8v.8M5.4 12h.8M17.8 12h.8M7.3 7.3l.6.6M16.1 16.1l.6.6M7.3 16.7l.6-.6M16.1 7.9l.6-.6" stroke-width="2.2"/>',
   'moon.fill': `${S}<path d="M20.3 14.6A8.6 8.6 0 0 1 9.4 3.7a8.6 8.6 0 1 0 10.9 10.9z"/>${E}`,
+  waveform: '<path d="M3.5 10.5v3M7.2 7v10M10.9 4v16M14.6 8v8M18.3 6v12M21 10.5v3" stroke-width="2.1"/>',
   'list.bullet': `${S}<circle cx="4.6" cy="6" r="1.6"/><circle cx="4.6" cy="12" r="1.6"/><circle cx="4.6" cy="18" r="1.6"/>${E}<path d="M9 6h11.5M9 12h11.5M9 18h11.5"/>`,
   number: '<path d="M9.8 3.5 7.6 20.5M16.4 3.5l-2.2 17M4.2 8.6h16.3M3.5 15.4h16.3"/>',
 

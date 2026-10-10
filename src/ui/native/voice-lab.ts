@@ -10,6 +10,7 @@ import { modelVoices, SCENE_TESTS, sceneKinds, sceneScore } from '../../core/nar
 import { speechScript } from '../../core/narration/speech-script.ts';
 import { openExpressiveLab } from './expressive-lab.ts';
 import { Narration, type NarratorInfo } from './narration.ts';
+import { lastListened } from './speech-dom.ts';
 import { fs } from './type.ts';
 
 /** Synthetic chapter for "Speak test paragraph" (and the simulator self-test): no novel, no progress. */
@@ -112,6 +113,26 @@ async function sceneReadingTest(): Promise<string> {
   return `Rules ${pct(rules)} · AI ${note ? `— (${note})` : `${pct(ai)} in ${(ms / 1000).toFixed(1)} s`} · ${total} sentences`;
 }
 
+/** Voice Lab › Test moods: the on-device AI director over the chapter last started with Listen, next to the rules'
+ * moods. The report (copy it) scores against hand labels on the PC; it holds only each sentence's first words. */
+async function chapterMoodTest(): Promise<{ summary: string; report: Obj | null }> {
+  const last = lastListened();
+  if (!last) return { summary: 'Start Listen on a chapter first, then come back here.', report: null };
+  const items = last.script.items;
+  const kinds = sceneKinds(items);
+  const r = await Narration.readScene({ sentences: items.map((i, k) => ({ text: i.text, kind: kinds[k] ?? 'narration' })) }).catch(() => null);
+  const rules = items.map((i) => i.mood ?? 'calm');
+  const count = (list: readonly string[]): string => {
+    const c = new Map<string, number>();
+    for (const m of list) c.set(m, (c.get(m) ?? 0) + 1);
+    return [...c].sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${n}`).join(', ');
+  };
+  const report: Obj = { chapter: last.chapter, sentences: items.length, ai: r?.moods ?? null, aiNote: r?.moods ? null : (r?.reason ?? 'not available'),
+    ms: Math.round(r?.ms ?? 0), rules, kinds, first: items.map((i) => i.text.slice(0, 40)) };
+  const ai = r?.moods ? `AI: ${count(r.moods)} (${((r.ms ?? 0) / 1000).toFixed(1)} s)` : `AI — (${r?.reason ?? 'not available'})`;
+  return { summary: `${last.chapter} · ${items.length} sentences · ${ai} · Rules: ${count(rules)}`, report };
+}
+
 export function openVoiceLab(): void {
   if (open) return;
   open = true;
@@ -129,6 +150,8 @@ export function openVoiceLab(): void {
   const body = root.querySelector('.body') as HTMLElement;
   let lab: Obj = {};
   let sceneResult = 'not run yet';
+  let moodResult = 'not run yet';
+  let moodReport: Obj | null = null;
   let poll = 0;
   let nar: NarratorInfo | null = null;
   let dialogueName = '';
@@ -243,6 +266,9 @@ export function openVoiceLab(): void {
       <h2>Scene reading</h2>
       <div class="kv" data-testid="lab-scene"><span>Accuracy</span><span>${esc(sceneResult)}</span></div>
       <div class="acts"><button type="button" data-act="scene-test">Test scene reading</button></div>
+      <div class="kv" data-testid="lab-moods"><span>Moods</span><span>${esc(moodResult)}</span></div>
+      <div class="acts"><button type="button" data-act="mood-test">Test moods on the last chapter I listened to</button>
+        ${moodReport ? '<button type="button" data-act="mood-copy">Copy mood report</button>' : ''}</div>
       <h2>Experimental</h2>
       <div class="acts"><button type="button" data-act="expressive">Experimental engines (expressive voices) ›</button></div>`;
   };
@@ -303,6 +329,22 @@ export function openVoiceLab(): void {
         void Narration.setVoiceSettings({ narrator: { [k]: !nar[k] } }).then(loadNarrator);
         return;
       }
+      case 'mood-test':
+        moodResult = 'Reading the chapter…';
+        moodReport = null;
+        render();
+        void chapterMoodTest().then((r) => {
+          moodResult = r.summary;
+          moodReport = r.report;
+          render();
+        });
+        return;
+      case 'mood-copy':
+        void navigator.clipboard
+          .writeText(JSON.stringify(moodReport))
+          .then(() => (el.textContent = 'Copied'))
+          .catch(() => (el.textContent = 'Copy failed'));
+        return;
       case 'copy':
         void navigator.clipboard
           .writeText(JSON.stringify(lab, null, 2))

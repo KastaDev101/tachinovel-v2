@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "engine": "pocket-tts",
   "name": "Nephis",
-  "frames": 81,
+  "frames": 95,
   "embeddingDim": 1024,
-  "bytes": 331776,
-  "sha256": "ce0c83bde48c2531edac8aa19d5855b90d9ec3e27b11b286f57b00cd754f186c",
-  "source": "baked blend: Parler-TTS mini 'Brenda' (65%) + 'Lea' (35%) as one prompt, read once by Pocket TTS (best of 8 takes), first 6.48 s"
+  "bytes": 389120,
+  "sha256": "4743e33789b1246711dbb8b6d5257dcf0686e750222c8c237851c6d629f741f8",
+  "source": "Pocket TTS prompt from her ElevenLabs narration (Kasta's own generated voice), voice isolated (UVR), her first sentence 7.6 s; 0.937 Resemblyzer likeness"
 }

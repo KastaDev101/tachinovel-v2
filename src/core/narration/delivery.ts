@@ -532,8 +532,10 @@ function speechClass(speech: string, mood: Mood, dread = false): LineClass | nul
   if (dread) return null;
   const relaxed = mood === 'calm' || mood === 'playful' || mood === 'soft';
   if (relaxed && TEASING_OPENER.test(words)) return 'teasing';
-  // A drawl in the middle of a line ("cute when you're… flustered"); a trailing "…" is just trailing off.
-  if (relaxed && /(?:…|\.\.\.)\s*\p{L}/u.test(words)) return 'teasing';
+  // A drawl in the middle of a line said to someone ("cute when you're… flustered"); a trailing "…" is just trailing
+  // off, and a drawl in a question or a statement about someone else is hesitation ("Prince Mordret was… is the
+  // eldest son", "why didn't you… kill him?"), never teasing.
+  if (relaxed && !question && /\p{L}[\s,]*(?:…|\.\.\.)\s*\p{L}/u.test(words) && /\byou(?:'re|r|rs)?\b/i.test(words)) return 'teasing';
   if (mood === 'playful' && question) return 'teasing';
   return null;
 }

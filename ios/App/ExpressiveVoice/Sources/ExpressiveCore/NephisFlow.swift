@@ -99,9 +99,119 @@ public enum NephisFlow {
         }
     }
 
+    /// Chain settings a Nephis model pack carries (pack.json "chain"), tuned on the PC for that model; any field it
+    /// leaves out keeps the default here.
+    public struct Chain: Codable, Sendable, Equatable {
+        /// Pause between the pieces of one paragraph, and after a piece ending in "…" or ":" (seconds).
+        public var pieceGap = 0.45
+        public var ellipsisGap = 0.8
+        /// Scales the pause before a paragraph (the director's natural pause).
+        public var paragraphGapScale = 1.0
+        /// Voice-prompt frames from her mood clip, and from what she just said (carry-over); at most 125 together.
+        public var clipFrames = NephisFlow.clipFrames
+        /// Carry-over used in her prompt: 12 (1 s) beat 62, 25 and none in the PC chain test (likeness 0.962, follows moods best).
+        public var carryFrames = 12
+        /// Her timing and level per mood (the director's mood names); a mood not listed uses the gaps above.
+        public var moods: [String: Mood] = NephisFlow.herMoods
+        /// Her EQ's lift above 2.5 kHz for this pack's decoder (dB); nil = the shipped +5.95 (VoiceTilt.nephis).
+        public var highShelfDB: Double?
+        /// Her EQ's gentler sibilance (5.5-9 kHz turned down where it sticks out); nil = on. Off for a pack whose
+        /// decoder already matches her S sounds: on the phone it pulled them to 6.1 kHz, hers sit at 6.35-6.4 (duller,
+        /// a little lispy; Voice test 2026-10-09).
+        public var softSibilance: Bool?
+        /// Words this model says wrong, respelled the way it says them right (whole words, any case); a pack's list
+        /// replaces these entries one by one ("" drops one).
+        public var respell: [String: String] = NephisFlow.herRespell
+
+        /// `text` with the respellings applied; a capitalized word keeps its capital.
+        public func respelled(_ text: String) -> String {
+            var out = text
+            for (word, said) in respell where !said.isEmpty {
+                let pattern = "\\b\(NSRegularExpression.escapedPattern(for: word))\\b"
+                guard let rx = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+                for m in rx.matches(in: out, range: NSRange(out.startIndex..., in: out)).reversed() {
+                    guard let r = Range(m.range, in: out) else { continue }
+                    let capital = out[r].first?.isUppercase == true
+                    out.replaceSubrange(r, with: capital ? said.prefix(1).uppercased() + said.dropFirst() : said)
+                }
+            }
+            return out
+        }
+
+        /// What she does in one mood: pauses after a sentence, after "…"/":", after a paragraph (seconds), and the
+        /// level change against calm that the model doesn't make by itself (dB).
+        public struct Mood: Codable, Sendable, Equatable {
+            public var sentence: Double
+            public var trail: Double
+            public var paragraph: Double
+            public var gainDB: Double
+            /// Her tone in this mood against calm, as a 2.5 kHz shelf (dB; nil = none): the model makes tender and
+            /// awe brighter than she is, sad and dread duller (PC chain, r13: 0.95 dB off on average, 0.10 with it).
+            public var toneDB: Double?
+            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double, toneDB: Double? = nil) {
+                self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB; self.toneDB = toneDB
+            }
+        }
+
+        /// The pause after a piece ending `piece`, in `mood`.
+        public func gap(after piece: String, mood: String?) -> Double {
+            let t = piece.trimmingCharacters(in: .whitespaces)
+            let trailing = t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":")
+            if let m = mood.flatMap({ moods[$0] }) { return trailing ? m.trail : m.sentence }
+            return trailing ? ellipsisGap : pieceGap
+        }
+
+        public init() {}
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            pieceGap = try c.decodeIfPresent(Double.self, forKey: .pieceGap) ?? pieceGap
+            ellipsisGap = try c.decodeIfPresent(Double.self, forKey: .ellipsisGap) ?? ellipsisGap
+            paragraphGapScale = try c.decodeIfPresent(Double.self, forKey: .paragraphGapScale) ?? paragraphGapScale
+            clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
+            carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
+            highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
+            softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
+            for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
+                respell[word.lowercased()] = said
+            }
+            // A pack's moods replace these one by one, clamped to sane values.
+            for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
+                moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
+                                   paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)),
+                                   toneDB: m.toneDB.map { min(4, max(-4, $0)) })
+            }
+        }
+    }
+
+    /// Measured on her real ElevenLabs reading (v4 chunks, word-aligned, 2026-10-09, her_style.py): median pauses per
+    /// mood, and the level she adds against calm minus what the trained model already adds (PC chain sim, r9).
+    /// Intense halves her pauses (0.46 s after a sentence, 0.54 s between paragraphs; calm 0.84 / 1.04); triumph and
+    /// playful are much louder than the model makes them.
+    /// Pronunciation sweep, r13 (1,409 words in a carrier line, 3 renders each, checked by speech recognition,
+    /// 2026-10-09): as written these came out "bad", "back", "bot", "tentively"; respelled, right 3 of 3.
+    public static let herRespell: [String: String] = [
+        "bed": "bedd", "bag": "bagg", "bought": "bawt", "tentatively": "tentuh-tiv-lee",
+    ]
+
+    public static let herMoods: [String: Chain.Mood] = [
+        "calm": .init(sentence: 0.84, trail: 0.9, paragraph: 1.04, gainDB: 0),
+        "wry": .init(sentence: 0.58, trail: 0.42, paragraph: 0.66, gainDB: 1.0),
+        "playful": .init(sentence: 0.48, trail: 0.51, paragraph: 0.70, gainDB: 3.0),
+        "tense": .init(sentence: 0.58, trail: 0.52, paragraph: 0.64, gainDB: 0.5),
+        "dread": .init(sentence: 0.64, trail: 0.52, paragraph: 0.62, gainDB: -0.4),
+        "intense": .init(sentence: 0.46, trail: 0.41, paragraph: 0.54, gainDB: 1.4),
+        "sad": .init(sentence: 0.68, trail: 0.56, paragraph: 0.64, gainDB: -0.6),
+        "tender": .init(sentence: 0.70, trail: 0.48, paragraph: 0.78, gainDB: -0.3),
+        "awe": .init(sentence: 0.66, trail: 0.42, paragraph: 0.71, gainDB: 0),
+        "hushed": .init(sentence: 0.50, trail: 0.42, paragraph: 0.65, gainDB: 0),
+        "triumph": .init(sentence: 0.48, trail: 0.5, paragraph: 0.65, gainDB: 3.8),
+        "cold": .init(sentence: 0.54, trail: 0.6, paragraph: 0.72, gainDB: 1.6),
+    ]
+
     /// The voice prompt for a paragraph: her clip (its first `clipFrames`), half the previous mood's clip and half
     /// this one's at a mood change, then the carry-over (the conditioning of the last latents she said).
-    public static func prompt(clip: [Float], previousClip: [Float]?, carry: [Float]) -> (frames: [Float], count: Int) {
+    public static func prompt(clip: [Float], previousClip: [Float]?, carry: [Float], clipFrames: Int = clipFrames) -> (frames: [Float], count: Int) {
         let dim = embeddingDim
         func head(_ c: [Float], _ frames: Int) -> [Float] { Array(c.prefix(min(c.count / dim, frames) * dim)) }
         var out: [Float]
@@ -197,13 +307,16 @@ public enum NephisFlow {
     /// past the end of the text), anything louder again is the model mumbling into the pause. Each such latent
     /// becomes the quiet latent before it. Returns how many were replaced.
     @discardableResult
-    public static func cleanTail(_ latents: inout [[Float]], levels: inout [Double], endOfText: Int, ring: Int = 2) -> Int {
+    public static func cleanTail(_ latents: inout [[Float]], levels: inout [Double], endOfText: Int, ring: Int = 4, hold: Int = 4) -> Int {
+        // The end of the text is an estimate and a last word can dip quiet inside it (a stop before "-ed", a soft
+        // final consonant): 2 quiet latents after 2 of ring clipped last syllables on the phone (Voice test
+        // 2026-10-09, "cutting sentences short"). Now the sound must stay quiet for `hold` latents (320 ms).
         var k = max(0, endOfText + ring)
-        while k + 1 < levels.count, !(levels[k] < quietDB && levels[k + 1] < quietDB) { k += 1 }
-        guard k + 1 < levels.count else { return 0 }
+        while k + hold <= levels.count, !(k..<(k + hold)).allSatisfy({ levels[$0] < quietDB }) { k += 1 }
+        guard k + hold <= levels.count else { return 0 }
         var n = 0
-        var quiet = k + 1
-        for i in (k + 2)..<max(k + 2, levels.count) {
+        var quiet = k + hold - 1
+        for i in (k + hold)..<max(k + hold, levels.count) {
             if levels[i] > quietDB {
                 latents[i] = latents[quiet]
                 levels[i] = levels[quiet]
@@ -247,9 +360,56 @@ public enum NephisFlow {
     /// `overlap` latents where they meet, and, for a longer pause, morphs from one into the other. Returns the
     /// latents to decode, starting with the trimmed tail.
     public static func join(tail: [[Float]], next: [[Float]], head: Int, pause: Double) -> [[Float]] {
+        joinPadded(tail: tail, next: next, head: head, pause: pause, maxBridge: .max).latents
+    }
+
+    /// Latents a long pause may be decoded through (240 ms); the rest of it is true silence spliced into the audio.
+    /// Decoding a pause from near-identical quiet latents makes Mimi buzz at its frame rate: a periodic 12.5 Hz
+    /// "du du du" 11-18 dB over her real pauses (PC test 2026-10-09: 80 ms periodicity 0.78-0.92), heard on the phone
+    /// before system lines (the longest pauses) and at long paragraph pauses.
+    public static let maxBridge = 3
+    /// Silence latents decoded around a long pause: her fade-out after the last word (240 ms) and the lead-in before
+    /// the next (160 ms); everything between them is true silence.
+    public static let keepTail = 3
+    public static let keepHead = 2
+    /// With the latents' levels known, the silence starts only once her fade-out is under `fadeDB` (two latents in a
+    /// row), and the lead-in keeps everything over it: a fixed 240 ms cut the end of a long-trailing word while it was
+    /// still audible ("...steadied in her hand", Voice test 2026-10-09: -55 dB at the cut).
+    public static let fadeDB = -68.0
+    public static let maxTail = 10
+    public static let maxHead = 6
+
+    /// Latents of fade-out to decode after the last word: up to and including the first of two quiet ones.
+    public static func fadeOut(_ levels: [Double]) -> Int {
+        var i = 0
+        while i + 1 < levels.count, !(levels[i] < fadeDB && levels[i + 1] < fadeDB) { i += 1 }
+        return min(maxTail, max(keepTail, i + 1))
+    }
+
+    /// Latents of lead-in to decode before the next word (`levels`: the silence before it): back to the first of two
+    /// quiet ones.
+    public static func leadIn(_ levels: [Double]) -> Int {
+        var i = levels.count - 1
+        while i > 0, !(levels[i] < fadeDB && levels[i - 1] < fadeDB) { i -= 1 }
+        return min(maxHead, max(keepHead, levels.count - i))
+    }
+
+    /// `join`, but a pause longer than its bridge is decoded with only `maxBridge` morph latents; `padAt` is where in
+    /// the returned latents `padSeconds` of silence go in the decoded audio (the middle of the bridge).
+    public static func joinPadded(tail: [[Float]], next: [[Float]], head: Int, pause: Double, maxBridge: Int = NephisFlow.maxBridge,
+                                  tailLevels: [Double]? = nil, headLevels: [Double]? = nil)
+        -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
         var a = tail, b = next
         let ov = max(0, min(overlap, a.count - 1, head - 1))
         let want = max(2, Int((pause / latentSeconds).rounded()))
+        // A pause longer than her fade-out + lead-in: decode only those (the first `keepTail` latents after the last
+        // word, the last `keepHead` before the next) and make all the rest silence. The model's own quiet latents buzz
+        // too, not just a morph between them (phone Voice test 2026-10-09, after the bridge cap: shorter, still there).
+        let keepTail = min(a.count, tailLevels.map(fadeOut) ?? Self.keepTail), keepHead = min(head, headLevels.map(leadIn) ?? Self.keepHead)
+        if maxBridge != .max, want > keepTail + keepHead, a.count + head > keepTail + keepHead {
+            return (Array(a.prefix(keepTail)) + Array(b.dropFirst(head - keepHead)), keepTail,
+                    Double(want - keepTail - keepHead) * latentSeconds)
+        }
         let have = a.count + head - ov
         var headLeft = head
         if have > want {
@@ -273,14 +433,53 @@ public enum NephisFlow {
             out = a
         }
         let now = out.count + max(0, headLeft - ov)
+        var padAt: Int?
+        var padSeconds = 0.0
         if now < want, let last = out.last, let first = b.first {
             let nb = want - now
-            out += (0..<nb).map { k in
-                let w = Float(k + 1) / Float(nb + 1)
+            let decoded = min(nb, maxBridge)
+            if decoded < nb {
+                padAt = out.count + decoded / 2
+                padSeconds = Double(nb - decoded) * latentSeconds
+            }
+            out += (0..<decoded).map { k in
+                let w = Float(k + 1) / Float(decoded + 1)
                 return zip(last, first).map { (1 - w) * $0 + w * $1 }
             }
         }
-        return out + b
+        return (out + b, padAt, padSeconds)
+    }
+
+    /// A high shelf (RBJ) over `x`, from a fresh filter state: one call's mood tone (the call starts in a pause).
+    public static func highShelf(_ x: inout [Float], db: Double, hz: Double = 2500, q: Double = 0.586, sampleRate: Int = sampleRate) {
+        guard db != 0, !x.isEmpty else { return }
+        let a = pow(10, db / 40), w = 2 * Double.pi * hz / Double(sampleRate), c = cos(w), s = sin(w)
+        let sq = 2 * sqrt(a) * s / (2 * q)
+        let a0 = (a + 1) - (a - 1) * c + sq
+        let b0 = a * ((a + 1) + (a - 1) * c + sq) / a0, b1 = -2 * a * ((a - 1) + (a + 1) * c) / a0
+        let b2 = a * ((a + 1) + (a - 1) * c - sq) / a0, a1 = 2 * ((a - 1) - (a + 1) * c) / a0, a2 = ((a + 1) - (a - 1) * c - sq) / a0
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+        for i in x.indices {
+            let v = Double(x[i])
+            let y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = v; y2 = y1; y1 = y
+            x[i] = Float(y)
+        }
+    }
+
+    /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with 10 ms fades
+    /// into and out of each so the level never steps.
+    public static func insertSilence(_ samples: [Float], pads: [(at: Int, seconds: Double)], sampleRate: Int = sampleRate) -> [Float] {
+        guard !pads.isEmpty else { return samples }
+        var out = samples
+        let fade = sampleRate / 100
+        for pad in pads.sorted(by: { $0.at > $1.at }) {
+            let i = min(out.count, pad.at * samplesPerLatent)
+            for k in 0..<min(fade, i) { out[i - 1 - k] *= Float(k) / Float(fade) }
+            for k in 0..<min(fade, out.count - i) { out[i + k] *= Float(k) / Float(fade) }
+            out.insert(contentsOf: [Float](repeating: 0, count: Int(pad.seconds * Double(sampleRate))), at: i)
+        }
+        return out
     }
 
     // MARK: - Takes

@@ -20,11 +20,14 @@ import { installNarrationOverlay } from './native/narration-overlay.ts';
 import { installOtaUi } from './native/ota-ui.ts';
 import { installRecovery } from './native/recovery.ts';
 import { runSmokeTour } from './native/smoke.ts';
+import { ensureNephis } from './native/voices-ui.ts';
 import { installV1Hooks } from './native/v1-hooks.ts';
 
 installCarHelp(HELP);
 installNarrationOverlay();
 installV1Hooks();
+// Nephis is the app's one voice: a phone that had another voice chosen switches to her once.
+void ensureNephis();
 installDiagnosticsOverlay();
 void installRecovery();
 installQaFolder();

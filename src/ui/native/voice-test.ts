@@ -82,8 +82,70 @@ export function openVoiceTest(): void {
     p.body.innerHTML = `
       <p class="note">Reads a 2-minute test passage aloud with the voice you listen with, exactly like Listen does, then says how it went: breaks, voice switches, speed and phone heat.</p>
       <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : report ? 'Run it again' : 'Start the test'}</button>
+      ${running ? '' : '<button type="button" class="btn alt" data-act="long" data-testid="voice-test-long">15-minute test with your own chapter</button>'}
       ${status ? `<p class="note" data-testid="voice-test-status">${esc(status)}</p>` : ''}
       ${result}`;
+  };
+
+  /**
+   * The long test (Kasta, 2026-10-09: "let it run 15 minutes and look for every possible issue"): records what plays
+   * while you listen to any chapter the usual way, and every 15 s notes the phone's heat, the voice's speed and any
+   * break or switch, so heat build-up, a dropout or a slowdown shows up with its time. Keep TachiNovel open.
+   */
+  const runLong = async (): Promise<void> => {
+    running = true;
+    report = null;
+    const timeline: Obj[] = [];
+    const t0 = Date.now();
+    const before = await ExpressiveVoice.resetStats().catch((): Obj => ({}));
+    const crashesBefore = Number(((before.crashes as Obj | undefined) ?? {}).total ?? 0);
+    const settings = await Narration.voiceSettings().catch(() => null);
+    recorded = false;
+    await ExpressiveVoice.recordStart().catch(() => undefined);
+    const minutes = 15;
+    while (running && Date.now() - t0 < minutes * 60_000) {
+      const s = await ExpressiveVoice.status().catch((): Obj => ({}));
+      const st = await Narration.state().catch(() => null);
+      const flow = (s.flow as Obj | undefined) ?? {};
+      const listen = (flow.listen as Obj | undefined) ?? {};
+      timeline.push({
+        t: Math.round((Date.now() - t0) / 1000),
+        thermal: ((s.device as Obj | undefined) ?? {}).thermal ?? null,
+        playing: st?.status ?? null,
+        renderX: flow.renderX ?? null,
+        breaks: listen.breaks ?? null,
+        otherVoice: listen.otherVoiceSentences ?? null,
+        audioSeconds: flow.audioSeconds ?? null,
+      });
+      const left = Math.max(0, minutes * 60 - Math.round((Date.now() - t0) / 1000));
+      status = `Recording: ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left. Play any chapter with Listen and keep TachiNovel open.`;
+      render();
+      for (let i = 0; i < 50 && running; i++) await sleep(300);
+    }
+    const rec = await ExpressiveVoice.recordStop().catch(() => ({ saved: false, bytes: 0 }));
+    recorded = rec.saved;
+    const after = await ExpressiveVoice.status().catch((): Obj => ({}));
+    const crashesAfter = Number(((after.crashes as Obj | undefined) ?? {}).total ?? 0);
+    report = {
+      kind: 'voice-test-long',
+      at: new Date().toISOString(),
+      app: after.app ?? null,
+      device: after.device ?? null,
+      delivery: (settings as { delivery?: unknown } | null)?.delivery ?? null,
+      ended: Date.now() - t0 >= minutes * 60_000,
+      seconds: Math.round((Date.now() - t0) / 100) / 10,
+      thermalStart: timeline[0]?.thermal ?? null,
+      thermalEnd: ((after.device as Obj | undefined) ?? {}).thermal ?? null,
+      crashesDuringTest: crashesAfter - crashesBefore,
+      lastCrash: crashesAfter > crashesBefore ? after.crashes : null,
+      flow: after.flow ?? null,
+      listen: ((after.flow as Obj | undefined) ?? {}).listen ?? null,
+      timeline,
+      recordingBytes: rec.bytes,
+    };
+    running = false;
+    status = 'Done.';
+    render();
   };
 
   const run = async (): Promise<void> => {
@@ -172,6 +234,7 @@ export function openVoiceTest(): void {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
     if (el.dataset.act === 'run' && !running) void run();
+    if (el.dataset.act === 'long' && !running) void runLong();
     if (el.dataset.act === 'stop') {
       running = false;
       void Narration.stop().catch(() => undefined);

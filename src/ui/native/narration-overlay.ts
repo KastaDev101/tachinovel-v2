@@ -25,7 +25,7 @@ import { installCarMode } from './car-mode.ts';
 import { alignChapter, clearPaint, HIGHLIGHT_CSS, paintRange, paintSegment, type ChapterAlignment } from './highlight.ts';
 import { Narration, type NarrationProgress, type NarrationState } from './narration.ts';
 import { chapterBody, locateReadingPoint, paragraphsOf, readerRoot } from './reader-dom.ts';
-import { domSpeechScript, rangeForSentence, type DomScript } from './speech-dom.ts';
+import { domSpeechScript, listMemory, rangeForSentence, rememberListened, type DomScript } from './speech-dom.ts';
 import { voiceLabel } from './voices-ui.ts';
 import { fs } from './type.ts';
 
@@ -66,6 +66,16 @@ const ICON_PAUSE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="curren
 const ICON_PLAY = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7z"/></svg>';
 const ICON_CLOSE =
   '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+/** The novel's cover (library entry, else its reading history), or undefined: native shows it on the lock screen. */
+async function novelCover(pluginId: string, novelPath: string): Promise<string | undefined> {
+  const key = `${pluginId}:${novelPath}`;
+  const lib = await callCore<{ key: string; cover?: string }[]>('library.list', {}).catch(() => []);
+  const hit = lib.find((e) => e.key === key)?.cover;
+  if (hit) return hit;
+  const hist = await callCore<{ pluginId: string; path: string; cover?: string }[]>('history.list', { limit: 50 }).catch(() => []);
+  return hist.find((h) => h.pluginId === pluginId && h.path === novelPath && h.cover)?.cover;
+}
 
 function tapFeedback(): void {
   void Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined);
@@ -277,17 +287,21 @@ export function installNarrationOverlay(): void {
       const lexicons = [l?.global, l?.novel].filter((x): x is Lexicon => !!x);
       let script: DomScript | null = null;
       try {
-        script = domSpeechScript(body, { title: chapterName, lexicons });
+        script = domSpeechScript(body, { title: chapterName, lexicons, lists: listMemory(`${ref.pluginId}:${ref.novelPath}`, ref.chapterPath) });
         speechScripts.set(ref.chapterPath, script);
+        rememberListened(chapterName, script.script);
       } catch (err) {
         console.warn('speech script failed; native splits the paragraphs', err);
       }
+      // The novel's cover for the lock screen, CarPlay and Control Center (Kasta, 2026-10-09: the square was empty).
+      const coverUrl = await novelCover(ref.pluginId, ref.novelPath);
       await Narration.play({
         pluginId: ref.pluginId,
         novelPath: ref.novelPath,
         chapterPath: ref.chapterPath,
         novelName,
         chapterName,
+        ...(coverUrl ? { coverUrl } : {}),
         paragraphs: paragraphsOf(body),
         ...(script && script.script.items.length > 0 ? { script: script.script } : {}),
         start: { paragraph: point.paragraph },

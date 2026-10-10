@@ -27,9 +27,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 /// tachinovel://open?plugin=<id>&novel=<path>[&chapter=<path>] (widget, Shortcuts, notifications) →
 /// the core's `app.openLink`, which emits v1's `app.deepLink` event to the UI.
-/// A .tnvoice file opened with "Open in TachiNovel" (Files, share sheet) is an imported voice (VoiceImport.swift).
+/// A .tnvoice file opened with "Open in TachiNovel" (Files, share sheet) is an imported voice (VoiceImport.swift);
+/// a .tnmodel is Nephis's trained voice (NephisModelPack.swift).
 enum DeepLinks {
     static func open(_ url: URL) {
+        if NephisModelPack.handles(url) { return NephisModelPack.open(url) }
         if VoiceImportInbox.handles(url) { return VoiceImportInbox.open(url) }
         guard url.scheme == "tachinovel", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return }
         var args: [String: Any] = [:]

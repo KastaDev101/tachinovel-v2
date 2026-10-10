@@ -26,12 +26,21 @@ public typealias NephisTranscriber = @Sendable ([Float], Int) async -> [NephisFl
 public actor NephisFlowSynth: ExpressiveSynthesizer {
     public struct Assets: Sendable {
         public let calm: PocketVoice
-        public let tense: PocketVoice?
+        /// Her mood reads by line role (PocketVoice.nephisMoods); a missing one reads calm.
+        public let moods: [String: PocketVoice]
         public let projection: NephisFlow.Projection
-        public init(calm: PocketVoice, tense: PocketVoice?, projection: NephisFlow.Projection) {
+        /// Pocket TTS models trained on her (a Nephis model pack: `<dir>/Models/pocket-tts-coreml/v2.1/english/…`);
+        /// nil = Kyutai's released models (downloaded once, cached).
+        public let modelsDirectory: URL?
+        /// The pack's chain settings (pauses, prompt sizes), tuned with its model; defaults without a pack.
+        public let chain: NephisFlow.Chain
+        public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil,
+                    chain: NephisFlow.Chain = .init()) {
             self.calm = calm
-            self.tense = tense
+            self.moods = moods
             self.projection = projection
+            self.modelsDirectory = modelsDirectory
+            self.chain = chain
         }
     }
 
@@ -59,6 +68,13 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let reset: Bool
         let started: Date
         var report: Report
+        /// Her level for this call's mood (dB against calm), reached during the pause the call starts with.
+        var gainDB = 0.0
+        /// True silence spliced into the decoded audio: (latent index in `stream`, seconds). Long pauses aren't
+        /// decoded through, which buzzes (NephisFlow.maxBridge).
+        var pads: [(at: Int, seconds: Double)] = []
+        /// Her tone for the call's mood (NephisFlow.Chain.Mood.toneDB).
+        var toneDB = 0.0
     }
 
     private let assets: Assets
@@ -72,9 +88,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     // The read so far.
     private var carry: [[Float]] = []
     private var pendingTail: [[Float]] = []
+    /// The levels of `pendingTail` (where her fade-out dies away).
+    private var pendingTailLevels: [Double] = []
     private var context: [Float] = []
     private var lastText: String?
     private var lastClip: [Float]?
+    /// The mood of the paragraph just read (its paragraph pause follows it), and the level it played at.
+    private var lastMood: String?
+    private var lastGainDB = 0.0
     private var started = false
     public private(set) var lastReport = Report()
 
@@ -96,7 +117,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func load() async throws -> Double {
         if manager != nil { return 0 }
         let t0 = Date()
-        let m = PocketTtsManager(placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
+        let m = PocketTtsManager(directory: assets.modelsDirectory, placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
         try await m.initialize()
         decoder = try await m.makeLatentDecoder()
         scratch = try await m.makeLatentDecoder()
@@ -118,9 +139,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private func forget() {
         carry = []
         pendingTail = []
+        pendingTailLevels = []
         context = []
         lastText = nil
         lastClip = nil
+        lastMood = nil
         started = false
     }
 
@@ -156,34 +179,45 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let reset = line.flowReset == true
         if reset { forget() }
         var report = Report()
-        let text = StyleMapper.pocketText(StyleMapper.plainText(line.text))
-        let clip = line.role == "tense" ? (assets.tense ?? assets.calm).audioPrompt : assets.calm.audioPrompt
+        let text = assets.chain.respelled(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
+        // The line's mood read (a mood change blends half the old clip and half the new one: NephisFlow.prompt).
+        let clip = (assets.moods[line.role] ?? assets.calm).audioPrompt
         // Pocket generates long text in pieces of about 50 tokens, each started again from the voice prompt: every
         // seam would be a restart nothing edits (an "uh", a mumble in the pause, the tone back at the clip). So the
         // call is read piece by piece here, each one a flow piece of its own: carry-over, joins and clean-up.
         let pieces = try await plan(manager, text: text, clip: clip)
+        let mood = assets.moods[line.role] != nil ? line.role : "calm"
+        let chain = assets.chain
+        // Before a paragraph: her pause after the paragraph before, in its mood; the director's own when it asks for
+        // more (a scene break, a title) or there is no paragraph before.
+        let director = (line.pauseBefore ?? 0.6) * chain.paragraphGapScale
+        let paragraphPause = lastMood.flatMap { chain.moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
         var stream: [[Float]] = []
+        var pads: [(at: Int, seconds: Double)] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
-            let pause = k == 0 ? (line.pauseBefore ?? 0.6) : Self.sentencePause(after: pieces[k - 1])
-            stream += try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
-                                     seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+            let pause = k == 0 ? paragraphPause : chain.gap(after: pieces[k - 1], mood: mood)
+            let r = try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
+                                   seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+            if let at = r.padAt { pads.append((at: stream.count + at, seconds: r.padSeconds)) }
+            stream += r.latents
         }
-        return Prepared(stream: stream, reset: reset, started: t0, report: report)
+        lastMood = mood
+        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
+                        toneDB: chain.moods[mood]?.toneDB ?? 0)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
-    static func sentencePause(after piece: String) -> Double {
+    static func sentencePause(after piece: String, chain: NephisFlow.Chain = .init()) -> Double {
         let t = piece.trimmingCharacters(in: .whitespaces)
-        return t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":") ? 0.8 : 0.45
+        return t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":") ? chain.ellipsisGap : chain.pieceGap
     }
 
     /// The pieces Pocket would generate `text` in (a sentence split inside stays with the piece it belongs to).
     private func plan(_ manager: PocketTtsManager, text: String, clip: [Float]) async throws -> [String] {
-        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry))
-        let session = try await manager.makeSession(voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
-        let chunks = await session.plannedChunks(text)
-        session.finish()
+        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
+        // Planning needs only the tokenizer and the prompt's length: no session, so no voice prefill spent on it.
+        let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
         var out: [String] = []
         for c in chunks {
             if c.isMidSentence, !out.isEmpty {
@@ -198,9 +232,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// One piece: its takes (with the lead-in for a call's first piece), the best one, its edits and its join to what
     /// came before. Returns the latents to decode; the piece's trailing silence waits for the next join.
     private func read(_ text: String, clip: [Float], line: ExpressiveLine, first: Bool, last: Bool, pause: Double, seed: UInt64?,
-                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws -> [[Float]] {
+                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws
+        -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: lastClip.flatMap { $0 == clip ? nil : $0 },
-                                       carry: assets.projection.condition(carry))
+                                       carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
         let temperature = min(0.85, max(0.55, line.temperature ?? 0.7))
         let n = max(1, min(8, line.takes ?? 1))
@@ -274,20 +309,26 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let silence = NephisFlow.silence(levels)
         if started { NephisFlow.cleanClicks(&latents, levels: &levels, from: 0, to: max(0, silence.head - 1)) }
         NephisFlow.cleanClicks(&latents, levels: &levels, from: min(levels.count, levels.count - silence.tail + 1), to: levels.count)
-        var stream = started && !pendingTail.isEmpty
-            ? NephisFlow.join(tail: pendingTail, next: latents, head: silence.head, pause: pause)
-            : latents
+        var joined: (latents: [[Float]], padAt: Int?, padSeconds: Double) = (latents, nil, 0)
+        if started && !pendingTail.isEmpty {
+            joined = NephisFlow.joinPadded(tail: pendingTail, next: latents, head: silence.head, pause: pause,
+                                           tailLevels: pendingTailLevels, headLevels: Array(levels.prefix(silence.head)))
+        }
+        var stream = joined.latents
         // The trailing silence waits for the next piece's join (unless it is the read's very last piece).
         let keep = last && line.flowLast == true ? 0 : min(silence.tail, stream.count)
         pendingTail = Array(stream.suffix(keep))
+        pendingTailLevels = Array(levels.suffix(keep))
         stream.removeLast(keep)
 
-        carry = Array((carry + latents).suffix(NephisFlow.carryFrames))
+        carry = Array((carry + latents).suffix(assets.chain.carryFrames))
         context = Array(best.audio.suffix(3 * NephisFlow.sampleRate))
         lastText = text
         lastClip = clip
         started = true
-        return stream
+        // The pad sits in the pause; the latents kept back for the next join come from the end, after it.
+        let padAt = joined.padAt.flatMap { $0 <= stream.count ? $0 : nil }
+        return (stream, padAt, padAt == nil ? 0 : joined.padSeconds)
     }
 
     // MARK: - Stage 2: the sound
@@ -304,7 +345,17 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             return (samples, Date().timeIntervalSince(d0) * 1000)
         }
         decodes = Task { _ = try? await job.value }
-        let (samples, ms) = try await job.value
+        let (decoded, ms) = try await job.value
+        var samples = NephisFlow.insertSilence(decoded, pads: p.pads)
+        NephisFlow.highShelf(&samples, db: p.toneDB)
+        // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
+        // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
+        let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
+        if from != 1 || to != 1 {
+            let ramp = min(samples.count, NephisFlow.sampleRate / 5)
+            for i in samples.indices { samples[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
+        }
+        lastGainDB = p.gainDB
         var report = p.report
         report.decodeMs = ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000

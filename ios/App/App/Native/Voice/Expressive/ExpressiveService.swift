@@ -88,16 +88,50 @@ final class ExpressiveService {
     /// The Narrator voice for Pocket TTS (BuiltInVoices/pocket/), checked once (size, shape, sha256).
     /// Nephis's flow engine assets: her clip, her tense clip, Pocket TTS's speaker projection. nil = not shipped or
     /// not valid (she then reads with the plain Pocket engine).
-    lazy var nephisFlowAssets: NephisFlowSynth.Assets? = {
-        guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil),
+    /// From an installed Nephis model pack (NephisModelPack: her trained model + her voice files for it) when there
+    /// is one, else the shipped files with Kyutai's model. Cached; `reloadNephisModel()` drops it.
+    var nephisFlowAssets: NephisFlowSynth.Assets? {
+        if let cached = nephisFlowAssetsCache { return cached }
+        let a = loadNephisFlowAssets()
+        nephisFlowAssetsCache = .some(a)
+        return a
+    }
+    private var nephisFlowAssetsCache: NephisFlowSynth.Assets??
+    private func loadNephisFlowAssets() -> NephisFlowSynth.Assets? {
+        let pack = NephisModelPack.voicesDirectory
+        guard let dir = pack ?? Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil),
               let calm = try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisName),
               let data = try? Data(contentsOf: dir.appendingPathComponent("\(PocketVoice.folder)/speaker-projection.bin")),
               let projection = NephisFlow.Projection(data: data) else {
             self.log.error("expressive: Nephis flow assets missing or invalid; plain Pocket engine")
             return nil
         }
-        return NephisFlowSynth.Assets(calm: calm, tense: try? PocketVoice.load(builtInVoices: dir, name: PocketVoice.nephisTenseName), projection: projection)
-    }()
+        var moods: [String: PocketVoice] = [:]
+        for mood in PocketVoice.nephisMoods {
+            if let v = try? PocketVoice.load(builtInVoices: dir, name: "nephis-\(mood)") { moods[mood] = v }
+        }
+        if pack != nil { log.info("expressive: Nephis reads with her trained model pack (\(moods.count) moods)") }
+        // The pack's chain settings (pack.json "chain": pauses, carry-over, her per-mood timing), tuned on the PC for
+        // its model; anything it leaves out keeps the defaults.
+        var chain = NephisFlow.Chain()
+        if pack != nil, let c = NephisModelPack.info?["chain"], let d = try? JSONSerialization.data(withJSONObject: c),
+           let decoded = try? JSONDecoder().decode(NephisFlow.Chain.self, from: d) {
+            chain = decoded
+        }
+        return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
+                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain)
+    }
+
+    /// Her EQ's top lift for the installed pack's decoder (nil: the shipped one).
+    var nephisHighShelfDB: Double? { nephisFlowAssets?.chain.highShelfDB }
+    /// Her EQ's gentler sibilance for the installed pack (nil: on).
+    var nephisSoftSibilance: Bool? { nephisFlowAssets?.chain.softSibilance }
+
+    /// A Nephis model pack was installed or removed: forget her assets; a loaded Nephis engine reloads on next use.
+    func reloadNephisModel() {
+        nephisFlowAssetsCache = nil
+        if loadedID == .pocketTts, usesFlow { unload(reason: "new Nephis model") }
+    }
     /// Nephis (v2): her own file, one read for every line.
     lazy var pocketNephis: Result<PocketVoice, Error> = Result {
         guard let dir = Bundle.main.url(forResource: "BuiltInVoices", withExtension: nil) else {
@@ -193,6 +227,8 @@ final class ExpressiveService {
     }
 
     func isInstalled(_ id: ExpressiveEngineID) -> Bool {
+        // Nephis with a model pack: the pack carries the whole Pocket model, so it counts without the download.
+        if id == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis, NephisModelPack.modelsDirectory != nil { return true }
         guard let store, let m = id.pinned else { return false }
         return store.isInstalled(m)
     }

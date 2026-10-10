@@ -177,10 +177,17 @@ public struct VoiceTilt: Sendable, Equatable {
     ///  - "warm + clear": +2 dB of body around 300 Hz and +1 dB of presence at 3 kHz (warmth without the muffle a
     ///    top cut gives);
     ///  - "soothing tone" (A): 1.5 dB less edge at 3.5 kHz and softer sibilance.
-    public static let nephis = VoiceTilt(bands: [
-        .highShelf(hz: 2500, q: 0.586, db: 5.95), .lowShelf(hz: 180, q: 0.591, db: 2),
-        .lowShelf(hz: 300, q: 0.591, db: 2), .peak(hz: 3000, q: 0.8, db: 1), .peak(hz: 3500, q: 0.9, db: -1.5),
-    ], softSibilance: true)
+    public static let nephis = nephisTilt(highShelfDB: 5.95)
+
+    /// Her EQ with another top lift: a model pack with her retrained decoder no longer loses the highs, so +5.95 dB
+    /// overshoots (phone Voice test 2026-10-09: brighter and rougher than her, "a tinge of roboticness"); the pack
+    /// says how much it needs (NephisFlow.Chain.highShelfDB, +4 dB for v3, matched to her on the PC).
+    public static func nephisTilt(highShelfDB: Double, softSibilance: Bool = true) -> VoiceTilt {
+        VoiceTilt(bands: [
+            .highShelf(hz: 2500, q: 0.586, db: highShelfDB), .lowShelf(hz: 180, q: 0.591, db: 2),
+            .lowShelf(hz: 300, q: 0.591, db: 2), .peak(hz: 3000, q: 0.8, db: 1), .peak(hz: 3500, q: 0.9, db: -1.5),
+        ], softSibilance: softSibilance)
+    }
 
     public func apply(_ x: inout [Float], sampleRate: Int) {
         let fs = Double(sampleRate)

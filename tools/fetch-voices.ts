@@ -45,10 +45,11 @@ export const VOICES = [
 /**
  * Voices made for this app, committed under ios/kokoro-voices/ in the same flat fp32 layout
  * ([510, 256]) and copied next to the downloaded ones. af_nephis: Kokoro matched to Nephis's voice (speaker
- * similarity 0.94 to her Pocket TTS reads, a random walk from Kokoro's own voices; docs/voices.md), so she can
+ * similarity 0.96 to her trained voice on the phone and 0.94 to her real reading, re-matched 2026-10-09; a random walk
+ * from Kokoro's own voices; docs/voices.md), so she can
  * read fast, and Kokoro stand-ins for her sound like her.
  */
-export const OWN_VOICES: readonly { name: string; sha256: string }[] = [{ name: 'af_nephis', sha256: 'b8c6b59d39737b5fa328817640af3ca28f3b0cd0700ffb838d4246cc0442da7e' }];
+export const OWN_VOICES: readonly { name: string; sha256: string }[] = [{ name: 'af_nephis', sha256: '070ef765b31e012662caef6ee32b2c657fecdcd94713e5e293ad26ca9f94bca4' }];
 export const OWN_VOICES_DIR = path.join(root, 'ios', 'kokoro-voices');
 
 /** Paths (relative to the HF repo root) that make up the bundle. Directories are expanded recursively. */

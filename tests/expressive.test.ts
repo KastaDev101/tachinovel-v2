@@ -200,12 +200,13 @@ describe('wiring', () => {
     expect(read('ios/App/App/Native/Shell/MainViewController.swift')).toContain('registerPluginInstance(ExpressiveVoicePlugin())');
   });
 
-  it('offers the experimental engines from Settings › Voices (discoverable) and the Voice Lab, nowhere else', () => {
+  it('keeps the experimental engines in the Voice Lab (and her download row), nowhere else', () => {
     const lab = read('src/ui/native/voice-lab.ts');
     expect(lab).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
     const voices = read('src/ui/native/voices-ui.ts');
-    expect(voices).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
-    expect(voices).toContain('Voice models'); // Settings › Voices › Advanced (the narrator-first cleanup)
+    // Nephis is the one voice (2026-10-09): Settings › Voices opens the models screen only to download her model.
+    expect(voices).toContain('Download her voice');
+    expect(voices).not.toContain('<b>Voice models</b>');
     for (const f of ['src/ui/native/v1-hooks.ts', 'src/ui/native/narration-overlay.ts']) {
       expect(read(f), f).not.toContain('expressive-lab');
     }

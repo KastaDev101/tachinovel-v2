@@ -39,18 +39,98 @@ final class NephisFlowTests: XCTestCase {
     }
 
     func testCleanTailQuietsAMumbleAfterTheLastWordDiedAway() {
-        // Word until 9, end of text at 8, rings out to 11, quiet 12-13, a mumble 14-16, quiet again.
-        var levels = [Double](repeating: -20, count: 10) + [-30, -45, -55, -58, -38, -36, -40, -57, -60]
+        // Word until 9, end of text at 8, rings out to 11, quiet 12-15 (320 ms), a mumble 16-18, quiet again.
+        var levels = [Double](repeating: -20, count: 10) + [-30, -45, -55, -58, -57, -59, -38, -36, -40, -57, -60]
         var latents = levels.indices.map { lat(Float($0)) }
         let n = NephisFlow.cleanTail(&latents, levels: &levels, endOfText: 8)
         XCTAssertEqual(n, 3)
-        XCTAssertEqual(latents[14], lat(13))
-        XCTAssertEqual(latents[16], lat(13))
+        XCTAssertEqual(latents[16], lat(15))
+        XCTAssertEqual(latents[18], lat(15))
         XCTAssertEqual(latents[9], lat(9), "the word itself is untouched")
         // Never quiet after the end: nothing is touched.
         var loud = [Double](repeating: -25, count: 12)
         var l2 = loud.indices.map { lat(Float($0)) }
         XCTAssertEqual(NephisFlow.cleanTail(&l2, levels: &loud, endOfText: 4), 0)
+    }
+
+    func testLongPausesAreSilenceNotDecodedQuietLatents() {
+        let q = [Float](repeating: 0, count: 32)
+        // A 1.04 s pause from 2 tail + 2 head silence latents (1 blended): 13 wanted, 3 decoded as a bridge, the rest silence.
+        let r = NephisFlow.joinPadded(tail: [q, q], next: [q, q] + [[Float]](repeating: [Float](repeating: 1, count: 32), count: 5), head: 2, pause: 1.04)
+        XCTAssertNotNil(r.padAt)
+        XCTAssertEqual(r.padSeconds, Double(13 - 3 - 3) * NephisFlow.latentSeconds, accuracy: 1e-9)  // 3 already there, 3 bridge
+        XCTAssertEqual(NephisFlow.join(tail: [q, q], next: [q, q], head: 2, pause: 0.2).count, NephisFlow.joinPadded(tail: [q, q], next: [q, q], head: 2, pause: 0.2).latents.count)
+        let audio = [Float](repeating: 0.5, count: 4 * NephisFlow.samplesPerLatent)
+        let out = NephisFlow.insertSilence(audio, pads: [(at: 2, seconds: 0.5)])
+        XCTAssertEqual(out.count, audio.count + NephisFlow.sampleRate / 2)
+        XCTAssertEqual(out[2 * NephisFlow.samplesPerLatent + 100], 0)
+        XCTAssertEqual(out[0], 0.5)
+    }
+
+    func testLongPauseDecodesOnlyHerFadeOutAndLeadIn() {
+        let q = [Float](repeating: 0, count: 32), w = [Float](repeating: 1, count: 32)
+        // 6 silence latents after the last word, 4 before the next word: at 1.04 s (13 latents) only 3 + 2 are
+        // decoded and 8 latents (0.64 s) are silence spliced in after the fade-out.
+        let r = NephisFlow.joinPadded(tail: [[Float]](repeating: q, count: 6), next: [[Float]](repeating: q, count: 4) + [w, w], head: 4, pause: 1.04)
+        XCTAssertEqual(r.padAt, 3)
+        XCTAssertEqual(r.padSeconds, 8 * NephisFlow.latentSeconds, accuracy: 1e-9)
+        XCTAssertEqual(r.latents.count, 3 + 2 + 2)
+        XCTAssertEqual(r.latents.last, w, "the next word itself is untouched")
+    }
+
+    func testALongTrailingWordKeepsItsWholeFadeOut() {
+        // Her fade-out is still audible for 6 latents (-40 .. -66), then quiet: all 7 are decoded, not just 3.
+        XCTAssertEqual(NephisFlow.fadeOut([-40, -48, -55, -60, -63, -66, -75, -80, -85, -85]), 7)
+        XCTAssertEqual(NephisFlow.fadeOut([-80, -85, -85]), NephisFlow.keepTail, "never under the minimum")
+        XCTAssertEqual(NephisFlow.fadeOut([Double](repeating: -40, count: 20)), NephisFlow.maxTail, "never over the maximum")
+        // A breath-in 3 latents before the word: those 3 and the quiet one before them.
+        XCTAssertEqual(NephisFlow.leadIn([-85, -85, -85, -85, -60, -55, -50]), 4)
+        let q = [Float](repeating: 0, count: 32)
+        let r = NephisFlow.joinPadded(tail: [[Float]](repeating: q, count: 10), next: [[Float]](repeating: q, count: 4) + [q], head: 4, pause: 1.04,
+                                      tailLevels: [-40, -48, -55, -60, -63, -66, -75, -80, -85, -85], headLevels: [-85, -85, -85, -85])
+        XCTAssertEqual(r.padAt, 7)
+        XCTAssertEqual(r.padSeconds, Double(13 - 7 - 2) * NephisFlow.latentSeconds, accuracy: 1e-9)
+    }
+
+    func testRespellingsAreWholeWordsKeepCapitalsAndPacksOverrideThem() throws {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.respelled("Bed. She bought a bag, then a bedroom."), "Bedd. She bawt a bagg, then a bedroom.")
+        let pack = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"respell": {"Bag": "", "glance": "glanss"}}"#.utf8))
+        XCTAssertEqual(pack.respelled("A bag and a glance in bed."), "A bag and a glanss in bedd.")
+    }
+
+    func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)
+        XCTAssertEqual(chain.gap(after: "They waited:", mood: "calm"), 0.9)
+        XCTAssertEqual(chain.gap(after: "They ran.", mood: "unknown"), chain.pieceGap)
+        let pack = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"moods": {"intense": {"sentence": 0.3, "trail": 0.3, "paragraph": 9, "gainDB": 2}}}"#.utf8))
+        XCTAssertEqual(pack.moods["intense"]?.sentence, 0.3)
+        XCTAssertEqual(pack.moods["intense"]?.paragraph, 3, "clamped")
+        XCTAssertEqual(pack.moods["calm"], NephisFlow.herMoods["calm"], "moods the pack leaves out keep hers")
+        XCTAssertNil(pack.highShelfDB, "no lift given: the shipped EQ")
+        XCTAssertNil(pack.softSibilance)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"softSibilance": false}"#.utf8)).softSibilance, false)
+        let toned = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"moods": {"tender": {"sentence": 0.7, "trail": 0.5, "paragraph": 0.8, "gainDB": 0, "toneDB": -9}}}"#.utf8))
+        XCTAssertEqual(toned.moods["tender"]?.toneDB, -4, "clamped")
+        // A shelf lifts a 6 kHz tone and leaves 200 Hz alone.
+        func level(_ hz: Double, _ db: Double) -> Float {
+            var x = (0..<4800).map { Float(sin(2 * Double.pi * hz * Double($0) / 24000)) }
+            NephisFlow.highShelf(&x, db: db)
+            return x[2400...].map { abs($0) }.max() ?? 0
+        }
+        XCTAssertGreaterThan(level(6000, 3), 1.3)
+        XCTAssertEqual(level(200, 3), 1, accuracy: 0.05)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"highShelfDB": 4}"#.utf8)).highShelfDB, 4)
+    }
+
+    func testCleanTailKeepsALastSyllableAfterAShortDip() {
+        // The end-of-text estimate is early (6) and the last word dips quiet for 2 latents (a stop) before its
+        // final syllable at 12-13: that syllable is speech, not a mumble.
+        var levels = [Double](repeating: -20, count: 10) + [-55, -56, -24, -26, -50, -57, -58, -59, -60]
+        var latents = levels.indices.map { lat(Float($0)) }
+        XCTAssertEqual(NephisFlow.cleanTail(&latents, levels: &levels, endOfText: 6), 0)
+        XCTAssertEqual(latents[12], lat(12))
     }
 
     func testLeadInCutWaitsForRealSilence() {

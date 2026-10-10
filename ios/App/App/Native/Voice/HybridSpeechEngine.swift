@@ -55,6 +55,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var sceneMoods: [Int: String] = [:]
     private var sceneNext = 0
     private var sceneBusy = false
+    /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
+    private var chapterBrief: String?
+    private var briefAsked = false
+    /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling].
+    private var sceneSenses: [Int: [String: String]] = [:]
     static let sceneWindow = 10
     static let sceneContext = 3
 
@@ -115,6 +120,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The Apple sentence is spoken directly by AVSpeechSynthesizer (its voice couldn't render to buffers).
     private var appleDirect = false
     private var waitItem: DispatchWorkItem?
+    /// Nephis's paced render: the next call once the gap after the last one has passed.
+    private var paceItem: DispatchWorkItem?
+    /// When her last call's latents were ready (the pacing gap counts from there).
+    private var lastFlowDone: Date?
     private var waiting = false
     private var paused = false
     private var loudness = LoudnessMatcher()
@@ -167,20 +176,24 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let nephis = listenEngine == .pocketTts && d.isNephis
             let source: (any BreathSource)? = d.breaths && !nephis ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : pack) : nil
             natural = NaturalFinisher(NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, seed: UInt64(truncatingIfNeeded: gen),
-                                                    tilt: listenEngine == .pocketTts ? (nephis ? .nephis : .pocketTts) : nil, plain: nephis))
+                                                    tilt: listenEngine == .pocketTts ? (nephis ? Self.nephisTilt : .pocketTts) : nil, plain: nephis))
         } else {
             natural = nil
         }
         // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
         // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
         // Kokoro alone renders 8 ahead (about 40 s): 2–3 ran dry with the screen locked on a drive (Kasta, 2026-10-07).
-        let ahead = listenEngine != nil ? max(prefs.clampedAhead, 12) : max(prefs.clampedAhead, 8)
+        // Nephis renders about three minutes ahead, at a steady pace once a minute is banked (pumpRender's pacing):
+        // the same work as a burst, lower peaks on the chip, and a cushion that carries her through a hot stretch.
+        let nephisReads = listenEngine == .pocketTts && prefs.delivery.isNephis
+        let ahead = listenEngine != nil ? max(prefs.clampedAhead, nephisReads ? 36 : 12) : max(prefs.clampedAhead, 8)
         fullAhead = ahead
         // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
         nephisOnly = Self.nephisCanReadAlone(listenEngine)
         let bridging = !nephisOnly && (listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false)
-        var s = HybridScheduler(count: segs.count, kokoro: kokoroState(),
+        let kokoro = kokoroState()  // may leave Nephis-only, so before the config reads it
+        var s = HybridScheduler(count: segs.count, kokoro: kokoro,
                                 config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead, patient: nephisOnly))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
@@ -196,10 +209,16 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     func stop() {
         gen += 1
+        paceItem?.cancel()
+        paceItem = nil
+        lastFlowDone = nil
         standIn = nil
         flowBusy = false
         flowNext = -1
         sceneMoods = [:]
+        sceneSenses = [:]
+        chapterBrief = nil
+        briefAsked = false
         sceneNext = 0
         sceneBusy = false
         cancelWait()
@@ -258,8 +277,16 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // Nephis alone: the scheduler's voice is her model; while it loads the session waits for it. If it can't be
         // used at all, the session reads the usual way (Kokoro, in her matched voice).
         if nephisOnly {
-            if Self.nephisCanReadAlone(listenEngine) { return .loading }
-            leaveNephisOnly(reason: "her model can't be used")
+            // Too hot for her model (critical: expressiveUsable says no until it cools): waiting for her would be
+            // silence for as long as the phone stays hot (Kasta, Texas drive 2026-10-09: the read stopped at 80% of a
+            // chapter and a restart didn't bring it back). The usual fallbacks read instead; she is back next read.
+            if ProcessInfo.processInfo.thermalState == .critical {
+                leaveNephisOnly(reason: "the phone is too hot")
+            } else if Self.nephisCanReadAlone(listenEngine) {
+                return .loading
+            } else {
+                leaveNephisOnly(reason: "her model can't be used")
+            }
         }
         let k = KokoroService.shared
         guard k.isBundled else { return .unavailable }
@@ -313,6 +340,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
             return
         }
+        if nephisOnly, let wait = paceWait() {
+            if paceItem == nil {
+                let g = gen
+                let item = DispatchWorkItem { [weak self] in
+                    guard let self, g == self.gen else { return }
+                    self.paceItem = nil
+                    self.pumpRender()
+                }
+                paceItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
+            }
+            return
+        }
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
         let g = gen
         if let id = listenEngine, expressiveUsable() {
@@ -328,7 +368,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let group = flow ? flowGroup(from: i, limit: flowLimit) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
-            let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
+            // Homographs said in the sense the AI director read (Nephis: "reed" for "she likes to read").
+            let text = members.map { j in
+                let t = StyleMapper.plainText(Self.readText(segments[j], expressive: true))
+                return id == .pocketTts ? sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t : t
+            }.joined(separator: " ")
             // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
             // (tense, sad, tender); the script never puts two reads in one call.
             var line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
@@ -379,6 +423,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     prepared.done = true
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     self.flowBusy = false
+                    self.lastFlowDone = Date()
                     self.pumpRender()
                 }, completion: handle)
             } else {
@@ -421,7 +466,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if d.usesAI {
             let speaks = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.speaks == true }
             let system = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.system == true }
-            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system) { voice = r }
+            let all = listenEngine == .pocketTts && d.isNephis
+            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system, allMoods: all) { voice = r }
         }
         return d.read(voice, speaks: n?.speaks ?? false)
     }
@@ -431,6 +477,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func pumpScene() {
         guard listenEngine != nil, natural != nil, VoiceSettings.shared.prefs.delivery.usesAI, !sceneBusy,
               sceneNext < segments.count, SceneReader.shared.available else { return }
+        if !briefAsked {
+            briefAsked = true
+            let g = gen
+            SceneReader.shared.brief(segments.map(sceneSentence)) { [weak self] b in
+                guard let self, g == self.gen else { return }
+                self.chapterBrief = b
+            }
+        }
         let playing = scheduler?.playing ?? 0
         guard sceneNext <= playing + 2 * Self.sceneWindow + 12 else { return }
         let start = sceneNext
@@ -439,11 +493,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let window = segments[start..<end].map(sceneSentence)
         sceneBusy = true
         let g = gen
-        SceneReader.shared.read(context: context, window: window) { [weak self] moods in
+        SceneReader.shared.read(context: context, window: window, brief: chapterBrief, part: start / SceneReader.briefPart + 1) { [weak self] moods in
             guard let self, g == self.gen else { return }
             self.sceneBusy = false
             if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }
             self.sceneNext = end
+            if self.listenEngine == .pocketTts {
+                let asks = (start..<end).map { (index: $0, text: self.segments[$0].kokoroText, before: $0 > 0 ? self.segments[$0 - 1].kokoroText : "") }
+                SceneReader.shared.senses(asks) { [weak self] senses in
+                    guard let self, g == self.gen else { return }
+                    self.sceneSenses.merge(senses) { _, new in new }
+                }
+            }
             self.pumpScene()
         }
     }
@@ -506,11 +567,35 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
     private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
         // A warm phone: the lightest calls, so she keeps up without heating it further.
-        if ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue) { return (1, false) }
+        // From "fair" on (not only when throttled): extras cost heat, and her 3x target leaves no need for them then
+        // (Voice test 2026-10-09: fair to serious in 90 s with redos and lead-ins; Kasta wants it a tad cooler).
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
         // Her last call came in under 1.5× real time (a busy or warm phone): the lightest calls until she is faster
         // again, so the margin that keeps the read gapless is never spent on extras.
         if let last = ExpressiveService.shared.flowStats.last, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
         return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
+    }
+
+    /// Her EQ, with the top lift her installed pack asks for.
+    static var nephisTilt: VoiceTilt {
+        let svc = ExpressiveService.shared
+        guard svc.nephisHighShelfDB != nil || svc.nephisSoftSibilance != nil else { return .nephis }
+        return VoiceTilt.nephisTilt(highShelfDB: svc.nephisHighShelfDB ?? 5.95, softSibilance: svc.nephisSoftSibilance ?? true)
+    }
+
+    /// Audio banked before her renders slow to a steady pace (seconds).
+    static let paceFrom = 60.0
+
+    /// How long to wait before her next call: none while less than `paceFrom` is banked (she renders flat out to
+    /// build the cushion), then a gap after each call (1.5 s, 3 s past two minutes, doubled from "fair" heat), so the
+    /// chip runs at part duty instead of bursting.
+    private func paceWait() -> TimeInterval? {
+        let buffered = bufferedAhead()
+        guard buffered > Self.paceFrom, let done = lastFlowDone else { return nil }
+        var gap = buffered > 2 * Self.paceFrom ? 3.0 : 1.5
+        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { gap *= 2 }
+        let left = gap - Date().timeIntervalSince(done)
+        return left > 0.05 ? left : nil
     }
 
     /// Seconds of rendered audio waiting after the sentence playing.
@@ -519,7 +604,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
-    static let leadInAhead = 15.0
+    static let leadInAhead = 25.0
 
     /// Whether a flow call got as far as its latents (main thread only).
     private final class FlowCall {
@@ -527,8 +612,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static func flowBudget(ahead: Double, readChange: Bool) -> (takes: Int, leadIn: Bool) {
-        let base = ahead > 60 ? 3 : ahead > 35 ? 2 : 1
-        return (min(4, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
+        // At most 2 takes: with the trained model a second take rarely wins, and each one is a whole extra render. With
+        // her three-minute cushion, a second take only once more than two and a half minutes are banked.
+        let base = ahead > 150 ? 2 : 1
+        return (min(2, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
     }
 
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
@@ -547,7 +634,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             scheduler?.renderDone(members[0], ok: false)
             if scheduler?.kokoro == .unavailable {
                 leaveNephisOnly(reason: "sentences kept failing")
-                scheduler?.kokoro = kokoroState()
+                let state = kokoroState()  // reads (and may change) the scheduler: never inside a write to it
+                scheduler?.kokoro = state
             }
             pumpRender()
             if waiting { advance() }
@@ -1210,6 +1298,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard nephisOnly else { return }
         nephisOnly = false
         scheduler?.config.patient = false
+        // The fallback has to be there to take over (a Nephis-only read never loaded it).
+        if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
         log.error("voice: Nephis can't read alone (\(reason, privacy: .public)): Kokoro reads in her voice meanwhile")
     }
 
@@ -1226,7 +1316,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     @objc private func kokoroStatusChanged() {
         DispatchQueue.main.async {
             guard self.scheduler != nil else { return }
-            self.scheduler?.kokoro = self.kokoroState()
+            // kokoroState() can leave Nephis-only, which writes the scheduler: computed before the write, not inside it
+            // (overlapping access to the scheduler aborts the app)
+            let state = self.kokoroState()
+            self.scheduler?.kokoro = state
             if self.expressiveUsable(), let s = self.scheduler, s.config.ahead < self.fullAhead { self.scheduler?.config.ahead = self.fullAhead }
             self.pumpRender()
             if self.waiting { self.advance() }
@@ -1236,7 +1329,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     @objc private func thermalChanged() {
         DispatchQueue.main.async {
             let throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
-            guard self.scheduler != nil, self.scheduler?.throttled != throttled else { return }
+            guard self.scheduler != nil else { return }
+            // Critical heat takes her out of a Nephis-only read (kokoroState): the fallbacks take over at once.
+            if ProcessInfo.processInfo.thermalState == .critical, self.nephisOnly { self.kokoroStatusChanged() }
+            guard self.scheduler?.throttled != throttled else { return }
             self.scheduler?.throttled = throttled
             self.log.info("voice: thermal throttling \(throttled ? "on" : "off", privacy: .public)")
             self.pumpRender()

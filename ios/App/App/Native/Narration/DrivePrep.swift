@@ -15,6 +15,8 @@
 
 @preconcurrency import AVFoundation
 @preconcurrency import BackgroundTasks
+import ExpressiveCore
+import ExpressiveEngines
 import Foundation
 import HDVoiceCore
 import HDVoiceKokoro
@@ -167,12 +169,18 @@ final class ChapterRenderer: @unchecked Sendable {
     /// Sentences done / total.
     var onProgress: ((Int, Int) -> Void)?
 
+    /// Nephis: whole paragraphs through her flow engine (as live playback reads them), not sentence by sentence.
+    private let nephis: Bool
+    private var groups: [[Int]] = []
+
     init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, narrator: NarratorSettings = NarratorSettings(),
-         folder: URL) {
+         folder: URL, nephis: Bool = false) {
         self.chapter = chapter
         self.items = items
         self.voice = voice
         self.narrator = narrator
+        self.nephis = nephis
+        if nephis { groups = Self.paragraphGroups(items) }
         polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
         self.folder = folder
         stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
@@ -203,8 +211,27 @@ final class ChapterRenderer: @unchecked Sendable {
     /// Stop after the sentence in progress.
     func stop(_ reason: String) { stopReason = reason }
 
+    /// Her calls: the sentences of one reader paragraph together, up to Pocket's per-call limit (400 characters).
+    static func paragraphGroups(_ items: [NarrationController.ScriptItem], limit: Int = 400) -> [[Int]] {
+        var out: [[Int]] = []
+        var cur: [Int] = []
+        var chars = 0
+        for (i, it) in items.enumerated() {
+            if let last = cur.last, items[last].paragraph != it.paragraph || chars + it.text.count > limit {
+                out.append(cur)
+                cur = []
+                chars = 0
+            }
+            cur.append(i)
+            chars += it.text.count + 1
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out
+    }
+
     private func step() {
         if let why = stopReason ?? shouldStop?() { return finish(.failure(DriveError.interrupted(why))) }
+        if nephis { return nephisStep() }
         guard next < items.count else { return finalize() }
         let item = items[next]
         let sentence = item.narrator
@@ -230,6 +257,83 @@ final class ChapterRenderer: @unchecked Sendable {
             KokoroService.shared.synthesize(parts: parts, voice: voice, speed: speed, completion: handle)
         } else {
             KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: speed, completion: handle)
+        }
+    }
+
+    /// One of her calls: the paragraph with its mood read, the director's temperature and the pause before it; the
+    /// better of two takes (there's no hurry ahead of time). Her EQ and the flow stream's soft limit, as live.
+    private func nephisStep() {
+        guard next < groups.count else { return finalize() }
+        let members = groups[next]
+        let its = members.map { items[$0] }
+        let d = VoiceSettings.shared.prefs.delivery
+        let text = its.map { StyleMapper.plainText($0.natural?.params.say ?? $0.text) }.joined(separator: " ")
+        var line = ExpressiveLine(text: text, role: d.read(its[0].natural?.voice, speaks: its[0].natural?.speaks ?? false) ?? "narrator")
+        let weights = its.map { Float(max(1, $0.text.count)) }
+        let temps = its.map { $0.natural?.params.temperature ?? 0.7 }
+        line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
+        if members[0] > 0 {
+            let prev = items[members[0] - 1]
+            line.pauseBefore = min(1.4, max(0.35, (prev.naturalMs ?? prev.pauseMs) / 1000))
+        }
+        line.flowReset = next == 0
+        line.flowLast = next == groups.count - 1
+        line.takes = 2
+        line.leadIn = false
+        ExpressiveService.shared.synthesizeFlow(line, prepared: {}) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let audio) where !audio.samples.isEmpty:
+                    self.appendNephis(members.map { self.items[$0] }, audio.samples, sampleRate: audio.sampleRate)
+                    self.retried = false
+                    self.next += 1
+                    self.onProgress?(min(self.items.count, (members.last ?? 0) + 1), self.items.count)
+                    self.step()
+                default:
+                    guard !self.retried else { return self.finish(.failure(DriveError.failed("Nephis couldn't read a paragraph"))) }
+                    self.retried = true
+                    ExpressiveService.shared.ensureLoaded(.pocketTts) { _ in self.step() }
+                }
+            }
+        }
+    }
+
+    /// Her paragraph into the file: the thump filter, her EQ, the flow stream's soft limit; the sentences' times by
+    /// their share of the letters, after the pause the call starts with (highlighting only).
+    private func appendNephis(_ its: [NarrationController.ScriptItem], _ samples: [Float], sampleRate sr: Int) {
+        sampleRate = sr
+        var out = samples
+        StartupSound.removeThump(&out, sampleRate: sr)
+        HybridSpeechEngine.nephisTilt.apply(&out, sampleRate: sr)
+        let knee = NaturalFinish.flowKnee
+        let room = NaturalFinish.peakCeiling - knee
+        for i in out.indices {
+            let v = out[i]
+            let a = abs(v)
+            if a > knee { out[i] = (v < 0 ? -1 : 1) * (knee + room * Float(tanh(Double((a - knee) / room)))) }
+        }
+        let lead = out.firstIndex { abs($0) > 0.003 } ?? 0
+        let letters = its.map { max(1, $0.text.count) }
+        let total = Double(letters.reduce(0, +))
+        let speech = Double(out.count - lead)
+        var at = Double(frames + lead)
+        for (it, n) in zip(its, letters) {
+            let len = speech * Double(n) / total
+            segments.append(NarrationTiming.Segment(id: it.id, block: it.block, start: it.start, end: it.end,
+                                                    t0: at / Double(sr), t1: (at + len) / Double(sr), hash: it.hash, paragraph: it.paragraph))
+            at += len
+        }
+        frames += out.count
+        guard !out.isEmpty, let format, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(out.count)),
+              let ch = buf.floatChannelData?[0] else { return }
+        out.withUnsafeBufferPointer { src in
+            if let base = src.baseAddress { ch.update(from: base, count: out.count) }
+        }
+        buf.frameLength = AVAudioFrameCount(out.count)
+        io.async {
+            guard self.writeError == nil, let f = self.file else { return }
+            do { try f.write(from: buf) } catch { self.writeError = error }
         }
     }
 
@@ -526,16 +630,29 @@ final class DrivePrep: @unchecked Sendable {
                                                        novelName: job.novelName, coverUrl: job.coverUrl) { ch in
             guard self.runningKey == job.novelKey else { return self.done() }
             guard let ch, let script = ch.script, !script.isEmpty else { return self.failed(job, "Couldn't load \(chapterPath)") }
-            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(voice: job.voice)) != nil {
+            // Nephis reads: her voice, rendered ahead (Kasta, 2026-10-09: in the car the phone only plays files, no
+            // rendering heat). Otherwise Kokoro, filed under the voice plus narrator mode's settings.
+            let nephis = NarrationController.preparesNephis
+            let prefs = VoiceSettings.shared.prefs
+            let key = nephis ? NarrationController.preparedNephisKey : prefs.preparedVoice(voice: job.voice)
+            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: key) != nil {
                 return self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
             }
-            KokoroService.shared.ensureLoaded { status in
-                guard status == .ready else { return self.failed(job, "Kokoro isn't available (\(KokoroService.shared.statusText))") }
-                self.usedKokoro = true
-                // Filed under the voice plus narrator mode's settings now (what playback will look for).
-                let prefs = VoiceSettings.shared.prefs
-                let key = prefs.preparedVoice(voice: job.voice)
-                let r = ChapterRenderer(chapter: ch, items: script, voice: job.voice, narrator: prefs.narrator, folder: DriveCache.shared.folder)
+            let ready: (@escaping (String?) -> Void) -> Void = { go in
+                if nephis {
+                    ExpressiveService.shared.ensureLoaded(.pocketTts) { result in
+                        if case .failure(let error) = result { return go("Nephis isn't available (\(error.localizedDescription))") }
+                        go(nil)
+                    }
+                } else {
+                    KokoroService.shared.ensureLoaded { status in go(status == .ready ? nil : "Kokoro isn't available (\(KokoroService.shared.statusText))") }
+                }
+            }
+            ready { problem in
+                if let problem { return self.failed(job, problem) }
+                if !nephis { self.usedKokoro = true }
+                let r = ChapterRenderer(chapter: ch, items: script, voice: nephis ? "nephis" : job.voice, narrator: prefs.narrator,
+                                        folder: DriveCache.shared.folder, nephis: nephis)
                 r.shouldStop = { [weak self] in self?.stopReason(job) }
                 r.onProgress = { [weak self] i, n in
                     self?.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: i, sentences: n)
