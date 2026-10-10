@@ -103,7 +103,97 @@ final class SceneReader {
         DispatchQueue.main.async { completion(nil) }
     }
 
+    /// Words spelled the same with two sayings. Nephis's model mostly says each one way whatever the sentence means
+    /// (PC test 2026-10-09, r13: the right sense 8 of 16): the model here is asked the question, and the answer picks
+    /// a respelling she says right (nil = as written, the way she says it anyway).
+    struct Homograph {
+        let question: String
+        let yes: String?
+        let no: String?
+    }
+    static let homographs: [String: Homograph] = [
+        "read": Homograph(question: "is \"read\" present tense or future (to read, they read every night), rhyming with \"reed\"", yes: "reed", no: nil),
+        "tear": Homograph(question: "does \"tear\" mean to rip (rhymes with \"air\")", yes: "tair", no: nil),
+        "wind": Homograph(question: "does \"wind\" mean to turn, coil or wrap (rhymes with \"kind\")", yes: "wynd", no: nil),
+        "bow": Homograph(question: "does \"bow\" mean bending forward or a ship's front (rhymes with \"cow\")", yes: "bau", no: nil),
+        "wound": Homograph(question: "is \"wound\" the past of wind: coiled, wrapped, turned (rhymes with \"sound\")", yes: "wownd", no: nil),
+        "live": Homograph(question: "is \"live\" an adjective: alive, active, burning or charged (rhymes with \"five\")", yes: "lyve", no: nil),
+        "lead": Homograph(question: "is \"lead\" the metal (rhymes with \"bed\")", yes: "led", no: "leed"),
+        "close": Homograph(question: "does \"close\" mean near (ends in an s sound, not z)", yes: "klohss", no: "klohz"),
+    ]
+
+    /// The homographs of `sentences` (index → text) and how to say them: index → [word: respelling], read with the
+    /// sentence and the one before it; empty when none or the model isn't available. Main queue.
+    func senses(_ sentences: [(index: Int, text: String, before: String)], completion: @escaping ([Int: [String: String]]) -> Void) {
+        var asks: [(index: Int, word: String, text: String, before: String)] = []
+        for s in sentences {
+            let words = Set(s.text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+            for w in words.sorted() where Self.homographs[w] != nil { asks.append((s.index, w, s.text, s.before)) }
+        }
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *), available, !asks.isEmpty {
+            Task.detached(priority: .utility) {
+                let out = await Self.askSenses(asks)
+                DispatchQueue.main.async { completion(out) }
+            }
+            return
+        }
+        #endif
+        DispatchQueue.main.async { completion([:]) }
+    }
+
+    /// `text` with the sense respellings applied (whole words; a capitalized word keeps its capital).
+    static func respell(_ text: String, _ senses: [String: String]) -> String {
+        var out = text
+        for (word, said) in senses {
+            guard let rx = try? NSRegularExpression(pattern: "\\b\(word)\\b", options: .caseInsensitive) else { continue }
+            for m in rx.matches(in: out, range: NSRange(out.startIndex..., in: out)).reversed() {
+                guard let r = Range(m.range, in: out) else { continue }
+                let capital = out[r].first?.isUppercase == true
+                out.replaceSubrange(r, with: capital ? said.prefix(1).uppercased() + said.dropFirst() : said)
+            }
+        }
+        return out
+    }
+
     #if canImport(FoundationModels)
+    @available(iOS 26.0, *)
+    @Generable
+    struct SenseAnswer {
+        @Guide(description: "The number of the question, as given")
+        var number: Int
+        @Guide(description: "The answer to the question")
+        var yes: Bool
+    }
+
+    @available(iOS 26.0, *)
+    @Generable
+    struct SenseAnswers {
+        @Guide(description: "One answer per numbered question, in order")
+        var answers: [SenseAnswer]
+    }
+
+    @available(iOS 26.0, *)
+    private static func askSenses(_ asks: [(index: Int, word: String, text: String, before: String)]) async -> [Int: [String: String]] {
+        var prompt = ""
+        for (k, a) in asks.enumerated() {
+            prompt += "\(k + 1). " + (a.before.isEmpty ? "" : "(Before it: \(a.before)) ") + "Sentence: \(a.text)\n   Question: in this sentence, \(homographs[a.word]!.question)?\n"
+        }
+        do {
+            let session = LanguageModelSession(instructions: "You help an audiobook narrator say words that are spelled alike but said differently. Answer each question from what the sentence means.")
+            let reply = try await session.respond(to: prompt, generating: SenseAnswers.self)
+            var out: [Int: [String: String]] = [:]
+            for r in reply.content.answers where r.number >= 1 && r.number <= asks.count {
+                let a = asks[r.number - 1]; let h = homographs[a.word]!
+                if let said = r.yes ? h.yes : h.no { out[a.index, default: [:]][a.word] = said }
+            }
+            return out
+        } catch {
+            Logger(subsystem: "app.tachinovel", category: "voice-scene").error("senses: \(error.localizedDescription, privacy: .public)")
+            return [:]
+        }
+    }
+
     @available(iOS 26.0, *)
     @Generable
     enum Mood {

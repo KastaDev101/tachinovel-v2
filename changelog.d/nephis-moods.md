@@ -38,3 +38,8 @@
 - Nephis model packs (personal flavor): a ".tnmodel" made on the PC holds her trained Pocket TTS model and her voice
   files for it; open it in TachiNovel (Files, share sheet) or copy it into the app's Documents and she reads with it.
 - Planning a paragraph's pieces no longer prepares her voice just to count tokens (one voice prefill less per call).
+- Nephis reads the whole chapter first: the AI director gets a short brief of each part, so a calm lull before a
+  reveal stays calm and a fight builds.
+- Nephis says words right that she used to slip on ("bed", "bag", "bought", "tentatively"), and with Apple
+  Intelligence on, words spelled alike in the sense the sentence means ("she likes to read", "the paper might tear",
+  "wind the clock", "a deep bow", "tightly wound", "the wire is live", "lead pipes", "the beast is close").

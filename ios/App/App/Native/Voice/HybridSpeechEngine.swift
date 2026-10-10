@@ -58,6 +58,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
     private var chapterBrief: String?
     private var briefAsked = false
+    /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling].
+    private var sceneSenses: [Int: [String: String]] = [:]
     static let sceneWindow = 10
     static let sceneContext = 3
 
@@ -214,6 +216,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         flowBusy = false
         flowNext = -1
         sceneMoods = [:]
+        sceneSenses = [:]
         chapterBrief = nil
         briefAsked = false
         sceneNext = 0
@@ -365,7 +368,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let group = flow ? flowGroup(from: i, limit: flowLimit) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
-            let text = members.map { StyleMapper.plainText(Self.readText(segments[$0], expressive: true)) }.joined(separator: " ")
+            // Homographs said in the sense the AI director read (Nephis: "reed" for "she likes to read").
+            let text = members.map { j in
+                let t = StyleMapper.plainText(Self.readText(segments[j], expressive: true))
+                return id == .pocketTts ? sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t : t
+            }.joined(separator: " ")
             // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
             // (tense, sad, tender); the script never puts two reads in one call.
             var line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
@@ -491,6 +498,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             self.sceneBusy = false
             if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }
             self.sceneNext = end
+            if self.listenEngine == .pocketTts {
+                let asks = (start..<end).map { (index: $0, text: self.segments[$0].kokoroText, before: $0 > 0 ? self.segments[$0 - 1].kokoroText : "") }
+                SceneReader.shared.senses(asks) { [weak self] senses in
+                    guard let self, g == self.gen else { return }
+                    self.sceneSenses.merge(senses) { _, new in new }
+                }
+            }
             self.pumpScene()
         }
     }
