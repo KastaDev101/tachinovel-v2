@@ -122,11 +122,8 @@ describe('QA walk', () => {
     await scr.locator('[data-act="narrator-settings"]').click();
     await shot('narrator-settings');
     await shell.page.locator('[data-testid="narrator-settings"] [data-act="close"]').click();
-    await scr.locator('[data-act="kokoro-all"]').click();
-    await shot('kokoro-all');
-    await shell.page.locator('[data-testid="kokoro-voices"] [data-act="close"]').click();
-    await scr.locator('[data-act="expressive"]').click();
-    await shot('voice-models');
+    // Nephis is the one voice: no Kokoro list or voice models on the menu any more.
+    expect(await scr.locator('[data-act="kokoro-all"]').count()).toBe(0);
     console.log('page errors', shell.pageErrors);
   });
 
@@ -143,11 +140,8 @@ describe('QA walk', () => {
     await shot('listen-playing');
     await shell.page.getByTestId('car-player').locator('[data-act="voice"]').click();
     const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
-    await picker.locator('[data-act="novel-kokoro"]').waitFor({ timeout: 5000 });
+    await picker.locator('[data-act="lexicon"]').waitFor({ timeout: 5000 });
     await shot('voice-picker');
-    await picker.locator('[data-act="novel-kokoro"]').click();
-    await shot('novel-kokoro');
-    await shell.page.locator('[data-testid="novel-kokoro"] [data-act="close"]').click();
     await picker.locator('[data-act="narrator-settings"]').click();
     await shot('narrator-settings-nephis');
     expect(shell.pageErrors).toEqual([]);
