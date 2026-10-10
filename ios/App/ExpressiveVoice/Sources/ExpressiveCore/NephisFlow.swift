@@ -119,6 +119,24 @@ public enum NephisFlow {
         /// decoder already matches her S sounds: on the phone it pulled them to 6.1 kHz, hers sit at 6.35-6.4 (duller,
         /// a little lispy; Voice test 2026-10-09).
         public var softSibilance: Bool?
+        /// Words this model says wrong, respelled the way it says them right (whole words, any case); a pack's list
+        /// replaces these entries one by one ("" drops one).
+        public var respell: [String: String] = NephisFlow.herRespell
+
+        /// `text` with the respellings applied; a capitalized word keeps its capital.
+        public func respelled(_ text: String) -> String {
+            var out = text
+            for (word, said) in respell where !said.isEmpty {
+                let pattern = "\\b\(NSRegularExpression.escapedPattern(for: word))\\b"
+                guard let rx = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+                for m in rx.matches(in: out, range: NSRange(out.startIndex..., in: out)).reversed() {
+                    guard let r = Range(m.range, in: out) else { continue }
+                    let capital = out[r].first?.isUppercase == true
+                    out.replaceSubrange(r, with: capital ? said.prefix(1).uppercased() + said.dropFirst() : said)
+                }
+            }
+            return out
+        }
 
         /// What she does in one mood: pauses after a sentence, after "…"/":", after a paragraph (seconds), and the
         /// level change against calm that the model doesn't make by itself (dB).
@@ -154,6 +172,9 @@ public enum NephisFlow {
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
             highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
             softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
+            for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
+                respell[word.lowercased()] = said
+            }
             // A pack's moods replace these one by one, clamped to sane values.
             for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
                 moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
@@ -167,6 +188,12 @@ public enum NephisFlow {
     /// mood, and the level she adds against calm minus what the trained model already adds (PC chain sim, r9).
     /// Intense halves her pauses (0.46 s after a sentence, 0.54 s between paragraphs; calm 0.84 / 1.04); triumph and
     /// playful are much louder than the model makes them.
+    /// Pronunciation sweep, r13 (1,409 words in a carrier line, 3 renders each, checked by speech recognition,
+    /// 2026-10-09): as written these came out "bad", "back", "bot", "tentively"; respelled, right 3 of 3.
+    public static let herRespell: [String: String] = [
+        "bed": "bedd", "bag": "bagg", "bought": "bawt", "tentatively": "tentuh-tiv-lee",
+    ]
+
     public static let herMoods: [String: Chain.Mood] = [
         "calm": .init(sentence: 0.84, trail: 0.9, paragraph: 1.04, gainDB: 0),
         "wry": .init(sentence: 0.58, trail: 0.42, paragraph: 0.66, gainDB: 1.0),

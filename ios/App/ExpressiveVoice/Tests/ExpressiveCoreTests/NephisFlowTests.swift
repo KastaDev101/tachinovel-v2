@@ -92,6 +92,13 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(r.padSeconds, Double(13 - 7 - 2) * NephisFlow.latentSeconds, accuracy: 1e-9)
     }
 
+    func testRespellingsAreWholeWordsKeepCapitalsAndPacksOverrideThem() throws {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.respelled("Bed. She bought a bag, then a bedroom."), "Bedd. She bawt a bagg, then a bedroom.")
+        let pack = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"respell": {"Bag": "", "glance": "glanss"}}"#.utf8))
+        XCTAssertEqual(pack.respelled("A bag and a glance in bed."), "A bag and a glanss in bedd.")
+    }
+
     func testChainUsesHerPausesPerMoodAndPacksOverrideThem() throws {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.gap(after: "They ran.", mood: "intense"), 0.46)

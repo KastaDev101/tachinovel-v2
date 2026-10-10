@@ -179,7 +179,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let reset = line.flowReset == true
         if reset { forget() }
         var report = Report()
-        let text = StyleMapper.pocketText(StyleMapper.plainText(line.text))
+        let text = assets.chain.respelled(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
         // The line's mood read (a mood change blends half the old clip and half the new one: NephisFlow.prompt).
         let clip = (assets.moods[line.role] ?? assets.calm).audioPrompt
         // Pocket generates long text in pieces of about 50 tokens, each started again from the voice prompt: every
