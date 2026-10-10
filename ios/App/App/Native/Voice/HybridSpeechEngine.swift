@@ -55,6 +55,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var sceneMoods: [Int: String] = [:]
     private var sceneNext = 0
     private var sceneBusy = false
+    /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
+    private var chapterBrief: String?
+    private var briefAsked = false
     static let sceneWindow = 10
     static let sceneContext = 3
 
@@ -211,6 +214,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         flowBusy = false
         flowNext = -1
         sceneMoods = [:]
+        chapterBrief = nil
+        briefAsked = false
         sceneNext = 0
         sceneBusy = false
         cancelWait()
@@ -465,6 +470,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func pumpScene() {
         guard listenEngine != nil, natural != nil, VoiceSettings.shared.prefs.delivery.usesAI, !sceneBusy,
               sceneNext < segments.count, SceneReader.shared.available else { return }
+        if !briefAsked {
+            briefAsked = true
+            let g = gen
+            SceneReader.shared.brief(segments.map(sceneSentence)) { [weak self] b in
+                guard let self, g == self.gen else { return }
+                self.chapterBrief = b
+            }
+        }
         let playing = scheduler?.playing ?? 0
         guard sceneNext <= playing + 2 * Self.sceneWindow + 12 else { return }
         let start = sceneNext
@@ -473,7 +486,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let window = segments[start..<end].map(sceneSentence)
         sceneBusy = true
         let g = gen
-        SceneReader.shared.read(context: context, window: window) { [weak self] moods in
+        SceneReader.shared.read(context: context, window: window, brief: chapterBrief, part: start / SceneReader.briefPart + 1) { [weak self] moods in
             guard let self, g == self.gen else { return }
             self.sceneBusy = false
             if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }

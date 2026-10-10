@@ -56,14 +56,40 @@ final class SceneReader {
         #endif
     }
 
-    /// Moods for `window` (in order), read with `context` (the sentences just before it) for the scene; nil when the
-    /// model isn't available or fails. The completion runs on the main queue.
-    func read(context: [Sentence], window: [Sentence], completion: @escaping ([String]?) -> Void) {
+    /// Sentences per part of the chapter brief (one model call each; well inside the model's context).
+    static let briefPart = 60
+
+    /// The chapter in brief, read once when a chapter starts (Kasta, 2026-10-09: "reading a whole chapter at a time so
+    /// it understands the context of the scene"): one line per part of `briefPart` sentences, what happens and how it
+    /// feels. Every window's read then knows where the chapter is going (a calm lull before a reveal, the build of a
+    /// fight). The whole chapter doesn't fit the on-device model at once; its parts do. nil when unavailable.
+    func brief(_ chapter: [Sentence], completion: @escaping (String?) -> Void) {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *), available, !chapter.isEmpty {
+            Task.detached(priority: .utility) {
+                var lines: [String] = []
+                let parts = stride(from: 0, to: chapter.count, by: Self.briefPart).map { Array(chapter[$0..<min(chapter.count, $0 + Self.briefPart)]) }
+                for (k, part) in parts.enumerated() {
+                    if let line = await Self.summarize(part) { lines.append("Part \(k + 1) of \(parts.count): \(line)") }
+                }
+                let brief = lines.isEmpty ? nil : lines.joined(separator: "\n")
+                DispatchQueue.main.async { completion(brief) }
+            }
+            return
+        }
+        #endif
+        DispatchQueue.main.async { completion(nil) }
+    }
+
+    /// Moods for `window` (in order), read with `context` (the sentences just before it) for the scene and, when there
+    /// is one, the chapter's brief and the part the window is in; nil when the model isn't available or fails. The
+    /// completion runs on the main queue.
+    func read(context: [Sentence], window: [Sentence], brief: String? = nil, part: Int? = nil, completion: @escaping ([String]?) -> Void) {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), available, !window.isEmpty {
             let t0 = Date()
             Task.detached(priority: .utility) { [weak self] in
-                let moods = await Self.ask(context: context, window: window)
+                let moods = await Self.ask(context: context, window: window, brief: brief, part: part)
                 DispatchQueue.main.async {
                     guard let self else { return completion(moods) }
                     self.lastMs = Date().timeIntervalSince(t0) * 1000
@@ -121,9 +147,34 @@ final class SceneReader {
         """
 
     @available(iOS 26.0, *)
-    private static func ask(context: [Sentence], window: [Sentence]) async -> [String]? {
+    @Generable
+    struct PartNote {
+        @Guide(description: "What happens in this part, in at most 20 words")
+        var summary: String
+        @Guide(description: "How this part feels overall")
+        var mood: Mood
+    }
+
+    @available(iOS 26.0, *)
+    private static func summarize(_ part: [Sentence]) async -> String? {
+        let text = part.map { $0.text }.joined(separator: " ")
+        do {
+            let session = LanguageModelSession(instructions: "You summarize a part of a novel chapter for an audiobook narrator: what happens and how it feels.")
+            let reply = try await session.respond(to: "Part of the chapter:\n" + text, generating: PartNote.self)
+            return "\(reply.content.summary) (\(name(reply.content.mood)))"
+        } catch {
+            Logger(subsystem: "app.tachinovel", category: "voice-scene").error("scene brief: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private static func ask(context: [Sentence], window: [Sentence], brief: String?, part: Int?) async -> [String]? {
         let label = { (s: Sentence) -> String in s.kind == .narration ? "" : s.kind == .spoken ? "[spoken] " : "[system] " }
         var prompt = ""
+        if let brief {
+            prompt += "The chapter in brief:\n" + brief + "\n" + (part.map { "These sentences are in part \($0).\n" } ?? "") + "\n"
+        }
         if !context.isEmpty {
             prompt += "Earlier in the scene:\n" + context.map { label($0) + $0.text }.joined(separator: "\n") + "\n\n"
         }
