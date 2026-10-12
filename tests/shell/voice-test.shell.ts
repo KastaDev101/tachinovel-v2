@@ -6,8 +6,11 @@
  *  - Run the test runs the studio speed test, then the listening test (Narration.play), and says how it went in
  *    plain words;
  *  - Copy report copies one combined report (pack, studio state and test, the listening test, notes);
- *  - none of the Voice Lab's developer controls appear, and every control has a name for VoiceOver.
- * Screenshots: .cache/shell-shots/voice-test-top.png, voice-test.png
+ *  - none of the Voice Lab's developer controls appear, and every control has a name for VoiceOver;
+ *  - Nephis switched off after real crashes of her model: Settings › Voices and the Voice test say why in plain words
+ *    and one tap ("Turn Nephis back on", ExpressiveVoice.resetCrashes) turns her back on; so does the Listen player's
+ *    Voice panel (car mode).
+ * Screenshots: .cache/shell-shots/voice-test-top.png, voice-test.png, voice-test-nephis-off.png
  */
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -19,11 +22,22 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
 let shell: PcShell;
 let studioOn = false;
+let nephisOff = false;
+const OFF_LINE = 'Nephis was switched off after crashing twice in a row, last at 2:32 PM, chapter 1026, phone warm.';
+
+const crashes = (): Record<string, unknown> =>
+  nephisOff
+    ? {
+        total: 2, consecutive: 2, disabled: true, notCounted: 1, lastContext: 'nephis 120 chars', lastAt: '2026-10-12T14:32:00Z', offLine: OFF_LINE,
+        lastEnd: { kind: 'crashed', counted: true, inFlight: true, line: 'Nephis crashed at 2:32 PM, chapter 1026, phone warm.' },
+        appLastEnd: { kind: 'fault', line: 'The app crashed at 2:32 PM, chapter 1026, phone warm.' },
+      }
+    : { total: 0, consecutive: 0, disabled: false, lastContext: null, lastAt: null };
 
 const status = (): Record<string, unknown> => ({
   available: true,
   app: '2.0.0-alpha.8 (8)',
-  crashes: { total: 0, consecutive: 0, disabled: false, lastContext: null, lastAt: null },
+  crashes: crashes(),
   device: { thermal: 'nominal', memoryMB: 240, availableMB: 3100, lowPower: false, os: 'Version 26.6.1' },
   engines: [],
   session: { state: 'idle' },
@@ -47,7 +61,12 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
       usePCAudio: false,
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
+      delivery: { listenEngine: 'pocket-tts', pocketVoice: 'nephis', nephisOff, nephisOffLine: nephisOff ? OFF_LINE : null },
     }));
+    shell.pluginReplies.set('ExpressiveVoice.resetCrashes', () => {
+      nephisOff = false;
+      return status();
+    });
     for (const m of ['status', 'resetStats']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, status);
     shell.pluginReplies.set('ExpressiveVoice.recordStart', () => ({ recording: true }));
     shell.pluginReplies.set('ExpressiveVoice.recordStop', () => ({ saved: false, bytes: 0 }));
@@ -141,6 +160,61 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     expect(unnamed).toEqual([]);
 
     await page.screenshot({ path: path.join(shots, 'voice-test.png'), fullPage: true });
+    expect(shell.pageErrors).toEqual([]);
+  });
+
+  it('says why Nephis is switched off, in plain words, and one tap turns her back on', async () => {
+    const page = shell.page;
+    nephisOff = true;
+    // Reopen Settings › Voices (it reads the voice settings when it opens): her card offers to turn her back on.
+    await page.getByTestId('voice-test').getByRole('button', { name: 'Back' }).click();
+    await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
+    await page.getByTestId('screen-voices').getByRole('button', { name: 'Back' }).click();
+    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
+    await page.getByTestId('more-voices').click();
+    const voices = page.getByTestId('screen-voices');
+    const offRow = voices.getByTestId('voices-nephis-on');
+    await expect.poll(() => offRow.textContent(), { timeout: 5000 }).toContain(OFF_LINE);
+    expect(await offRow.textContent()).toContain('Turn Nephis back on');
+
+    // The Voice test says it too, with her last cut-off and how the app last closed.
+    await voices.getByTestId('voices-test').click();
+    const screen = page.getByTestId('voice-test');
+    const safety = screen.getByTestId('voice-test-safety');
+    await expect.poll(() => safety.textContent(), { timeout: 5000 }).toContain(`${OFF_LINE} Her backup voice reads meanwhile.`);
+    expect(await safety.textContent()).toContain('Her last cut-off: Nephis crashed at 2:32 PM, chapter 1026, phone warm.');
+    expect(await safety.textContent()).toContain('Last time the app closed: The app crashed at 2:32 PM, chapter 1026, phone warm.');
+    await page.waitForTimeout(450); // slide-in
+    await page.screenshot({ path: path.join(shots, 'voice-test-nephis-off.png') });
+
+    // One tap: native turns her back on and the page says so.
+    await screen.getByTestId('voice-test-nephis-on').click();
+    await expect.poll(() => calls('ExpressiveVoice', 'resetCrashes').length).toBe(1);
+    await expect.poll(() => screen.getByTestId('voice-test-safety').count()).toBe(0);
+    expect(await screen.getByTestId('voice-test-nephis-on').count()).toBe(0);
+    expect(shell.pageErrors).toEqual([]);
+  });
+
+  it('the Listen player’s Voice panel (car mode) turns Nephis back on too', async () => {
+    const page = shell.page;
+    nephisOff = true;
+    await page.getByTestId('voice-test').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
+    await page.getByTestId('screen-voices').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
+    // She reads a novel aloud: the player offers Voice for it.
+    shell.pluginReplies.set('Narration.state', () => ({
+      status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', novelName: 'Alpha Story',
+      chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1', position: 10, duration: 600,
+    }));
+    await page.getByTestId('more-listen').click();
+    await page.getByTestId('car-player').locator('[data-act="voice"]').click();
+    const picker = page.locator('[data-testid="voice-picker"]:not([inert])');
+    const offRow = picker.getByTestId('voices-nephis-on');
+    await expect.poll(() => offRow.textContent(), { timeout: 5000 }).toContain(OFF_LINE);
+    await offRow.click();
+    await expect.poll(() => calls('ExpressiveVoice', 'resetCrashes').length).toBe(2);
+    await expect.poll(() => picker.getByTestId('voices-nephis-on').count(), { timeout: 5000 }).toBe(0);
     expect(shell.pageErrors).toEqual([]);
   });
 });

@@ -261,7 +261,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
       ${voices?.view() ?? ''}
       ${
         crashes.disabled
-          ? `<div class="card"><b>Turned off after crashing twice</b> (${esc(str(crashes.lastContext, ''))}).<div class="acts"><button type="button" data-act="reset-crashes">Turn back on</button></div></div>`
+          ? `<div class="card"><b>${esc(str(crashes.offLine, 'Turned off after crashing twice.'))}</b> (${esc(str(crashes.lastContext, ''))})<div class="acts"><button type="button" data-act="reset-crashes">Turn Nephis back on</button></div></div>`
           : ''
       }
       <h2>Sample</h2>
@@ -291,7 +291,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>Free storage</span><span>${fmt(st.freeMB)} MB</span>
         <span>Kokoro</span><span>${esc(str(st.kokoro))}</span>
         <span>Memory warnings</span><span>${fmt(st.memoryWarnings)}</span>
-        <span>Crashes (experimental)</span><span>${fmt(crashes.total)} total, ${fmt(crashes.consecutive)} in a row</span>
+        <span>Crashes (experimental)</span><span>${fmt(crashes.total)} total, ${fmt(crashes.consecutive)} in a row, ${fmt(crashes.notCounted)} ends not counted</span>
         <span>iOS</span><span>${esc(str(dev.os))}</span>
       </div>
       <div class="acts">

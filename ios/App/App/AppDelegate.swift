@@ -17,6 +17,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         DeviceSnapshot.shared.start()
         // Crash/hang reports from MetricKit, kept on the device (Settings › Diagnostics).
         MetricDiagnostics.shared.start()
+        // How this run goes (foreground, playing, clean ends, a heartbeat while a voice works), so the next launch can
+        // tell a crash of a voice's model from a swipe-away, an update or iOS closing the app. Before the voices' checks.
+        VoiceRun.shared.start(foreground: application.applicationState != .background)
         // Bundled Kokoro voice: crash check from the last run, memory-pressure handling, one-time warm-up.
         KokoroService.shared.start()
         // "Prepare for the drive": the background task must be registered before launch finishes; pending

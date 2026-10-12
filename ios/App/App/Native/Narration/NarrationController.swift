@@ -350,6 +350,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
 
     func stop() {
         interruption.userActed()
+        VoiceRun.shared.narrationStopped()
         chapterEndedAt = nil
         generation += 1
         engine.stop()
@@ -822,6 +823,21 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         return kokoroVoiceForCurrentNovel()
     }
 
+    /// For the run journal's heartbeat (VoiceRun): the chapter narration is on and who reads it, in a word.
+    var runLabels: (chapter: String?, voice: String?) {
+        let voice: String?
+        if mode == .audio {
+            voice = audioOrigin == .prepared ? "prepared audio" : "PC audio"
+        } else if speechSource == .apple {
+            voice = "Apple voice"
+        } else if speechSource == .kokoro, let e = engine.currentExpressive {
+            voice = e == .pocketTts ? (VoiceSettings.shared.prefs.delivery.isNephis ? "Nephis" : "Narrator") : e.title
+        } else {
+            voice = speechSource == .kokoro ? "Kokoro" : nil
+        }
+        return (chapter?.chapterName, voice)
+    }
+
     /// Narration that would use Kokoro is active (KokoroService reloads after memory pressure only then).
     var wantsKokoro: Bool { mode == .speech && (status == .playing || status == .loading || status == .paused) }
 
@@ -854,7 +870,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         let p = VoiceSettings.shared.prefs
         // The read's rate too: her studio switched on or off mid-read starts the sentence again at the new rate.
         let rate = SessionRate.forRead(Self.listenEngine())
-        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")|\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)|\(p.delivery.pocketVoice)|\(rate)"
+        // Nephis's crash switch too: "Turn Nephis back on" mid-read hands the sentence back to her.
+        let switches = "\(KokoroService.shared.crashDisabled)|\(ExpressiveService.shared.crashDisabled)"
+        let reader = "\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")"
+        let delivery = "\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)|\(p.delivery.pocketVoice)"
+        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(switches)|\(reader)|\(delivery)|\(rate)"
     }
 
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.
@@ -1103,6 +1123,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         publishNowPlaying(jump: jump)
         if s != .loading { endTransition() }
         DrivePrep.shared.narrationChanged()
+        VoiceRun.shared.narrationChanged(playing: s == .playing || s == .loading)
     }
 
     private func fail(_ message: String) {
@@ -1112,6 +1133,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         publishNowPlaying()
         endTransition()
         DrivePrep.shared.narrationChanged()
+        VoiceRun.shared.narrationChanged(playing: false)
     }
 
     private func activateSession() {

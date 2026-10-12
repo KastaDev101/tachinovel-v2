@@ -23,7 +23,7 @@ import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { openVoiceTest } from './voice-test.ts';
 import { groupVoices } from './voice-groups.ts';
-import { openExpressiveLab } from './expressive-lab.ts';
+import { ExpressiveVoice, openExpressiveLab } from './expressive-lab.ts';
 import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
 import { blendVoice, cleanMixName, mixPercent, mixProblem, mixShares, suggestedMixName, usableMixes } from './voice-mix.ts';
 import {
@@ -391,7 +391,20 @@ function nephisCard(info: VoiceSettingsInfo): string {
     info.delivery?.pocketInstalled === false
       ? `<button type="button" class="row" data-act="expressive"><div class="main"><b>Download her voice</b><span class="sub">About 370 MB, on Wi-Fi</span></div><span aria-hidden="true">›</span></button>`
       : '';
-  return `<div class="card" data-testid="voices-engine"><div class="row"><div class="main"><b>Nephis</b><span class="sub">Her own voice, with moods for the scene. If the phone runs too hot, her backup voice stands in.</span></div></div>${download}</div>`;
+  const off = nephisOffLine(info.delivery);
+  const offRow = off
+    ? `<button type="button" class="row" data-act="nephis-on" data-testid="voices-nephis-on"><div class="main"><b>Turn Nephis back on</b><span class="sub">${esc(off)} Her backup voice reads meanwhile.</span></div><span aria-hidden="true">›</span></button>`
+    : '';
+  return `<div class="card" data-testid="voices-engine"><div class="row"><div class="main"><b>Nephis</b><span class="sub">Her own voice, with moods for the scene. If the phone runs too hot, her backup voice stands in.</span></div></div>${offRow}${download}</div>`;
+}
+
+/**
+ * Why Nephis is switched off (her model crashed twice in a row while the app was in use), in plain words; null while
+ * she isn't. Swipe-aways, updates, AltStore refreshes and iOS closing the app for memory never switch her off.
+ */
+export function nephisOffLine(delivery: Partial<DeliveryInfo> | undefined): string | null {
+  if (delivery?.nephisOff !== true) return null;
+  return typeof delivery.nephisOffLine === 'string' && delivery.nephisOffLine ? delivery.nephisOffLine : 'Nephis was switched off after crashing twice in a row.';
 }
 
 /** Nephis reads chapters: set it when another voice was chosen before (the old Narrator, Kokoro, an experiment). */
@@ -600,6 +613,12 @@ export function openVoicesScreen(): void {
       case 'kokoro-on':
         void Narration.setVoiceSettings({ kokoroEnabled: true }).then(load);
         return;
+      case 'nephis-on':
+        void ExpressiveVoice.resetCrashes()
+          .then(() => toast('Nephis is back on: she reads from the next sentence.'))
+          .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`))
+          .then(load);
+        return;
       case 'car-buttons': {
         const v: CarButtons = el.dataset.v === 'skip15' ? 'skip15' : 'chapters';
         void Narration.setVoiceSettings({ carButtons: v }).then(load);
@@ -794,6 +813,14 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     if (act === 'novel-kokoro') kokoroPanel();
     if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
     if (act === 'expressive') openExpressiveLab();
+    // Her card says "Turn Nephis back on" here too (car mode › Voice): one tap, as in Settings › Voices.
+    if (act === 'nephis-on') {
+      void ExpressiveVoice.resetCrashes()
+        .then(() => toast('Nephis is back on: she reads from the next sentence.'))
+        .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`))
+        .then(load)
+        .then(onChange);
+    }
   });
   render();
   void load();

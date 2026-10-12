@@ -3,6 +3,9 @@
  * run the test, then copy report. Something super simple"). No hidden taps: the Voice Lab is for developers only.
  *   - Top (personal flavor): which Nephis pack is installed, whether it has her studio, whether the studio is on, and
  *     the studio switch (ExpressiveVoice.studioEnable) when the pack has one.
+ *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
+ *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
+ *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
  *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, when the pack may have a studio), then a
  *     fixed passage read aloud through the real Listen path (speech script → Narration.play → HybridSpeechEngine →
  *     the voice, its finishing chain, playback).
@@ -164,6 +167,27 @@ export function statusLines(pack: unknown, k: StudioKnown): string[] {
   return lines;
 }
 
+/** How the app last closed, worth a look (native's RunEndKind): an app crash, iOS stopping it while in use, memory. */
+const TROUBLE_ENDS = new Set(['appError', 'fault', 'stopped', 'unexpected', 'memory']);
+
+/**
+ * Her safety switch (ExpressiveVoice.status().crashes) in plain words: whether Nephis is switched off and why, the last
+ * time the app ended while her model worked (counted as her crash, or why not: an update, a swipe-away, iOS closing the
+ * app for memory, an app bug), and how the app's last run ended. Older builds say nothing.
+ */
+export function safetyLines(crashes: unknown): { off: string | null; lines: Line[] } {
+  const c = (crashes && typeof crashes === 'object' ? crashes : {}) as Obj;
+  const off = c.disabled === true ? (typeof c.offLine === 'string' && c.offLine ? c.offLine : 'Nephis was switched off after crashing twice in a row.') : null;
+  const lines: Line[] = [];
+  const last = (c.lastEnd && typeof c.lastEnd === 'object' ? c.lastEnd : {}) as Obj;
+  if (typeof last.line === 'string' && last.line) lines.push({ ok: last.counted !== true, text: `Her last cut-off: ${last.line}` });
+  const app = (c.appLastEnd && typeof c.appLastEnd === 'object' ? c.appLastEnd : {}) as Obj;
+  if (typeof app.line === 'string' && app.line) {
+    lines.push({ ok: typeof app.kind !== 'string' || !TROUBLE_ENDS.has(app.kind), text: `Last time the app closed: ${app.line}` });
+  }
+  return { off, lines };
+}
+
 /** Live reading needs the studio at least this fast (× real time). */
 export const LIVE_X = 1.5;
 const HEAT = ['nominal', 'fair', 'serious', 'critical'];
@@ -215,6 +239,8 @@ export function combinedReport(o: { status: Obj; studio: StudioKnown; studioTest
     app: o.status.app ?? null,
     device: o.status.device ?? null,
     pack: o.status.nephisPack === undefined ? 'not reported' : o.status.nephisPack,
+    // Her safety switch: crashes counted, ends not counted and the last one in plain words.
+    safety: o.status.crashes ?? null,
     studio: { has: o.studio.has, on: o.studio.on, test: o.studioTest },
     voiceTest: o.voiceTest,
     notes: o.notes.trim() || null,
@@ -285,6 +311,15 @@ export function openVoiceTest(): void {
             : ''
         }</div>`
       : '';
+    const safety = safetyLines(status.crashes);
+    const safetyCard =
+      safety.off || safety.lines.length
+        ? `<div class="sec">Her voice model</div><div class="card" data-testid="voice-test-safety">${
+            safety.off ? row({ ok: false, text: `${safety.off} Her backup voice reads meanwhile.` }) : ''
+          }${safety.lines.map(row).join('')}</div>${
+            safety.off ? `<button type="button" class="btn" data-act="nephis-on" data-testid="voice-test-nephis-on" ${running ? 'disabled' : ''}>Turn Nephis back on</button>` : ''
+          }`
+        : '';
     const lines = running ? [] : [...(studioTest ? studioLines(studioTest) : []), ...(report ? summarize(report) : [])];
     const result = lines.length
       ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${lines.map(row).join('')}</div>
@@ -294,7 +329,7 @@ export function openVoiceTest(): void {
          ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the recording</button>' : ''}
          <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
       : '';
-    p.body.innerHTML = `${nephis}
+    p.body.innerHTML = `${nephis}${safetyCard}
       <div class="sec">Test</div>
       <p class="note">${STUDIO ? 'Times her studio, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.</p>
       <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : lines.length ? 'Run it again' : 'Run the test'}</button>
@@ -506,6 +541,16 @@ export function openVoiceTest(): void {
     if (act === 'run' && !running) void run();
     if (act === 'long' && !running) void runLong();
     if (act === 'stop') stop();
+    if (act === 'nephis-on' && !running) {
+      void ExpressiveVoice.resetCrashes()
+        .then((st) => {
+          status = st;
+          known = studioKnown(st.nephisPack, known);
+          toast('Nephis is back on: she reads from the next sentence.');
+        })
+        .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`))
+        .finally(render);
+    }
     if (act === 'share') {
       void ExpressiveVoice.shareRecording().catch((err: unknown) => (el.textContent = err instanceof Error ? err.message : 'Couldn’t share'));
     }
@@ -537,5 +582,6 @@ export function openVoiceTest(): void {
     if (el.dataset.f === 'notes') notes = el.value;
   });
   render();
-  if (STUDIO) void loadStatus();
+  // Her pack and studio (personal flavor) and her safety switch (every flavor).
+  void loadStatus();
 }

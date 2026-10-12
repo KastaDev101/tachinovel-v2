@@ -305,6 +305,10 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "systemChime": prefs.delivery.systemChime,
                     "systemTone": prefs.delivery.systemTone,
                     "pocketVoice": prefs.delivery.pocketVoice,
+                    // Nephis switched off after real crashes of her model, and why in plain words (Settings › Voices
+                    // shows "Turn Nephis back on").
+                    "nephisOff": ExpressiveService.shared.crashDisabled,
+                    "nephisOffLine": ExpressiveService.shared.sentinel.offLine() ?? NSNull(),
                 ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,

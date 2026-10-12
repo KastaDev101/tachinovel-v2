@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { chipSummary, combinedReport, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
+import { chipSummary, combinedReport, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
+import { nephisOffLine } from '../src/ui/native/voices-ui.ts';
 
 describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () => {
   it('says a clean run is clean, in plain words', () => {
@@ -130,11 +131,69 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
       at: '2026-10-12T00:00:00Z',
     });
     expect(r).toEqual({
-      kind: 'nephis-test', at: '2026-10-12T00:00:00Z', app: '2.0.0 (8)', device: { thermal: 'fair' }, pack: { name: 'nephis-r9' },
+      kind: 'nephis-test', at: '2026-10-12T00:00:00Z', app: '2.0.0 (8)', device: { thermal: 'fair' }, pack: { name: 'nephis-r9' }, safety: null,
       studio: { has: true, on: true, test: { ran: true, timesRealTime: 2 } }, voiceTest: { kind: 'voice-test', ended: true }, notes: 'a click at 0:40',
     });
     const bare = combinedReport({ status: {}, studio: { has: null, on: null }, studioTest: null, voiceTest: null, notes: ' ' });
     expect(bare.pack).toBe('not reported');
     expect(bare.notes).toBeNull();
+    // Her safety switch goes into the report as native says it.
+    const crashes = { total: 2, consecutive: 0, disabled: false, notCounted: 3 };
+    expect(combinedReport({ status: { crashes }, studio: { has: null, on: null }, studioTest: null, voiceTest: null, notes: '' }).safety).toEqual(crashes);
+  });
+
+  it('says in plain words whether Nephis is switched off, her last cut-off and how the app last closed', () => {
+    // Switched off by two real crashes of her model: why, and the last one.
+    const off = safetyLines({
+      total: 2, consecutive: 2, disabled: true, notCounted: 1,
+      offLine: 'Nephis was switched off after crashing twice in a row, last at 2:32 PM, chapter 1026, phone warm.',
+      lastEnd: { kind: 'crashed', counted: true, inFlight: true, line: 'Nephis crashed at 2:32 PM, chapter 1026, phone warm.' },
+      appLastEnd: { kind: 'unexpected', line: 'The app closed unexpectedly at 2:32 PM, chapter 1026, phone warm.' },
+    });
+    expect(off.off).toBe('Nephis was switched off after crashing twice in a row, last at 2:32 PM, chapter 1026, phone warm.');
+    expect(off.lines).toEqual([
+      { ok: false, text: 'Her last cut-off: Nephis crashed at 2:32 PM, chapter 1026, phone warm.' },
+      { ok: false, text: 'Last time the app closed: The app closed unexpectedly at 2:32 PM, chapter 1026, phone warm.' },
+    ]);
+    // iOS closed the app for memory mid-call: on, and why it wasn't held against her.
+    const memory = safetyLines({
+      disabled: false,
+      lastEnd: { kind: 'memory', counted: false, line: 'Closed in the background for memory at 2:32 PM, chapter 1026, phone warm. Not counted against Nephis.' },
+      appLastEnd: { kind: 'closed', line: 'The app was closed at 9:05 AM (swiped away, or closed by iOS).' },
+    });
+    expect(memory).toEqual({
+      off: null,
+      lines: [
+        { ok: true, text: 'Her last cut-off: Closed in the background for memory at 2:32 PM, chapter 1026, phone warm. Not counted against Nephis.' },
+        { ok: true, text: 'Last time the app closed: The app was closed at 9:05 AM (swiped away, or closed by iOS).' },
+      ],
+    });
+    // An app bug while her model loaded (the Oct 9 crash): not held against her, and the app's crash is worth a look.
+    const appBug = safetyLines({
+      disabled: false,
+      lastEnd: { kind: 'appError', counted: false, line: 'The app crashed at 10:51 AM (an app bug). Not counted against Nephis.', signal: 'SIGABRT on the main thread' },
+      appLastEnd: { kind: 'appError', line: 'The app crashed at 10:51 AM (an app bug).' },
+    });
+    expect(appBug.lines).toEqual([
+      { ok: true, text: 'Her last cut-off: The app crashed at 10:51 AM (an app bug). Not counted against Nephis.' },
+      { ok: false, text: 'Last time the app closed: The app crashed at 10:51 AM (an app bug).' },
+    ]);
+    // iOS stopped the app while in use (no crash) or the phone restarted.
+    expect(safetyLines({ appLastEnd: { kind: 'stopped', line: 'The app was closed without crashing at 2:31 PM (by iOS, or swiped away).' } }).lines[0]?.ok).toBe(false);
+    expect(safetyLines({ appLastEnd: { kind: 'restarted', line: 'The phone restarted or ran out of power after 2:32 PM.' } }).lines[0]?.ok).toBe(true);
+    // Older builds: only the switch, in the old words; nothing at all without a report.
+    expect(safetyLines({ total: 2, consecutive: 2, disabled: true, lastContext: 'x' })).toEqual({ off: 'Nephis was switched off after crashing twice in a row.', lines: [] });
+    expect(safetyLines(undefined)).toEqual({ off: null, lines: [] });
+    expect(safetyLines({ appLastEnd: null, lastEnd: null })).toEqual({ off: null, lines: [] });
+  });
+
+  it('Settings › Voices offers “Turn Nephis back on” only while she is switched off', () => {
+    expect(nephisOffLine({ nephisOff: true, nephisOffLine: 'Nephis was switched off after crashing twice in a row, last at 2:32 PM.' })).toBe(
+      'Nephis was switched off after crashing twice in a row, last at 2:32 PM.',
+    );
+    expect(nephisOffLine({ nephisOff: true, nephisOffLine: null })).toBe('Nephis was switched off after crashing twice in a row.');
+    expect(nephisOffLine({ nephisOff: false, nephisOffLine: 'stale' })).toBeNull();
+    expect(nephisOffLine({})).toBeNull();
+    expect(nephisOffLine(undefined)).toBeNull();
   });
 });

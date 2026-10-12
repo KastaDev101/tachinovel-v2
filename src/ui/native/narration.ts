@@ -230,6 +230,10 @@ export interface DeliveryInfo {
   systemTone: boolean;
   /** Which Pocket TTS voice reads: the original Narrator, or Nephis (v2: deeper and clearer, one read for everything). */
   pocketVoice?: 'narrator' | 'nephis';
+  /** Read only: Nephis was switched off after real crashes of her model (her backup voice reads); absent in older builds. */
+  nephisOff?: boolean;
+  /** Read only: why, in plain words ("Nephis was switched off after crashing twice in a row, last at 2:32 PM, …"). */
+  nephisOffLine?: string | null;
 }
 
 /** One "Prepare for the drive" request. */

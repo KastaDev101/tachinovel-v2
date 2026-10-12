@@ -58,6 +58,7 @@
 		5E28A85DEC3FB9375166C166 /* NarrationPlugin+Scene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */; };
 		D3D11872C6EC5CA527BBC7D2 /* NephisSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */; };
 		EC3DC2872CD490F0500F5EBE /* NephisModelPack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */; };
+		69874972264DB4360F799EDC /* VoiceRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D3A26F0369D03559BFBE7C /* VoiceRun.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -123,6 +124,7 @@
 		5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/NarrationPlugin+Scene.swift"; sourceTree = "<group>"; };
 		E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/NephisSpeech.swift"; sourceTree = "<group>"; };
 		C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/NephisModelPack.swift"; sourceTree = "<group>"; };
+		83D3A26F0369D03559BFBE7C /* VoiceRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceRun.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,6 +227,7 @@
 				5515551D8C34E7EB6D4814B2 /* NarrationPlugin+Scene.swift */,
 				E450AFED20E74445BDA7AF2F /* NephisSpeech.swift */,
 				C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */,
+				83D3A26F0369D03559BFBE7C /* VoiceRun.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -393,6 +396,7 @@
 				5E28A85DEC3FB9375166C166 /* NarrationPlugin+Scene.swift in Sources */,
 				D3D11872C6EC5CA527BBC7D2 /* NephisSpeech.swift in Sources */,
 				EC3DC2872CD490F0500F5EBE /* NephisModelPack.swift in Sources */,
+				69874972264DB4360F799EDC /* VoiceRun.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

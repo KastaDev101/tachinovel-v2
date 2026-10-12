@@ -10,7 +10,8 @@
 //  stop
 //  speedTest / cancelSpeedTest    {engine, sample, lines}: render without playing, measure
 //  unload                         free the loaded model now
-//  resetCrashes                   turn the experimental engines back on after the crash protection tripped
+//  resetCrashes                   "Turn Nephis back on" (and the experimental engines) after the crash protection
+//                                 tripped; status().crashes says why in plain words (offLine, lastEnd, appLastEnd)
 //
 //  Imported voices (personal flavor, docs/voice-import.md; status() carries them as `voices`):
 //  importVoice                    Files picker for a .tnvoice → checked and kept → {voice, replaced, status} or

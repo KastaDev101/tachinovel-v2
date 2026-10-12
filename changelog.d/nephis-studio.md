@@ -41,9 +41,20 @@
   went to another voice. Chapters prepared with and without her studio are kept apart.
 - Opening a Nephis pack during Listen (or one installed from Documents after a read has started) that adds or drops
   her studio also starts the sentence again at the new rate, instead of the rest of the chapter going to another voice.
+- Nephis is no longer switched off by mistake. The app now notes how each run ends (closed or swiped away, updated or
+  refreshed by AltStore, put in the background idle, closed by iOS for memory, the phone restarting) and, as it goes
+  down, which crash signal ended it; every 10 seconds while a voice works it notes the chapter, the voice, the phone's
+  heat and memory. Only a real crash of her model counts: a memory fault off the main thread while her call runs (how
+  Core ML crashes). An app bug during her call (like the Oct 9 crash), iOS closing the app without a crash, or a restart
+  never does. Two real crashes in a row still hand over to her backup voice. Anything unsure is noted, never counted. A
+  new app build starts her count over and turns her back on.
 
 ### Changed
 
+- Turning Nephis back on is one tap: "Turn Nephis back on" in Settings › Voices, the Listen player's Voice panel and on
+  the Voice test, which also says in
+  plain words what happened ("Closed in the background for memory at 2:32 PM, chapter 1026, phone warm. Not counted
+  against Nephis."). The same line goes to Settings › Diagnostics.
 - Settings › Voices › Voice test is now the one testing page: which Nephis pack is installed and whether it has her
   studio, a studio switch, one Run the test (studio speed test + 2-minute listen), a plain-words result and one Copy
   report. The hidden Voice Lab is no longer needed for testing.

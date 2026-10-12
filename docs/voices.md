@@ -30,6 +30,7 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 | Files (PC-narrated, prepared): AVAudioEngine file player with time-pitch for speed, the same gain + limiter | `ios/App/App/Native/Narration/AudioChapterPlayer.swift` |
 | Listen player: speed 0.5–2.5× (0.05 steps, chips 0.9/1/1.1/1.25/1.5/2) and "Voice volume" 0–150 %, saved natively, every voice | `HDVoiceCore/ListenControls.swift`, `src/ui/native/listen-controls.ts`, `car-mode.ts` |
 | Load/release, memory pressure, idle release, warm-up, crash containment | `Native/Voice/KokoroService.swift`, `HDVoiceCore/CrashSentinel.swift` |
+| How the last run ended (closed, swiped away, updated or refreshed, idle in the background, closed for memory, the phone restarted), the crash signal it died of (SIGSEGV/SIGBUS off the main thread = a voice's model; a Swift trap, abort() or a main-thread fault = an app bug; none = iOS closed it) and a 10 s heartbeat while a voice works, so only real crashes of a voice's model count | `Native/Voice/VoiceRun.swift`, `HDVoiceCore/RunJournal.swift`, `HDVoiceCore/CrashSignals.swift` |
 | Preferences: default voice, per-novel voice, Kokoro on/off, "Use PC audio when available" (off) | `HDVoiceCore/VoiceCatalog.swift`, `Native/Voice/VoiceSettings.swift` |
 | UI: "Listen" in the reader's bottom bar (shows and hides with the bars, like the mini player in the reader), More › Voices, voice picker per novel (Listen player › Voice), pronunciations, hidden Voice Lab. The mini player says "Kokoro · Heart", or "System voice (fallback) · why" | `src/ui/native/narration-overlay.ts`, `voices-ui.ts`, `voice-lab.ts`, `v1-hooks.ts`, `car-mode.ts` |
 
@@ -43,7 +44,7 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 | Phone thermally throttled (serious or critical) | No new Kokoro renders. Already-rendered sentences still play, then Apple until the phone cools down |
 | One sentence fails to synthesize | Apple reads that sentence; Kokoro continues with the next. Three failures in a row: Apple for the rest of the chapter |
 | Memory warning | The model is released, Apple covers, and the model reloads after 60 s (backing off to 10 min) |
-| Kokoro crashed the app twice in a row (a known iOS Core ML bug, below) | Kokoro is turned off; Settings › Voices shows "Turn it back on" |
+| Kokoro crashed the app twice in a row (a known iOS Core ML bug, below) | Kokoro is turned off; Settings › Voices shows "Turn it back on". Only a memory fault off the main thread during its call counts; app bugs, swipe-aways, updates and AltStore refreshes, restarts, and iOS closing the app for memory or in the background never do (`RunJournal`); a new build starts the count over |
 | Kokoro turned off in Settings › Voices | Apple always |
 
 Apple voice choice: an explicitly chosen system voice if there is one, else the best installed English
@@ -240,7 +241,7 @@ report from an iPhone running ≥ 0.17.0 yet, either way.
 | FluidAudio **0.17.5** (includes the 0.17.0 padding fix) | The only fix that addresses the root cause. No routing avoids BNNS |
 | GPU-free placement (Neural Engine + CPU) | Keeps the RNN stages off the GPU (the GPU RNN JIT abort, #667), and works on the lock screen, where iOS forbids GPU work. iOS 26's FluidAudio default (`aneTailGpu`) crashed the same way in #844 anyway |
 | Warm-up only **loads** the model (Neural Engine compile), it never synthesizes | A Core ML crash can't happen right after launch, only while you listen |
-| Crash sentinel (a file written before each synthesis, checked at launch) | Two crashes in a row → Kokoro off, Apple voice, a "Turn it back on" button in Settings › Voices |
+| Crash sentinel (a file written before each synthesis, checked at launch with the run journal: only a call in flight when the process died of a memory fault off the main thread, same install, not closed properly, counts) | Two crashes in a row → Kokoro off, Apple voice, a "Turn it back on" button in Settings › Voices |
 | Voice Lab: "Safety fallback" (tripped or not, crash count, what was being synthesized) and "Where each stage runs" (Core ML's per-operation plan: Neural Engine / CPU / GPU ops per stage) | So tonight's test tells us whether it held, and how much of each stage runs on the CPU (where BNNS lives) |
 
 Not available, considered and rejected: forcing a stage onto the Neural Engine only (Core ML still sends

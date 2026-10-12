@@ -6,8 +6,10 @@
 //    ModelStore), kept out of backups, deletable. Never bundled.
 //  - One engine loaded at a time (they are 0.7–1.4 GB); unloaded on a memory warning, after 3 minutes idle,
 //    or when another engine is loaded.
-//  - Crash containment: a CrashSentinel of its own (not Kokoro's); two crashes in a row inside an
-//    experimental engine turn the experimental engines off until "Turn back on" in the Voice Lab.
+//  - Crash containment: a CrashSentinel of its own (not Kokoro's), judged with the run journal (VoiceRun): only a
+//    real crash of her model counts (her call in flight while the app was in use, no update, swipe-away or memory
+//    kill). Two in a row switch Nephis (and the experimental engines) off until "Turn Nephis back on" (Settings ›
+//    Voices, the Voice test) or a new build of the app; every end with her call in flight is kept in plain words.
 //  - Speed test: renders a sample without playing it and records load (cold/warm), time to first audio,
 //    × real time per line, memory and thermal state.
 //  Narration (NarrationController) never uses these engines; the Voice Lab plays them through
@@ -196,9 +198,10 @@ final class ExpressiveService {
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice-expressive", isDirectory: true))
+        let sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice-expressive", isDirectory: true), name: "Nephis")
         self.sentinel = sentinel
-        let crashed = sentinel.checkAtLaunch()
+        VoiceRun.shared.watch(sentinel)
+        let check = sentinel.checkAtLaunch(VoiceRun.shared.journal)
         let modelStore = (try? ExpressiveEngines.modelsRoot()).map { ModelStore(root: $0) }
         store = modelStore
         let voiceStore = ImportedVoiceStore(root: support.appendingPathComponent("TachiNovel/voices", isDirectory: true))
@@ -213,9 +216,16 @@ final class ExpressiveService {
         } catch {
             log.error("expressive: voice slot: \(error.localizedDescription, privacy: .public)")
         }
-        if crashed {
-            let context = sentinel.current.lastContext ?? ""
-            log.error("expressive: the previous run crashed inside an experimental engine (\(context, privacy: .public))")
+        if check.turnedBackOn { log.info("expressive: Nephis turned back on: a new build of the app") }
+        if let note = check.note {
+            // Her call was in flight when the last run ended: a crash of her model only if nothing else explains it.
+            let line = RunEndWords.line(note, voice: "Nephis")
+            if note.counted {
+                log.error("expressive: \(line, privacy: .public) (\(note.context ?? "", privacy: .public))")
+            } else {
+                log.info("expressive: \(line, privacy: .public)")
+            }
+            VoiceRun.shared.postVoice(sentinel.offLine() ?? line, counted: note.counted, quiet: note.isQuiet)
         }
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
@@ -823,8 +833,37 @@ final class ExpressiveService {
         ]
     }
 
+    /// "Turn Nephis back on": her model may be used again at once; a read going on picks her up from the sentence
+    /// playing (NarrationController's voice key carries the switch), and her model loads now otherwise.
     func resetCrashes() {
+        let wasOff = crashDisabled
         sentinel.reset()
+        guard wasOff else { return }
+        log.info("expressive: Nephis turned back on")
+        NotificationCenter.default.post(name: VoiceSettings.changed, object: nil)
+        warmNephis()
+    }
+
+    /// Her safety switch for the Voice test and Settings › Voices: switched off or not, why in plain words, and how
+    /// the app last ended while her model worked.
+    func crashSnapshot() -> [String: Any] {
+        let crash = sentinel.current
+        let lastEnd: Any = crash.lastEnd.map { note -> [String: Any] in
+            ["kind": note.kind.rawValue, "counted": note.counted, "inFlight": note.inFlight,
+             "at": note.at.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(), "line": sentinel.lastEndLine() ?? NSNull(),
+             // What killed the process ("SIGABRT on the main thread"), when the app noted it.
+             "signal": note.signal ?? NSNull()]
+        } ?? NSNull()
+        let app = VoiceRun.shared.journal.lastEnd
+        return [
+            "total": crash.total, "consecutive": crash.consecutive, "disabled": crash.disabled, "notCounted": crash.notCounted,
+            "lastContext": crash.lastContext ?? NSNull(),
+            "lastAt": crash.lastCrashAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
+            "offLine": sentinel.offLine() ?? NSNull(),
+            "lastEnd": lastEnd,
+            // How the app's last run ended (whatever the voices did): one plain line.
+            "appLastEnd": app.kind == .unknown ? NSNull() as Any : ["kind": app.kind.rawValue, "line": RunEndWords.line(app, voice: "Nephis")] as Any,
+        ]
     }
 
     // MARK: - Speed test (render only, no playback)
@@ -918,7 +957,6 @@ final class ExpressiveService {
             if let l = lastLoad[id] { d["lastLoadMs"] = Self.r1(l.ms); d["lastLoadCold"] = l.cold }
             return d
         }
-        let crash = sentinel.current
         // The installed Nephis pack and its studio, for Settings › Voices › Voice test (one testing page).
         let pack: Any = NephisModelPack.modelsDirectory == nil ? NSNull() : [
             "name": NephisModelPack.info?["name"] ?? NSNull(), "made": NephisModelPack.info?["made"] ?? NSNull(),
@@ -931,9 +969,7 @@ final class ExpressiveService {
             "engines": engines,
             "freeMB": free.map { Int($0 / 1_048_576) } ?? NSNull(),
             "memoryWarnings": memoryWarnings,
-            "crashes": ["total": crash.total, "consecutive": crash.consecutive, "disabled": crash.disabled,
-                        "lastContext": crash.lastContext ?? NSNull(),
-                        "lastAt": crash.lastCrashAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()] as [String: Any],
+            "crashes": crashSnapshot(),
             "device": [
                 "thermal": Self.thermalName(),
                 "memoryMB": Self.r1(VoiceLab.memoryFootprintMB()),
@@ -1044,7 +1080,7 @@ enum ExpressiveError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .disabled: return "Experimental engines were turned off after crashing twice. Turn them back on in the Voice Lab."
+        case .disabled: return "Nephis was switched off after crashing twice in a row. Turn her back on in Settings › Voices › Voice test."
         case .released(let why): return "The model was released (\(why))."
         }
     }

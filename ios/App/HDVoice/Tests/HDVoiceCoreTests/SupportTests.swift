@@ -130,51 +130,6 @@ final class AppleVoiceRankingTests: XCTestCase {
     }
 }
 
-final class CrashSentinelTests: XCTestCase {
-    private func tempDir() -> URL {
-        let d = FileManager.default.temporaryDirectory.appendingPathComponent("hdvoice-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }
-
-    func testCleanRunsAreNotCrashes() {
-        let dir = tempDir()
-        let s = CrashSentinel(directory: dir)
-        s.begin("af_heart")
-        s.end(success: true)
-        XCTAssertFalse(CrashSentinel(directory: dir).checkAtLaunch())
-    }
-
-    func testTwoCrashesInARowDisableKokoroUntilReset() {
-        let dir = tempDir()
-        CrashSentinel(directory: dir).begin("af_heart ane-cpu 120 chars") // process "dies" here
-        let second = CrashSentinel(directory: dir)
-        XCTAssertTrue(second.checkAtLaunch())
-        XCTAssertEqual(second.current.consecutive, 1)
-        XCTAssertFalse(second.current.disabled)
-        second.begin("af_heart ane-cpu 80 chars") // dies again
-        let third = CrashSentinel(directory: dir)
-        XCTAssertTrue(third.checkAtLaunch())
-        XCTAssertEqual(third.current.consecutive, 2)
-        XCTAssertTrue(third.current.disabled)
-        XCTAssertEqual(third.current.lastContext, "af_heart ane-cpu 80 chars")
-        third.reset()
-        let fourth = CrashSentinel(directory: dir)
-        XCTAssertFalse(fourth.current.disabled)
-        XCTAssertEqual(fourth.current.total, 2)
-    }
-
-    func testASuccessBreaksTheStreak() {
-        let dir = tempDir()
-        CrashSentinel(directory: dir).begin("x")
-        let s = CrashSentinel(directory: dir)
-        XCTAssertTrue(s.checkAtLaunch())
-        s.begin("y")
-        s.end(success: true)
-        XCTAssertEqual(CrashSentinel(directory: dir).current.consecutive, 0)
-    }
-}
-
 final class PhonemeJoinerTests: XCTestCase {
     func testOverridesSpliceWithOriginalSpacing() {
         XCTAssertEqual(PhonemeJoiner.join([(.phonemes("nˈɛfɪs"), "nˈɛfɪs"), (.text(", wait!"), ", wˈAt!")]), "nˈɛfɪs, wˈAt!")

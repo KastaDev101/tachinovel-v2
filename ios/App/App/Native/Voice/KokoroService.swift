@@ -64,7 +64,7 @@ final class KokoroService: @unchecked Sendable {
         runtime = dir.map { KokoroRuntime(modelsDirectory: $0) }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice", isDirectory: true))
+        sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice", isDirectory: true), name: "Kokoro")
         if let dir, let data = try? Data(contentsOf: dir.appendingPathComponent("model-info.json")),
            let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             modelInfo = info
@@ -75,8 +75,18 @@ final class KokoroService: @unchecked Sendable {
 
     /// Call once at launch (AppDelegate).
     func start() {
-        if sentinel.checkAtLaunch() {
-            log.error("voice: the previous run crashed during Kokoro synthesis (\(self.sentinel.current.lastContext ?? "", privacy: .public))")
+        // How the last run ended (VoiceRun's journal): only a real crash of Kokoro's model counts against it.
+        VoiceRun.shared.watch(sentinel)
+        let check = sentinel.checkAtLaunch(VoiceRun.shared.journal)
+        if check.turnedBackOn { log.info("voice: Kokoro turned back on: a new build of the app") }
+        if let note = check.note {
+            let line = RunEndWords.line(note, voice: "Kokoro")
+            if note.counted {
+                log.error("voice: \(line, privacy: .public) (\(note.context ?? "", privacy: .public))")
+            } else {
+                log.info("voice: \(line, privacy: .public)")
+            }
+            VoiceRun.shared.postVoice(line, counted: note.counted, quiet: note.isQuiet)
         }
         if runtime == nil { status = .unavailable("Kokoro isn't included in this build") }
         else if sentinel.current.disabled { status = .unavailable("Turned off after crashing twice") }
