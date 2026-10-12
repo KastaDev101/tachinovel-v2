@@ -18,6 +18,15 @@ import CoreML
 import Foundation
 
 public actor NephisStudio {
+    /// Optional detail refiner (refiner.json + NephisRefiner): a flow-matching step run `steps` times after the
+    /// blueprint (tachinovel-tts-lab finetune/wsl/fm_refine.py). It puts back the fine detail the blueprint averages
+    /// away, which the vocoder otherwise renders as faint static.
+    public struct RefinerConfig: Decodable, Sendable {
+        public let steps: Int
+        public let temp: Double
+        public let rs: Double
+    }
+
     public struct Config: Decodable, Sendable {
         public let sample_rate: Int
         public let hop: Int
@@ -38,6 +47,7 @@ public actor NephisStudio {
     public struct Report: Sendable {
         public var resampleMs = 0.0
         public var blueprintMs = 0.0
+        public var refinerMs = 0.0
         public var vocoderMs = 0.0
         /// Time spent deliberately resting between vocoder windows to cool the phone (not compute).
         public var restMs = 0.0
@@ -45,7 +55,7 @@ public actor NephisStudio {
         /// The phone was too hot: Mimi's own sound (resampled) was used instead of the studio.
         public var bypassed = false
         public var thermal = 0
-        public var timesRealTime: Double { audioMs / max(1, resampleMs + blueprintMs + vocoderMs + restMs) }
+        public var timesRealTime: Double { audioMs / max(1, resampleMs + blueprintMs + refinerMs + vocoderMs + restMs) }
     }
 
     /// Heat policy (quality first, then speed, then heat): the studio runs at full speed while the phone is cool,
@@ -67,6 +77,8 @@ public actor NephisStudio {
     public nonisolated let config: Config
     private let blueprint: MLModel
     private let vocoder: MLModel
+    private let refiner: MLModel?
+    private let refinerConfig: RefinerConfig?
     public private(set) var lastReport = Report()
 
     /// The studio in `<dir>` (a pack's Models/nephis-studio), or nil when the pack doesn't ship one.
@@ -87,16 +99,24 @@ public actor NephisStudio {
         let name = config.vocoder_model.flatMap { fm.fileExists(atPath: dir.appendingPathComponent("\($0).mlpackage").path)
             || fm.fileExists(atPath: dir.appendingPathComponent("\($0).mlmodelc").path) ? $0 : nil } ?? "NephisVocoder"
         let vc = try MLModel(contentsOf: try await compiled(name, in: dir), configuration: mc)
-        return NephisStudio(config: config, blueprint: bp, vocoder: vc)
+        var rf: MLModel?, rc: RefinerConfig?
+        let rcURL = dir.appendingPathComponent("refiner.json")
+        if fm.fileExists(atPath: rcURL.path) {
+            rc = try JSONDecoder().decode(RefinerConfig.self, from: Data(contentsOf: rcURL))
+            rf = try MLModel(contentsOf: try await compiled("NephisRefiner", in: dir), configuration: mc)
+        }
+        return NephisStudio(config: config, blueprint: bp, vocoder: vc, refiner: rf, refinerConfig: rc)
     }
 
     public var heat = HeatPolicy()
     public func setHeatPolicy(_ p: HeatPolicy) { heat = p }
 
-    init(config: Config, blueprint: MLModel, vocoder: MLModel) {
+    init(config: Config, blueprint: MLModel, vocoder: MLModel, refiner: MLModel? = nil, refinerConfig: RefinerConfig? = nil) {
         self.config = config
         self.blueprint = blueprint
         self.vocoder = vocoder
+        self.refiner = refiner
+        self.refinerConfig = refinerConfig
     }
 
     /// `<name>.mlmodelc` in `dir`, compiling `<name>.mlpackage` once (cached next to it) when only that ships.
@@ -135,8 +155,13 @@ public actor NephisStudio {
         let frames = (pcm.count - hop) / hop + 1
 
         t0 = Date()
-        let mel = try blueprintMel(pcm: pcm, latents: latents, frames: frames)
+        var mel = try blueprintMel(pcm: pcm, latents: latents, frames: frames)
         report.blueprintMs = Date().timeIntervalSince(t0) * 1000
+        if let refiner, let refinerConfig {
+            t0 = Date()
+            mel = try await refine(mel: mel, frames: frames, model: refiner, settings: refinerConfig)
+            report.refinerMs = Date().timeIntervalSince(t0) * 1000
+        }
 
         let out = try await vocode(mel: mel, frames: frames, report: &report)
         report.audioMs = Double(out.count) * 1000 / Double(config.sample_rate)
@@ -145,6 +170,39 @@ public actor NephisStudio {
     }
 
     // MARK: - Steps
+
+    /// Flow matching from seeded noise to her detail (fm_refine.sample): x += v(x, cond, i/steps) / steps; mel = cond + x * rs.
+    private func refine(mel: MLMultiArray, frames: Int, model: MLModel, settings: RefinerConfig) async throws -> MLMultiArray {
+        let bands = config.n_mels
+        let cond = Self.floats(mel)
+        let n = bands * frames
+        guard cond.count >= n else { throw StudioError.badOutput("mel size") }
+        let shape: [NSNumber] = [1, NSNumber(value: bands), NSNumber(value: frames)]
+        let condArray = try MLMultiArray(shape: shape, dataType: .float32)
+        let cp = condArray.dataPointer.assumingMemoryBound(to: Float.self)
+        for i in 0..<n { cp[i] = cond[i] }
+        var rng = SplitMix64(seed: UInt64(frames))  // same text, same detail
+        var x = (0..<n).map { _ in Float(rng.gaussian() * settings.temp) }
+        let steps = max(1, settings.steps)
+        for s in 0..<steps {
+            let xt = try MLMultiArray(shape: shape, dataType: .float32)
+            let xp = xt.dataPointer.assumingMemoryBound(to: Float.self)
+            for i in 0..<n { xp[i] = x[i] }
+            let t = try MLMultiArray(shape: [1], dataType: .float32)
+            t[0] = NSNumber(value: Float(s) / Float(steps))
+            let input = try MLDictionaryFeatureProvider(dictionary: ["x_t": xt, "cond": condArray, "t": t])
+            guard let vArray = try await model.prediction(from: input).featureValue(for: "velocity")?.multiArrayValue else {
+                throw StudioError.badOutput("velocity")
+            }
+            let v = Self.floats(vArray)
+            for i in 0..<n { x[i] += v[i] / Float(steps) }
+        }
+        let out = try MLMultiArray(shape: shape, dataType: .float32)
+        let op = out.dataPointer.assumingMemoryBound(to: Float.self)
+        let rs = Float(settings.rs)
+        for i in 0..<n { op[i] = cond[i] + x[i] * rs }
+        return out
+    }
 
     private func blueprintMel(pcm: [Float], latents: [[Float]], frames: Int) throws -> MLMultiArray {
         let x = try MLMultiArray(shape: [1, 1, NSNumber(value: pcm.count)], dataType: .float32)
@@ -289,5 +347,23 @@ public actor NephisStudio {
         }
         if let err { throw err }
         return Array(UnsafeBufferPointer(start: outBuf.floatChannelData![0], count: Int(outBuf.frameLength)))
+    }
+}
+
+/// Small seeded generator for the refiner's noise (reproducible per sentence length, no global RNG state).
+struct SplitMix64 {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed &+ 0x9E37_79B9_7F4A_7C15 }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+    /// Standard normal (Box-Muller).
+    mutating func gaussian() -> Double {
+        let u1 = max(Double(next() >> 11) / Double(1 << 53), 1e-12), u2 = Double(next() >> 11) / Double(1 << 53)
+        return (-2 * log(u1)).squareRoot() * cos(2 * .pi * u2)
     }
 }
