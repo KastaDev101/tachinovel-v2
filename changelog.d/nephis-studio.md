@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Listen: a pause now holds when the system voice is reading. Paused just as it got going, or on its last word, it used
+  to finish the sentence anyway, and at a chapter's end the next chapter then started by itself.
 - Nephis studio: each sentence is rendered with the end of the one before it, so starts no longer begin from a cold
   edge; the last sound of a sentence (a final "s") is no longer clipped; long paragraphs are rendered in overlapping
   pieces instead of failing past 40 seconds; and if the studio fails for a sentence, her normal sound plays instead of

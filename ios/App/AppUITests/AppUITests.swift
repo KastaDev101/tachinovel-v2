@@ -558,6 +558,11 @@ extension AppUITests {
         try toReader()
         let (pause, play) = (element(label: "Pause"), element(label: "Play"))
         if !pause.exists, !play.exists {
+            // Listen from the top of chapter 1. The reader reopens near the end of the short demo text (where the first
+            // test's narration got to), and from there narration could end by itself during the taps below (2026-10-12:
+            // one sentence of chapter 1 and the few seconds of chapter 2 were left).
+            for _ in 0..<3 { web.swipeDown(velocity: .fast) }
+            Thread.sleep(forTimeInterval: 1) // the scroll's momentum
             // "Listen from here" is in the reader's bottom bar: a tap in the middle of the page shows the bars.
             let listen = element(label: "Listen from here")
             if !(listen.waitForExistence(timeout: 10) && listen.isHittable) {
@@ -566,22 +571,36 @@ extension AppUITests {
             try tapOnce(listen, "\"Listen from here\"", timeout: 30)
         }
         try require(pause, "the mini player's Pause", timeout: 45)
-        for label in ["Pause", "Play", "Pause"] { // ends paused: the short demo chapter can't finish meanwhile
+        // Each tap must show its effect (Pause → Play → Pause), and a pause must hold: on 2026-10-12 the Apple voice,
+        // getting going just then, finished its sentence while paused and the next chapter started by itself.
+        for label in ["Pause", "Play", "Pause"] { // ends paused: the demo chapter can't finish meanwhile
             try tapOnce(element(label: label), "the mini player's \(label)", timeout: 15)
+            let (shown, name) = label == "Pause" ? (play, "Play") : (pause, "Pause")
+            try require(shown, "the mini player's \(name) after \(label)", timeout: 15)
+            if label == "Pause" {
+                Thread.sleep(forTimeInterval: 3)
+                XCTAssertTrue(play.exists && !pause.exists, "narration should stay paused after Pause (it went on by itself)")
+            }
         }
-        try require(play, "Play after Pause", timeout: 15)
         try tap(element(label: "Open the Listen player"), "the reader's Player", until: element(label: "Forward 15 seconds"))
-        // Stay inside the car player's dialog (the reader under it has its own "Next chapter").
-        let car = web.otherElements["Car player"].exists ? web.otherElements["Car player"] : web
         shot("14-car-player")
         for control in ["1.25×", "Play", "Pause", "Back 15 seconds", "Forward 15 seconds"] { // Forward last: it can end the demo chapter
-            try tapOnce(inside(car, label: control), "the car player's \(control)", timeout: 15)
+            try tapOnce(carControl(control), "the car player's \(control)", timeout: 15)
         }
-        let next = inside(car, label: "Next chapter") // only while narration is still on (chapter 3 is locked)
+        let next = carControl("Next chapter") // only while narration is still on (chapter 3 is locked)
         if next.waitForExistence(timeout: 3) { try tapOnce(next, "the car player's Next chapter", timeout: 5) }
-        try tap(inside(car, label: "Close"), "the car player's Close", timeout: 10, untilGone: true)
-        let stop = element(label: "Stop") // gone already if narration ended
-        if stop.waitForExistence(timeout: 5) { try tap(stop, "the mini player's Stop", timeout: 15, untilGone: true) }
+        try tap(carControl("Close"), "the car player's Close", timeout: 10, untilGone: true)
+        // Stop. Next chapter / Forward leave chapter 2 playing, a few seconds long: narration can end by itself before or
+        // while Stop is tapped (2026-10-12: Stop showed, then went away with the chapter's end). Either way the mini
+        // player must go away; a Stop that vanished first isn't tapped (or waited for) again.
+        let stop = element(label: "Stop")
+        for attempt in 1...3 {
+            guard stop.waitForExistence(timeout: 5), let frame = settledFrame(stop, timeout: 5), stop.exists else { break }
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+            if waitUntilGone(stop, timeout: 10) { break }
+            print("UITEST-RETRY tap the mini player's Stop: attempt \(attempt) had no effect")
+        }
+        XCTAssertTrue(waitUntilGone(stop, timeout: 5), "the mini player should go away after Stop (or the chapter's end)")
     }
 
     private func toBackupAndRestore(until row: XCUIElement) throws {
@@ -590,8 +609,14 @@ extension AppUITests {
         try tap(element(label: "Backup & Restore"), "\"Backup & Restore\"", until: row)
     }
 
-    private func inside(_ root: XCUIElement, label: String) -> XCUIElement {
-        root.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+    /// A control of the car player (the Listen player). It covers the reader, but the reader's controls stay in the
+    /// accessibility tree, some with the same label, and the dialog itself isn't an element to search in: the reader's
+    /// disabled "Next chapter" (chapter 3 is locked) matched first, and the tap at its spot hit the player's "Continue
+    /// listening" row, which started narration over (2026-10-12). The player comes after the reader in the page: its
+    /// control is the last enabled match.
+    private func carControl(_ label: String) -> XCUIElement {
+        let query = web.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+        return query.allElementsBoundByIndex.last { $0.exists && $0.isEnabled } ?? query.firstMatch
     }
 
     /// A system sheet's element, without checkPage (under a sheet the page may be hidden from accessibility).

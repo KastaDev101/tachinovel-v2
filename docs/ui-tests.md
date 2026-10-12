@@ -25,10 +25,12 @@ backup it uses), taps the native-only surfaces for real (see also docs/qa.md):
 7. novel page › **Share** › the share sheet closed (its **Close**, or a tap outside: iOS 26 shows it as a
    popover without one);
 8. reader › **Appearance**: the **Brightness** slider and **Keep screen awake** (native calls);
-9. **Listen from here** › mini player **Pause** / **Play** › the reader's **Player** › car player
-   **1.25×**, **Play**, **Pause**, **Back 15 seconds**, **Forward 15 seconds**, **Next chapter** (while
-   narration is still on: the demo's chapter 3 is locked), **Close** › mini player **Stop**; the app must
-   still be running.
+9. **Listen from here** (from the top of chapter 1: the reader reopens near the end of the short demo
+   text) › mini player **Pause** / **Play** / **Pause**, each showing its effect, and a pause must still
+   hold 3 s later › the reader's **Player** › car player **1.25×**, **Play**, **Pause**, **Back 15
+   seconds**, **Forward 15 seconds**, **Next chapter** (while narration is still on: the demo's chapter 3
+   is locked), **Close** › mini player **Stop** (narration may also end by itself there: chapter 2 lasts a
+   few seconds; the mini player must go away either way); the app must still be running.
 
 The job also fails when the app left a crash report (`App-*.ips`) during the run.
 
@@ -77,6 +79,7 @@ failed for reasons that were not the app's:
 |---|---|
 | A tap landed where a row *was*: its hit point was computed during v1's push animation (`{396,646}` while the row ends at x 386 once in place) | Every tap waits until the element stops moving (the same frame twice, 150 ms apart, its center on screen), then taps the element, or that fresh frame's center when XCUITest calls the element not hittable |
 | A tap was swallowed, or a tab tap picked a moving "More" title instead of the tab | Taps that are safe to repeat (navigation, dismissing) check their effect (the next element appears, or the tapped one goes away) and tap again from a fresh snapshot, up to 3 times. Tabs are looked up in the bottom 30 % of the screen |
+| Listen ran out of text mid-test (2026-10-12): it started one sentence before the end of chapter 1 (where the reader reopened); and the car player's "Next chapter" matched the reader's disabled one underneath, whose spot is the player's "Continue listening" row, so narration started chapter 2 over and Stop vanished with its end just before the tap | Listen starts from the top of chapter 1; car player controls are the last enabled match (`carControl`); the final Stop is tapped only while it is there, and the mini player must go away either way. (The same runs found a real bug: a pause during the system voice didn't hold, `HybridSpeechEngine.pause`) |
 | The page went blank right after onboarding appeared: the web view kept only its scroll bars (a WebContent process that ended: the app reloads the page and rebuilds its screen stack, `WebContentRecovery.swift` and `src/ui/native/recovery.ts`) | Once the page has been seen, a web view without any readable element counts as blank: the test keeps a screenshot and the accessibility tree, waits up to 150 s for the reload, and starts the current step over: it skips onboarding again if it reappears, then goes back from the restored screens to the tab bar, where every step starts |
 
 Every workaround prints a `UITEST-…` line. `ci/ios-ui-tests.sh` turns those into warnings on the run,

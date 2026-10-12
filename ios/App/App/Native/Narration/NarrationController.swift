@@ -228,6 +228,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private var coverHint: (key: String, url: String)?
     /// Interruption bookkeeping (calls, Siri, other audio). See InterruptionPolicy.
     private var interruption = InterruptionPolicy()
+    /// Speech: the chapter's last sentence ended while paused (in this `generation`): the pause holds, and resume goes on
+    /// to the next chapter. (The Apple voice speaking directly can finish its last word after a pause.)
+    private var endedWhilePaused: Int?
 
     // Audio mode (PC-narrated files, or chapters prepared on this iPhone)
     enum AudioOrigin: String { case pc, prepared }
@@ -336,6 +339,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
 
     private func resumeInternal() {
         guard status == .paused else { return }
+        if let g = endedWhilePaused {
+            endedWhilePaused = nil
+            // Nothing left to say in this chapter: on to the next one (or the end), as it would have gone unpaused.
+            if g == generation, mode == .speech { return finishChapter() }
+        }
         activateSession()
         if mode == .audio {
             audio.resume(rate: rate)
@@ -960,9 +968,12 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     func speechEngine(didStart id: Int, source: VoiceSource) {
         guard let i = index(of: id), let it = items[safe: i], let ch = chapter else { return }
         current = i
-        sentenceStartedAt = ProcessInfo.processInfo.systemUptime
+        // Started while paused (the Apple voice gets going a moment after it is asked to; a stand-in waits in the player):
+        // the sentence clock starts on resume, and this sentence isn't measured.
+        let pausedNow = status == .paused
+        sentenceStartedAt = pausedNow ? nil : ProcessInfo.processInfo.systemUptime
         sentencePlayed = 0
-        sentenceInterrupted = false
+        sentenceInterrupted = pausedNow
         recordChapterGap()
         let sourceChanged = speechSource != source
         speechSource = source
@@ -993,7 +1004,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
             timeline.record(i, seconds: played - pause(of: it))
         }
         resetSentenceClock()
-        if i >= items.count - 1 { finishChapter() }
+        guard i >= items.count - 1 else { return }
+        // The last sentence ended while paused: the pause holds (it used to start the next chapter by itself, CI
+        // 2026-10-12), and resume goes on from there.
+        if status == .paused { endedWhilePaused = generation; return }
+        finishChapter()
     }
 
     func speechEngine(willSpeak id: Int, range: NSRange) {

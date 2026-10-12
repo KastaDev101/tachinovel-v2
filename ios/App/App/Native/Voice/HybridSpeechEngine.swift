@@ -125,6 +125,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var appleRender: AppleRender?
     /// The Apple sentence is spoken directly by AVSpeechSynthesizer (its voice couldn't render to buffers).
     private var appleDirect = false
+    /// That direct sentence is waiting for resume(): the switch to direct speech came while paused, so it wasn't spoken.
+    private var appleDirectHeld = false
     private var waitItem: DispatchWorkItem?
     /// Nephis's paced render: the next call once the gap after the last one has passed.
     private var paceItem: DispatchWorkItem?
@@ -252,6 +254,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         appleUtterance = nil
         appleRender = nil
         appleDirect = false
+        appleDirectHeld = false
         segments.removeAll()
         paused = false
         stopOutput()
@@ -266,7 +269,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             player.pause()
             pauseOutput()
         }
-        if appleSegment != nil, appleDirect, synth.isSpeaking { synth.pauseSpeaking(at: .word) }
+        // At once, not at the end of the word: on a sentence's last word that end is the sentence's end, and it went on.
+        if appleSegment != nil, appleDirect, synth.isSpeaking { synth.pauseSpeaking(at: .immediate) }
     }
 
     func resume() {
@@ -278,7 +282,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         } else if let i = appleSegment, !appleDirect {
             if startOutput() { player.play() } else { speakApple(i, reason: lastFallback ?? .queueDry, restart: true) }
         } else if let i = appleSegment {
-            if !(synth.isPaused && synth.continueSpeaking()) {
+            if appleDirectHeld, let u = appleUtterance {
+                // It went direct while paused and hasn't said a word yet.
+                appleDirectHeld = false
+                synth.speak(u)
+            } else if !(synth.isPaused && synth.continueSpeaking()) {
                 // An interruption can end the utterance: say this sentence again.
                 speakApple(i, reason: lastFallback ?? .queueDry, restart: true)
             }
@@ -986,8 +994,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard let buf = makeBuffer(frames), startOutput() else { return speakApple(i, reason: reason, restart: false) }
         buffers[i] = buf
         schedule(i)
-        // Paused meanwhile: it waits in the player, and resume() starts it.
-        if !paused, !player.isPlaying { player.play() }
+        // Paused meanwhile: it waits in the player, and resume() starts it. (The node can still be "playing" from the
+        // sentence before, which pause() left alone when nothing was queued: it would play this one at once.)
+        if paused { player.pause() } else if !player.isPlaying { player.play() }
         began(i, .kokoro)
     }
 
@@ -1004,6 +1013,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         appleUtterance = u
         appleRender = nil
         appleDirect = false
+        appleDirectHeld = false
         if restart, synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
         guard startOutput() else { return speakAppleDirectly(i, utterance: u) }
         renderAppleIntoGraph(i, utterance: u, pause: seg.pauseAfter)
@@ -1077,7 +1087,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
         if !render.started {
             render.started = true
-            if !paused, !player.isPlaying { player.play() }
+            // Paused meanwhile: it waits in the player (see playStandIn), and resume() starts it.
+            if paused { player.pause() } else if !player.isPlaying { player.play() }
             began(i, .apple)
         }
     }
@@ -1097,6 +1108,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         u.postUtteranceDelay = segments[i].pauseAfter
         u.volume = Float(min(1, volume))
         if queued.isEmpty { pauseOutput() } // no Kokoro audio pending: let the graph sleep
+        // Paused during the wait for its buffers: not a word until resume() (CI 2026-10-12: it spoke while paused, and
+        // its end started the next chapter).
+        if paused {
+            appleDirectHeld = true
+            return
+        }
         synth.speak(u)
     }
 
@@ -1106,6 +1123,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         appleUtterance = nil
         appleRender = nil
         appleDirect = false
+        appleDirectHeld = false
         scheduler?.finished(i)
         let g = gen
         delegate?.speechEngine(didFinish: segments[i].id)
@@ -1136,6 +1154,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         onMain {
             guard !self.manualOutput, self.appleDirect, utterance === self.appleUtterance, let i = self.appleSegment else { return }
+            // Paused before the synthesizer got going (it starts a moment after speak(), and a pause then can miss it).
+            if self.paused { self.synth.pauseSpeaking(at: .immediate) }
             self.began(i, .apple)
         }
     }
