@@ -13,6 +13,7 @@
 //
 
 @preconcurrency import Capacitor
+import OSLog
 import UIKit
 import UniformTypeIdentifiers
 import WebKit
@@ -53,6 +54,24 @@ enum DiagnosticsFiles {
         (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
     }
 
+    /// The app's own os_log lines (Logger, subsystem app.tachinovel) from the last `minutes`: the native voice engine's
+    /// reasons ("gave unusable audio", studio skipped, memory holds) never reach logs/app.log, so a read that played
+    /// nothing without crashing is explained in the folder too (Kasta 2026-10-12). Nil if the store can't be read.
+    static func nativeLog(minutes: Double = 60) -> Data? {
+        guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return nil }
+        let since = store.position(date: Date().addingTimeInterval(-minutes * 60))
+        let mine = NSPredicate(format: "subsystem == %@", "app.tachinovel")
+        guard let entries = try? store.getEntries(at: since, matching: mine) else { return nil }
+        let clock = DateFormatter()
+        clock.dateFormat = "HH:mm:ss.SSS"
+        var text = ""
+        for case let entry as OSLogEntryLog in entries {
+            text += "\(clock.string(from: entry.date)) [\(entry.category)] \(entry.composedMessage)\n"
+        }
+        guard !text.isEmpty else { return nil }
+        return Data(Data(text.utf8).suffix(logTailBytes))
+    }
+
     /// Mirror the device's logs/ into `root` (logs as tails, other files when new or changed), plus extras.
     static func mirror(root: URL, local: URL, extras: [String: Data]) throws {
         let accessing = root.startAccessingSecurityScopedResource()
@@ -63,6 +82,7 @@ enum DiagnosticsFiles {
                 try write(data, to: root.appendingPathComponent(name))
             }
         }
+        if let native = nativeLog() { try write(native, to: root.appendingPathComponent("native.log")) }
         // Everything else under logs/ (MetricKit reports, …): small files, copied when new or changed.
         let fm = FileManager.default
         if let walker = fm.enumerator(at: logs, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
@@ -90,6 +110,7 @@ enum DiagnosticsFiles {
         if let log = tail(local.appendingPathComponent("logs/app.log"), max: reportLogBytes) {
             try write(log, to: dir.appendingPathComponent("app-log-tail.txt"))
         }
+        if let native = nativeLog(minutes: 30) { try write(native, to: dir.appendingPathComponent("native-log.txt")) }
     }
 }
 
