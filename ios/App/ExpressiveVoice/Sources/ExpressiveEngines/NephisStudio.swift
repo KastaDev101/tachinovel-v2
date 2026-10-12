@@ -25,6 +25,8 @@ public actor NephisStudio {
         public let steps: Int
         public let temp: Double
         public let rs: Double
+        /// Per-band noise scale (one per mel band), fitted on her held-out audio so the drawn detail matches hers.
+        public let bands: [Double]?
     }
 
     public struct Config: Decodable, Sendable {
@@ -183,6 +185,12 @@ public actor NephisStudio {
         for i in 0..<n { cp[i] = cond[i] }
         var rng = SplitMix64(seed: UInt64(frames))  // same text, same detail
         var x = (0..<n).map { _ in Float(rng.gaussian() * settings.temp) }
+        if let bands = settings.bands, bands.count == bandsCount(bands) {
+            for b in 0..<min(bands.count, config.n_mels) {
+                let scale = Float(bands[b])
+                for f in 0..<frames { x[b * frames + f] *= scale }
+            }
+        }
         let steps = max(1, settings.steps)
         for s in 0..<steps {
             let xt = try MLMultiArray(shape: shape, dataType: .float32)
@@ -203,6 +211,8 @@ public actor NephisStudio {
         for i in 0..<n { op[i] = cond[i] + x[i] * rs }
         return out
     }
+
+    private func bandsCount(_ bands: [Double]) -> Int { config.n_mels == bands.count ? bands.count : -1 }
 
     private func blueprintMel(pcm: [Float], latents: [[Float]], frames: Int) throws -> MLMultiArray {
         let x = try MLMultiArray(shape: [1, 1, NSNumber(value: pcm.count)], dataType: .float32)
