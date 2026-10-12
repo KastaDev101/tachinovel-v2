@@ -134,49 +134,139 @@ public actor NephisStudio {
         return compiledURL
     }
 
-    /// One decoded call: Mimi's 24 kHz audio and the latents it was decoded from -> her 44.1 kHz audio.
-    /// `hurry`: playback has little buffered; skip the studio for this call (Mimi's sound at 44.1 kHz).
-    public func render(pcm24: [Float], latents: [[Float]], hurry: Bool = false) async throws -> [Float] {
+    /// Left context carried from the previous call of the same read: its last audio (44.1 kHz, the blueprint's input)
+    /// and latents. A call's start is then rendered with the audio before it, like the PC's one-piece render, instead
+    /// of from a cold edge (code review 2026-10-12: cold call edges = onset artifacts). Cleared when a read restarts.
+    private var carryPCM: [Float] = []
+    private var carryLatents: [[Float]] = []
+    /// Latents of context carried across calls: 0.8 s at 12.5 Hz, more than the blueprint's ~0.65 s reach.
+    static let carryLatentCount = 10
+    /// Longest stretch (mel frames) sent to the blueprint/refiner at once (their inputs stop at 3446 frames, ~40 s);
+    /// longer calls go in overlapping segments, keeping only each segment's middle.
+    static let segmentFrames = 2048
+    static let segmentContext = 64
+
+    /// One decoded call: Mimi's 24 kHz audio and the latents it was decoded from -> her 44.1 kHz audio, exactly
+    /// `pcm24.count * rate / 24000` samples long. `hurry`: playback has little buffered; skip the studio for this call
+    /// (Mimi's sound at 44.1 kHz). `continues`: this call follows the previous one in the same read (its audio is the
+    /// left context); false starts a new read.
+    public func render(pcm24: [Float], latents: [[Float]], hurry: Bool = false, continues: Bool = false) async throws -> [Float] {
         guard !pcm24.isEmpty, !latents.isEmpty else { return [] }
+        if !continues { carryPCM = []; carryLatents = [] }
         var report = Report()
         let thermal = ProcessInfo.processInfo.thermalState
         report.thermal = thermal.rawValue
         var t0 = Date()
-        // The model's own 11.5 kHz low-pass makes the result independent of this resampler's filter.
-        let pcm = try Self.resample(pcm24, from: Self.inputRate, to: config.sample_rate)
+        let target = Int((Double(pcm24.count) * Double(config.sample_rate) / Double(Self.inputRate)).rounded())
+        // 50 ms of silence past the end, so the resampler's filter tail and the mel framing cover the last real sample
+        // (a cut final "s" otherwise). The model's own 11.5 kHz low-pass makes the result independent of the resampler.
+        let padded = try Self.resample(pcm24 + [Float](repeating: 0, count: Self.inputRate / 20), from: Self.inputRate, to: config.sample_rate)
+        let own = Self.fit(padded, target)
         report.resampleMs = Date().timeIntervalSince(t0) * 1000
         let hop = config.hop
-        if hurry || thermal.rawValue >= heat.bypassFrom.rawValue || pcm.count < 2048 {
+        defer { remember(own: own, latents: latents) }
+        if hurry || thermal.rawValue >= heat.bypassFrom.rawValue || own.count < 2048 {
             report.bypassed = true
-            report.audioMs = Double(pcm.count) * 1000 / Double(config.sample_rate)
+            report.audioMs = Double(own.count) * 1000 / Double(config.sample_rate)
             lastReport = report
-            return pcm
+            return own
         }
 
+        // The carried context in front; its samples are dropped from the output again.
+        let pcm = carryPCM + padded
+        let lead = carryPCM.count
+        let latentsAll = carryLatents + latents
         // Mel frame count exactly as the model computes it (reflect pad (n_fft - hop) / 2 each side, n_fft 2048).
         let frames = (pcm.count - hop) / hop + 1
-
-        t0 = Date()
-        var mel = try blueprintMel(pcm: pcm, latents: latents, frames: frames)
-        report.blueprintMs = Date().timeIntervalSince(t0) * 1000
-        if let refiner, let refinerConfig {
-            t0 = Date()
-            mel = try await refine(mel: mel, frames: frames, model: refiner, settings: refinerConfig)
-            report.refinerMs = Date().timeIntervalSince(t0) * 1000
+        // The latents cover the real audio (carry + this call), not the 50 ms of padding: map them over those frames
+        // and hold the last one over the padding frames.
+        let realFrames = max(1, min(frames, (lead + target - hop) / hop + 1))
+        let zReal = Self.latentsPerFrame(latentsAll, frames: realFrames, dims: config.z_dims)
+        var zf = [Float](repeating: 0, count: config.z_dims * frames)
+        for d in 0..<config.z_dims {
+            for f in 0..<frames { zf[d * frames + f] = zReal[d * realFrames + min(f, realFrames - 1)] }
         }
 
-        let out = try await vocode(mel: mel, frames: frames, report: &report)
-        report.audioMs = Double(out.count) * 1000 / Double(config.sample_rate)
+        t0 = Date()
+        let mel = try await melSegmented(pcm: pcm, zf: zf, frames: frames, report: &report)
+        report.blueprintMs = Date().timeIntervalSince(t0) * 1000 - report.refinerMs
+
+        let out = try await vocode(melValues: mel, frames: frames, report: &report)
+        let mine = Self.fit(Array(out.dropFirst(lead)), target)
+        report.audioMs = Double(mine.count) * 1000 / Double(config.sample_rate)
         lastReport = report
-        return out
+        return mine
+    }
+
+    /// The fallback when the studio fails for a call: Mimi's own sound at the studio's rate, so the stream keeps one
+    /// sample rate and nothing is dropped. Linear interpolation if even the resampler fails.
+    public nonisolated func plainAudio(pcm24: [Float]) -> [Float] {
+        let rate = config.sample_rate
+        let target = Int((Double(pcm24.count) * Double(rate) / Double(Self.inputRate)).rounded())
+        if let r = try? Self.resample(pcm24 + [Float](repeating: 0, count: Self.inputRate / 20), from: Self.inputRate, to: rate) {
+            return Self.fit(r, target)
+        }
+        guard pcm24.count > 1 else { return pcm24 }
+        let step = Double(pcm24.count - 1) / Double(max(1, target - 1))
+        return (0..<target).map { i in
+            let x = Double(i) * step, i0 = Int(x), i1 = min(i0 + 1, pcm24.count - 1), t = Float(x - Double(i0))
+            return pcm24[i0] * (1 - t) + pcm24[i1] * t
+        }
+    }
+
+    private func remember(own: [Float], latents: [[Float]]) {
+        let keep = min(Self.carryLatentCount, latents.count)
+        let perLatent = own.count / max(1, latents.count)
+        carryLatents = Array(latents.suffix(keep))
+        carryPCM = Array(own.suffix(keep * perLatent))
+    }
+
+    /// `x` cut or zero-padded to exactly `n` samples.
+    static func fit(_ x: [Float], _ n: Int) -> [Float] {
+        x.count >= n ? Array(x.prefix(n)) : x + [Float](repeating: 0, count: n - x.count)
     }
 
     // MARK: - Steps
 
+    /// Blueprint (+ refiner) for the whole call, in overlapping segments when it is longer than the models take at
+    /// once. Returns her log-mel, [bands][frames] row-major.
+    private func melSegmented(pcm: [Float], zf: [Float], frames: Int, report: inout Report) async throws -> [Float] {
+        let bands = config.n_mels, dims = config.z_dims, hop = config.hop
+        let seg = Self.segmentFrames, ctx = Self.segmentContext
+        if frames <= seg + 2 * ctx { return try await melPiece(pcm: pcm, zf: zf, frames: frames, report: &report) }
+        var mel = [Float](repeating: 0, count: bands * frames)
+        var s = 0
+        while s < frames {
+            let f0 = max(0, s - ctx), f1 = min(frames, s + seg + ctx), n = f1 - f0
+            let piecePCM = Array(pcm[(f0 * hop)..<min(pcm.count, f1 * hop)])
+            let pf = min(n, (piecePCM.count - hop) / hop + 1)
+            var pieceZ = [Float](repeating: 0, count: dims * pf)
+            for d in 0..<dims {
+                for f in 0..<pf { pieceZ[d * pf + f] = zf[d * frames + f0 + f] }
+            }
+            let m = try await melPiece(pcm: piecePCM, zf: pieceZ, frames: pf, report: &report)
+            let keep = min(seg, frames - s)
+            for b in 0..<bands {
+                for f in 0..<keep where s - f0 + f < pf { mel[b * frames + s + f] = m[b * pf + s - f0 + f] }
+            }
+            s += seg
+        }
+        return mel
+    }
+
+    private func melPiece(pcm: [Float], zf: [Float], frames: Int, report: inout Report) async throws -> [Float] {
+        var mel = try blueprintMel(pcm: pcm, zf: zf, frames: frames)
+        if let refiner, let refinerConfig {
+            let t0 = Date()
+            mel = try await refine(cond: mel, frames: frames, model: refiner, settings: refinerConfig)
+            report.refinerMs += Date().timeIntervalSince(t0) * 1000
+        }
+        return mel
+    }
+
     /// Flow matching from seeded noise to her detail (fm_refine.sample): x += v(x, cond, i/steps) / steps; mel = cond + x * rs.
-    private func refine(mel: MLMultiArray, frames: Int, model: MLModel, settings: RefinerConfig) async throws -> MLMultiArray {
+    private func refine(cond: [Float], frames: Int, model: MLModel, settings: RefinerConfig) async throws -> [Float] {
         let bands = config.n_mels
-        let cond = Self.floats(mel)
         let n = bands * frames
         guard cond.count >= n else { throw StudioError.badOutput("mel size") }
         let shape: [NSNumber] = [1, NSNumber(value: bands), NSNumber(value: frames)]
@@ -184,19 +274,18 @@ public actor NephisStudio {
         let cp = condArray.dataPointer.assumingMemoryBound(to: Float.self)
         for i in 0..<n { cp[i] = cond[i] }
         var rng = SplitMix64(seed: UInt64(frames))  // same text, same detail
-        var x = (0..<n).map { _ in Float(rng.gaussian() * settings.temp) }
-        if let bands = settings.bands, bands.count == bandsCount(bands) {
-            for b in 0..<min(bands.count, config.n_mels) {
-                let scale = Float(bands[b])
+        let xt = try MLMultiArray(shape: shape, dataType: .float32)
+        let x = xt.dataPointer.assumingMemoryBound(to: Float.self)
+        for i in 0..<n { x[i] = Float(rng.gaussian() * settings.temp) }
+        if let scales = settings.bands, scales.count == bands {
+            for b in 0..<bands {
+                let scale = Float(scales[b])
                 for f in 0..<frames { x[b * frames + f] *= scale }
             }
         }
+        let t = try MLMultiArray(shape: [1], dataType: .float32)
         let steps = max(1, settings.steps)
         for s in 0..<steps {
-            let xt = try MLMultiArray(shape: shape, dataType: .float32)
-            let xp = xt.dataPointer.assumingMemoryBound(to: Float.self)
-            for i in 0..<n { xp[i] = x[i] }
-            let t = try MLMultiArray(shape: [1], dataType: .float32)
             t[0] = NSNumber(value: Float(s) / Float(steps))
             let input = try MLDictionaryFeatureProvider(dictionary: ["x_t": xt, "cond": condArray, "t": t])
             guard let vArray = try await model.prediction(from: input).featureValue(for: "velocity")?.multiArrayValue else {
@@ -205,36 +294,39 @@ public actor NephisStudio {
             let v = Self.floats(vArray)
             for i in 0..<n { x[i] += v[i] / Float(steps) }
         }
-        let out = try MLMultiArray(shape: shape, dataType: .float32)
-        let op = out.dataPointer.assumingMemoryBound(to: Float.self)
         let rs = Float(settings.rs)
-        for i in 0..<n { op[i] = cond[i] + x[i] * rs }
-        return out
+        return (0..<n).map { cond[$0] + x[$0] * rs }
     }
 
-    private func bandsCount(_ bands: [Double]) -> Int { config.n_mels == bands.count ? bands.count : -1 }
-
-    private func blueprintMel(pcm: [Float], latents: [[Float]], frames: Int) throws -> MLMultiArray {
+    /// The blueprint on one stretch: PCM + the sketch per mel frame ([dims][frames]) -> her log-mel [bands][frames].
+    private func blueprintMel(pcm: [Float], zf: [Float], frames: Int) throws -> [Float] {
         let x = try MLMultiArray(shape: [1, 1, NSNumber(value: pcm.count)], dataType: .float32)
         pcm.withUnsafeBufferPointer { src in
             x.dataPointer.assumingMemoryBound(to: Float.self).update(from: src.baseAddress!, count: pcm.count)
         }
-        let zf = Self.latentsPerFrame(latents, frames: frames, dims: config.z_dims)
         let z = try MLMultiArray(shape: [1, NSNumber(value: config.z_dims), NSNumber(value: frames)], dataType: .float32)
         zf.withUnsafeBufferPointer { src in
-            z.dataPointer.assumingMemoryBound(to: Float.self).update(from: src.baseAddress!, count: zf.count)
+            z.dataPointer.assumingMemoryBound(to: Float.self).update(from: src.baseAddress!, count: min(zf.count, config.z_dims * frames))
         }
         let input = try MLDictionaryFeatureProvider(dictionary: ["pcm44": x, "z_frames": z])
         guard let mel = try blueprint.prediction(from: input).featureValue(for: "mel")?.multiArrayValue else {
             throw StudioError.badOutput("mel")
         }
-        return mel
+        // The model's own frame count may differ by one from ours: re-pack to exactly [bands][frames].
+        let m = Self.floats(mel), bands = config.n_mels, mf = m.count / bands
+        guard mf == frames else {
+            var out = [Float](repeating: 0, count: bands * frames)
+            for b in 0..<bands {
+                for f in 0..<frames { out[b * frames + f] = m[b * mf + min(f, mf - 1)] }
+            }
+            return out
+        }
+        return m
     }
 
-    private func vocode(mel: MLMultiArray, frames: Int, report: inout Report) async throws -> [Float] {
+    private func vocode(melValues: [Float], frames: Int, report: inout Report) async throws -> [Float] {
         let bands = config.n_mels, chunk = config.chunk_frames, ctx = config.context_frames, win = config.window_frames
-        let melValues = Self.floats(mel)  // [bands][frames], row-major
-        let stride = melValues.count / bands
+        let stride = melValues.count / bands  // [bands][frames], row-major
         var out: [Float] = []
         out.reserveCapacity(frames * config.hop)
         var start = 0

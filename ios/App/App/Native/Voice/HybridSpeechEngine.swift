@@ -388,8 +388,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
-                // Her studio (when on) only while playback has a cushion; short of audio, speed comes first.
-                line.studio = bufferedAhead() >= Self.studioAhead
+                // Her studio (when on): always before playback starts (the first lines get it too), then only while
+                // playback has a cushion; short of audio, speed comes first.
+                line.studio = !player.isPlaying || bufferedAhead() >= Self.studioAhead
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }

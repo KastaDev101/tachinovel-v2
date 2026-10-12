@@ -326,7 +326,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
                 let r = await studio.lastReport
                 let placement = await NephisStudio.placement(in: dir)
                 call.resolve(["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
-                              "blueprintMs": r.blueprintMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
+                              "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
                               "timesRealTime": r.timesRealTime, "placement": placement,
                               "thermalBefore": thermalBefore, "thermalAfter": ProcessInfo.processInfo.thermalState.rawValue,
                               "enabled": UserDefaults.standard.bool(forKey: "nephisStudio")])

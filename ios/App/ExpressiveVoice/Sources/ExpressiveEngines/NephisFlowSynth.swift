@@ -353,7 +353,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             let d0 = Date()
             if p.reset { try await decoder.reset() }
             var samples = try await decoder.decode(p.stream)
-            if let studio { samples = try await studio.render(pcm24: samples, latents: p.stream, hurry: p.hurry) }  // her 44.1 kHz sound
+            if let studio {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
+                do { samples = try await studio.render(pcm24: samples, latents: p.stream, hurry: p.hurry, continues: !p.reset) } catch {
+                    samples = studio.plainAudio(pcm24: samples)
+                }
+            }
             return (samples, Date().timeIntervalSince(d0) * 1000)
         }
         decodes = Task { _ = try? await job.value }
