@@ -25,8 +25,10 @@ interface ExpressiveVoicePlugin {
   unload(): Promise<Obj>;
   resetCrashes(): Promise<Obj>;
   resetStats(): Promise<Obj>;
-  recordStart(): Promise<{ recording: boolean }>;
-  recordStop(): Promise<{ saved: boolean; bytes: number }>;
+  /** float32: a 32-bit float WAV (the exact samples that played) instead of 16-bit. */
+  recordStart(o?: { float32?: boolean }): Promise<{ recording: boolean; float32?: boolean }>;
+  /** sampleRate: the rate of the read the WAV holds (24 kHz, or 44.1 kHz with her studio); absent in older builds. */
+  recordStop(): Promise<{ saved: boolean; bytes: number; sampleRate?: number; float32?: boolean }>;
   shareRecording(): Promise<void>;
   importVoice(): Promise<Obj>;
   selectVoice(o: { id: string | null }): Promise<Obj>;

@@ -336,12 +336,15 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load.
+    /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load. A read
+    /// plays at one rate (SessionRate), so a Listen read in progress starts its sentence again at the new one (as a
+    /// voice change does); otherwise its next calls would come at the other rate and go to Kokoro.
     @objc func studioEnable(_ call: CAPPluginCall) {
         let on = call.getBool("on") ?? false
         DispatchQueue.main.async {
             UserDefaults.standard.set(on, forKey: "nephisStudio")
             ExpressiveService.shared.reloadNephisModel()
+            NotificationCenter.default.post(name: VoiceSettings.changed, object: nil)
             call.resolve(["enabled": on])
         }
     }
@@ -359,19 +362,28 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("voice-test.wav")
     }
 
+    /// The running recording is 32-bit float (main thread, like the recording itself).
+    private var recordingFloat32 = false
+
+    /// {float32?}: 16-bit WAV, or 32-bit float (the exact samples that played, for measuring on the PC).
     @objc func recordStart(_ call: CAPPluginCall) {
+        let float32 = call.getBool("float32") ?? false
         DispatchQueue.main.async {
             guard let url = Self.recordingURL else { return call.resolve(["recording": false]) }
-            NarrationController.shared.speechEngine.startRecording(to: url)
-            call.resolve(["recording": true])
+            self.recordingFloat32 = float32
+            NarrationController.shared.speechEngine.startRecording(to: url, float32: float32)
+            call.resolve(["recording": true, "float32": float32])
         }
     }
 
+    /// {saved, bytes, sampleRate, float32}: the WAV is at the rate of the read it holds (a read at another rate starts it
+    /// again: HybridSpeechEngine.useRate).
     @objc func recordStop(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            let url = NarrationController.shared.speechEngine.stopRecording()
+            let engine = NarrationController.shared.speechEngine
+            let url = engine.stopRecording()
             let bytes = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size] as? NSNumber }?.intValue ?? 0
-            call.resolve(["saved": url != nil && bytes > 44, "bytes": bytes])
+            call.resolve(["saved": url != nil && bytes > 44, "bytes": bytes, "sampleRate": engine.sessionRate, "float32": self.recordingFloat32])
         }
     }
 

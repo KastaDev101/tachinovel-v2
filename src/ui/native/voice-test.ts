@@ -12,9 +12,14 @@
  *     - breaks: times the read had to wait for the voice, and for how long (the goal is none: an audiobook never stops);
  *     - other voice: sentences another voice read (the goal is none);
  *     - speed: × real time of the voice's work (the goal is 8×), stage by stage for Nephis;
+ *     - her studio, call by call (flow.studio, flow.callLog): which calls it rendered, why it stepped aside for the
+ *       others, at what rate and in which mood, so the recording can be lined up with it;
+ *     - endings (flow.endings): her pieces still audible when the voice stopped, a cut-off (the goal is under 2%), and
+ *       the endings her studio's reads let fade out instead;
  *     - phone heat at the start and the end, crashes, memory; the app, the device and the pack;
  *     - the listener's own notes (noises, wrong words), typed into the report;
- *     - a recording of what played (after the volume stage and limiter), shared to the PC to compare with its renders.
+ *     - a recording of what played (after the volume stage and limiter, at the read's rate; 32-bit float when her
+ *       studio reads, else 16-bit as before), shared to the PC to compare with its renders.
  * The passage is long paragraphs (Pocket's ~50-token seams), dialogue, a pause after "…", a system line and numbers.
  */
 import { callCore } from '../capacitor-client.ts';
@@ -25,6 +30,8 @@ import { esc, panel, toast } from './voices-ui.ts';
 
 type Obj = Record<string, unknown>;
 type Line = { ok: boolean; text: string };
+/** ExpressiveVoice.recordStop's answer (sampleRate and float32 from builds that report them). */
+type Recording = { saved: boolean; bytes: number; sampleRate?: number; float32?: boolean };
 
 export const TEST_PASSAGE = [
   'Chapter 7 - The Lantern Road',
@@ -55,12 +62,55 @@ export function summarize(r: Obj): Line[] {
     { ok: other === 0, text: other === 0 ? 'One voice from start to end.' : `Another voice read ${other} sentence${other === 1 ? '' : 's'}.` },
   ];
   if (speed > 0) lines.push({ ok: speed >= 8, text: `Speed: ${speed.toFixed(1)}× real time (goal 8×).` });
+  lines.push(...studioCallLines(flow));
   if (Number.isFinite(start)) lines.push({ ok: start <= 2000, text: `Started ${(start / 1000).toFixed(1)} s after the tap.` });
   lines.push({ ok: crashes === 0, text: crashes === 0 ? 'No crashes.' : `${crashes} crash${crashes === 1 ? '' : 'es'} during the test.` });
   const word = (v: unknown): string => (typeof v === 'string' ? v : '?');
   const heat = `${word(r.thermalStart)} → ${word(r.thermalEnd)}`;
   lines.push({ ok: r.thermalEnd === 'nominal' || r.thermalEnd === 'fair', text: `Phone heat: ${heat}.` });
   if (r.ended !== true) lines.push({ ok: false, text: 'The test was stopped before the end.' });
+  return lines;
+}
+
+/** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
+const STUDIO_REASON: Record<string, string> = { hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty' };
+
+/**
+ * Her studio and her endings in plain words (native's flow.studio and flow.endings; nothing in builds that don't
+ * report them): how many of her calls her studio rendered and why it stepped aside for the others; how many of her
+ * pieces were cut off while still audible (the goal is under 2%) and how many endings were let fade out instead.
+ */
+export function studioCallLines(flow: Obj): Line[] {
+  const lines: Line[] = [];
+  const studio = (flow.studio as Obj | undefined) ?? {};
+  const calls = Number(studio.calls ?? 0);
+  if (calls > 0) {
+    const used = Number(studio.used ?? 0);
+    const why = Object.entries((studio.reasons as Obj | undefined) ?? {})
+      .filter(([, n]) => Number(n) > 0)
+      .map(([reason, n]) => `${Number(n)} ${STUDIO_REASON[reason] ?? reason}`)
+      .join(', ');
+    lines.push(
+      used >= calls
+        ? { ok: true, text: `Her studio rendered all ${calls} of her calls.` }
+        : { ok: false, text: `Her studio rendered ${used} of ${calls} calls; ${calls - used} were her plain sound${why ? ` (${why})` : ''}.` },
+    );
+  }
+  const endings = (flow.endings as Obj | undefined) ?? {};
+  const pieces = Number(endings.pieces ?? 0);
+  if (pieces > 0) {
+    const cut = Number(endings.endedAudible ?? 0);
+    const pct = (cut / pieces) * 100;
+    lines.push({
+      ok: pct < 2,
+      text:
+        cut === 0
+          ? `Endings: none of ${pieces} was cut off.`
+          : `Endings: ${cut} of ${pieces} ${cut === 1 ? 'was' : 'were'} cut off while still audible (${pct.toFixed(1)}%; goal under 2%).`,
+    });
+    const faded = Number(endings.tailsExtended ?? 0);
+    if (faded > 0) lines.push({ ok: true, text: `${faded} ending${faded === 1 ? ' was' : 's were'} let fade out instead of being cut.` });
+  }
   return lines;
 }
 
@@ -86,6 +136,16 @@ export function studioKnown(pack: unknown, remembered: StudioKnown): StudioKnown
   if (pack === null) return { has: false, on: null };
   const p = (pack && typeof pack === 'object' ? pack : {}) as PackInfo;
   return { has: typeof p.studio === 'boolean' ? p.studio : remembered.has, on: typeof p.studioOn === 'boolean' ? p.studioOn : remembered.on };
+}
+
+/**
+ * The read goes through her studio, as native decides it (SessionRate.forRead): Nephis reads with Pocket TTS (Listen's
+ * delivery) and her pack's studio is known to be there and on. Unknown counts as no: only her studio's reads are
+ * recorded as 32-bit float; every other read (v4.2 Nephis, Kokoro, Apple voices) stays the 16-bit WAV it always was.
+ */
+export function studioReads(k: StudioKnown, delivery: unknown): boolean {
+  const d = (delivery && typeof delivery === 'object' ? delivery : {}) as { listenEngine?: unknown; pocketVoice?: unknown };
+  return k.has === true && k.on === true && d.listenEngine === 'pocket-tts' && d.pocketVoice === 'nephis';
 }
 
 /** The status block at the top, one plain line each. */
@@ -354,7 +414,10 @@ export function openVoiceTest(): void {
     const thermalStart = ((before.device as Obj | undefined) ?? {}).thermal ?? null;
     const settings = await Narration.voiceSettings().catch(() => null);
     recorded = false;
-    await ExpressiveVoice.recordStart().catch(() => undefined);
+    // Her studio's reads: 32-bit float, the exact samples that played, to measure against the PC's renders (2 min ≈
+    // 21 MB at 44.1 kHz). Every other read: the 16-bit WAV as before (any PC tool opens it; half the size).
+    const float32 = STUDIO && studioReads(known, (settings as { delivery?: unknown } | null)?.delivery);
+    await ExpressiveVoice.recordStart(float32 ? { float32: true } : undefined).catch(() => undefined);
     let failed = '';
     listening = true;
     try {
@@ -381,7 +444,7 @@ export function openVoiceTest(): void {
     const ended = state.status === 'ended';
     if (!ended) await Narration.stop().catch(() => undefined);
     for (const h of handles) void h.remove();
-    const rec = await ExpressiveVoice.recordStop().catch(() => ({ saved: false, bytes: 0 }));
+    const rec: Recording = await ExpressiveVoice.recordStop().catch((): Recording => ({ saved: false, bytes: 0 }));
     recorded = rec.saved;
     const after = await ExpressiveVoice.status().catch((): Obj => ({}));
     if (Object.keys(after).length) {
@@ -407,6 +470,8 @@ export function openVoiceTest(): void {
       listen: ((after.flow as Obj | undefined) ?? {}).listen ?? null,
       error: state.status === 'error' ? (state.error ?? 'error') : null,
       recordingBytes: rec.bytes,
+      recordingRate: rec.sampleRate ?? null,
+      recordingFloat32: rec.float32 ?? null,
     };
     progress = failed || (ended ? 'Done. Copy the report below.' : 'Stopped.');
   };

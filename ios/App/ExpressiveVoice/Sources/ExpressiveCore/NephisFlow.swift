@@ -564,3 +564,249 @@ public enum NephisFlow {
         return abs(12 * log2(p / q)) + 0.3 * abs(speechLevel(take) - reference.level)
     }
 }
+
+// MARK: - Studio reads (NephisStudio's pure parts; studio audit 2026-10-12)
+
+extension NephisFlow.Projection {
+    /// Latents at Mimi's own scale (latent × std + mean). The read's stream holds Pocket's normalized latents (Mimi
+    /// denormalizes inside its own model; `condition` does the same before projecting), and the studio's blueprint was
+    /// trained on denormalized ones (tachinovel-tts-lab gta_dump.py: pred × emb_std + emb_mean).
+    public func denormalized(_ latents: [[Float]]) -> [[Float]] {
+        let n = min(std.count, mean.count)
+        return latents.map { l in
+            var x = l
+            for j in 0..<min(n, l.count) { x[j] = l[j] * std[j] + mean[j] }
+            return x
+        }
+    }
+}
+
+extension NephisFlow {
+    /// The studio's shortest input, in mel frames: NephisBlueprint takes pcm44 from 44,100 samples and z_frames from
+    /// 87 (studio_port.py). A shorter call threw, and fell back to Mimi's sound.
+    public static let studioMinFrames = 87
+
+    /// Mel frames the blueprint makes from `samples` (reflect pad (n_fft - hop) / 2 each side, n_fft 2048).
+    public static func studioFrames(samples: Int, hop: Int) -> Int {
+        (samples - hop) / hop + 1
+    }
+
+    /// Latents of leading silence that bring a studio call (`samples` long at the studio's rate, its carried context
+    /// and end padding included) up to `minFrames`; 0 when it is long enough. Whole latents (`samplesPerLatent` each),
+    /// so the sketch stays aligned with the audio.
+    public static func studioLeadPad(samples: Int, hop: Int, samplesPerLatent: Int, minFrames: Int = studioMinFrames) -> Int {
+        let need = minFrames * hop - samples
+        guard need > 0, samplesPerLatent > 0 else { return 0 }
+        return (need + samplesPerLatent - 1) / samplesPerLatent
+    }
+
+    /// The call's own audio out of a studio render: the first `lead` samples (the padding and the carried context in
+    /// front) dropped, then cut or zero-padded to exactly `count`.
+    public static func studioTrim(_ rendered: [Float], lead: Int, count: Int) -> [Float] {
+        let own = rendered.dropFirst(lead)
+        return own.count >= count ? Array(own.prefix(count)) : Array(own) + [Float](repeating: 0, count: count - own.count)
+    }
+
+    /// One stretch of a long studio call: mel frames `from..<to` go to the blueprint (and refiner), and frames
+    /// `keepFrom..<keepTo` of what comes back are kept.
+    public struct StudioSegment: Equatable, Sendable {
+        public let from: Int
+        public let to: Int
+        public let keepFrom: Int
+        public let keepTo: Int
+        public init(from: Int, to: Int, keepFrom: Int, keepTo: Int) {
+            self.from = from
+            self.to = to
+            self.keepFrom = keepFrom
+            self.keepTo = keepTo
+        }
+    }
+
+    /// A call of `frames` mel frames in overlapping stretches of `length` frames with `context` on each side, keeping
+    /// each stretch's middle; one stretch when it fits in `length + 2 × context`. A stretch reaches back far enough to
+    /// be at least `minFrames` long: a call just past a multiple of `length` ended in a stretch too short for the
+    /// blueprint, which threw and sent the whole call (~48 s and longer) to Mimi's sound.
+    public static func studioSegments(frames: Int, length: Int, context: Int, minFrames: Int = studioMinFrames) -> [StudioSegment] {
+        guard frames > length + 2 * context, length > 0 else { return [StudioSegment(from: 0, to: frames, keepFrom: 0, keepTo: frames)] }
+        var out: [StudioSegment] = []
+        var s = 0
+        while s < frames {
+            let to = min(frames, s + length + context)
+            out.append(StudioSegment(from: max(0, min(s - context, to - minFrames)), to: to, keepFrom: s, keepTo: min(s + length, frames)))
+            s += length
+        }
+        return out
+    }
+
+    /// Every value is a number: a model output that overflowed (NaN, ±inf) must never reach the speaker.
+    public static func allFinite(_ x: [Float]) -> Bool {
+        x.withUnsafeBufferPointer { b in !b.contains { !$0.isFinite } }
+    }
+
+    /// Her EQ for Mimi's sound: HDVoiceCore's VoiceTilt.nephisTilt band for band (copied: this package doesn't link
+    /// HDVoice), the EQ the player gives the read without the studio. In a studio read the player adds none, and
+    /// NephisFlowSynth gives it to the calls the studio skipped or failed instead.
+    public struct MimiEQ: Equatable, Sendable {
+        /// The lift above 2.5 kHz (dB), and the gentler sibilance (`softenSibilance`).
+        public var highShelfDB: Double
+        public var softSibilance: Bool
+
+        public init(highShelfDB: Double = 5.95, softSibilance: Bool = true) {
+            self.highShelfDB = highShelfDB
+            self.softSibilance = softSibilance
+        }
+
+        /// Hers for a pack's chain, as the player picks it (HybridSpeechEngine.nephisTilt): the pack's lift and
+        /// sibilance setting, else the shipped +5.95 dB with the softer sibilance (VoiceTilt.nephis).
+        public init(chain: Chain) {
+            self.init(highShelfDB: chain.highShelfDB ?? 5.95, softSibilance: chain.softSibilance ?? true)
+        }
+
+        /// VoiceTilt.apply with nephisTilt's bands, in its order: the top lift and +2 dB under 180 Hz ("deeper +
+        /// clear"), +2 dB around 300 Hz and +1 dB at 3 kHz ("warm + clear"), 1.5 dB less edge at 3.5 kHz ("soothing").
+        public func apply(_ x: inout [Float], sampleRate: Int) {
+            let fs = Double(sampleRate)
+            var sections: [ToneBiquad] = [.lowShelf(hz: 180, q: 0.591, db: 2, fs: fs), .lowShelf(hz: 300, q: 0.591, db: 2, fs: fs),
+                                          .peaking(hz: 3000, q: 0.8, db: 1, fs: fs), .peaking(hz: 3500, q: 0.9, db: -1.5, fs: fs)]
+            // A band at 0 dB is skipped, as VoiceTilt does (the pack's lift may be 0).
+            if highShelfDB != 0 { sections.insert(.highShelf(hz: 2500, q: 0.586, db: highShelfDB, fs: fs), at: 0) }
+            for var section in sections { section.process(&x) }
+            if softSibilance { Self.softenSibilance(&x, sampleRate: sampleRate) }
+        }
+
+        /// VoiceTilt.softenSibilance: the 5.5–9 kHz band turned down by as much as it sticks out of the whole voice
+        /// beyond -6 dB (at most 6 dB), over 5 ms windows with a 10 ms smoothed gain. Rate-dependent: at 44.1 kHz its
+        /// band filters pass 2-3 dB less of an "s" than at 24 kHz (sharper there, near Nyquist), so the same code turns
+        /// it down less (a 7 kHz tone: -0.8 dB against -2.3 dB). It runs at Mimi's 24 kHz, where it was tuned.
+        public static func softenSibilance(_ x: inout [Float], sampleRate: Int) {
+            let fs = Double(sampleRate)
+            guard 9000 < fs / 2, !x.isEmpty else { return }
+            var band = x
+            var h1 = ToneBiquad.highPass(hz: 5500, q: 0.707, fs: fs), h2 = h1
+            var l1 = ToneBiquad.lowPass(hz: 9000, q: 0.707, fs: fs), l2 = l1
+            h1.process(&band); h2.process(&band); l1.process(&band); l2.process(&band)
+            let n = max(1, Int(0.005 * fs))
+            var sb = 0.0, sx = 0.0
+            var gain = [Float](repeating: 1, count: x.count)
+            for i in x.indices {
+                sb += Double(band[i] * band[i]); sx += Double(x[i] * x[i])
+                if i >= n { sb -= Double(band[i - n] * band[i - n]); sx -= Double(x[i - n] * x[i - n]) }
+                let over = 10 * log10(max(sb, 1e-12) / max(sx, 1e-12)) + 6
+                gain[i] = Float(pow(10, -min(6, max(0, over)) / 20))
+            }
+            let m = 2 * n
+            var acc: Float = 0
+            for i in x.indices {
+                acc += gain[i]
+                if i >= m { acc -= gain[i - m] }
+                let g = acc / Float(min(i + 1, m))
+                x[i] = x[i] - band[i] + band[i] * g
+            }
+        }
+    }
+
+    /// The tone of one call in a studio read (studio audit 2026-10-12, A3: one owner per path). A call the studio
+    /// rendered gets none: her studio sound is her tone (the mood's level still applies). A call it skipped or failed is
+    /// Mimi's sound and gets what the read without the studio gets: the mood's shelf and her Mimi EQ.
+    public struct StudioTone: Equatable, Sendable {
+        /// The mood's 2.5 kHz shelf (dB; 0 = none).
+        public var moodShelfDB: Double
+        public var mimiEQ: MimiEQ?
+
+        public init(moodShelfDB: Double, mimiEQ: MimiEQ?) {
+            self.moodShelfDB = moodShelfDB
+            self.mimiEQ = mimiEQ
+        }
+
+        /// The mood's shelf, then her EQ: the order of the read without the studio (NephisFlowSynth.decode, then the
+        /// player).
+        public func apply(_ x: inout [Float], sampleRate: Int) {
+            NephisFlow.highShelf(&x, db: moodShelfDB, sampleRate: sampleRate)
+            mimiEQ?.apply(&x, sampleRate: sampleRate)
+        }
+    }
+
+    public static func studioTone(studioUsed: Bool, moodToneDB: Double, chain: Chain) -> StudioTone {
+        studioUsed ? StudioTone(moodShelfDB: 0, mimiEQ: nil) : StudioTone(moodShelfDB: moodToneDB, mimiEQ: MimiEQ(chain: chain))
+    }
+}
+
+/// One second-order section (transposed direct form II) and its RBJ cookbook designs: HDVoiceCore's Biquad, copied
+/// with the same formulas in the same order, so her Mimi EQ here is the player's.
+struct ToneBiquad: Sendable {
+    let b0: Double
+    let b1: Double
+    let b2: Double
+    let a1: Double
+    let a2: Double
+    private var z1 = 0.0
+    private var z2 = 0.0
+
+    init(b0: Double, b1: Double, b2: Double, a1: Double, a2: Double) {
+        self.b0 = b0
+        self.b1 = b1
+        self.b2 = b2
+        self.a1 = a1
+        self.a2 = a2
+    }
+
+    mutating func process(_ x: Double) -> Double {
+        let y = b0 * x + z1
+        z1 = b1 * x - a1 * y + z2
+        z2 = b2 * x - a2 * y
+        return y
+    }
+
+    mutating func process(_ samples: inout [Float]) {
+        for i in samples.indices { samples[i] = Float(process(Double(samples[i]))) }
+    }
+
+    private static func normalized(_ b0: Double, _ b1: Double, _ b2: Double, _ a0: Double, _ a1: Double, _ a2: Double) -> ToneBiquad {
+        ToneBiquad(b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0)
+    }
+
+    static func highPass(hz f: Double, q: Double, fs: Double) -> ToneBiquad {
+        let w = 2 * Double.pi * f / fs
+        let alpha = sin(w) / (2 * q)
+        let c = cos(w)
+        return normalized((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + alpha, -2 * c, 1 - alpha)
+    }
+
+    static func lowPass(hz f: Double, q: Double, fs: Double) -> ToneBiquad {
+        let w = 2 * Double.pi * min(f, fs * 0.49) / fs
+        let alpha = sin(w) / (2 * q)
+        let c = cos(w)
+        let a0 = 1 + alpha
+        return ToneBiquad(b0: (1 - c) / 2 / a0, b1: (1 - c) / a0, b2: (1 - c) / 2 / a0, a1: -2 * c / a0, a2: (1 - alpha) / a0)
+    }
+
+    static func peaking(hz f: Double, q: Double, db gainDB: Double, fs: Double) -> ToneBiquad {
+        let a = pow(10, gainDB / 40)
+        let w = 2 * Double.pi * f / fs
+        let alpha = sin(w) / (2 * q)
+        let c = cos(w)
+        return normalized(1 + alpha * a, -2 * c, 1 - alpha * a, 1 + alpha / a, -2 * c, 1 - alpha / a)
+    }
+
+    static func lowShelf(hz f: Double, q: Double, db gainDB: Double, fs: Double) -> ToneBiquad {
+        let a = pow(10, gainDB / 40)
+        let w = 2 * Double.pi * f / fs
+        let c = cos(w)
+        let alpha = sin(w) / (2 * q)
+        let s = 2 * a.squareRoot() * alpha
+        let a0 = (a + 1) + (a - 1) * c + s
+        return ToneBiquad(b0: a * ((a + 1) - (a - 1) * c + s) / a0, b1: 2 * a * ((a - 1) - (a + 1) * c) / a0, b2: a * ((a + 1) - (a - 1) * c - s) / a0,
+                          a1: -2 * ((a - 1) + (a + 1) * c) / a0, a2: ((a + 1) + (a - 1) * c - s) / a0)
+    }
+
+    static func highShelf(hz f: Double, q: Double, db gainDB: Double, fs: Double) -> ToneBiquad {
+        let a = pow(10, gainDB / 40)
+        let w = 2 * Double.pi * min(f, fs * 0.49) / fs
+        let c = cos(w)
+        let alpha = sin(w) / (2 * q)
+        let s = 2 * a.squareRoot() * alpha
+        let a0 = (a + 1) - (a - 1) * c + s
+        return ToneBiquad(b0: a * ((a + 1) + (a - 1) * c + s) / a0, b1: -2 * a * ((a - 1) + (a + 1) * c) / a0, b2: a * ((a + 1) + (a - 1) * c - s) / a0,
+                          a1: 2 * ((a - 1) - (a + 1) * c) / a0, a2: ((a + 1) - (a - 1) * c - s) / a0)
+    }
+}

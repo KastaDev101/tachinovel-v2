@@ -132,7 +132,8 @@ final class DriveCache: @unchecked Sendable {
 // MARK: - One chapter → audio file
 
 /// Renders a chapter's sentence script with Kokoro into `<stem>.m4a` (AAC-LC, mono 24 kHz, 32 kbps,
-/// ~14 MB per hour) and `<stem>.json` (timestamp manifest). Main thread; file writes on a serial queue.
+/// ~14 MB per hour; Nephis with her studio: 44.1 kHz, 128 kbps, ~58 MB per hour) and `<stem>.json` (timestamp
+/// manifest). Main thread; file writes on a serial queue.
 /// Driven on main; only the audio file is touched on its writer queue (`io`), one write at a time.
 final class ChapterRenderer: @unchecked Sendable {
     struct Output {
@@ -154,9 +155,14 @@ final class ChapterRenderer: @unchecked Sendable {
     private let io = DispatchQueue(label: "app.tachinovel.drive-writer")
     private var file: AVAudioFile?
     private var writeError: Error?
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)
+    /// The file's rate (SessionRate): her studio's 44.1 kHz when Nephis prepares with it, else 24 kHz as before. Audio
+    /// that arrives at another rate (her studio switched since the chapter started) is resampled to it before it is
+    /// written, so every buffer matches the file and the timings stay in its frames.
+    private let sampleRate: Int
+    private let format: AVAudioFormat?
     private var frames: Int = 0
-    private var sampleRate = 24_000
+    /// Audio that couldn't be converted to the file's rate: the chapter fails at the next step.
+    private var conversionFailure: String?
     private var segments: [NarrationTiming.Segment] = []
     private var loudness = LoudnessMatcher()
     private var next = 0
@@ -180,21 +186,31 @@ final class ChapterRenderer: @unchecked Sendable {
         self.voice = voice
         self.narrator = narrator
         self.nephis = nephis
+        let rate = nephis ? SessionRate.forRead(.pocketTts) : SessionRate.standard
+        sampleRate = rate
+        format = AVAudioFormat(standardFormatWithSampleRate: Double(rate), channels: 1)
         if nephis { groups = Self.paragraphGroups(items) }
         polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
         self.folder = folder
         stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
     }
 
+    /// AAC bit rate for a file at `sampleRate`: 128 kbps for her studio's 44.1 kHz chapters (low rates smear breaths
+    /// and "s" sounds first); 24 kHz chapters keep 32 kbps, as before.
+    static func bitRate(sampleRate: Int) -> Int {
+        sampleRate == SessionRate.standard ? 32_000 : 128_000
+    }
+
     func start(_ completion: @escaping (Result<Output, Error>) -> Void) {
         self.completion = completion
         let url = folder.appendingPathComponent("\(stem).m4a")
+        let rate = sampleRate
         io.async {
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 24_000,
+                AVSampleRateKey: rate,
                 AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 32_000,
+                AVEncoderBitRateKey: Self.bitRate(sampleRate: rate),
             ]
             do {
                 let f = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
@@ -230,6 +246,7 @@ final class ChapterRenderer: @unchecked Sendable {
     }
 
     private func step() {
+        if let why = conversionFailure { return finish(.failure(DriveError.failed(why))) }
         if let why = stopReason ?? shouldStop?() { return finish(.failure(DriveError.interrupted(why))) }
         if nephis { return nephisStep() }
         guard next < items.count else { return finalize() }
@@ -299,13 +316,13 @@ final class ChapterRenderer: @unchecked Sendable {
         }
     }
 
-    /// Her paragraph into the file: the thump filter, her EQ, the flow stream's soft limit; the sentences' times by
-    /// their share of the letters, after the pause the call starts with (highlighting only).
-    private func appendNephis(_ its: [NarrationController.ScriptItem], _ samples: [Float], sampleRate sr: Int) {
-        sampleRate = sr
+    /// Her paragraph into the file: the thump filter, her EQ (Mimi's 24 kHz stream only: her studio's stream comes with
+    /// its tone set, as in NaturalFinish.renderFlow), the flow stream's soft limit, then the file's rate; the sentences'
+    /// times by their share of the letters, after the pause the call starts with (highlighting only).
+    private func appendNephis(_ its: [NarrationController.ScriptItem], _ samples: [Float], sampleRate made: Int) {
         var out = samples
-        StartupSound.removeThump(&out, sampleRate: sr)
-        HybridSpeechEngine.nephisTilt.apply(&out, sampleRate: sr)
+        StartupSound.removeThump(&out, sampleRate: made)
+        if made == NaturalFinish.mimiRate { HybridSpeechEngine.nephisTilt.apply(&out, sampleRate: made) }
         let knee = NaturalFinish.flowKnee
         let room = NaturalFinish.peakCeiling - knee
         for i in out.indices {
@@ -313,6 +330,14 @@ final class ChapterRenderer: @unchecked Sendable {
             let a = abs(v)
             if a > knee { out[i] = (v < 0 ? -1 : 1) * (knee + room * Float(tanh(Double((a - knee) / room)))) }
         }
+        if made != sampleRate {
+            guard let converted = SessionRate.resample(out, from: made, to: sampleRate) else {
+                conversionFailure = "Couldn't convert her \(made) Hz audio to \(sampleRate) Hz"
+                return
+            }
+            out = converted
+        }
+        let sr = sampleRate
         let lead = out.firstIndex { abs($0) > 0.003 } ?? 0
         let letters = its.map { max(1, $0.text.count) }
         let total = Double(letters.reduce(0, +))
@@ -338,17 +363,25 @@ final class ChapterRenderer: @unchecked Sendable {
     }
 
     private func append(_ item: NarrationController.ScriptItem, _ audio: KokoroAudio) {
-        sampleRate = audio.sampleRate
         let pause = NarratorPlan.pause(for: item.narrator, settings: narrator)
-        let out: [Float]
+        var out: [Float]
         if var p = polish, p.sampleRate == audio.sampleRate {
             out = p.prepareSentence(audio.samples, pause: pause)
             polish = p
         } else {
             out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
         }
-        let speech = max(0, out.count - PCM.silenceFrames(seconds: pause, sampleRate: audio.sampleRate))
-        let sr = Double(max(1, audio.sampleRate))
+        var speech = max(0, out.count - PCM.silenceFrames(seconds: pause, sampleRate: audio.sampleRate))
+        // At the file's rate (Kokoro's 24 kHz matches it: a file for Kokoro is always 24 kHz).
+        if audio.sampleRate != sampleRate {
+            guard audio.sampleRate > 0, let converted = SessionRate.resample(out, from: audio.sampleRate, to: sampleRate) else {
+                conversionFailure = "Couldn't convert Kokoro's \(audio.sampleRate) Hz audio to \(sampleRate) Hz"
+                return
+            }
+            speech = Int((Double(speech) * Double(sampleRate) / Double(audio.sampleRate)).rounded())
+            out = converted
+        }
+        let sr = Double(max(1, sampleRate))
         let t0 = Double(frames) / sr
         segments.append(NarrationTiming.Segment(id: item.id, block: item.block, start: item.start, end: item.end,
                                                 t0: t0, t1: t0 + Double(speech) / sr, hash: item.hash, paragraph: item.paragraph))

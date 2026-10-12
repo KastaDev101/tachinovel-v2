@@ -5,7 +5,8 @@
 //  after the last word ends the call before).
 //
 //  Needs the vendored FluidAudio's latent access (ios/App/Vendor/FluidAudio/README.md): sessions yield latents only,
-//  one PocketTtsLatentDecoder decodes the whole read, a second one (reset per take) decodes takes for analysis.
+//  one PocketTtsLatentDecoder decodes the whole read, a second one (reset per take) decodes takes for analysis. In her
+//  studio's reads a third one tells the end guard how loud a piece still is where Pocket would stop (studio audit A6).
 //
 //  Speed (Kasta's phone runs Pocket at only ~1.5–2× real time, and Mimi decoding is the larger half of that):
 //  - a call is two stages: `prepare` (generate, check, edit: the read's state moves on) and `decode` (the one
@@ -65,6 +66,26 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var decodeMs = 0.0
         public var totalMs = 0.0
         public var audioMs = 0.0
+        /// Her studio on this call (the player's log). `studioRead`: the read runs through the studio, so the stream is
+        /// at its rate and decode set the call's whole tone (the player adds no EQ). `studioUsed`: the call is her
+        /// studio sound; otherwise `bypassReason` says why it is Mimi's sound with the read's own EQ ("hurry", "heat",
+        /// "empty", "failed: …"). Without a studio: false, false, nil.
+        public var studioRead = false
+        public var studioUsed = false
+        public var bypassReason: String?
+        /// The call's sample rate, and the mood it was read in (her mood names; a role without a mood reads calm).
+        public var sampleRate = NephisFlow.sampleRate
+        public var mood = "calm"
+        /// How her pieces ended (studio audit A6), for the take kept for each piece: pieces read, and those whose last
+        /// latent was still above -40 dBFS when Pocket stopped (a hard cut: measured on every read, guard or not).
+        /// With the end guard (`endGuard`: her studio's reads only), the text chunks it ran on past their usual stop,
+        /// the latents it added and the end-of-speech signals it ignored before step 6.
+        public var pieces = 0
+        public var piecesEndingAudible = 0
+        public var tailsExtended = 0
+        public var extraLatents = 0
+        public var earlyEos = 0
+        public var endGuard = false
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -91,6 +112,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var scratch: PocketTtsLatentDecoder?
     /// Her studio, when the pack ships one (the stream is then 44.1 kHz).
     private var studio: NephisStudio?
+    /// Her studio's reads only: decodes the latents the end guard asks about (PocketTtsSynthesizer.levelProbe).
+    private var tailDecoder: PocketTtsLatentDecoder?
     /// The stream decodes, one after the other in call order.
     private var decodes: Task<Void, Never>?
 
@@ -115,6 +138,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     static let headEdge = 24
     static let tailEdge = 32
     static let warmUp = 6
+    /// A piece whose last latent is louder than this (dBFS) when Pocket stops was cut off, not finished (A6).
+    static let audibleEndDB = -40.0
 
     public init(assets: Assets, transcriber: NephisTranscriber? = nil) {
         self.assets = assets
@@ -133,6 +158,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         decoder = try await m.makeLatentDecoder()
         scratch = try await m.makeLatentDecoder()
         if let dir = assets.studioDirectory { studio = try await NephisStudio.load(from: dir) }
+        // The end guard's own decoder (it shares the Mimi model; only its state is new).
+        if studio != nil { tailDecoder = try await m.makeLatentDecoder() }
         manager = m
         return Date().timeIntervalSince(t0) * 1000
     }
@@ -142,6 +169,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         decoder = nil
         scratch = nil
         studio = nil
+        tailDecoder = nil
         preparing?.cancel()
         preparing = nil
         waiting = nil
@@ -217,6 +245,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             stream += r.latents
         }
         lastMood = mood
+        report.mood = mood
         return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
                         toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false)
     }
@@ -267,13 +296,15 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             var endOfText: Int?
             var match: Double
             var score: Double
+            /// How its text chunks ended (the end guard's record).
+            var ends: [PocketTtsSynthesizer.ChunkEnd]
         }
         var takes: [Take] = []
         for t in 0..<n {
             let said = lead.map { $0 + " " + text } ?? text
             let r = try await render(manager, scratch: scratch, voice: voice, text: said, temperature: temperature,
                                      seed: seed.map { $0 &+ UInt64(t) }, whole: listen || scoring, report: &report)
-            var take = Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0)
+            var take = Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0, ends: r.ends)
             report.takes += 1
             if listen, let transcriber {
                 let a0 = Date()
@@ -299,7 +330,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             let r = try await render(manager, scratch: scratch, voice: voice, text: text, temperature: temperature, seed: seed,
                                      whole: false, report: &report)
             report.takes += 1
-            takes = [Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0)]
+            takes = [Take(latents: r.latents, levels: r.levels, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0, ends: r.ends)]
         } else if lead != nil {
             report.leadIn = true
         }
@@ -310,6 +341,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let best = (exact.isEmpty ? [takes.max { $0.match < $1.match }!] : exact).min { $0.score < $1.score }!
         report.wordMatch = report.listened ? best.match : nil
         report.jumpScore = scoring ? best.score : nil
+        // How the kept take ended, before any edit (A6): still above -40 dBFS where Pocket stopped is a hard cut.
+        report.pieces += 1
+        if let end = best.levels.last, end > Self.audibleEndDB { report.piecesEndingAudible += 1 }
+        for e in best.ends {
+            if e.tailExtended { report.tailsExtended += 1 }
+            if e.earlyEosStep != nil { report.earlyEos += 1 }
+            report.extraLatents += e.extraLatents
+        }
 
         // Edit the stream before any audio exists.
         var latents = best.latents
@@ -356,28 +395,63 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
 
     /// Decodes a prepared call into the read's one stream, after every call prepared before it.
     public func decode(_ p: Prepared) async throws -> ExpressiveAudio {
+        try await decodeReporting(p).audio
+    }
+
+    /// One call's audio out of the decode queue, and what the studio did with it.
+    private struct Decoded: Sendable {
+        var samples: [Float]
+        var ms = 0.0
+        var studioUsed = false
+        var bypassReason: String? = nil
+    }
+
+    /// `decode`, with this call's report (studio used or why not, rate, mood: the player's log; `lastReport` may
+    /// already be a later call's by the time a caller reads it).
+    public func decodeReporting(_ p: Prepared) async throws -> (audio: ExpressiveAudio, report: Report) {
         guard let decoder else { throw ExpressiveEngineError.notLoaded }
         let previous = decodes
         let studio = studio
-        let job = Task { () async throws -> (samples: [Float], ms: Double) in
+        // The studio was trained on the sketch at Mimi's scale (gta_dump.py: latent × std + mean); the stream holds
+        // Pocket's normalized latents, which Mimi denormalizes inside its own model (studio audit 2026-10-12, A4).
+        let sketch: [[Float]] = studio == nil ? [] : assets.projection.denormalized(p.stream)
+        // A call the studio skips or fails gets the tone the read without the studio gets (A3).
+        let plainTone = NephisFlow.studioTone(studioUsed: false, moodToneDB: p.toneDB, chain: assets.chain)
+        let job = Task { () async throws -> Decoded in
             await previous?.value
             let d0 = Date()
             if p.reset { try await decoder.reset() }
-            var samples = try await decoder.decode(p.stream)
+            let mimi = try await decoder.decode(p.stream)
+            var out = Decoded(samples: mimi)
             if let studio {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
-                do { samples = try await studio.render(pcm24: samples, latents: p.stream, hurry: p.hurry, continues: !p.reset) } catch {
-                    samples = studio.plainAudio(pcm24: samples)
+                do {
+                    let r = try await studio.renderReporting(pcm24: mimi, latents: sketch, hurry: p.hurry, continues: !p.reset)
+                    out.samples = r.pcm
+                    out.studioUsed = !r.report.bypassed
+                    out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
+                } catch {
+                    out.bypassReason = "failed: \(error)"
+                }
+                if !out.studioUsed {
+                    // Mimi's sound with the read's own EQ (the mood's shelf and her Mimi EQ), applied at Mimi's 24 kHz
+                    // where it was tuned, then at the studio's rate: the call sounds like the read without the studio.
+                    var toned = mimi
+                    plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
+                    out.samples = studio.plainAudio(pcm24: toned)
                 }
             }
-            return (samples, Date().timeIntervalSince(d0) * 1000)
+            out.ms = Date().timeIntervalSince(d0) * 1000
+            return out
         }
         decodes = Task { _ = try? await job.value }
-        let (decoded, ms) = try await job.value
+        let decoded = try await job.value
         // Without a studio everything stays at Mimi's 24 kHz; with one, the pauses and tone follow its rate.
         let rate = studio?.config.sample_rate ?? NephisFlow.sampleRate
         let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
-        var samples = NephisFlow.insertSilence(decoded, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
-        NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate)
+        var samples = NephisFlow.insertSilence(decoded.samples, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
+        // The mood's tone, for the read without the studio (the player adds her EQ). In a studio read each call's tone
+        // was set above: none on her studio sound, the read's own EQ on Mimi's (one owner per path).
+        if studio == nil { NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate) }
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
@@ -387,25 +461,39 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         lastGainDB = p.gainDB
         var report = p.report
-        report.decodeMs = ms
+        report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)
+        report.sampleRate = rate
+        report.studioRead = studio != nil
+        report.studioUsed = decoded.studioUsed
+        report.bypassReason = decoded.bypassReason
         lastReport = report
-        return ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
-                               chunks: report.takes)
+        let audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
+                                    chunks: report.takes)
+        return (audio, report)
     }
 
     // MARK: - One take
 
     /// One take: its latents (the session doesn't decode them) and the levels of its audio, decoded on the scratch
     /// decoder while the take is generated. `whole`: decode all of it (recognition, the take score); otherwise only
-    /// the first `headEdge` latents and the last `tailEdge` (the middle's levels read as speech).
+    /// the first `headEdge` latents and the last `tailEdge` (the middle's levels read as speech). `ends`: how each of
+    /// its text chunks ended.
     private func render(_ manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, voice: PocketTtsVoiceData, text: String,
                         temperature: Float, seed: UInt64?, whole: Bool, report: inout Report)
-        async throws -> (latents: [[Float]], levels: [Double], audio: [Float], endOfText: Int?) {
+        async throws -> (latents: [[Float]], levels: [Double], audio: [Float], endOfText: Int?, ends: [PocketTtsSynthesizer.ChunkEnd]) {
         let r0 = Date()
         let session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         await session.setDecodesAudio(false)
+        // Her studio's reads (studio audit 2026-10-12, A6): a piece still above -40 dBFS where Pocket stops runs on until
+        // it has died away (two latents under -50 dBFS, at most 6 more), and an end-of-speech signal in its first 6
+        // steps is ignored (Kyutai's own loop). The tail decoder measures the level it decides on. Without the studio
+        // every piece stops exactly where it always did.
+        if studio != nil, let tailDecoder {
+            await session.setEndGuard(.audibleTail, levelProbe: PocketTtsSynthesizer.levelProbe(decoder: tailDecoder))
+            report.endGuard = true
+        }
         session.enqueue(text)
         session.finish()
         try await scratch.reset()
@@ -437,25 +525,27 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         if !batch.isEmpty { send(batch) }
         if !afterEnd { endOfText = nil }
+        // Complete: the frames end after the last chunk's end is noted.
+        let ends = await session.chunkEnds
         report.renderMs += Date().timeIntervalSince(r0) * 1000
         let a0 = Date()
         defer { report.analysisMs += Date().timeIntervalSince(a0) * 1000 }
         var audio = try await analysis?.value ?? []
         let n = latents.count
         if whole || n <= Self.headEdge {
-            return (latents, NephisFlow.levels(audio), audio, endOfText)
+            return (latents, NephisFlow.levels(audio), audio, endOfText, ends)
         }
         if n <= Self.headEdge + Self.tailEdge + Self.warmUp {
             // Short take: decoding the rest is about as cheap as the tail.
             audio += try await scratch.decode(Array(latents[Self.headEdge...]))
-            return (latents, NephisFlow.levels(audio), audio, endOfText)
+            return (latents, NephisFlow.levels(audio), audio, endOfText, ends)
         }
         let head = NephisFlow.levels(audio)
         try await scratch.reset()
         let tailAudio = Array(try await scratch.decode(Array(latents.suffix(Self.tailEdge + Self.warmUp)))
             .dropFirst(Self.warmUp * NephisFlow.samplesPerLatent))
         let middle = [Double](repeating: 0, count: n - Self.headEdge - Self.tailEdge)
-        return (latents, head + middle + NephisFlow.levels(tailAudio), tailAudio, endOfText)
+        return (latents, head + middle + NephisFlow.levels(tailAudio), tailAudio, endOfText, ends)
     }
 
     /// The last sentence of a text (the lead-in for the next call).

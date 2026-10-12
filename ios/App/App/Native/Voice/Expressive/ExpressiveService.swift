@@ -677,17 +677,22 @@ final class ExpressiveService {
         Task.detached(priority: .userInitiated) { [weak self] in
             sentinel.begin(context)
             let result: Result<ExpressiveAudio, Error>
+            // This call's own report (the Voice test's log: studio used or why not, rate, mood, endings). Read from
+            // `lastReport` afterwards, it could already be the next call's.
+            let report: NephisFlowSynth.Report?
             do {
                 let p = try await flow.prepare(line, seed: nil)
                 DispatchQueue.main.async(execute: prepared)
-                result = .success(try await flow.decode(p))
+                let decoded = try await flow.decodeReporting(p)
+                result = .success(decoded.audio)
+                report = decoded.report
             } catch {
                 result = .failure(error)
+                report = nil
             }
             sentinel.end(success: (try? result.get()) != nil)
-            let report = await flow.lastReport
             DispatchQueue.main.async {
-                if case .success = result { self?.recordFlow(report) }
+                if let report { self?.recordFlow(report) }
                 completion(result)
             }
         }
@@ -714,6 +719,34 @@ final class ExpressiveService {
         var failedCalls = 0
         var emptyPieces = 0
         var configReplays = 0
+        /// Her studio, call by call (studio audit B7: which parts of a recording were her studio): calls in a studio
+        /// read, those it rendered, why it skipped the others ("hurry", "heat", "failed", "empty"), the calls per sample
+        /// rate and per mood, and the last `logLimit` calls one by one.
+        var studioCalls = 0
+        var studioUsed = 0
+        var bypassReasons: [String: Int] = [:]
+        var rates: [Int: Int] = [:]
+        var moods: [String: Int] = [:]
+        var log: [Call] = []
+        /// How her pieces ended (A6): pieces read, those still above -40 dBFS when Pocket stopped (a hard cut), and
+        /// the end guard's work in her studio's reads (endings it let fade out, latents it added, early end-of-speech
+        /// signals it ignored; calls it was on for).
+        var pieces = 0
+        var piecesEndingAudible = 0
+        var tailsExtended = 0
+        var extraLatents = 0
+        var earlyEos = 0
+        var guardCalls = 0
+
+        static let logLimit = 400
+
+        /// One call of the log: its number in this session, where it starts in her audio (seconds of her audio before
+        /// it: roughly its place in the Voice test recording, give or take waits and other voices) and its report.
+        struct Call {
+            let n: Int
+            let atMs: Double
+            let report: NephisFlowSynth.Report
+        }
     }
 
     private(set) var flowStats = FlowStats()
@@ -728,6 +761,24 @@ final class ExpressiveService {
     }
 
     private func recordFlow(_ r: NephisFlowSynth.Report) {
+        flowStats.log.append(FlowStats.Call(n: flowStats.calls + 1, atMs: flowStats.audioMs, report: r))
+        if flowStats.log.count > FlowStats.logLimit { flowStats.log.removeFirst(flowStats.log.count - FlowStats.logLimit) }
+        if r.studioRead {
+            flowStats.studioCalls += 1
+            if r.studioUsed {
+                flowStats.studioUsed += 1
+            } else {
+                flowStats.bypassReasons[Self.reasonKey(r.bypassReason), default: 0] += 1
+            }
+        }
+        flowStats.rates[r.sampleRate, default: 0] += 1
+        flowStats.moods[r.mood, default: 0] += 1
+        flowStats.pieces += r.pieces
+        flowStats.piecesEndingAudible += r.piecesEndingAudible
+        flowStats.tailsExtended += r.tailsExtended
+        flowStats.extraLatents += r.extraLatents
+        flowStats.earlyEos += r.earlyEos
+        flowStats.guardCalls += r.endGuard ? 1 : 0
         flowStats.calls += 1
         flowStats.takes += r.takes
         flowStats.leadIns += r.leadIn ? 1 : 0
@@ -739,6 +790,28 @@ final class ExpressiveService {
         flowStats.recognizeMs += r.recognizeMs
         flowStats.decodeMs += r.decodeMs
         flowStats.last = r
+    }
+
+    /// A studio bypass reason for counting: "failed: <the error>" counts as "failed".
+    private static func reasonKey(_ reason: String?) -> String {
+        guard let reason else { return "unknown" }
+        return reason.hasPrefix("failed") ? "failed" : reason
+    }
+
+    /// Her studio on one call, in a word: her studio sound ("used"), Mimi's sound in a studio read ("bypassed", the
+    /// reason says why), or a read without the studio ("off").
+    private static func studioWord(_ r: NephisFlowSynth.Report) -> String {
+        r.studioUsed ? "used" : r.studioRead ? "bypassed" : "off"
+    }
+
+    /// One call of the log, for the report.
+    private static func callJSON(_ c: FlowStats.Call) -> [String: Any] {
+        let r = c.report
+        return [
+            "n": c.n, "atS": r1(c.atMs / 1000), "seconds": r1(r.audioMs / 1000), "engine": "nephis", "mood": r.mood, "rate": r.sampleRate,
+            "studio": studioWord(r), "reason": r.bypassReason.map { String($0.prefix(160)) } ?? NSNull(),
+            "pieces": r.pieces, "endedAudible": r.piecesEndingAudible, "tailsExtended": r.tailsExtended,
+        ]
     }
 
     func resetCrashes() {
@@ -888,7 +961,9 @@ final class ExpressiveService {
         let f = flowStats
         let evidence: [String: Any] = ["readRestarts": f.readRestarts, "failedCalls": f.failedCalls, "emptyPieces": f.emptyPieces,
                                        "configReplays": f.configReplays]
-        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0, "evidence": evidence] as [String: Any] }
+        // The rate Listen's read plays at: 24 kHz, or her studio's 44.1 kHz.
+        let sessionRate = NarrationController.shared.speechEngine.sessionRate
+        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate] as [String: Any] }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
             "active": usesFlow, "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened,
@@ -900,17 +975,37 @@ final class ExpressiveService {
                                "recognize": Self.r2(f.recognizeMs / audio), "decode": Self.r2(f.decodeMs / audio),
                                "call": Self.r2(f.totalMs / audio)],
             "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
+            "sessionRate": sessionRate,
         ]
+        // Her studio (B7): calls it rendered, why it skipped the others, the rates and moods, and every call in order
+        // (`callLog`, to line up with the recording).
+        let studio: [String: Any] = ["calls": f.studioCalls, "used": f.studioUsed, "bypassed": f.studioCalls - f.studioUsed,
+                                     "reasons": f.bypassReasons]
+        out["studio"] = studio
+        out["rates"] = Dictionary(uniqueKeysWithValues: f.rates.map { (String($0.key), $0.value) })
+        out["moods"] = f.moods
+        // How her pieces ended (A6): the goal is under 2 % still audible when Pocket stopped.
+        let audiblePercent = f.pieces > 0 ? Self.r1(Double(f.piecesEndingAudible) * 100 / Double(f.pieces)) : 0
+        let endings: [String: Any] = ["pieces": f.pieces, "endedAudible": f.piecesEndingAudible, "endedAudiblePercent": audiblePercent,
+                                      "tailsExtended": f.tailsExtended, "extraLatents": f.extraLatents, "earlyEos": f.earlyEos,
+                                      "guardCalls": f.guardCalls]
+        out["endings"] = endings
+        out["callLog"] = f.log.map(Self.callJSON)
         // Breaks a listener heard in the last Listen session: waits for her, and sentences another voice read.
         if let s = NarrationController.shared.speechEngine.snapshot {
             out["listen"] = ["breaks": s.underruns, "breakSeconds": Self.r1(s.waitedSeconds), "otherVoiceSentences": s.appleSentences,
                              "fallbacks": Dictionary(uniqueKeysWithValues: s.fallbacks.map { ($0.key.rawValue, $0.value) })] as [String: Any]
         }
         if let r = f.last {
-            out["last"] = ["takes": r.takes, "usable": r.usable, "leadIn": r.leadIn, "wordMatch": r.wordMatch.map { Self.r2($0) } ?? NSNull(),
-                           "jumpScore": r.jumpScore.map { Self.r2($0) } ?? NSNull(), "renderMs": Self.r1(r.renderMs),
-                           "analysisMs": Self.r1(r.analysisMs), "recognizeMs": Self.r1(r.recognizeMs), "decodeMs": Self.r1(r.decodeMs),
-                           "totalMs": Self.r1(r.totalMs), "audioMs": Self.r1(r.audioMs)] as [String: Any]
+            var last: [String: Any] = ["takes": r.takes, "usable": r.usable, "leadIn": r.leadIn, "wordMatch": r.wordMatch.map { Self.r2($0) } ?? NSNull(),
+                                       "jumpScore": r.jumpScore.map { Self.r2($0) } ?? NSNull(), "renderMs": Self.r1(r.renderMs),
+                                       "analysisMs": Self.r1(r.analysisMs), "recognizeMs": Self.r1(r.recognizeMs), "decodeMs": Self.r1(r.decodeMs),
+                                       "totalMs": Self.r1(r.totalMs), "audioMs": Self.r1(r.audioMs)]
+            last["sampleRate"] = r.sampleRate
+            last["mood"] = r.mood
+            last["studio"] = Self.studioWord(r)
+            if let reason = r.bypassReason { last["bypassReason"] = reason } else { last["bypassReason"] = NSNull() }
+            out["last"] = last
         }
         return out
     }

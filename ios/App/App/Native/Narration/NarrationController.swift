@@ -582,11 +582,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     }
 
     /// What her prepared chapters are filed under: her model pack (a new pack is a new voice, so old files aren't
-    /// played in a voice that changed).
+    /// played in a voice that changed), and her studio when it is on (its 44.1 kHz chapters are another sound; without
+    /// it the key is as before).
     static var preparedNephisKey: String {
         let info = NephisModelPack.info
         let sha = (info?["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? "shipped"
-        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")"
+        let studio = SessionRate.forRead(.pocketTts) == SessionRate.studio ? "|studio" : ""
+        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")\(studio)"
     }
 
     private func playPrepared(_ p: PreparedChapter, pluginId: String, novelPath: String, novelName: String, startParagraph: Int) {
@@ -850,7 +852,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
 
     private func voiceKey() -> String {
         let p = VoiceSettings.shared.prefs
-        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")|\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)|\(p.delivery.pocketVoice)"
+        // The read's rate too: her studio switched on or off mid-read starts the sentence again at the new rate.
+        let rate = SessionRate.forRead(Self.listenEngine())
+        return "\(kokoroVoiceForCurrentNovel())|\(p.kokoroEnabled)|\(p.route)|\(p.clampedAhead)|\(KokoroService.shared.crashDisabled)|\(String(describing: p.narrator))|\(Self.listenEngine()?.rawValue ?? "kokoro")|\(p.delivery.natural)|\(p.delivery.breaths)|\(p.delivery.studioSound)|\(p.delivery.pocketVoice)|\(rate)"
     }
 
     /// Voice, Kokoro on/off or route changed: the current sentence restarts with the new voice.

@@ -46,6 +46,7 @@ public struct PocketTtsSynthesizer {
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - seed: Random seed for reproducibility (nil for random).
     ///   - deEss: Whether to apply de-essing post-processing.
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: A synthesis result containing WAV audio data.
     public static func synthesize(
         text: String,
@@ -54,7 +55,8 @@ public struct PocketTtsSynthesizer {
         seed: UInt64? = nil,
         deEss: Bool = true,
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        endGuard: EndGuard = .off
     ) async throws -> SynthesisResult {
         let store = try currentModelStore()
         let voiceData = try await store.voiceData(for: voice)
@@ -65,7 +67,8 @@ public struct PocketTtsSynthesizer {
             seed: seed,
             deEss: deEss,
             maxTokensPerChunk: maxTokensPerChunk,
-            language: language
+            language: language,
+            endGuard: endGuard
         )
     }
 
@@ -79,6 +82,7 @@ public struct PocketTtsSynthesizer {
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - seed: Random seed for reproducibility (nil for random).
     ///   - deEss: Whether to apply de-essing post-processing.
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: A synthesis result containing WAV audio data.
     public static func synthesize(
         text: String,
@@ -87,28 +91,31 @@ public struct PocketTtsSynthesizer {
         seed: UInt64? = nil,
         deEss: Bool = true,
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        endGuard: EndGuard = .off
     ) async throws -> SynthesisResult {
         logger.info("PocketTTS synthesizing with custom voice: '\(text)'")
         let genStart = Date()
 
         // Buffer the streaming output. Both APIs share one chunk loop now,
         // so any change to prefill/generation logic only needs to land once.
-        let stream = try await synthesizeStreaming(
+        let run = try await startStreaming(
             text: text,
             voiceData: voiceData,
             temperature: temperature,
             seed: seed,
             maxTokensPerChunk: maxTokensPerChunk,
-            language: language
+            language: language,
+            endGuard: endGuard
         )
 
         var allSamples: [Float] = []
         var frameCount = 0
-        for try await frame in stream {
+        for try await frame in run.frames {
             allSamples.append(contentsOf: frame.samples)
             frameCount += 1
         }
+        let chunkEnds = await run.chunkEnds()
 
         let genElapsed = Date().timeIntervalSince(genStart)
         logger.info("Generated \(frameCount) frames in \(String(format: "%.2f", genElapsed))s")
@@ -136,7 +143,8 @@ public struct PocketTtsSynthesizer {
             audio: audioData,
             samples: allSamples,
             frameCount: frameCount,
-            eosStep: nil
+            eosStep: nil,
+            chunkEnds: chunkEnds
         )
     }
 
@@ -177,6 +185,7 @@ public struct PocketTtsSynthesizer {
     ///   - voice: Voice identifier (default: "alba").
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - seed: Random seed for reproducibility (nil for random).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: An `AsyncThrowingStream` of audio frames. Throws if a model
     ///   inference error occurs during generation.
     ///
@@ -193,7 +202,8 @@ public struct PocketTtsSynthesizer {
         temperature: Float = PocketTtsConstants.temperature,
         seed: UInt64? = nil,
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        endGuard: EndGuard = .off
     ) async throws -> AsyncThrowingStream<AudioFrame, Error> {
         let store = try currentModelStore()
         let voiceData = try await store.voiceData(for: voice)
@@ -203,7 +213,8 @@ public struct PocketTtsSynthesizer {
             temperature: temperature,
             seed: seed,
             maxTokensPerChunk: maxTokensPerChunk,
-            language: language
+            language: language,
+            endGuard: endGuard
         )
     }
 
@@ -216,6 +227,7 @@ public struct PocketTtsSynthesizer {
     ///   - voiceData: Voice conditioning data (e.g., from cloneVoice).
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - seed: Random seed for reproducibility (nil for random).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: An `AsyncThrowingStream` of audio frames. Throws if a model
     ///   inference error occurs during generation.
     public static func synthesizeStreaming(
@@ -224,8 +236,31 @@ public struct PocketTtsSynthesizer {
         temperature: Float = PocketTtsConstants.temperature,
         seed: UInt64? = nil,
         maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        endGuard: EndGuard = .off
     ) async throws -> AsyncThrowingStream<AudioFrame, Error> {
+        try await startStreaming(
+            text: text,
+            voiceData: voiceData,
+            temperature: temperature,
+            seed: seed,
+            maxTokensPerChunk: maxTokensPerChunk,
+            language: language,
+            endGuard: endGuard
+        ).frames
+    }
+
+    /// TachiNovel: `synthesizeStreaming(text:voiceData:...)`, plus how each chunk ended once the frames have all
+    /// been read (`synthesize` reports them in `SynthesisResult.chunkEnds`).
+    static func startStreaming(
+        text: String,
+        voiceData: PocketTtsVoiceData,
+        temperature: Float,
+        seed: UInt64?,
+        maxTokensPerChunk: Int,
+        language: PocketTtsLanguage,
+        endGuard: EndGuard
+    ) async throws -> StreamingRun {
         let store = try currentModelStore()
 
         logger.info("PocketTTS streaming synthesis with custom voice: '\(text)'")
@@ -245,7 +280,8 @@ public struct PocketTtsSynthesizer {
                 temperature: temperature,
                 seed: seed,
                 maxTokensPerChunk: effectiveMaxTokens,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
         }
 
@@ -293,10 +329,15 @@ public struct PocketTtsSynthesizer {
             seedValue: seedValue,
             chunkCount: chunkCount,
             temperature: temperature,
-            language: language
+            language: language,
+            endGuard: endGuard
         )
 
-        return makeStream(generator: generator)
+        return StreamingRun(
+            frames: makeStream(
+                generator: generator,
+                pipelined: useCrossEnginePipeline && !endGuard.extendsTails),
+            chunkEnds: { await generator.chunkEnds })
     }
 
     // MARK: - Session API
@@ -419,6 +460,9 @@ public struct PocketTtsSynthesizer {
         let chunkCount: Int
         let temperature: Float
         let language: PocketTtsLanguage
+        /// TachiNovel: how each chunk ends, and how the chunks generated so far ended.
+        let endGuard: EndGuard
+        private(set) var chunkEnds: [ChunkEnd] = []
 
         init(
             constants: PocketTtsConstantsBundle,
@@ -439,7 +483,8 @@ public struct PocketTtsSynthesizer {
             seedValue: UInt64,
             chunkCount: Int,
             temperature: Float,
-            language: PocketTtsLanguage
+            language: PocketTtsLanguage,
+            endGuard: EndGuard
         ) {
             self.constants = constants
             self.voiceData = voiceData
@@ -460,6 +505,7 @@ public struct PocketTtsSynthesizer {
             self.chunkCount = chunkCount
             self.temperature = temperature
             self.language = language
+            self.endGuard = endGuard
         }
 
         /// Flow decode using actor-isolated RNG state.
@@ -545,12 +591,15 @@ public struct PocketTtsSynthesizer {
                     let cachePosition = try PocketTtsSynthesizer.kvCachePosition(in: kvState)
                     let maxGenLen = PocketTtsSynthesizer.boundedGenerationFrameCount(
                         text: chunk.text, cachePosition: cachePosition)
-                    var eosStep: Int?
                     var sequence = try PocketTtsSynthesizer.createBosStartSequence(
                         bosEmbedding: constants.bosEmbedding,
                         splitKV: flowlmLayerKeys.isSplitKV)
                     let totalFramesAfterEos =
                         framesAfterEos + PocketTtsConstants.extraFramesAfterDetection
+                    // TachiNovel: the chunk's end (EndGuard); this loop decodes every latent, so the guard
+                    // reads the levels it needs from that audio.
+                    var end = ChunkEndTracker(
+                        endGuard: endGuard, usualFramesAfterEos: totalFramesAfterEos)
 
                     for step in 0..<maxGenLen {
                         if Task.isCancelled { break }
@@ -560,12 +609,11 @@ public struct PocketTtsSynthesizer {
                             kvState: &kvState
                         )
 
-                        if eosLogit > PocketTtsConstants.eosThreshold && eosStep == nil {
-                            eosStep = step
+                        if end.noteEos(step: step, logit: eosLogit) {
                             PocketTtsSynthesizer.logger.info(
                                 "Stream chunk \(chunkIdx + 1) EOS at step \(step)")
                         }
-                        if let eos = eosStep, step >= eos + totalFramesAfterEos {
+                        if end.shouldStop(before: step) {
                             break
                         }
 
@@ -583,15 +631,17 @@ public struct PocketTtsSynthesizer {
                                 chunkCount: chunkCount,
                                 utteranceIndex: nil
                             ))
+                        end.kept(level: PocketTtsSynthesizer.latentLevel(frameSamples))
 
                         sequence = try PocketTtsSynthesizer.createSequenceFromLatent(latent)
                     }
+                    chunkEnds.append(end.summary(chunkIndex: chunkIdx, utteranceIndex: nil))
 
                     if !Task.isCancelled {
                         try PocketTtsSynthesizer.validateGenerationCompleted(
                             generatedFrameLimit: maxGenLen,
                             cachePosition: cachePosition,
-                            eosStep: eosStep,
+                            eosStep: end.eosStep,
                             framesAfterEos: totalFramesAfterEos)
                     }
 
@@ -664,31 +714,35 @@ public struct PocketTtsSynthesizer {
                     let cachePosition = try PocketTtsSynthesizer.kvCachePosition(in: kvState)
                     let maxGenLen = PocketTtsSynthesizer.boundedGenerationFrameCount(
                         text: chunk.text, cachePosition: cachePosition)
-                    var eosStep: Int?
                     var sequence = try PocketTtsSynthesizer.createBosStartSequence(
                         bosEmbedding: constants.bosEmbedding,
                         splitKV: flowlmLayerKeys.isSplitKV)
                     let totalFramesAfterEos =
                         framesAfterEos + PocketTtsConstants.extraFramesAfterDetection
+                    // TachiNovel: the chunk's end (EndGuard). Mimi decodes on its own actor here, so no level
+                    // reaches this loop and a tail is never extended (`makeStream` runs a guard that extends
+                    // tails on `generate`); the early-signal guard and the chunk's end report still apply.
+                    var end = ChunkEndTracker(
+                        endGuard: endGuard, usualFramesAfterEos: totalFramesAfterEos)
 
                     for step in 0..<maxGenLen {
                         if Task.isCancelled { break }
                         let (transformerOut, eosLogit) = try await flowLMStep(
                             sequence: sequence, kvState: &kvState)
-                        if eosLogit > PocketTtsConstants.eosThreshold && eosStep == nil {
-                            eosStep = step
-                        }
-                        if let eos = eosStep, step >= eos + totalFramesAfterEos { break }
+                        end.noteEos(step: step, logit: eosLogit)
+                        if end.shouldStop(before: step) { break }
                         let latent = try await flowDecodeStep(transformerOut: transformerOut)
                         latentCont.yield(
                             LatentWork(latent: latent, frameIndex: step, chunkIndex: chunkIdx))
+                        end.kept(level: nil)
                         sequence = try PocketTtsSynthesizer.createSequenceFromLatent(latent)
                     }
+                    chunkEnds.append(end.summary(chunkIndex: chunkIdx, utteranceIndex: nil))
                     if !Task.isCancelled {
                         try PocketTtsSynthesizer.validateGenerationCompleted(
                             generatedFrameLimit: maxGenLen,
                             cachePosition: cachePosition,
-                            eosStep: eosStep,
+                            eosStep: end.eosStep,
                             framesAfterEos: totalFramesAfterEos)
                     }
                     if Task.isCancelled { break }
@@ -738,13 +792,17 @@ public struct PocketTtsSynthesizer {
     static let useCrossEnginePipeline = false
 
     /// Create the AsyncThrowingStream and spawn the generation task.
+    ///
+    /// TachiNovel: `pipelined` = `useCrossEnginePipeline`, unless the end guard extends tails (that needs each
+    /// latent's level in the generation loop, which only `generate` has).
     private static func makeStream(
-        generator: StreamingGenerator
+        generator: StreamingGenerator,
+        pipelined: Bool
     ) -> AsyncThrowingStream<AudioFrame, Error> {
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: AudioFrame.self)
 
         let task = Task {
-            if PocketTtsSynthesizer.useCrossEnginePipeline {
+            if pipelined {
                 await generator.generatePipelined(continuation: continuation)
             } else {
                 await generator.generate(continuation: continuation)

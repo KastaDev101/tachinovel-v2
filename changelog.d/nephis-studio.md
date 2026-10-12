@@ -5,6 +5,14 @@
   chip each part runs on and the heat level.
 - Nephis studio packs can carry a detail refiner (refiner.json + NephisRefiner): after the blueprint it puts back her
   fine detail, which otherwise comes out as faint static. Voice Lab's speed test includes its time.
+- Her studio now plays in Listen, the Voice Lab player and "Prepare for the drive" (studio switch on): a read with it
+  runs at 44.1 kHz from start to end, and other voices filling in are converted to that rate. Before, every studio
+  line was handed to another voice. Chapters prepared with her studio are saved at 44.1 kHz, 128 kbps. Everything
+  without the studio stays at 24 kHz and 32 kbps, as before.
+- The Voice test report lists her calls one by one: whether her studio rendered each one or why it stepped aside
+  (short of audio, phone too hot, failed), its sample rate and mood, and where it falls in her audio. It also counts
+  how many of her sentence ends were cut off while still audible and how many were let fade out. The 2-minute test
+  records 32-bit float at the read's rate.
 
 ### Fixed
 
@@ -17,6 +25,14 @@
   the status bar, and a quick second tap no longer starts the read twice. Nephis keeps the soft end of her last word (a final
   "s") when the next paragraph is late or the read starts over. The Voice test report counts read restarts, failed
   calls, sentences cut without audio and audio-route replays.
+- Nephis studio sound: each call has one tone. Her studio sound no longer gets the 24 kHz EQ and mood treble on top,
+  and a call the studio skips sounds exactly like her reading without the studio. The studio gets her sketch at the
+  scale it was trained on. Short first lines (under about 1 s) and very long paragraphs (about 48 s and more) keep
+  her studio sound instead of dropping to her plain one. A broken model output plays her plain sound instead of noise.
+- Nephis with her studio: a sentence that is still audible where the voice would stop now fades out (up to half a
+  second more) instead of being cut, which is the clipped final "s".
+- Turning her studio on or off during Listen starts the sentence again with the new sound. Before, her next lines
+  went to another voice. Chapters prepared with and without her studio are kept apart.
 
 ### Changed
 

@@ -13,6 +13,12 @@ Marked "TachiNovel" in the code.
 - `PocketTtsSession.setDecodesAudio(_:)`: a session can skip its own Mimi decode and yield latents only.
 - `PocketTtsLatentDecoder` (new, `Pipeline/PocketTtsLatentDecoder.swift`) and `PocketTtsManager.makeLatentDecoder()`:
   one Mimi decoder with persistent state, so the latents of several sessions decode as one continuous stream.
+- `PocketTtsSynthesizer.EndGuard` and `ChunkEnd` (new, `Pipeline/PocketTtsEndGuard.swift`),
+  `PocketTtsSession.setEndGuard(_:levelProbe:)` and `chunkEnds`, `SynthesisResult.chunkEnds`, and an `endGuard:`
+  parameter on the synthesize/stream calls (default `.off`: FluidAudio's own stop, unchanged). `.audibleTail` lets a
+  chunk still above -40 dBFS at its usual stop run on until it has died away (at most 6 latents) and ignores an
+  end-of-speech signal before step 6; a latents-only session gets the levels from a `TailLevelProbe`
+  (`PocketTtsSynthesizer.levelProbe(decoder:)`). Every chunk's end is recorded either way.
 
 Why: the Nephis narrator reads each paragraph in its own session (its voice prompt carries the last seconds she
 said), and its joins, pauses and clean-ups are done on the latents before any audio exists; decoded per session, every

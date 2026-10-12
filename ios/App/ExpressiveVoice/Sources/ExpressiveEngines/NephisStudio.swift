@@ -11,10 +11,14 @@
 //  The models and studio.json live in a model pack: `<pack>/Models/nephis-studio/` (NephisBlueprint.mlpackage or
 //  .mlmodelc, NephisVocoder.mlpackage or .mlmodelc, studio.json), exported by tachinovel-tts-lab
 //  finetune/wsl/studio_port.py. Packages are compiled once on the device and cached next to them.
+//  The sketch comes in at Mimi's scale (denormalized, as in training: the caller maps it). A call shorter than the
+//  blueprint takes is padded in front and trimmed again; a model output that is not all numbers throws, so the
+//  caller plays Mimi's sound for that call instead (studio audit 2026-10-12).
 //
 
 @preconcurrency import AVFoundation
 import CoreML
+import ExpressiveCore
 import Foundation
 
 public actor NephisStudio {
@@ -54,8 +58,12 @@ public actor NephisStudio {
         /// Time spent deliberately resting between vocoder windows to cool the phone (not compute).
         public var restMs = 0.0
         public var audioMs = 0.0
-        /// The phone was too hot: Mimi's own sound (resampled) was used instead of the studio.
+        /// The studio was skipped for the call (Mimi's own sound, resampled, is used instead); `bypassReason` says
+        /// why: "hurry" (playback short of audio), "heat" (the phone too hot), "empty", or "failed: <error>".
         public var bypassed = false
+        public var bypassReason: String?
+        /// Latents of leading silence added to a call too short for the blueprint (trimmed off again).
+        public var padLatents = 0
         public var thermal = 0
         public var timesRealTime: Double { audioMs / max(1, resampleMs + blueprintMs + refinerMs + vocoderMs + restMs) }
     }
@@ -146,14 +154,25 @@ public actor NephisStudio {
     static let segmentFrames = 2048
     static let segmentContext = 64
 
-    /// One decoded call: Mimi's 24 kHz audio and the latents it was decoded from -> her 44.1 kHz audio, exactly
-    /// `pcm24.count * rate / 24000` samples long. `hurry`: playback has little buffered; skip the studio for this call
-    /// (Mimi's sound at 44.1 kHz). `continues`: this call follows the previous one in the same read (its audio is the
-    /// left context); false starts a new read.
+    /// One decoded call: Mimi's 24 kHz audio and the latents it was decoded from (at Mimi's scale: denormalized, as
+    /// the blueprint was trained) -> her 44.1 kHz audio, exactly `pcm24.count * rate / 24000` samples long. `hurry`:
+    /// playback has little buffered; skip the studio for this call (Mimi's sound at 44.1 kHz). `continues`: this call
+    /// follows the previous one in the same read (its audio is the left context); false starts a new read.
     public func render(pcm24: [Float], latents: [[Float]], hurry: Bool = false, continues: Bool = false) async throws -> [Float] {
-        guard !pcm24.isEmpty, !latents.isEmpty else { return [] }
-        if !continues { carryPCM = []; carryLatents = [] }
+        try await renderReporting(pcm24: pcm24, latents: latents, hurry: hurry, continues: continues).pcm
+    }
+
+    /// `render`, with this call's report (`lastReport` may already be a later call's by the time a caller reads it).
+    /// A failure throws after recording itself in `lastReport` (bypassed, "failed: …").
+    public func renderReporting(pcm24: [Float], latents: [[Float]], hurry: Bool = false, continues: Bool = false) async throws
+        -> (pcm: [Float], report: Report) {
         var report = Report()
+        guard !pcm24.isEmpty, !latents.isEmpty else {
+            report.bypassed = true
+            report.bypassReason = "empty"
+            return ([], report)
+        }
+        if !continues { carryPCM = []; carryLatents = [] }
         let thermal = ProcessInfo.processInfo.thermalState
         report.thermal = thermal.rawValue
         var t0 = Date()
@@ -165,21 +184,31 @@ public actor NephisStudio {
         report.resampleMs = Date().timeIntervalSince(t0) * 1000
         let hop = config.hop
         defer { remember(own: own, latents: latents) }
-        if hurry || thermal.rawValue >= heat.bypassFrom.rawValue || own.count < 2048 {
+        let skip: String? = hurry ? "hurry" : thermal.rawValue >= heat.bypassFrom.rawValue ? "heat" : nil
+        if let skip {
             report.bypassed = true
+            report.bypassReason = skip
             report.audioMs = Double(own.count) * 1000 / Double(config.sample_rate)
             lastReport = report
-            return own
+            return (own, report)
         }
 
-        // The carried context in front; its samples are dropped from the output again.
-        let pcm = carryPCM + padded
-        let lead = carryPCM.count
-        let latentsAll = carryLatents + latents
+        // A call too short for the blueprint (under 87 mel frames with its carried context, about 1 s: a short first
+        // line) gets leading silence up to that length, with quiet latents to match (copies of the first one, which sits
+        // in the pause a call starts with). Both are dropped from the output with the carried context. Such a call
+        // used to fall back to Mimi's sound: a jump in quality on a short first line (studio audit 2026-10-12, A7).
+        let perLatent = NephisFlow.samplesPerLatent * config.sample_rate / Self.inputRate
+        let context = carryLatents + latents
+        let padLatents = NephisFlow.studioLeadPad(samples: carryPCM.count + padded.count, hop: hop, samplesPerLatent: perLatent)
+        report.padLatents = padLatents
+        // The padding and the carried context in front; their samples are dropped from the output again.
+        let pcm = [Float](repeating: 0, count: padLatents * perLatent) + carryPCM + padded
+        let lead = padLatents * perLatent + carryPCM.count
+        let latentsAll = [[Float]](repeating: context[0], count: padLatents) + context
         // Mel frame count exactly as the model computes it (reflect pad (n_fft - hop) / 2 each side, n_fft 2048).
-        let frames = (pcm.count - hop) / hop + 1
-        // The latents cover the real audio (carry + this call), not the 50 ms of padding: map them over those frames
-        // and hold the last one over the padding frames.
+        let frames = NephisFlow.studioFrames(samples: pcm.count, hop: hop)
+        // The latents cover the real audio (padding + carry + this call), not the 50 ms of padding at the end: map them
+        // over those frames and hold the last one over the end padding's frames.
         let realFrames = max(1, min(frames, (lead + target - hop) / hop + 1))
         let zReal = Self.latentsPerFrame(latentsAll, frames: realFrames, dims: config.z_dims)
         var zf = [Float](repeating: 0, count: config.z_dims * frames)
@@ -187,19 +216,27 @@ public actor NephisStudio {
             for f in 0..<frames { zf[d * frames + f] = zReal[d * realFrames + min(f, realFrames - 1)] }
         }
 
-        t0 = Date()
-        let mel = try await melSegmented(pcm: pcm, zf: zf, frames: frames, report: &report)
-        report.blueprintMs = Date().timeIntervalSince(t0) * 1000 - report.refinerMs
+        do {
+            t0 = Date()
+            let mel = try await melSegmented(pcm: pcm, zf: zf, frames: frames, report: &report)
+            report.blueprintMs = Date().timeIntervalSince(t0) * 1000 - report.refinerMs
 
-        let out = try await vocode(melValues: mel, frames: frames, report: &report)
-        let mine = Self.fit(Array(out.dropFirst(lead)), target)
-        report.audioMs = Double(mine.count) * 1000 / Double(config.sample_rate)
-        lastReport = report
-        return mine
+            let out = try await vocode(melValues: mel, frames: frames, report: &report)
+            let mine = NephisFlow.studioTrim(out, lead: lead, count: target)
+            report.audioMs = Double(mine.count) * 1000 / Double(config.sample_rate)
+            lastReport = report
+            return (mine, report)
+        } catch {
+            report.bypassed = true
+            report.bypassReason = "failed: \(error)"
+            lastReport = report
+            throw error
+        }
     }
 
-    /// The fallback when the studio fails for a call: Mimi's own sound at the studio's rate, so the stream keeps one
-    /// sample rate and nothing is dropped. Linear interpolation if even the resampler fails.
+    /// The fallback when the studio skips or fails a call: Mimi's own sound at the studio's rate, so the stream keeps
+    /// one sample rate and nothing is dropped (NephisFlowSynth gives it the read's own EQ first, at 24 kHz). Linear
+    /// interpolation if even the resampler fails.
     public nonisolated func plainAudio(pcm24: [Float]) -> [Float] {
         let rate = config.sample_rate
         let target = Int((Double(pcm24.count) * Double(rate) / Double(Self.inputRate)).rounded())
@@ -229,27 +266,25 @@ public actor NephisStudio {
     // MARK: - Steps
 
     /// Blueprint (+ refiner) for the whole call, in overlapping segments when it is longer than the models take at
-    /// once. Returns her log-mel, [bands][frames] row-major.
+    /// once (NephisFlow.studioSegments: none shorter than the blueprint takes). Returns her log-mel, [bands][frames]
+    /// row-major.
     private func melSegmented(pcm: [Float], zf: [Float], frames: Int, report: inout Report) async throws -> [Float] {
         let bands = config.n_mels, dims = config.z_dims, hop = config.hop
-        let seg = Self.segmentFrames, ctx = Self.segmentContext
-        if frames <= seg + 2 * ctx { return try await melPiece(pcm: pcm, zf: zf, frames: frames, report: &report) }
+        let plan = NephisFlow.studioSegments(frames: frames, length: Self.segmentFrames, context: Self.segmentContext)
+        if plan.count == 1 { return try await melPiece(pcm: pcm, zf: zf, frames: frames, report: &report) }
         var mel = [Float](repeating: 0, count: bands * frames)
-        var s = 0
-        while s < frames {
-            let f0 = max(0, s - ctx), f1 = min(frames, s + seg + ctx), n = f1 - f0
-            let piecePCM = Array(pcm[(f0 * hop)..<min(pcm.count, f1 * hop)])
+        for seg in plan {
+            let f0 = seg.from, n = seg.to - seg.from
+            let piecePCM = Array(pcm[(f0 * hop)..<min(pcm.count, seg.to * hop)])
             let pf = min(n, (piecePCM.count - hop) / hop + 1)
             var pieceZ = [Float](repeating: 0, count: dims * pf)
             for d in 0..<dims {
                 for f in 0..<pf { pieceZ[d * pf + f] = zf[d * frames + f0 + f] }
             }
             let m = try await melPiece(pcm: piecePCM, zf: pieceZ, frames: pf, report: &report)
-            let keep = min(seg, frames - s)
             for b in 0..<bands {
-                for f in 0..<keep where s - f0 + f < pf { mel[b * frames + s + f] = m[b * pf + s - f0 + f] }
+                for f in seg.keepFrom..<seg.keepTo where f - f0 < pf { mel[b * frames + f] = m[b * pf + f - f0] }
             }
-            s += seg
         }
         return mel
     }
@@ -295,7 +330,9 @@ public actor NephisStudio {
             for i in 0..<n { x[i] += v[i] / Float(steps) }
         }
         let rs = Float(settings.rs)
-        return (0..<n).map { cond[$0] + x[$0] * rs }
+        let mel = (0..<n).map { cond[$0] + x[$0] * rs }
+        guard NephisFlow.allFinite(mel) else { throw StudioError.badOutput("refined mel: not finite") }
+        return mel
     }
 
     /// The blueprint on one stretch: PCM + the sketch per mel frame ([dims][frames]) -> her log-mel [bands][frames].
@@ -312,8 +349,10 @@ public actor NephisStudio {
         guard let mel = try blueprint.prediction(from: input).featureValue(for: "mel")?.multiArrayValue else {
             throw StudioError.badOutput("mel")
         }
-        // The model's own frame count may differ by one from ours: re-pack to exactly [bands][frames].
         let m = Self.floats(mel), bands = config.n_mels, mf = m.count / bands
+        // A LayerNorm can overflow fp16 on quiet frames (on the Neural Engine): such a call plays Mimi's sound instead.
+        guard NephisFlow.allFinite(m) else { throw StudioError.badOutput("mel: not finite") }
+        // The model's own frame count may differ by one from ours: re-pack to exactly [bands][frames].
         guard mf == frames else {
             var out = [Float](repeating: 0, count: bands * frames)
             for b in 0..<bands {
@@ -362,7 +401,9 @@ public actor NephisStudio {
                 try await Task.sleep(nanoseconds: UInt64(rest * 1e9))
             }
         }
-        return Array(out.prefix(frames * config.hop))
+        let audio = Array(out.prefix(frames * config.hop))
+        guard NephisFlow.allFinite(audio) else { throw StudioError.badOutput("pcm44: not finite") }
+        return audio
     }
 
     // MARK: - Where it runs (Voice Lab)

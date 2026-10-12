@@ -13,7 +13,8 @@
 //    - one sentence failed to synthesize.
 //  Switches happen only at sentence boundaries; the expressive engine takes over again once it is two
 //  sentences ahead. A crash inside an experimental engine is contained by ExpressiveService's own sentinel.
-//  Main thread only.
+//  One rate per run (SessionRate): 24 kHz as always, or her studio's 44.1 kHz when Nephis reads with her studio pack
+//  (Kokoro's 24 kHz fallback is resampled to it). Main thread only.
 //
 
 import AVFoundation
@@ -50,7 +51,11 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
 
     private var audioEngine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+    /// The run's format (`useRate`): the graph and every buffer at its rate.
+    private var format = AVAudioFormat(standardFormatWithSampleRate: Double(SessionRate.standard), channels: 1)!
+    private var sessionRate: Int { Int(format.sampleRate) }
+    /// Her studio's run: audio at any other rate is resampled to it (a 24 kHz run takes 24 kHz only, as before).
+    private var studioRead: Bool { sessionRate != SessionRate.standard }
     private var graphReady = false
 
     private var segments: [SpeechSegment] = []
@@ -91,6 +96,8 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     func enqueue(_ segs: [SpeechSegment]) {
         stop()
         gen += 1
+        // Her studio's 44.1 kHz when Nephis reads with it (else 24 kHz), picked before anything renders.
+        useRate(SessionRate.forRead(primary))
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -269,7 +276,14 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     private func rendered(_ i: Int, gen g: Int, result: Result<Rendered, Error>) {
         guard g == gen, scheduler != nil else { return }
         switch result {
-        case .success(let audio) where audio.sampleRate == 24_000 && !audio.samples.isEmpty:
+        case .success(let made) where !made.samples.isEmpty && (made.sampleRate == sessionRate || (studioRead && made.sampleRate > 0)):
+            // Her studio's audio is at the run's rate; anything else in her studio's run is resampled to it first. A
+            // 24 kHz run takes 24 kHz audio only, as before.
+            guard let audio = atSessionRate(made) else {
+                log.error("expressive: sentence \(i) audio couldn't be converted to \(self.sessionRate) Hz")
+                scheduler?.renderDone(i, ok: false)
+                break
+            }
             scheduler?.renderDone(i, ok: true)
             if scheduler?.isReady(i) == true {
                 let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: segments[i].pauseAfter, loudness: &loudness)
@@ -325,9 +339,11 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
             self.renderKokoro(i) { result in
                 guard g == self.gen, self.fallbackSegment == i else { return }
                 switch result {
-                case .success(let audio):
+                case .success(let made):
+                    // At the run's rate: Kokoro's 24 kHz resampled in her studio's run (as it is in a 24 kHz run).
+                    let audio = self.atSessionRate(made) ?? made
                     let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: self.segments[i].pauseAfter, loudness: &self.loudness)
-                    guard audio.sampleRate == 24_000, let buf = self.makeBuffer(frames), self.startOutput() else {
+                    guard audio.sampleRate == self.sessionRate, let buf = self.makeBuffer(frames), self.startOutput() else {
                         return self.skipFallback(i, why: "Kokoro audio unusable")
                     }
                     self.records[i]?.synthMs = Date().timeIntervalSince(start) * 1000
@@ -355,6 +371,29 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     }
 
     // MARK: - Playback
+
+    /// `audio` at the run's rate: as it is when it already is (always, in a 24 kHz run), else resampled
+    /// (SessionRate.resample; a lab run, so on the main thread). nil if it couldn't be converted.
+    private func atSessionRate(_ audio: Rendered) -> Rendered? {
+        guard audio.sampleRate != sessionRate else { return audio }
+        guard let samples = SessionRate.resample(audio.samples, from: audio.sampleRate, to: sessionRate) else { return nil }
+        return Rendered(samples: samples, sampleRate: sessionRate, synthMs: audio.synthMs)
+    }
+
+    /// The graph at `rate` (enqueue, right after stop(): nothing is queued). A different rate rebuilds it.
+    private func useRate(_ rate: Int) {
+        guard rate != sessionRate, let f = AVAudioFormat(standardFormatWithSampleRate: Double(rate), channels: 1) else { return }
+        if graphReady {
+            NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: audioEngine)
+            player.stop()
+            audioEngine.stop()
+        }
+        audioEngine = AVAudioEngine()
+        player = AVAudioPlayerNode()
+        graphReady = false
+        epoch += 1
+        format = f
+    }
 
     private func makeBuffer(_ frames: [Float]) -> AVAudioPCMBuffer? {
         guard !frames.isEmpty, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames.count)),

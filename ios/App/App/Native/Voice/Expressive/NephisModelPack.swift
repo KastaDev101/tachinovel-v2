@@ -42,8 +42,8 @@ enum NephisModelPack {
     /// The installed pack's root (FluidAudio's models directory for her engine), or nil.
     static var modelsDirectory: URL? { complete(root) ? root : nil }
     /// The installed pack's studio (Models/nephis-studio: NephisBlueprint, NephisVocoder, studio.json), or nil.
-    /// Used only while the hidden `nephisStudio` default is on: the studio makes the stream 44.1 kHz, and parts of
-    /// the player still assume Mimi's 24 kHz (natural finish, polish), so it stays a Voice Lab experiment for now.
+    /// Used only while the hidden `nephisStudio` default is on (Settings › Voices › Voice test's studio switch): the
+    /// studio makes her stream 44.1 kHz, and a read with it plays at that rate (SessionRate in HybridSpeechEngine.swift).
     static var studioDirectory: URL? {
         let dir = root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
         guard complete(root), UserDefaults.standard.bool(forKey: "nephisStudio"),

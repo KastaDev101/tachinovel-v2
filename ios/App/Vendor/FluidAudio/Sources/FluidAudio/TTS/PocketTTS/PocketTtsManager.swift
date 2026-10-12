@@ -79,13 +79,15 @@ public actor PocketTtsManager {
     ///   - voice: Voice identifier (default: uses the manager's default voice).
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - deEss: Whether to apply de-essing post-processing (default: true).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: WAV audio data at 24kHz.
     public func synthesize(
         text: String,
         voice: String? = nil,
         temperature: Float = PocketTtsConstants.temperature,
         deEss: Bool = true,
-        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
+        endGuard: PocketTtsSynthesizer.EndGuard = .off
     ) async throws -> Data {
         guard isInitialized else {
             throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
@@ -104,7 +106,8 @@ public actor PocketTtsManager {
                 temperature: temperature,
                 deEss: deEss,
                 maxTokensPerChunk: maxTokensPerChunk,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
             return result.audio
         }
@@ -119,6 +122,7 @@ public actor PocketTtsManager {
     ///   - voiceData: Voice conditioning data (e.g., from cloneVoice).
     ///   - temperature: Generation temperature (default: 0.7).
     ///   - deEss: Whether to apply de-essing post-processing (default: true).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: WAV audio data at 24kHz.
     ///
     /// Example:
@@ -131,7 +135,8 @@ public actor PocketTtsManager {
         voiceData: PocketTtsVoiceData,
         temperature: Float = PocketTtsConstants.temperature,
         deEss: Bool = true,
-        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
+        endGuard: PocketTtsSynthesizer.EndGuard = .off
     ) async throws -> Data {
         guard isInitialized else {
             throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
@@ -146,19 +151,24 @@ public actor PocketTtsManager {
                 temperature: temperature,
                 deEss: deEss,
                 maxTokensPerChunk: maxTokensPerChunk,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
             return result.audio
         }
     }
 
     /// Synthesize text and return detailed results including frame count and EOS info.
+    ///
+    /// TachiNovel: `endGuard` sets how each chunk ends (default `.off`, FluidAudio's own stop); the result's
+    /// `chunkEnds` says how each one did.
     public func synthesizeDetailed(
         text: String,
         voice: String? = nil,
         temperature: Float = PocketTtsConstants.temperature,
         deEss: Bool = true,
-        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
+        endGuard: PocketTtsSynthesizer.EndGuard = .off
     ) async throws -> PocketTtsSynthesizer.SynthesisResult {
         guard isInitialized else {
             throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
@@ -174,7 +184,8 @@ public actor PocketTtsManager {
                 temperature: temperature,
                 deEss: deEss,
                 maxTokensPerChunk: maxTokensPerChunk,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
         }
     }
@@ -189,6 +200,7 @@ public actor PocketTtsManager {
     ///   - text: The text to synthesize.
     ///   - voice: Voice identifier (default: uses the manager's default voice).
     ///   - temperature: Generation temperature (default: 0.7).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: An `AsyncThrowingStream` of audio frames. Throws if a model
     ///   inference error occurs during generation.
     ///
@@ -205,7 +217,8 @@ public actor PocketTtsManager {
         text: String,
         voice: String? = nil,
         temperature: Float = PocketTtsConstants.temperature,
-        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
+        endGuard: PocketTtsSynthesizer.EndGuard = .off
     ) async throws -> AsyncThrowingStream<PocketTtsSynthesizer.AudioFrame, Error> {
         guard isInitialized else {
             throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
@@ -220,7 +233,8 @@ public actor PocketTtsManager {
                 voice: selectedVoice,
                 temperature: temperature,
                 maxTokensPerChunk: maxTokensPerChunk,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
         }
     }
@@ -233,13 +247,15 @@ public actor PocketTtsManager {
     ///   - text: The text to synthesize.
     ///   - voiceData: Voice conditioning data (e.g., from cloneVoice).
     ///   - temperature: Generation temperature (default: 0.7).
+    ///   - endGuard: TachiNovel: how each chunk ends (default `.off`, FluidAudio's own stop).
     /// - Returns: An `AsyncThrowingStream` of audio frames. Throws if a model
     ///   inference error occurs during generation.
     public func synthesizeStreaming(
         text: String,
         voiceData: PocketTtsVoiceData,
         temperature: Float = PocketTtsConstants.temperature,
-        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk
+        maxTokensPerChunk: Int = PocketTtsConstants.maxTokensPerChunk,
+        endGuard: PocketTtsSynthesizer.EndGuard = .off
     ) async throws -> AsyncThrowingStream<PocketTtsSynthesizer.AudioFrame, Error> {
         guard isInitialized else {
             throw PocketTTSError.modelNotFound("PocketTTS model not initialized")
@@ -253,7 +269,8 @@ public actor PocketTtsManager {
                 voiceData: voiceData,
                 temperature: temperature,
                 maxTokensPerChunk: maxTokensPerChunk,
-                language: language
+                language: language,
+                endGuard: endGuard
             )
         }
     }

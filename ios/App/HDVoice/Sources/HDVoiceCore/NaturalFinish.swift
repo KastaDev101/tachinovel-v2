@@ -18,7 +18,8 @@
 //    8. time      the context pause after the unit and, when the lung budget says so, a breath inside it (never adding
 //                 time).
 //  Deterministic for the same input. One instance per session (the breath planner and the rate leveler count across
-//  units).
+//  units), at the session's rate: 24 kHz, or her studio's 44.1 kHz (every step works at either; her EQ goes on the
+//  flow stream only at 24 kHz: `renderFlow`).
 //
 
 import Foundation
@@ -155,7 +156,8 @@ public struct NaturalFinish: Sendable {
     public private(set) var breathsSkipped = 0
     public private(set) var lastReport = Report()
 
-    /// The expressive engine's own tonal correction (VoiceTilt.pocketTts), before the shared chain.
+    /// The expressive engine's own tonal correction (VoiceTilt.pocketTts), before the shared chain. nil for her studio's
+    /// reads (its tone is set by NephisFlowSynth); `renderFlow` applies it to Mimi's 24 kHz stream only.
     public var tilt: VoiceTilt?
     /// The voice exactly as approved on the PC (Nephis): the start-up sound before each call's first word turned
     /// down (StartupSound), her own EQ (`tilt`), loudness matching; no polish EQ, no Studio chain.
@@ -291,17 +293,20 @@ public struct NaturalFinish: Sendable {
     public static let flowGainDB = 0.0
     /// Above this the flow stream is softly limited (never hard-clipped: that crackles), reaching at most `peakCeiling`.
     public static let flowKnee: Float = 0.75
+    /// Mimi's decode rate, where her EQ (`tilt`) was measured. Her studio's stream (NephisFlowSynth, 44.1 kHz) comes with
+    /// its tone already set, so a flow stream at any other rate gets the thump filter but no EQ on top.
+    public static let mimiRate = 24_000
 
-    /// Nephis's continuous stream: the thump filter and her EQ, one fixed gain, the listener's speed, then the cut
-    /// into sentences for highlighting only. No trims, fades, pauses, breaths, non-verbals or per-line DSP: the
-    /// engine made the pauses and joins, and any of those would put a seam back.
+    /// Nephis's continuous stream: the thump filter and her EQ (Mimi's 24 kHz stream only), one fixed gain, the
+    /// listener's speed, then the cut into sentences for highlighting only. No trims, fades, pauses, breaths,
+    /// non-verbals or per-line DSP: the engine made the pauses and joins, and any of those would put a seam back.
     mutating func renderFlow(_ u: Unit) -> [Piece] {
         var report = Report()
         let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
         var speech = u.samples
         guard !speech.isEmpty else { lastReport = report; return lines.map { _ in Piece(frames: [], speechSeconds: 0) } }
         StartupSound.removeThump(&speech, sampleRate: sampleRate)
-        tilt?.apply(&speech, sampleRate: sampleRate)
+        if sampleRate == Self.mimiRate { tilt?.apply(&speech, sampleRate: sampleRate) }
         let g = Float(pow(10, Self.flowGainDB / 20))
         let room = Self.peakCeiling - Self.flowKnee
         for i in speech.indices {
