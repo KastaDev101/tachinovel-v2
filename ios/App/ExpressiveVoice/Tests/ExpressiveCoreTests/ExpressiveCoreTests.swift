@@ -65,6 +65,39 @@ final class StyleMapperTests: XCTestCase {
         XCTAssertEqual(StyleMapper.pocketText("Ah... not good..."), "Ah, not good.")
     }
 
+    func testPocketTextRawFormKeepsTheTextAsWritten() {
+        // Q1's raw arm (tachinovel-tts-lab 2026-10-12): the script's lines read as written, ellipses as "...".
+        let q1 = [
+            "Hah... hahh... what did you just do to me...",
+            "Right there... right there... yes, yes, YES— ohhh... fuuuck... oh...",
+            "Eyes on me. No— on me. Mmm... that's it. Ah— keep that pace... exactly that... god, you're doing so well... mmh...",
+            "\"Did you lock the gate?\" A long pause. \"...Define locked.\"",
+            "Closer. Closer. Faster now. Faster. Hold the line, hold it, hold it... NOOOW!",
+            "Please... please, open the door... please... OPEN IT!",
+            "Again. Again! Ha... we did it... we actually DID it!",
+            "Kai... Kai! KAI!",
+            "Don't stop... don't you dare stop... I'm— OH, GOD— mmmh... god... fuuuuck...",
+            "Heh... ah— you want more, don't you? I can tell... mmm... ask me nicely.",
+            "Hmmm... you came back.",
+            "\"Race you to the top! Loser carries the packs for a week! Ready, set...\" She was already running. \"Go!\"",
+        ]
+        for line in q1 { XCTAssertEqual(StyleMapper.pocketText(line, form: .raw), line) }
+        XCTAssertEqual(StyleMapper.pocketText("Hmm… I don’t bite… often.", form: .raw), "Hmm... I don’t bite... often.", "every \"…\" as \"...\"")
+        XCTAssertEqual(StyleMapper.pocketText("Well. . . maybe…. Or not.", form: .raw), "Well... maybe... Or not.")
+        // What a book needs stays: numbers, codes, real acronyms spelled, a broken word joined.
+        XCTAssertEqual(StyleMapper.pocketText("There are 312 steps, 1,500 lanterns and a 3rd gate.", form: .raw),
+                       "There are three hundred twelve steps, one thousand five hundred lanterns and a third gate.")
+        XCTAssertEqual(StyleMapper.pocketText("The NPC rolled past gate L0-49.", form: .raw), "The N P C rolled past gate L zero forty nine.")
+        XCTAssertEqual(StyleMapper.pocketText("His HP fell... and the AI said OK.", form: .raw), "His H P fell... and the A I said OK.")
+        XCTAssertEqual(StyleMapper.pocketText("'Damna... tion...'", form: .raw), "'Damnation...'")
+        XCTAssertEqual(StyleMapper.pocketText("It's imposs… ible!", form: .raw), "It's impossible!")
+        // Shouted words stay words (the app's form never shows them to spokenCodes: nanoText lower-cases them first).
+        XCTAssertEqual(StyleMapper.spokenCodes("Please, OPEN IT and STAY there, Kai.", acronymsOnly: true), "Please, OPEN IT and STAY there, Kai.")
+        XCTAssertEqual(StyleMapper.spokenCodes("Please, OPEN IT and STAY there, Kai."), "Please, O P E N IT and S T A Y there, Kai.", "the app's form, unchanged")
+        // The default is the app's form, exactly.
+        XCTAssertEqual(StyleMapper.pocketText("Hmmm. HMM? Hmm…", form: .app), StyleMapper.pocketText("Hmmm. HMM? Hmm…"))
+    }
+
     func testPlainTextRemovesSoundTags() {
         XCTAssertEqual(StyleMapper.plainText("“It was a fair price, I swear [chuckle]. Well, almost fair.”"), "“It was a fair price, I swear. Well, almost fair.”")
         XCTAssertEqual(StyleMapper.plainText("[gasp] “It’s coming from the cellar!”"), "“It’s coming from the cellar!”")

@@ -78,6 +78,9 @@ public actor PocketTtsSession {
     private var rng: SeededRNG
     /// TachiNovel: false = frames carry latents only (no Mimi decode here; the caller decodes them).
     private var decodesAudio = true
+    /// TachiNovel: true = a run of sentence marks ("...", "?!") ends one sentence when text is chunked
+    /// (`PocketTtsSynthesizer.splitSentences(keepsRuns:)`); false = FluidAudio's own split.
+    private var keepsPunctuationRuns = false
     /// TachiNovel: how each chunk ends (`setEndGuard`); `.off` = FluidAudio's own stop.
     private var endGuard = PocketTtsSynthesizer.EndGuard.off
     /// TachiNovel: the levels the guard needs when this session yields latents only.
@@ -94,12 +97,18 @@ public actor PocketTtsSession {
             text.trimmingCharacters(in: .whitespacesAndNewlines), tokenizer: constants.tokenizer,
             maxTokens: maxTokensPerChunk,
             preferredMaxTokens: min(PocketTtsConstants.preferredTokensPerChunk, maxTokensPerChunk),
-            voiceCachePosition: voiceCachePosition, language: language)
+            voiceCachePosition: voiceCachePosition, language: language, keepsPunctuationRuns: keepsPunctuationRuns)
     }
 
     /// TachiNovel: latents only, from now on (call before enqueueing text).
     public func setDecodesAudio(_ on: Bool) {
         decodesAudio = on
+    }
+
+    /// TachiNovel: a run of sentence marks ("...", "?!") stays one sentence end when text is chunked, from now on
+    /// (call before enqueueing text), as in Kyutai's pocket_tts; off (the default) is FluidAudio's own split.
+    public func setKeepsPunctuationRuns(_ on: Bool) {
+        keepsPunctuationRuns = on
     }
 
     /// TachiNovel: how each chunk ends, from now on (call before enqueueing text; `PocketTtsSynthesizer.EndGuard`).
@@ -288,7 +297,8 @@ public actor PocketTtsSession {
                     preferredMaxTokens: min(
                         PocketTtsConstants.preferredTokensPerChunk, maxTokensPerChunk),
                     voiceCachePosition: voiceCachePosition,
-                    language: language
+                    language: language,
+                    keepsPunctuationRuns: keepsPunctuationRuns  // TachiNovel
                 )
                 Self.logger.info(
                     "Session enqueued '\(trimmed)', \(chunks.count) chunk(s)")

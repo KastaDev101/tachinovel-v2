@@ -153,6 +153,49 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"highShelfDB": 4}"#.utf8)).highShelfDB, 4)
     }
 
+    func testAPackCanAskForTheTextAsWritten() throws {
+        let v42 = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"carryFrames": 12}"#.utf8))
+        XCTAssertEqual(v42.text, .app, "no \"text\": the app's text, as every pack before")
+        XCTAssertEqual(NephisFlow.Chain().text, .app)
+        let raw = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"text": "raw"}"#.utf8))
+        XCTAssertEqual(raw.text, .raw)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"text": "phonemes"}"#.utf8)).text, .app, "a form this version doesn't know")
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"text": 3, "carryFrames": 20}"#.utf8)).carryFrames, 20,
+                       "a wrong type doesn't cost the pack its other settings")
+
+        var line = ExpressiveLine(text: "Hm, you came back, Nooow. She bought a bag.")
+        line.raw = "Hmmm... you came back... NOOOW! She bought a bag."
+        // The app's form: exactly what NephisFlowSynth read before.
+        XCTAssertEqual(v42.pocketText(for: line), v42.respelled(StyleMapper.pocketText(StyleMapper.plainText(line.text))))
+        XCTAssertEqual(v42.pocketText(for: line), "Hm, you came back, Nooow. She bawt a bagg.")
+        // As written; her respellings still apply.
+        XCTAssertEqual(raw.pocketText(for: line), "Hmmm... you came back... NOOOW! She bawt a bagg.")
+        // A call without the raw text (a Voice Lab line): its text, in the raw form.
+        XCTAssertEqual(raw.pocketText(for: ExpressiveLine(text: "Wait… [sigh] really?")), "Wait... really?")
+    }
+
+    func testHerTrailPauseFollowsAnEllipsisInTheRawForm() {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.gap(after: "I waited...", mood: "sad"), 0.56)
+        XCTAssertEqual(chain.gap(after: "\"Ready, set...\"", mood: "playful"), 0.51, "before a closing quote too")
+        XCTAssertEqual(chain.gap(after: "Ready, set…”", mood: "calm"), 0.9)
+        XCTAssertEqual(chain.gap(after: "I waited.", mood: "sad"), 0.68)
+        XCTAssertEqual(chain.gap(after: "\"Ready, set.\"", mood: "playful"), 0.48)
+        XCTAssertEqual(chain.gap(after: "They waited:\"", mood: "calm"), 0.84, "a colon counts at the very end only, as before")
+        XCTAssertEqual(chain.gap(after: "I waited...", mood: nil), chain.ellipsisGap)
+        // The app's form leaves no ellipsis at a piece's end: there her trail never followed one.
+        XCTAssertEqual(chain.gap(after: StyleMapper.pocketText("I waited..."), mood: "sad"), 0.68)
+    }
+
+    func testALeadInIsTheLastSentenceAndAnEllipsisDoesNotEndOne() {
+        XCTAssertEqual(NephisFlow.lastSentence("The rain stopped. She waited."), "She waited.")
+        XCTAssertEqual(NephisFlow.lastSentence("The rain stopped. I waited... and waited... and you never... came."),
+                       "I waited... and waited... and you never... came.")
+        XCTAssertEqual(NephisFlow.lastSentence("\"Run!\" she said. \"Now?!\" Yes."), "Yes.")
+        XCTAssertEqual(NephisFlow.lastSentence("No end here"), "No end here")
+        XCTAssertEqual(NephisFlow.lastSentence("Wait.. what is this? Go\nnow."), "Go now.")
+    }
+
     func testCleanTailKeepsALastSyllableAfterAShortDip() {
         // The end-of-text estimate is early (6) and the last word dips quiet for 2 latents (a stop) before its
         // final syllable at 12-13: that syllable is speech, not a mumble.

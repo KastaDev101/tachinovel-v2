@@ -85,6 +85,9 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     /// Nephis flow with her studio (NephisStudio): false = playback is short of audio, skip the studio for this call
     /// (her sound stays 44.1 kHz, just without the polish); nil = use it.
     public var studio: Bool?
+    /// Nephis flow, raw text form (a pack whose chain says "text": "raw", NephisFlow.Chain.text): the call's text as
+    /// written (the script's `delivery.raw` per sentence, else its text); nil = `text`. Only such a pack reads it.
+    public var raw: String?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
@@ -92,6 +95,15 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
         self.style = style
         self.role = role
     }
+}
+
+/// Which text Pocket TTS gets (StyleMapper.pocketText). `app`: the app's spoken form, ellipses turned into commas and
+/// periods, "Hmm" into "Hm" (every voice, and every Nephis pack that doesn't ask otherwise). `raw`: the text as written,
+/// for a Nephis pack whose chain says "text": "raw" (tachinovel-tts-lab Q1, 2026-10-12: read as written, her model lost
+/// no last word and kept her timing after "..."; see src/core/narration/raw-text.ts for what the script leaves as is).
+public enum PocketTextForm: String, Sendable, Codable, Equatable {
+    case app
+    case raw
 }
 
 public enum StyleMapper {
@@ -117,7 +129,9 @@ public enum StyleMapper {
     /// comma 0 of 10). So a trailing-off "…" inside a line becomes a comma, at the end of a line or quote a period,
     /// and a leading one goes. The hesitation comes back afterwards: NaturalFinish stretches the pause at each
     /// ellipsis the director marked (350–450 ms).
-    public static func pocketText(_ text: String) -> String {
+    /// `form: .raw` (a Nephis pack that asks for the text as written): `rawPocketText` instead.
+    public static func pocketText(_ text: String, form: PocketTextForm = .app) -> String {
+        if form == .raw { return rawPocketText(text) }
         let dots = #"(?:\.\s?\.\s?\.|…)"#
         // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
         // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
@@ -138,6 +152,31 @@ public enum StyleMapper {
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Pocket's text in the raw form (Q1, tachinovel-tts-lab 2026-10-12, c7-1500: read as written she lost 0 of 147
+    /// last words and never ran away, against 6 and 3 with the app's text; her pauses after "..." followed hers
+    /// better). Kept as written: every ellipsis (as "...", never a comma or a period, a leading one too), "Hmm" and
+    /// "Hmmm" (no "Hm"), and capitals: a word in capitals is spelled out only when it is one of the acronyms the app's
+    /// text keeps in capitals (`keptCapitals`) or has two letters, which are exactly the capitals `spokenCodes` spells in
+    /// the app's form, so "NPC" is still "N P C" and "OPEN IT", "KAI", "DID" stay words. Still done, as a book needs it:
+    /// numbers in words, codes ("L0-49"), a word broken by "..." joined ("Damna... tion").
+    static func rawPocketText(_ text: String) -> String {
+        var out = text.replacingOccurrences(of: "…+", with: "...", options: .regularExpression)
+            .replacingOccurrences(of: #"\.{3,}|\.(?: \.){2,}"#, with: "...", options: .regularExpression)
+        out = spokenNumbers(spokenCodes(joinBrokenWords(out), acronymsOnly: true))
+        out = out.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The capitals the app's text keeps (src/core/narration/delivery.ts ACRONYMS: nanoText lower-cases every other word
+    /// of three capitals or more before `spokenCodes` sees it). The raw form keeps capitals as written, so it spells out
+    /// only these among words of three or more.
+    static let keptCapitals: Set<String> = [
+        "HP", "MP", "SP", "XP", "EXP", "NPC", "PVP", "PVE", "RPG", "MMO", "MMORPG", "AI", "OK", "TV", "CEO", "FBI", "CIA", "USA", "UK",
+        "EU", "UN", "DNA", "ID", "IQ", "GPS", "CPU", "GPU", "STR", "AGI", "DEX", "INT", "WIS", "VIT", "END", "LUK", "CHA", "DEF",
+        "ATK", "SSS", "SS", "RIP", "LOL", "DIY", "ASAP", "NASA", "SWAT", "POV", "UFO", "ATM", "MVP", "AOE", "DPS", "DOT", "II",
+        "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII",
+    ]
+
     /// Capitals shouted as words, never spelled out ("NO!", "RUN"), and everyday short words.
     static let shoutedWords: Set<String> = [
         "I", "A", "OK", "NO", "YES", "GO", "NOW", "STOP", "RUN", "HELP", "WHAT", "WHY", "WHO", "HOW", "HEY", "OH", "AH",
@@ -151,7 +190,9 @@ public enum StyleMapper {
     /// letters stuck to digits come apart ("L0" → "L 0"), a dash between digit groups becomes a space, and a short
     /// all-capitals word that isn't a shouted everyday word is spelled out ("APC" → "A P C"), unless the whole
     /// sentence is in capitals (shouting). The novel's Pronunciations entries still win: they reach this text first.
-    public static func spokenCodes(_ text: String) -> String {
+    /// `acronymsOnly` (the raw form, which keeps shouted capitals as written): a word of three capitals or more is
+    /// spelled out only when it is in `keptCapitals`.
+    public static func spokenCodes(_ text: String, acronymsOnly: Bool = false) -> String {
         var out = text
         let rules: [(String, String)] = [
             (#"(?<=\b[A-Za-z]{1,4})(?=\d)"#, " "), // "L0" → "L 0"
@@ -170,6 +211,7 @@ public enum StyleMapper {
             let word = ns.substring(with: m.range)
             // Shouted words, and sounds in capitals ("HMM", "AAAH", "SHH": a letter doubled) stay words.
             guard !shoutedWords.contains(word), word.range(of: #"(.)\1"#, options: .regularExpression) == nil else { continue }
+            if acronymsOnly, word.count > 2, !keptCapitals.contains(word) { continue }
             spelled = spelled.replacingCharacters(in: m.range, with: word.map(String.init).joined(separator: " ")) as NSString
         }
         return spelled as String

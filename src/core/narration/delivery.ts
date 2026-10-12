@@ -230,7 +230,7 @@ const STOP_WORDS = new Set(
 );
 
 /** All-caps words that are names of things, not shouting (kept as written). */
-const ACRONYMS = new Set([
+export const ACRONYMS = new Set([
   'HP', 'MP', 'SP', 'XP', 'EXP', 'NPC', 'PVP', 'PVE', 'RPG', 'MMO', 'MMORPG', 'AI', 'OK', 'TV', 'CEO', 'FBI', 'CIA', 'USA', 'UK',
   'EU', 'UN', 'DNA', 'ID', 'IQ', 'GPS', 'CPU', 'GPU', 'STR', 'AGI', 'DEX', 'INT', 'WIS', 'VIT', 'END', 'LUK', 'CHA', 'DEF',
   'ATK', 'SSS', 'SS', 'RIP', 'LOL', 'DIY', 'ASAP', 'NASA', 'SWAT', 'POV', 'UFO', 'ATM', 'MVP', 'AOE', 'DPS', 'DOT', 'II',
@@ -265,6 +265,9 @@ export interface DeliveryJson {
   nv?: NonVerbal;
   /** The text for Nano when it differs from the item's text (reshaped emphasis, a falling ending, a key-word pause). */
   say?: string;
+  /** The raw text form (raw-text.ts) when it differs from the item's text: the sentence as written, for a Nephis pack
+   * that asks for it (pack.json chain "text": "raw"); every other voice and pack reads `say` or the text. */
+  raw?: string;
   /** Syllables Nano will say (native levels the speaking rate: syllables per second of voiced audio). */
   syl?: number;
   /** Where a dramatic "…" sits inside the sentence (share of its letters before it): native stretches the model's
@@ -457,6 +460,8 @@ export function lastContentWord(text: string): string | undefined {
  * or shouts capitals); a sound effect ending in a dash stops instead of trailing off; a command's "!" falls to
  * "."; a pause ("…" or ",") before the key word. Non-verbals are never written in (Nano's tags sounded robotic and
  * roughened the speech after them): native splices a recorded one in front (DeliveryJson.nv).
+ * Nephis reads this too (through `say`), unless her pack asks for the raw text form: then none of it applies
+ * (DeliveryJson.raw, raw-text.ts; Q1 2026-10-12: these rewrites cost her last words and her timing).
  */
 export function nanoText(text: string, cue: Pick<Cue, 'stress' | 'line' | 'dialogue' | 'keyWord'>): string {
   let out = text.replace(/\b[A-Z][A-Z'’]{2,}\b/g, (w, at: number) => {

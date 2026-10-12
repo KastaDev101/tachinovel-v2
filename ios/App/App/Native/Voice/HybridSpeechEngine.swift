@@ -394,6 +394,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
             let syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
             if flow {
+                // The same sentences as written, for a Nephis pack that reads that form (chain "text": "raw"; the
+                // engine picks one of the two): the script's raw form where it has one, else the sentence's text.
+                line.raw = members.map { j in
+                    let t = StyleMapper.plainText(segments[j].natural?.params.raw ?? segments[j].kokoroText)
+                    return sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t
+                }.joined(separator: " ")
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
                 line.flowReset = i != flowNext
                 if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }

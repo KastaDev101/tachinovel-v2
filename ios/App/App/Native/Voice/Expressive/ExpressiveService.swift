@@ -972,11 +972,16 @@ final class ExpressiveService {
                                        "configReplays": f.configReplays]
         // The rate Listen's read plays at: 24 kHz, or her studio's 44.1 kHz.
         let sessionRate = NarrationController.shared.speechEngine.sessionRate
-        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate] as [String: Any] }
+        // Which text her pack reads: "app" (the app's spoken form) or "raw" (as written; pack.json chain "text"). The
+        // loaded assets only: a report never loads them.
+        let textForm = nephisFlowAssetsCache.flatMap { $0 }?.chain.text.rawValue ?? PocketTextForm.app.rawValue
+        guard f.calls > 0 else {
+            return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm] as [String: Any]
+        }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
             "active": usesFlow, "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened,
-            "evidence": evidence,
+            "evidence": evidence, "textForm": textForm,
             "audioSeconds": Self.r1(f.audioMs / 1000),
             // Seconds of work per second of audio, stage by stage (render overlaps the analysis decode; the
             // stream decode overlaps the next call's render in Listen).

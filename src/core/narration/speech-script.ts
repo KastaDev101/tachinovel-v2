@@ -26,7 +26,8 @@
  *   line       the line class when it isn't plain narration/dialogue (teasing, commanding, tender),
  *   delivery   Nano's controls for the sentence: temperature, gain, tempo, pitch (cents), a pause before it, the
  *              [whispering] lead, and `say`, the text Nano reads when it differs (a sound tag, reshaped capitals,
- *              a falling ending, a pause before the key word); the displayed text and its offsets never change,
+ *              a falling ending, a pause before the key word), and `raw`, the sentence as written for a Nephis pack
+ *              that asks for it (raw-text.ts); the displayed text and its offsets never change,
  *   naturalMs  the natural pause after it (relaxed pacing ±15 %, ×1.2 after "…", a command's room to land), when it differs
  *              from relaxedMs/pauseMs,
  *   breath     a natural place for a breath after it (a paragraph start, a long sentence-final pause; never inside
@@ -36,6 +37,7 @@
  * Pure ES2023: runs in the core (JSContext: lock-screen auto-continue) and in the UI (Listen from here).
  */
 import { compactLists, type ListMemory } from './lists.ts';
+import { rawTextReader } from './raw-text.ts';
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
 import {
   alternateSpeakers,
@@ -250,13 +252,24 @@ export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptO
   }));
   const speakers = alternateSpeakers(meta);
   naturalDelivery(blocks, items, meta, opts.emphasis);
+  // The raw text form (raw-text.ts), for a Nephis pack that asks for it: the sentence as written, where it differs from
+  // the text. Titles keep the front-end's title reading ("Chapter 1. Nightmare Begins.").
+  const rawOf = rawTextReader({ lexicons: opts.lexicons ?? [], stutter: opts.stutter });
+  for (const it of items) {
+    if (it.kind === 'title' || !it.delivery) continue;
+    const raw = rawOf(blocks[it.block]?.text.slice(it.start, it.end) ?? it.text);
+    if (SPEAKABLE.test(raw) && raw !== it.text) it.delivery.raw = raw;
+  }
   items.forEach((it, i) => {
     if (speakers[i] === 1 && meta[i]?.dialogue) it.speaker = 1;
     const rate = rateJitter(it.hash);
     if (rate !== 1) it.rate = rate;
   });
   // Long LitRPG lists ("Memories: [A], [B]…", 6+ items) as a summary, not item by item (lists.ts).
+  const before = new Map(items.map((it) => [it, it.text]));
   const spoken = compactLists(items, (b) => blocks[b]?.text ?? '', opts.lists);
+  // A sentence read as a list's summary (or only its words after the list) has no raw form: the text is the reading.
+  for (const it of spoken) if (it.delivery?.raw !== undefined && it.text !== before.get(it)) delete it.delivery.raw;
   return { frontendVersion: script.frontendVersion, textHash: script.textHash, items: spoken, delivery: DELIVERY_HEADER };
 }
 

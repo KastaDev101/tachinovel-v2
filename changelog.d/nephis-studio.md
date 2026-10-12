@@ -9,6 +9,12 @@
   runs at 44.1 kHz from start to end, and other voices filling in are converted to that rate. Before, every studio
   line was handed to another voice. Chapters prepared with her studio are saved at 44.1 kHz, 128 kbps. Everything
   without the studio stays at 24 kHz and 32 kbps, as before.
+- A Nephis pack can ask for her text as written (pack.json chain "text": "raw"): her model then reads "..." as an
+  ellipsis instead of a comma or a period, and "Hmmm", capitals and drawn-out words as they are in the book, while
+  numbers, codes, acronyms, abbreviations, Pronunciations and her respellings are still taken care of. Her pause after a
+  piece ending in "..." is then her own per-mood pause after one. In the lab, read this way her model lost no last word
+  and kept her timing better. Packs without the setting (v4.2 included) read exactly as before. The Voice test's copied
+  report says which text her pack reads.
 - The Voice test report lists her calls one by one: whether her studio rendered each one or why it stepped aside
   (short of audio, phone too hot, failed), its sample rate and mood, and where it falls in her audio. It also counts
   how many of her sentence ends were cut off while still audible and how many were let fade out. The 2-minute test

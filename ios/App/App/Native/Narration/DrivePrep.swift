@@ -286,6 +286,8 @@ final class ChapterRenderer: @unchecked Sendable {
         let d = VoiceSettings.shared.prefs.delivery
         let text = its.map { StyleMapper.plainText($0.natural?.params.say ?? $0.text) }.joined(separator: " ")
         var line = ExpressiveLine(text: text, role: d.read(its[0].natural?.voice, speaks: its[0].natural?.speaks ?? false) ?? "narrator")
+        // As written, for a Nephis pack that reads that form (chain "text": "raw"), as live.
+        line.raw = its.map { StyleMapper.plainText($0.natural?.params.raw ?? $0.text) }.joined(separator: " ")
         let weights = its.map { Float(max(1, $0.text.count)) }
         let temps = its.map { $0.natural?.params.temperature ?? 0.7 }
         line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))

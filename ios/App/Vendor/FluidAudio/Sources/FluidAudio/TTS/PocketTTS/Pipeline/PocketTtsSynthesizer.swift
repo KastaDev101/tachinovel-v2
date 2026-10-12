@@ -979,13 +979,17 @@ public struct PocketTtsSynthesizer {
     ///
     /// The `language` parameter selects language-specific abbreviation and
     /// punctuation tables. English is the default.
+    ///
+    /// TachiNovel: `keepsPunctuationRuns` splits sentences after a whole run of
+    /// `.!?` (`splitSentences(keepsRuns:)`); off, FluidAudio's own split.
     static func chunkTextWithMetadata(
         _ text: String,
         tokenizer: SentencePieceTokenizer,
         maxTokens: Int = PocketTtsConstants.maxTokensPerChunk,
         preferredMaxTokens: Int? = nil,
         voiceCachePosition: Int? = nil,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        keepsPunctuationRuns: Bool = false
     ) -> [TextChunk] {
         let preferredMaxTokens = min(preferredMaxTokens ?? maxTokens, maxTokens)
         // Size chunks on the text the model is given. `normalizeText` collapses
@@ -1016,7 +1020,7 @@ public struct PocketTtsSynthesizer {
 
         // Split into sentences at .!? boundaries, using the language's
         // abbreviation table so e.g. French `M.` doesn't end a sentence.
-        let sentences = splitSentences(normalized, language: language)
+        let sentences = splitSentences(normalized, language: language, keepsRuns: keepsPunctuationRuns)
 
         // Further split any oversized sentences at clause/word boundaries.
         // Track which pieces came from mid-sentence splits so the synthesizer
@@ -1296,9 +1300,16 @@ public struct PocketTtsSynthesizer {
     /// The `language` parameter selects the abbreviation table; English is the
     /// default. French (`.french24L`) uses `frenchAbbreviations` for civility
     /// titles, address terms, and reference markers.
+    ///
+    /// TachiNovel: `keepsRuns` ends a sentence after a whole run of `.!?`
+    /// ("...", "?!"), as Kyutai's pocket_tts does (text_chunking.py: a split
+    /// comes at the first token after the boundary tokens). Off, every mark
+    /// ends one, and "Hah... hahh" became "Hah." "." "." "hahh" (". . ." once
+    /// regrouped).
     static func splitSentences(
         _ text: String,
-        language: PocketTtsLanguage = .english
+        language: PocketTtsLanguage = .english,
+        keepsRuns: Bool = false
     ) -> [String] {
         let abbrevSet = abbreviations(for: language)
         var sentences: [String] = []
@@ -1309,6 +1320,9 @@ public struct PocketTtsSynthesizer {
             current.append(char)
 
             guard ".!?".contains(char) else { continue }
+
+            // TachiNovel: inside a run of sentence marks, the run goes on.
+            if keepsRuns, i + 1 < chars.count, ".!?".contains(chars[i + 1]) { continue }
 
             // For periods, check if this is an abbreviation
             if char == "." {

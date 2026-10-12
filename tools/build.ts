@@ -42,7 +42,9 @@ const BUDGETS_KB: Record<string, number> = {
   // (src/core/narration/delivery.ts, ~8 KB) so they sound like Listen; the settings screen for it comes next.
   // 740 → 760 (2026-10-07, narrator-moods): Settings › Voices rebuilt around the Narrator (who reads, its settings,
   // Kokoro's three backups, sub-pages) plus the Voice Lab scene-reading test; Kasta asked for the cleanup.
-  'index.html': 760,
+  // 760 → 770 (2026-10-12, nephis-studio): the raw text form (src/core/narration/raw-text.ts, ~5.7 KB) runs in the
+  // UI's speech script so a pack can read the text as written (lab Q1: 0 vs 6 of 147 last words lost).
+  'index.html': 770,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,

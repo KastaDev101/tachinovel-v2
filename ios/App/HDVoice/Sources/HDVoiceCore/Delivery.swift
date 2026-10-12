@@ -204,9 +204,12 @@ public struct DeliveryParams: Sendable, Equatable {
     /// Where a dramatic "…" sits inside the sentence, and where punctuation sits (shares of the letters).
     public var ellipses: [Double]
     public var punctuation: [Double]
+    /// The sentence as written (the script's raw text form, src/core/narration/raw-text.ts) when it differs from its
+    /// text; only a Nephis pack that asks for it reads it (pack.json chain "text": "raw").
+    public var raw: String?
 
     public init(temperature: Float = 0.7, gainDB: Double = 0, tempo: Double = 1, cents: Double = 0, preSeconds: Double = 0, say: String? = nil,
-                nonVerbal: NonVerbalType? = nil, syllables: Int = 0, ellipses: [Double] = [], punctuation: [Double] = []) {
+                nonVerbal: NonVerbalType? = nil, syllables: Int = 0, ellipses: [Double] = [], punctuation: [Double] = [], raw: String? = nil) {
         self.temperature = temperature
         self.gainDB = gainDB
         self.tempo = tempo
@@ -217,6 +220,7 @@ public struct DeliveryParams: Sendable, Equatable {
         self.syllables = syllables
         self.ellipses = ellipses
         self.punctuation = punctuation
+        self.raw = raw
     }
 
     public static let neutral = DeliveryParams()
@@ -229,10 +233,13 @@ public struct DeliveryParams: Sendable, Equatable {
             (o[k] as? [Any] ?? []).prefix(32).compactMap { ($0 as? NSNumber)?.doubleValue }.filter { $0.isFinite && $0 > 0 && $0 < 1 }
         }
         guard let t = num("t") else { return nil }
-        let say = (o["say"] as? String).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String($0.prefix(2_000)) }
+        func text(_ k: String) -> String? {
+            (o[k] as? String).flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String($0.prefix(2_000)) }
+        }
         return DeliveryParams(temperature: Float(t), gainDB: num("g") ?? 0, tempo: num("s") ?? 1, cents: num("c") ?? 0, preSeconds: (num("pre") ?? 0) / 1000,
-                              say: say, nonVerbal: (o["nv"] as? String).flatMap(NonVerbalType.init(rawValue:)),
-                              syllables: Int(min(2_000, max(0, num("syl") ?? 0))), ellipses: shares("ell"), punctuation: shares("pun")).clamped()
+                              say: text("say"), nonVerbal: (o["nv"] as? String).flatMap(NonVerbalType.init(rawValue:)),
+                              syllables: Int(min(2_000, max(0, num("syl") ?? 0))), ellipses: shares("ell"), punctuation: shares("pun"),
+                              raw: text("raw")).clamped()
     }
 
     /// The safety envelope native enforces whatever a script says (the TS director stays well inside it).

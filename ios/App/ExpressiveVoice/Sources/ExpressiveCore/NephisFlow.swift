@@ -122,6 +122,18 @@ public enum NephisFlow {
         /// Words this model says wrong, respelled the way it says them right (whole words, any case); a pack's list
         /// replaces these entries one by one ("" drops one).
         public var respell: [String: String] = NephisFlow.herRespell
+        /// Which text she reads (pack.json "text"): "raw" = the text as written (the script's `delivery.raw`, then
+        /// StyleMapper.pocketText's raw form: ellipses, capitals and drawn-out words kept), for a model that reads it
+        /// better (tachinovel-tts-lab Q1, 2026-10-12, c7-1500: no last word lost against 6 of 147, no runaway against 3,
+        /// her pauses after "..." closer to hers). Absent or anything else = the app's text, as every pack before.
+        public var text: PocketTextForm = .app
+
+        /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
+        /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
+        public func pocketText(for line: ExpressiveLine) -> String {
+            let source = text == .raw ? (line.raw ?? line.text) : line.text
+            return respelled(StyleMapper.pocketText(StyleMapper.plainText(source), form: text))
+        }
 
         /// `text` with the respellings applied; a capitalized word keeps its capital.
         public func respelled(_ text: String) -> String {
@@ -153,10 +165,13 @@ public enum NephisFlow {
             }
         }
 
-        /// The pause after a piece ending `piece`, in `mood`.
+        /// The pause after a piece ending `piece`, in `mood`: her `trail` after one trailing off ("…", "...", also before
+        /// a closing quote: 'Ready, set..."') or ending in ":", else her `sentence`. Only the raw text form keeps
+        /// ellipses (the app's form makes each one a comma or a period), so only its pieces trail off.
         public func gap(after piece: String, mood: String?) -> Double {
             let t = piece.trimmingCharacters(in: .whitespaces)
-            let trailing = t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(":")
+            let core = t.replacingOccurrences(of: #"["'”’»)\]]+$"#, with: "", options: .regularExpression)
+            let trailing = core.hasSuffix("…") || core.hasSuffix("...") || t.hasSuffix(":")
             if let m = mood.flatMap({ moods[$0] }) { return trailing ? m.trail : m.sentence }
             return trailing ? ellipsisGap : pieceGap
         }
@@ -172,6 +187,8 @@ public enum NephisFlow {
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
             highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
             softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
+            // A form this version doesn't know (or not a string) reads the app's text: a newer pack still plays.
+            text = (try? c.decodeIfPresent(String.self, forKey: .text)).flatMap(PocketTextForm.init(rawValue:)) ?? .app
             for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
                 respell[word.lowercased()] = said
             }
@@ -240,6 +257,17 @@ public enum NephisFlow {
 
     static func norm(_ s: String) -> String { String(s.lowercased().unicodeScalars.filter { CharacterSet.lowercaseLetters.contains($0) }) }
     static func words(_ s: String) -> [String] { s.split(whereSeparator: { $0 == " " || $0 == "\n" }).map { norm(String($0)) }.filter { !$0.isEmpty } }
+
+    /// The last sentence of what she said (the next call's lead-in). An ellipsis is a pause inside a sentence, not its
+    /// end: the raw text form keeps them ("I waited... and you never... came." is one lead-in, as it is in the app's
+    /// form, where they became commas). The app's form has no ellipsis left, so there it splits where it always did.
+    public static func lastSentence(_ text: String) -> String {
+        let parts = text.split(omittingEmptySubsequences: true) { $0 == "\n" }.joined(separator: " ")
+        guard let re = try? NSRegularExpression(pattern: #"(?:[!?]|(?<!\.\.)\.)["'”’]?\s+(?=\S)"#),
+              let m = re.matches(in: parts, range: NSRange(parts.startIndex..., in: parts)).last,
+              let r = Range(m.range, in: parts) else { return parts }
+        return String(parts[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+    }
 
     /// The first latent to keep after a lead-in: speech recognition finds the lead-in's last word followed by the
     /// paragraph's first word, then the cut walks forward to real silence (two latents under `quietDB`, since word

@@ -221,7 +221,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let reset = line.flowReset == true
         if reset { forget() }
         var report = Report()
-        let text = assets.chain.respelled(StyleMapper.pocketText(StyleMapper.plainText(line.text)))
+        // The app's text, or the text as written for a pack that asks for it (chain "text": "raw").
+        let text = assets.chain.pocketText(for: line)
         // The line's mood read (a mood change blends half the old clip and half the new one: NephisFlow.prompt).
         let clip = (assets.moods[line.role] ?? assets.calm).audioPrompt
         // Pocket generates long text in pieces of about 50 tokens, each started again from the voice prompt: every
@@ -260,7 +261,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private func plan(_ manager: PocketTtsManager, text: String, clip: [Float]) async throws -> [String] {
         let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
         // Planning needs only the tokenizer and the prompt's length: no session, so no voice prefill spent on it.
-        let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count))
+        // The raw form keeps "..." whole (FluidAudio would end a sentence at each of its dots: ". . .").
+        let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count),
+                                                     keepsPunctuationRuns: assets.chain.text == .raw)
         var out: [String] = []
         for c in chunks {
             if c.isMidSentence, !out.isEmpty {
@@ -282,7 +285,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
         let temperature = min(0.85, max(0.55, line.temperature ?? 0.7))
         let n = max(1, min(8, line.takes ?? 1))
-        let lead = first && started && transcriber != nil && line.leadIn != false ? lastText.map(Self.lastSentence) : nil
+        let lead = first && started && transcriber != nil && line.leadIn != false ? lastText.map(NephisFlow.lastSentence) : nil
         // Recognition only where it can change something (a lead-in cut, a choice between takes); the take score
         // only between takes. Otherwise the analysis decode only needs the take's ends.
         let listen = transcriber != nil && (lead != nil || n > 1)
@@ -486,6 +489,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let r0 = Date()
         let session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         await session.setDecodesAudio(false)
+        // The raw form's "..." stays whole when the session chunks a lead-in and its piece (as Kyutai's pocket_tts does).
+        if assets.chain.text == .raw { await session.setKeepsPunctuationRuns(true) }
         // Her studio's reads (studio audit 2026-10-12, A6): a piece still above -40 dBFS where Pocket stops runs on until
         // it has died away (two latents under -50 dBFS, at most 6 more), and an end-of-speech signal in its first 6
         // steps is ignored (Kyutai's own loop). The tail decoder measures the level it decides on. Without the studio
@@ -546,12 +551,5 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             .dropFirst(Self.warmUp * NephisFlow.samplesPerLatent))
         let middle = [Double](repeating: 0, count: n - Self.headEdge - Self.tailEdge)
         return (latents, head + middle + NephisFlow.levels(tailAudio), tailAudio, endOfText, ends)
-    }
-
-    /// The last sentence of a text (the lead-in for the next call).
-    static func lastSentence(_ text: String) -> String {
-        let parts = text.split(omittingEmptySubsequences: true) { $0 == "\n" }.joined(separator: " ")
-        guard let r = parts.range(of: "[.!?…][\"'”’]?\\s+(?=[^\\s])", options: [.regularExpression, .backwards]) else { return parts }
-        return String(parts[r.upperBound...]).trimmingCharacters(in: .whitespaces)
     }
 }

@@ -110,8 +110,15 @@ final class DeliveryTests: XCTestCase {
         XCTAssertEqual(wild.cents, 150)
         XCTAssertEqual(wild.preSeconds, 0.5)
         XCTAssertNil(wild.nonVerbal)
+        XCTAssertNil(wild.say)
+        XCTAssertNil(wild.raw, "no raw form: the sentence's text is it")
         XCTAssertNil(DeliveryParams.parse(["g": 1]), "no temperature: not a delivery object")
         XCTAssertNil(DeliveryParams.parse("x"))
+        // The raw text form (a Nephis pack with chain "text": "raw" reads it), next to Nano's `say`.
+        let raw = try XCTUnwrap(DeliveryParams.parse(["t": 0.7, "say": "Look at you, trembling already.", "raw": "Look at you... trembling already."]))
+        XCTAssertEqual(raw.raw, "Look at you... trembling already.")
+        XCTAssertEqual(raw.say, "Look at you, trembling already.")
+        XCTAssertNil(try XCTUnwrap(DeliveryParams.parse(["t": 0.7, "raw": "  "])).raw, "blank: none")
     }
 
     func testSentenceFromScriptItem() throws {
