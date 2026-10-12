@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chipSummary, combinedReport, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
+import { chipSummary, combinedReport, runParts, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
 import { nephisOffLine } from '../src/ui/native/voices-ui.ts';
 
 describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () => {
@@ -85,6 +85,44 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
     expect(studioLines({ ran: false, error: 'studio.json is missing.' })).toEqual([{ ok: false, text: 'Studio test failed: studio.json is missing.' }]);
     expect(studioLines({})[0]?.ok).toBe(false);
     expect(chipSummary(undefined)).toBe('');
+    // Refused for lack of memory (crash plan a1): not run, native's own words with the number.
+    const why = 'Not enough memory for the studio test: 226 MB free, it needs about 1,000 MB. Swipe TachiNovel away, open it again and run the test.';
+    expect(studioLines({ ran: false, refused: true, error: why })).toEqual([{ ok: false, text: `Studio test not run: ${why}` }]);
+    // Where the chips run comes from its own check now, merged in when asked for.
+    expect(studioLines({ ran: true, timesRealTime: 2, enabled: false }).some((l) => l.text.startsWith('Chips:'))).toBe(false);
+  });
+
+  it('runs the studio test, then the listening test, in that order (crash plan a2)', async () => {
+    const order: string[] = [];
+    const parts = (studio: boolean, going = (): boolean => true): Parameters<typeof runParts>[0] => ({
+      studio,
+      studioTest: () => Promise.resolve(void order.push('studio test')),
+      listen: () => Promise.resolve(void order.push('listen')),
+      going,
+    });
+    // Native's studio test frees its own studio and returns with Nephis warm: the listening test starts as Listen does.
+    expect(await runParts(parts(true))).toBe(true);
+    expect(order).toEqual(['studio test', 'listen']);
+    // No studio in this pack: only the listening test.
+    order.length = 0;
+    expect(await runParts(parts(false))).toBe(true);
+    expect(order).toEqual(['listen']);
+    // Stopped during the studio test: no listening test.
+    order.length = 0;
+    expect(await runParts(parts(true, () => false))).toBe(false);
+    expect(order).toEqual(['studio test']);
+  });
+
+  it('says when her model wasn’t loaded for lack of memory, and counts low memory as a studio reason', () => {
+    const why = 'Not enough memory to load Nephis: 640 MB free, she needs about 700 MB. Another voice reads meanwhile.';
+    const lines = summarize({ ended: true, flow: { memory: { refusals: 1, lastRefusal: why } }, listen: {} });
+    expect(lines).toContainEqual({ ok: false, text: why });
+    expect(summarize({ ended: true, flow: { memory: { refusals: 0, lastRefusal: null } } }).some((l) => l.text.startsWith('Not enough memory'))).toBe(false);
+    expect(studioCallLines({ studio: { calls: 6, used: 4, reasons: { memory: 2 } } })).toEqual([
+      { ok: false, text: 'Her studio rendered 4 of 6 calls; 2 were her plain sound (2 low memory).' },
+    ]);
+    // Her studio's models still loading in the background (calls never wait for them).
+    expect(studioCallLines({ studio: { calls: 6, used: 5, reasons: { loading: 1 } } })[0]?.text).toContain('(1 still loading)');
   });
 
   it('the status block names the pack and the studio state; native’s word wins over what the phone remembers', () => {

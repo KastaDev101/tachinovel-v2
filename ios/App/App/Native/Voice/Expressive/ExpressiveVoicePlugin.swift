@@ -24,9 +24,11 @@
 //
 
 import Capacitor
+import Darwin
 import ExpressiveEngines
 import ExpressiveCore
 import Foundation
+import HDVoiceCore
 
 @objc(ExpressiveVoicePlugin)
 public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -305,36 +307,95 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     /// stand-in input twice (the first warms it up) and reports the second: × real time per step, and the thermal
     /// state before and after. Stand-in input (noise and random sketch) costs the same as speech, so only the speed
     /// is meaningful, not the sound.
+    /// It runs alone (crash plan a1: build 321 was closed by iOS for memory here, its studio loaded on top of Nephis):
+    /// the lab player and narration stop, Nephis and Kokoro are released and the test waits until their models are gone;
+    /// with less than ~1,000 MB free it refuses and says how much is free. Inside her crash sentinel (a kill during it is
+    /// noted); `memory`: used and free MB at each step (start, loaded, each render, released). The studio is freed
+    /// before the result goes back, and Nephis is warmed again first when she is Listen's voice (the listening test then
+    /// starts as Listen does). `placement: true`: only where Core ML runs each model (MLComputePlan), on its own. One at a
+    /// time: a second one while one runs is refused (`busy`).
     @objc func studioTest(_ call: CAPPluginCall) {
         let dir = NephisModelPack.root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
         guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
             return call.resolve(["ran": false, "error": "The installed Nephis pack has no studio (Models/nephis-studio)."])
         }
-        Task.detached(priority: .userInitiated) {
-            let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
-            do {
-                let t0 = Date()
-                guard let studio = try await NephisStudio.load(from: dir) else {
-                    return call.resolve(["ran": false, "error": "studio.json is missing."])
+        let placementOnly = call.getBool("placement") ?? false
+        DispatchQueue.main.async {
+            guard !ExpressiveService.shared.studioTestRunning else {
+                return call.resolve(["ran": false, "busy": true, "error": "The studio test is already running."])
+            }
+            ExpressiveLabPlayer.shared.stop()
+            VoicePreviewPlayer.shared.stop()
+            if NarrationController.shared.status == .playing { NarrationController.shared.pause() }
+            let sentinel = ExpressiveService.shared.sentinel
+            ExpressiveService.shared.clearForStudioTest {
+                Task.detached(priority: .userInitiated) {
+                    let out = await Self.runStudioTest(dir: dir, placementOnly: placementOnly, sentinel: sentinel)
+                    DispatchQueue.main.async {
+                        ExpressiveService.shared.studioTestEnded { call.resolve(out) }
+                    }
                 }
+            }
+        }
+    }
+
+    /// The studio test itself, once nothing else holds a model (studioTest).
+    private static func runStudioTest(dir: URL, placementOnly: Bool, sentinel: CrashSentinel) async -> [String: Any] {
+        var memory: [[String: Any]] = []
+        func note(_ step: String) {
+            let free = ExpressiveService.freeMemoryMB()
+            memory.append(["step": step, "usedMB": ExpressiveService.r1(VoiceLab.memoryFootprintMB()),
+                           "freeMB": free.map { ExpressiveService.r1($0) } ?? NSNull()])
+        }
+        note("start")
+        if let free = ExpressiveService.freeMemoryMB(), NephisMemory.short(.studioTest, freeMB: free) {
+            return ["ran": false, "refused": true, "error": NephisMemory.refusal(.studioTest, freeMB: free), "memory": memory]
+        }
+        let system = ProcessInfo.processInfo.operatingSystemVersionString
+        if placementOnly {
+            sentinel.begin("studio placement \(system)")
+            let placement = await NephisStudio.placement(in: dir)
+            sentinel.end(success: true)
+            note("placement")
+            return ["placementOnly": true, "placement": placement, "memory": memory]
+        }
+        let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
+        var out: [String: Any]
+        var ok = false
+        sentinel.begin("studio test \(system)")
+        do {
+            let t0 = Date()
+            // The test's own studio lives in this block only: freed before the result goes back.
+            if let studio = try await NephisStudio.load(from: dir) {
                 let loadMs = Date().timeIntervalSince(t0) * 1000
+                note("loaded")
                 let seconds = 10
                 var rng = SystemRandomNumberGenerator()
                 let pcm = (0..<(NephisStudio.inputRate * seconds)).map { _ in Float.random(in: -0.05...0.05, using: &rng) }
                 let latents = (0..<(seconds * 25 / 2)).map { _ in (0..<32).map { _ in Float.random(in: -1...1, using: &rng) } }
                 _ = try await studio.render(pcm24: pcm, latents: latents)
+                note("render 1")
                 _ = try await studio.render(pcm24: pcm, latents: latents)
+                note("render 2")
                 let r = await studio.lastReport
-                let placement = await NephisStudio.placement(in: dir)
-                call.resolve(["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
-                              "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
-                              "timesRealTime": r.timesRealTime, "placement": placement,
-                              "thermalBefore": thermalBefore, "thermalAfter": ProcessInfo.processInfo.thermalState.rawValue,
-                              "enabled": UserDefaults.standard.bool(forKey: "nephisStudio")])
-            } catch {
-                call.resolve(["ran": false, "error": "\(error)"])
+                out = ["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
+                       "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
+                       "timesRealTime": r.timesRealTime]
+                ok = true
+            } else {
+                out = ["ran": false, "error": "studio.json is missing."]
             }
+        } catch {
+            out = ["ran": false, "error": "\(error)"]
         }
+        sentinel.end(success: ok)
+        _ = malloc_zone_pressure_relief(nil, 0)
+        note("released")
+        out["memory"] = memory
+        out["thermalBefore"] = thermalBefore
+        out["thermalAfter"] = ProcessInfo.processInfo.thermalState.rawValue
+        out["enabled"] = UserDefaults.standard.bool(forKey: "nephisStudio")
+        return out
     }
 
     /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load. A read

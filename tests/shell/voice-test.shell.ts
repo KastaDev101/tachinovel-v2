@@ -3,8 +3,9 @@
  * testing Nephis, reached without hidden taps. Against canned ExpressiveVoice / Narration plugins:
  *  - the top says which pack is installed, that it has her studio and whether the studio is on; the switch sends
  *    ExpressiveVoice.studioEnable;
- *  - Run the test runs the studio speed test, then the listening test (Narration.play), and says how it went in
- *    plain words;
+ *  - Run the test runs the studio speed test (native returns with Nephis warm again), then the listening test
+ *    (Narration.play), in that order, and says how it went in plain words; where her studio's models run is its own
+ *    button ("Where her studio runs": studioTest {placement: true});
  *  - Copy report copies one combined report (pack, studio state and test, the listening test, notes);
  *  - none of the Voice Lab's developer controls appear, and every control has a name for VoiceOver;
  *  - Nephis switched off after real crashes of her model: Settings › Voices and the Voice test say why in plain words
@@ -67,17 +68,23 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
       nephisOff = false;
       return status();
     });
-    for (const m of ['status', 'resetStats']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, status);
+    for (const m of ['status', 'resetStats', 'unload']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, status);
     shell.pluginReplies.set('ExpressiveVoice.recordStart', () => ({ recording: true }));
     shell.pluginReplies.set('ExpressiveVoice.recordStop', () => ({ saved: false, bytes: 0 }));
     shell.pluginReplies.set('ExpressiveVoice.studioEnable', (o) => {
       studioOn = o.on === true;
       return { enabled: studioOn };
     });
-    shell.pluginReplies.set('ExpressiveVoice.studioTest', () => ({
-      ran: true, loadMs: 900, audioSeconds: 10, resampleMs: 20, blueprintMs: 1500, refinerMs: 0, vocoderMs: 2400, restMs: 0, bypassed: false,
-      timesRealTime: 2.34, placement: { 'blueprint.ane': 40, 'vocoder.ane': 90, 'vocoder.cpu': 10 }, thermalBefore: 0, thermalAfter: 1, enabled: studioOn,
-    }));
+    // The speed test (memory at each step), and where its models run on its own (placement: true).
+    shell.pluginReplies.set('ExpressiveVoice.studioTest', (o) =>
+      o.placement === true
+        ? { placementOnly: true, placement: { 'blueprint.ane': 40, 'vocoder.ane': 90, 'vocoder.cpu': 10 }, memory: [{ step: 'placement', usedMB: 300, freeMB: 2900 }] }
+        : {
+            ran: true, loadMs: 900, audioSeconds: 10, resampleMs: 20, blueprintMs: 1500, refinerMs: 0, vocoderMs: 2400, restMs: 0, bypassed: false,
+            timesRealTime: 2.34, thermalBefore: 0, thermalAfter: 1, enabled: studioOn,
+            memory: [{ step: 'start', usedMB: 240, freeMB: 3100 }, { step: 'loaded', usedMB: 700, freeMB: 2650 }, { step: 'released', usedMB: 260, freeMB: 3080 }],
+          },
+    );
     // The passage "plays": her first word, then the end.
     shell.pluginReplies.set('Narration.play', () => {
       setTimeout(() => shell.emitPluginEvent('Narration', 'progress', { paragraph: 0 }), 150);
@@ -115,15 +122,25 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     await page.waitForTimeout(450); // slide-in
     await page.screenshot({ path: path.join(shots, 'voice-test-top.png') });
 
-    // One button runs the studio speed test, then the listening test.
+    // One button runs the studio speed test, then the listening test (crash plan a2: native's studio test frees its own
+    // studio and returns with Nephis warm again, so nothing is released in between and the start is Listen's).
     await screen.getByRole('button', { name: 'Run the test' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'studioTest').length, { timeout: 5000 }).toBe(1);
     await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(1);
+    const steps = shell.pluginCalls
+      .map((c) => `${c.pluginId}.${c.methodName}`)
+      .filter((s) => ['ExpressiveVoice.studioTest', 'ExpressiveVoice.unload', 'Narration.play'].includes(s));
+    expect(steps).toEqual(['ExpressiveVoice.studioTest', 'Narration.play']);
     const result = screen.getByTestId('voice-test-result');
     await result.waitFor({ timeout: 10_000 });
-    const text = (await result.textContent()) ?? '';
-    expect(text).toContain('Studio: 2.3× real time — fast enough for live reading.');
-    expect(text).toContain('Chips: blueprint 100% Neural Engine; vocoder 90% Neural Engine, 10% CPU.');
+    expect(await result.textContent()).toContain('Studio: 2.3× real time — fast enough for live reading.');
+    // Where her studio's models run is its own check now (crash plan a1), on its own button.
+    expect(await result.textContent()).not.toContain('Chips:');
+    await screen.getByTestId('voice-test-placement').click();
+    await expect.poll(() => calls('ExpressiveVoice', 'studioTest').at(-1)).toEqual({ placement: true });
+    await expect.poll(() => screen.getByTestId('voice-test-result').textContent()).toContain('Chips: blueprint 100% Neural Engine; vocoder 90% Neural Engine, 10% CPU.');
+    expect(await screen.getByTestId('voice-test-placement').count()).toBe(0);
+    const text = (await screen.getByTestId('voice-test-result').textContent()) ?? '';
     expect(text).toContain('Studio heat: nominal → fair.');
     expect(text).toContain('Studio is on for Nephis.');
     expect(text).toContain('No breaks: it never stopped to wait for the voice.');
@@ -146,7 +163,8 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     const copied = JSON.parse(await page.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? '{}')) as Record<string, unknown>;
     expect(copied.kind).toBe('nephis-test');
     expect(copied.pack).toEqual({ name: 'nephis-r9', made: '2026-10-11', studio: true, studioOn: true });
-    expect(copied.studio).toMatchObject({ has: true, on: true, test: { ran: true, timesRealTime: 2.34 } });
+    expect(copied.studio).toMatchObject({ has: true, on: true, test: { ran: true, timesRealTime: 2.34, placement: { 'vocoder.cpu': 10 } } });
+    expect((copied.studio as { test: { memory: unknown[] } }).test.memory).toHaveLength(3);
     expect(copied.voiceTest).toMatchObject({ kind: 'voice-test', ended: true });
     expect(copied.notes).toBe('a click at 0:40');
     expect(copied.device).toMatchObject({ thermal: 'nominal' });

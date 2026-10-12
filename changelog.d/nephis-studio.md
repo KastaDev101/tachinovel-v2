@@ -48,6 +48,17 @@
   Core ML crashes). An app bug during her call (like the Oct 9 crash), iOS closing the app without a crash, or a restart
   never does. Two real crashes in a row still hand over to her backup voice. Anything unsure is noted, never counted. A
   new app build starts her count over and turns her back on.
+- The Voice test no longer runs the app out of memory (build 321 was closed by iOS during it). Her studio's speed test
+  now runs alone: it stops the players, frees Nephis and Kokoro first, refuses with less than about 1,000 MB free (and
+  says how much is free), and reports the memory used and free at each step; "Where her studio runs" is its own button.
+  The test frees its own studio before the listening test and warms Nephis again, so the listening test starts the way
+  Listen does. A read paused for the test keeps Nephis, and "Prepare for the drive" waits for her instead of failing.
+  Freeing her model now really frees it, even while it loads or reads; after a memory warning she waits a minute
+  (longer if it happens again soon) before loading again, and Kokoro reads meanwhile; she doesn't load with too little
+  memory free (the report says so). Her studio loads in the background after her instead of with her, so her first
+  word never waits for it (her plain sound until it is up, "still loading" in the report), and steps aside when memory
+  runs low ("low memory"). Kokoro's first-launch warm-up runs after hers instead of at the same time, and broken studio
+  outputs play her plain sound instead of crashing.
 
 ### Changed
 

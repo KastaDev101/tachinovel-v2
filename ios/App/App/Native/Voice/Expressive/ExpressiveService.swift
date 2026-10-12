@@ -6,6 +6,13 @@
 //    ModelStore), kept out of backups, deletable. Never bundled.
 //  - One engine loaded at a time (they are 0.7–1.4 GB); unloaded on a memory warning, after 3 minutes idle,
 //    or when another engine is loaded.
+//  - Memory (crash plan 2026-10-12: build 321 was closed by iOS for memory during the Voice test): a release really
+//    frees (the next load waits until the released engine has let go of its models and any load of it still running
+//    has ended: `teardown`; a load released while it waited never starts); after a memory warning no expressive model
+//    loads for a while (`memoryHold`: 60 s, doubling until she has read 5 minutes without one, as Kokoro does) and
+//    Kokoro or the Apple voice reads meanwhile; Nephis doesn't load with less than ~700 MB free (her studio's models
+//    load behind hers with their own check), which starts the same wait; the studio speed test runs alone
+//    (`clearForStudioTest`) and she is warmed again after it.
 //  - Crash containment: a CrashSentinel of its own (not Kokoro's), judged with the run journal (VoiceRun): only a
 //    real crash of her model counts (her call in flight while the app was in use, no update, swipe-away or memory
 //    kill). Two in a row switch Nephis (and the experimental engines) off until "Turn Nephis back on" (Settings ›
@@ -21,6 +28,7 @@
 //    Kokoro and Apple voice settings are separate and never touched.
 //
 
+import Darwin
 import ExpressiveCore
 import ExpressiveEngines
 import Foundation
@@ -79,6 +87,20 @@ final class ExpressiveService {
     private var loadWaiters: [(Result<Void, Error>) -> Void] = []
     private var idleItem: DispatchWorkItem?
     private(set) var memoryWarnings = 0
+    /// After a memory warning (or a load refused for lack of memory) no expressive model loads for a while: 60 s,
+    /// doubling when it happens again (KokoroService's releasedForMemory + ReloadBackoff). `reloadItem` ends the wait.
+    private var memoryHold = MemoryHold()
+    private var reloadItem: DispatchWorkItem?
+    /// The studio speed test runs alone: no expressive model loads meanwhile.
+    private(set) var studioTestRunning = false
+    /// The engine released last, still letting go of its models (its load and calls ending): the next load waits for it.
+    private var teardown: Task<Void, Never>?
+    /// The load running (or done) for the engine loaded now: a release waits for it to end before freeing what it made
+    /// (engines other than Nephis's can't stop a load midway).
+    private var loadTask: Task<Void, Never>?
+    /// Posted (main) when an expressive model may be used again: the memory wait ended, the studio test ended, a reload
+    /// after the wait or her warm-up load finished (HybridSpeechEngine picks her up again).
+    static let statusChanged = Notification.Name("tachinovel.expressiveStatusChanged")
     private(set) var speedTest: SpeedTest?
     private var speedTask: Task<Void, Never>?
     private let log = Logger(subsystem: "app.tachinovel", category: "voice-expressive")
@@ -348,6 +370,8 @@ final class ExpressiveService {
             unload(reason: "switching voice")
         }
         guard !crashDisabled else { return completion(.failure(ExpressiveError.disabled)) }
+        // Resting after a memory warning, or the studio test running: fail at once, another voice reads meanwhile.
+        if let block = loadBlock { return completion(.failure(block)) }
         guard Self.supported(id) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         guard isInstalled(id) else { return completion(.failure(ExpressiveEngineError.modelNotInstalled(id.title))) }
         // Pocket TTS reads with the Narrator voice; a voice file that fails its check is never used (Listen falls back).
@@ -361,8 +385,15 @@ final class ExpressiveService {
                 return completion(.failure(error))
             }
         }
-        // Nephis reads as one continuous flow (NephisFlowSynth): carry-over, lead-ins, blended joins, best takes.
-        let flow: (any ExpressiveSynthesizer)? = nephis ? nephisFlowAssets.map { NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber()) } : nil
+        // Nephis reads as one continuous flow (NephisFlowSynth): carry-over, lead-ins, blended joins, best takes. Her
+        // studio's models load in the background once she is up and go when memory runs low (it asks how much is free).
+        let flowAssets = nephis ? nephisFlowAssets : nil
+        let flow: (any ExpressiveSynthesizer)? = flowAssets.map {
+            NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber(), freeMemoryMB: { ExpressiveService.freeMemoryMB() })
+        }
+        // What Nephis needs free to load (crash plan a4): Pocket's room; her studio's models load behind it, in the
+        // background, with their own check (NephisFlowSynth.startStudioLoad).
+        let need: NephisMemory.Need? = flowAssets == nil ? nil : .nephis
         guard let engine = flow ?? ExpressiveEngines.make(id, pocketVoice: pocketVoice, pocketReads: id == .pocketTts && !nephis ? pocketReads : [:]) else { return completion(.failure(ExpressiveEngineError.unsupportedOS(id.title))) }
         usesFlow = flow != nil
         if let flowSynth = flow as? NephisFlowSynth {
@@ -386,21 +417,42 @@ final class ExpressiveService {
         let context = "load \(id.rawValue)\(voiceTag) \(ProcessInfo.processInfo.operatingSystemVersionString)"
         let slot = id == .chatterboxNano ? chatterboxSlot : nil
         let sources = VoiceSources(imported: voices, bundled: bundled, fallback: id == .chatterboxNano ? defaultVoice : Self.builtInVoice)
+        // The engine released before this one (a switch, a reload) first lets go of its models, and any load of it still
+        // running ends: two never overlap.
+        let released = teardown
         ExpressiveEngines.setOfflineMode(true)
-        Task.detached(priority: .userInitiated) { [weak self] in
-            sentinel.begin(context)
+        loadTask = Task.detached(priority: .userInitiated) { [weak self] in
+            await released?.value
+            // Released while it waited (the studio test, a memory warning, another voice): it never starts (crash plan a3).
+            let current = await withCheckedContinuation { (go: CheckedContinuation<Bool, Never>) in
+                DispatchQueue.main.async { go.resume(returning: self?.loadedID == id && self?.loadGeneration == generation) }
+            }
             let outcome: VoiceLoadOutcome
-            if let slot, let request {
-                outcome = await Self.loadChatterbox(engine, slot: slot, sources: sources, request: request)
+            if !current {
+                outcome = VoiceLoadOutcome(result: .failure(ExpressiveEngineError.released), used: Self.builtInVoice, note: nil)
+            } else if let need, let free = Self.freeMemoryMB(), NephisMemory.short(need, freeMB: free) {
+                // Not enough memory left for her (crash plan a4): refused before anything loads; another voice reads.
+                outcome = VoiceLoadOutcome(result: .failure(ExpressiveError.lowMemory(NephisMemory.refusal(need, freeMB: free))), used: Self.builtInVoice, note: nil)
             } else {
-                do { outcome = VoiceLoadOutcome(result: .success(try await engine.load()), used: Self.builtInVoice, note: nil) } catch {
-                    outcome = VoiceLoadOutcome(result: .failure(error), used: Self.builtInVoice, note: nil)
+                sentinel.begin(context)
+                let loaded: VoiceLoadOutcome
+                if let slot, let request {
+                    loaded = await Self.loadChatterbox(engine, slot: slot, sources: sources, request: request)
+                } else {
+                    do { loaded = VoiceLoadOutcome(result: .success(try await engine.load()), used: Self.builtInVoice, note: nil) } catch {
+                        loaded = VoiceLoadOutcome(result: .failure(error), used: Self.builtInVoice, note: nil)
+                    }
                 }
+                sentinel.end(success: (try? loaded.result.get()) != nil)
+                outcome = loaded
             }
             let result = outcome.result
-            sentinel.end(success: (try? result.get()) != nil)
             DispatchQueue.main.async {
-                guard let self, self.loadedID == id, self.loadGeneration == generation else { return }
+                guard let self, self.loadedID == id, self.loadGeneration == generation else {
+                    // Dropped while it loaded (crash plan a3): free what this load made now, not whenever the engine goes.
+                    if case .success = result { Task.detached { await engine.unload() } }
+                    return
+                }
                 let waiters = self.loadWaiters
                 self.loadWaiters = []
                 self.loadingVoiceRequest = nil
@@ -416,6 +468,18 @@ final class ExpressiveService {
                         if let note = outcome.note { self.log.error("expressive: \(note, privacy: .public)") }
                     }
                     waiters.forEach { $0(.success(())) }
+                case .failure(ExpressiveError.lowMemory(let why)):
+                    // Not a failure of her model: the same wait as after a memory warning, then she may load again
+                    // (Settings and "Prepare for the drive" still count on her). Said in the Voice test report.
+                    self.loadStates[id] = .unloaded
+                    self.synth = nil
+                    self.loadedID = nil
+                    self.usesFlow = false
+                    self.flowStats.memoryRefusals += 1
+                    self.flowStats.lastMemoryRefusal = why
+                    self.log.error("expressive: \(id.rawValue, privacy: .public) not loaded: \(why, privacy: .public)")
+                    self.holdForMemory(id)
+                    waiters.forEach { $0(.failure(ExpressiveError.lowMemory(why))) }
                 case .failure(let error):
                     self.loadStates[id] = .failed(error.localizedDescription)
                     self.synth = nil
@@ -629,7 +693,98 @@ final class ExpressiveService {
         let waiters = loadWaiters
         loadWaiters = []
         waiters.forEach { $0(.failure(ExpressiveError.released(reason))) }
-        Task.detached { await engine?.unload() }
+        // Her engine stops its load and calls and lets go of their models (crash plan a3). The other engines can't stop a
+        // load: the one still running ends first, then what it installed goes too. The next load waits for all of it;
+        // malloc then hands the freed pages back to iOS, as Kokoro's release does.
+        let before = teardown
+        let load = loadTask
+        loadTask = nil
+        teardown = Task.detached {
+            if let flow = engine as? NephisFlowSynth { await flow.unloadAndWait() } else { await engine?.unload() }
+            await load?.value
+            await engine?.unload()
+            _ = malloc_zone_pressure_relief(nil, 0)
+            await before?.value
+        }
+    }
+
+    /// Why no expressive model may load right now (the studio test running, the wait after a memory warning); nil when
+    /// one may. ensureLoaded fails at once meanwhile, and Kokoro or the Apple voice reads.
+    var loadBlock: ExpressiveError? {
+        if studioTestRunning { return .busy }
+        let left = memoryHold.remaining(at: Date())
+        return left > 0 ? .resting(seconds: Int(left.rounded(.up))) : nil
+    }
+
+    /// Memory left before iOS closes the app (os_proc_available_memory), MB; nil where the system doesn't say (simulator).
+    static func freeMemoryMB() -> Double? {
+        let bytes = os_proc_available_memory()
+        return bytes > 0 ? Double(bytes) / 1_048_576 : nil
+    }
+
+    /// `id` was released for memory (a warning, or a load refused for lack of it): no expressive model loads for a while
+    /// (60 s, doubling), then it loads again if Listen still wants it and the read picks it up (statusChanged).
+    private func holdForMemory(_ id: ExpressiveEngineID) {
+        let wait = memoryHold.release(at: Date())
+        log.info("expressive: \(id.rawValue, privacy: .public) released for memory; may load again in \(Int(wait)) s")
+        reloadItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.reloadItem = nil
+            self.memoryHold.lift()
+            let notify = { NotificationCenter.default.post(name: Self.statusChanged, object: nil) }
+            guard NarrationController.shared.wantsKokoro, NarrationController.listenEngine() == id, self.loadedID == nil else { return notify() }
+            self.ensureLoaded(id) { _ in notify() }
+        }
+        reloadItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
+    }
+
+    // MARK: - Studio speed test (runs alone: crash plan a1)
+
+    /// Before the studio speed test: the speed test stops, any expressive model (Nephis) and Kokoro are released, and
+    /// nothing loads them again until `studioTestEnded` (a Kokoro load asked for meanwhile waits for it; a Nephis-only
+    /// read waits for her). `ready` (main) once their models are gone.
+    func clearForStudioTest(_ ready: @escaping () -> Void) {
+        studioTestRunning = true
+        cancelSpeedTest(reason: "stopped: the studio test")
+        cancelIdleRelease()
+        unload(reason: "studio test")
+        let gone = teardown
+        let done = MainBound(ready)
+        KokoroService.shared.holdForStudioTest {
+            Task.detached {
+                await gone?.value
+                DispatchQueue.main.async { done.value() }
+            }
+        }
+    }
+
+    /// After the studio test: Nephis loads again when she is Listen's voice (as at launch, so a read waiting for her and
+    /// the listening test that follows start as Listen does, not cold), then Kokoro's loads asked for meanwhile; `done`
+    /// (main) once she and her studio's models are up, or couldn't load.
+    func studioTestEnded(_ done: @escaping () -> Void) {
+        studioTestRunning = false
+        warmNephis()
+        NotificationCenter.default.post(name: Self.statusChanged, object: nil)
+        whenSettled {
+            KokoroService.shared.studioTestEnded()
+            done()
+        }
+    }
+
+    /// `done` (main) once the expressive load in progress and her studio's models loading behind it have ended (at once
+    /// when nothing loads): the next big load (Kokoro's warm-up, the listening test) never overlaps them.
+    func whenSettled(_ done: @escaping () -> Void) {
+        let finish = MainBound(done)
+        let settle: () -> Void = { [weak self] in
+            guard let flow = self?.synth as? NephisFlowSynth else { return finish.value() }
+            Task.detached {
+                await flow.studioSettled()
+                DispatchQueue.main.async { finish.value() }
+            }
+        }
+        if let id = loadedID, loadState(id) == .loading { loadWaiters.append { _ in settle() } } else { settle() }
     }
 
     /// Nephis is the reader: load her model shortly after launch (the first load after an app update compiles it for
@@ -639,6 +794,8 @@ final class ExpressiveService {
         guard NarrationController.listenEngine() == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis, isInstalled(.pocketTts),
               !crashDisabled, Self.supported(.pocketTts), loadedID == nil else { return }
         ensureLoaded(.pocketTts) { [weak self] result in
+            // A read that waits for her without having asked for this load (after the studio test) picks her up.
+            NotificationCenter.default.post(name: Self.statusChanged, object: nil)
             guard case .success = result, !NarrationController.shared.wantsKokoro else { return }
             self?.scheduleIdleRelease()
         }
@@ -657,8 +814,11 @@ final class ExpressiveService {
     }
 
     private func memoryWarning() {
-        guard loadedID != nil else { return }
+        guard let id = loadedID else { return }
         memoryWarnings += 1
+        // Not reloaded at once (Nephis was, and the app ran into iOS's limit again): wait, backing off (crash plan a4).
+        // The wait starts before the release, so whoever waited for her load sees it (DrivePrep pauses, not fails).
+        holdForMemory(id)
         unload(reason: "memory warning")
     }
 
@@ -756,6 +916,9 @@ final class ExpressiveService {
         var extraLatents = 0
         var earlyEos = 0
         var guardCalls = 0
+        /// Loads of her model refused for lack of free memory (crash plan a4), and the last refusal in plain words.
+        var memoryRefusals = 0
+        var lastMemoryRefusal: String?
 
         static let logLimit = 400
 
@@ -780,6 +943,9 @@ final class ExpressiveService {
     }
 
     private func recordFlow(_ r: NephisFlowSynth.Report) {
+        // Her model works again: once she has read 5 minutes since the last release for memory, the next one waits the
+        // shortest time again (not on her first call after a reload: the wait could then never grow).
+        memoryHold.worked(at: Date())
         flowStats.log.append(FlowStats.Call(n: flowStats.calls + 1, atMs: flowStats.audioMs, report: r))
         if flowStats.log.count > FlowStats.logLimit { flowStats.log.removeFirst(flowStats.log.count - FlowStats.logLimit) }
         if r.studioRead {
@@ -811,10 +977,11 @@ final class ExpressiveService {
         flowStats.last = r
     }
 
-    /// A studio bypass reason for counting: "failed: <the error>" counts as "failed".
+    /// A studio bypass reason for counting, its word before any colon: "failed: <the error>" counts as "failed",
+    /// "memory: 480 MB free" as "memory".
     private static func reasonKey(_ reason: String?) -> String {
         guard let reason else { return "unknown" }
-        return reason.hasPrefix("failed") ? "failed" : reason
+        return String(reason.prefix { $0 != ":" })
     }
 
     /// Her studio on one call, in a word: her studio sound ("used"), Mimi's sound in a studio read ("bypassed", the
@@ -1011,13 +1178,19 @@ final class ExpressiveService {
         // Which text her pack reads: "app" (the app's spoken form) or "raw" (as written; pack.json chain "text"). The
         // loaded assets only: a report never loads them.
         let textForm = nephisFlowAssetsCache.flatMap { $0 }?.chain.text.rawValue ?? PocketTextForm.app.rawValue
+        // Memory (crash plan a4): loads refused for lack of it (the last one in plain words), the wait after a memory
+        // warning, the warnings this launch, and what is free now.
+        let memory: [String: Any] = [
+            "refusals": f.memoryRefusals, "lastRefusal": f.lastMemoryRefusal ?? NSNull(), "warnings": memoryWarnings,
+            "restingSeconds": Int(memoryHold.remaining(at: Date()).rounded(.up)), "freeMB": Self.freeMemoryMB().map { Self.r1($0) } ?? NSNull(),
+        ]
         guard f.calls > 0 else {
-            return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm] as [String: Any]
+            return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm, "memory": memory] as [String: Any]
         }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
             "active": usesFlow, "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened,
-            "evidence": evidence, "textForm": textForm,
+            "evidence": evidence, "textForm": textForm, "memory": memory,
             "audioSeconds": Self.r1(f.audioMs / 1000),
             // Seconds of work per second of audio, stage by stage (render overlaps the analysis decode; the
             // stream decode overlaps the next call's render in Listen).
@@ -1077,11 +1250,26 @@ final class ExpressiveService {
 enum ExpressiveError: Error, LocalizedError {
     case disabled
     case released(String)
+    /// The studio speed test is running (it runs alone).
+    case busy
+    /// Released for memory a moment ago: it may load again in this many seconds.
+    case resting(seconds: Int)
+    /// Not enough free memory to load her, in plain words with the numbers (NephisMemory.refusal).
+    case lowMemory(String)
+
+    /// The wait after a memory warning (not the studio test, which a read waits out).
+    var isMemoryRest: Bool {
+        if case .resting = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
         case .disabled: return "Nephis was switched off after crashing twice in a row. Turn her back on in Settings › Voices › Voice test."
         case .released(let why): return "The model was released (\(why))."
+        case .busy: return "The studio test is running; her model loads after it."
+        case .resting(let seconds): return "Her model was released to free memory; it may load again in \(seconds) s. Another voice reads meanwhile."
+        case .lowMemory(let why): return why
         }
     }
 }

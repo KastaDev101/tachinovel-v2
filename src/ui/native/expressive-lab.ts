@@ -35,7 +35,8 @@ interface ExpressiveVoicePlugin {
   renameVoice(o: { id: string; name: string }): Promise<Obj>;
   deleteVoice(o: { id: string }): Promise<Obj>;
   playVoiceSample(o: { id: string | null }): Promise<Obj>;
-  studioTest(): Promise<Obj>;
+  /** placement: only where Core ML runs her studio's models (MLComputePlan), on its own. */
+  studioTest(o?: { placement?: boolean }): Promise<Obj>;
   studioEnable(o: { on: boolean }): Promise<Obj>;
 }
 

@@ -167,6 +167,8 @@ final class ChapterRenderer: @unchecked Sendable {
     private var loudness = LoudnessMatcher()
     private var next = 0
     private var retried = false
+    /// Waiting for Nephis's model to be allowed to load again (her rest after a memory warning, the studio test).
+    private var restItem: DispatchWorkItem?
     private var stopReason: String?
     private var completion: ((Result<Output, Error>) -> Void)?
 
@@ -224,8 +226,28 @@ final class ChapterRenderer: @unchecked Sendable {
         }
     }
 
-    /// Stop after the sentence in progress.
-    func stop(_ reason: String) { stopReason = reason }
+    /// Stop after the sentence in progress (at once while waiting for Nephis).
+    func stop(_ reason: String) {
+        stopReason = reason
+        guard let item = restItem else { return }
+        item.cancel()
+        restItem = nil
+        step()
+    }
+
+    /// Nephis's model may not load for a while (resting after a memory warning, or the studio test running): the chapter
+    /// waits for her and then goes on from the paragraph it was at, instead of failing (crash plan a4). Main thread.
+    private func waitForNephis(_ block: ExpressiveError) {
+        var seconds = 10.0
+        if case .resting(let left) = block { seconds = Double(left) + 1 }
+        retried = false
+        let item = DispatchWorkItem { [weak self] in
+            self?.restItem = nil
+            self?.step()
+        }
+        restItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
+    }
 
     /// Her calls: the sentences of one reader paragraph together, up to Pocket's per-call limit (400 characters).
     static func paragraphGroups(_ items: [NarrationController.ScriptItem], limit: Int = 400) -> [[Int]] {
@@ -310,9 +332,14 @@ final class ChapterRenderer: @unchecked Sendable {
                     self.onProgress?(min(self.items.count, (members.last ?? 0) + 1), self.items.count)
                     self.step()
                 default:
+                    // Released for memory, or the studio test runs: wait for her (not a failed paragraph).
+                    if let block = ExpressiveService.shared.loadBlock { return self.waitForNephis(block) }
                     guard !self.retried else { return self.finish(.failure(DriveError.failed("Nephis couldn't read a paragraph"))) }
                     self.retried = true
-                    ExpressiveService.shared.ensureLoaded(.pocketTts) { _ in self.step() }
+                    ExpressiveService.shared.ensureLoaded(.pocketTts) { _ in
+                        if let block = ExpressiveService.shared.loadBlock { return self.waitForNephis(block) }
+                        self.step()
+                    }
                 }
             }
         }
@@ -684,6 +711,9 @@ final class DrivePrep: @unchecked Sendable {
                 }
             }
             ready { problem in
+                // Nephis resting after a memory warning (or too little memory, or the studio test): the request waits,
+                // uncounted, and goes on afterwards (crash plan a4).
+                if problem != nil, nephis, let block = ExpressiveService.shared.loadBlock { return self.rest(job, block) }
                 if let problem { return self.failed(job, problem) }
                 if !nephis { self.usedKokoro = true }
                 let r = ChapterRenderer(chapter: ch, items: script, voice: nephis ? "nephis" : job.voice, narrator: prefs.narrator,
@@ -723,6 +753,15 @@ final class DrivePrep: @unchecked Sendable {
     private func completed(_ job: DriveJob, chapterPath: String, title: String, next: String?) {
         retryAfter[job.novelKey] = nil
         update(job.novelKey) { $0.completed(chapterPath, title: title, next: next) }
+        done()
+    }
+
+    /// Nephis's model can't load for a while (`block`): the request tries again once it may, without counting a failure.
+    private func rest(_ job: DriveJob, _ block: ExpressiveError) {
+        var seconds = 10.0
+        if case .resting(let left) = block { seconds = Double(left) + 1 }
+        log.info("drive: waiting for Nephis (\(block.localizedDescription, privacy: .public))")
+        retryAfter[job.novelKey] = ProcessInfo.processInfo.systemUptime + seconds
         done()
     }
 

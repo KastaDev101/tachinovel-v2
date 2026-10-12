@@ -147,6 +147,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         synth.mixToTelephonyUplink = false
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(kokoroStatusChanged), name: KokoroService.statusChanged, object: nil)
+        // Her model may be used again (the wait after a memory warning ended, she reloaded): the read picks her up.
+        nc.addObserver(self, selector: #selector(kokoroStatusChanged), name: ExpressiveService.statusChanged, object: nil)
         nc.addObserver(self, selector: #selector(thermalChanged), name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
         nc.addObserver(self, selector: #selector(mediaServicesReset), name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
     }
@@ -200,13 +202,17 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let nephisReads = listenEngine == .pocketTts && prefs.delivery.isNephis
         let ahead = listenEngine != nil ? max(prefs.clampedAhead, nephisReads ? 36 : 12) : max(prefs.clampedAhead, 8)
         fullAhead = ahead
+        // Her model resting after a memory warning (crash plan a4): Kokoro reads meanwhile, as far ahead as it reads alone,
+        // and she takes over when she is back (ExpressiveService.statusChanged). The studio test is waited out instead.
+        let resting = listenEngine != nil && ExpressiveService.shared.loadBlock?.isMemoryRest == true
+        nephisOnly = Self.nephisCanReadAlone(listenEngine) && !resting
         // While the narrator voice is still loading, Kokoro bridges only a sentence or two ahead, so the Narrator
         // takes over within moments instead of after a minute of Kokoro (kokoroStatusChanged widens it again).
-        nephisOnly = Self.nephisCanReadAlone(listenEngine)
-        let bridging = !nephisOnly && (listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false)
+        let bridging = !nephisOnly && !resting && (listenEngine.map { ExpressiveService.shared.isInstalled($0) && !expressiveUsable() } ?? false)
         let kokoro = kokoroState()  // may leave Nephis-only, so before the config reads it
         var s = HybridScheduler(count: segs.count, kokoro: kokoro,
-                                config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : ahead, patient: nephisOnly))
+                                config: HybridScheduler.Config(ahead: bridging ? min(ahead, 2) : resting ? min(ahead, Self.kokoroAloneAhead) : ahead,
+                                                               patient: nephisOnly))
         s.throttled = ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue)
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
         s.paragraphStarts = Set(segs.indices.dropFirst().filter { !Self.sameChunk(segs[$0 - 1], segs[$0]) })
@@ -294,7 +300,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             // chapter and a restart didn't bring it back). The usual fallbacks read instead; she is back next read.
             if ProcessInfo.processInfo.thermalState == .critical {
                 leaveNephisOnly(reason: "the phone is too hot")
+            } else if let block = ExpressiveService.shared.loadBlock, block.isMemoryRest {
+                // Her model rests after a memory warning (crash plan a4): Kokoro reads, only as far ahead as it reads
+                // alone, so she takes over again soon after she is back (statusChanged widens it again).
+                leaveNephisOnly(reason: block.localizedDescription)
+                scheduler?.config.ahead = min(fullAhead, Self.kokoroAloneAhead)
             } else if Self.nephisCanReadAlone(listenEngine) {
+                // Loading, or the studio test running (the read is paused for it; she is warmed again after it).
                 return .loading
             } else {
                 leaveNephisOnly(reason: "her model can't be used")
@@ -346,8 +358,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard !paused else { return }
         pumpScene()
         if nephisOnly, scheduler?.kokoro != .unavailable, !expressiveUsable() {
-            // Released (memory pressure, idle) or still loading: load her again; the session waits.
-            if ExpressiveService.shared.loadState(.pocketTts) == .unloaded {
+            // Released (idle) or still loading: load her again; the session waits. Released for memory: not at once
+            // (crash plan a4, the reload ran the app into iOS's limit again); kokoroState hands the read to Kokoro. The
+            // studio test running: the session waits; she loads again when it ends (statusChanged).
+            if let block = ExpressiveService.shared.loadBlock {
+                if block.isMemoryRest { kokoroStatusChanged() }
+            } else if ExpressiveService.shared.loadState(.pocketTts) == .unloaded {
                 ExpressiveService.shared.ensureLoaded(.pocketTts) { [weak self] _ in self?.kokoroStatusChanged() }
             }
             return
@@ -655,6 +671,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     static let leadInAhead = 25.0
     /// Seconds buffered ahead below which her studio is skipped for a call (NephisStudio, ExpressiveLine.studio).
     static let studioAhead = 6.0
+    /// Sentences Kokoro renders ahead when it reads alone (enqueue): while her model rests after a memory warning.
+    static var kokoroAloneAhead: Int { max(VoiceSettings.shared.prefs.clampedAhead, 8) }
 
     /// Whether a flow call got as far as its latents (main thread only).
     private final class FlowCall {

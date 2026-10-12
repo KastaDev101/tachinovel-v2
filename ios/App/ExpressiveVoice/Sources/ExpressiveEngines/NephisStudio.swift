@@ -14,6 +14,9 @@
 //  The sketch comes in at Mimi's scale (denormalized, as in training: the caller maps it). A call shorter than the
 //  blueprint takes is padded in front and trimmed again; a model output that is not all numbers throws, so the
 //  caller plays Mimi's sound for that call instead (studio audit 2026-10-12).
+//  Crash plan 2026-10-12 (a5): outputs are read by shape (ModelOutput.floats: Float16, padded strides), every shape
+//  and size is checked and throws instead of trapping (the call plays her plain sound), one compile at a time with an
+//  atomic install, and a render stops between windows when its call is cancelled (a release).
 //
 
 @preconcurrency import AVFoundation
@@ -81,7 +84,7 @@ public actor NephisStudio {
         public init() {}
     }
 
-    public enum StudioError: Error { case missing(String), badOutput(String) }
+    public enum StudioError: Error { case missing(String), badOutput(String), badConfig(String) }
 
     public static let inputRate = 24_000
     public nonisolated let config: Config
@@ -91,12 +94,21 @@ public actor NephisStudio {
     private let refinerConfig: RefinerConfig?
     public private(set) var lastReport = Report()
 
+    /// studio.json in `dir` (nil when the pack ships no studio), checked so a bad file throws here instead of
+    /// trapping in a render (a zero hop or chunk, a keep range that runs backwards).
+    public static func readConfig(in dir: URL) throws -> Config? {
+        let url = dir.appendingPathComponent("studio.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let c = try JSONDecoder().decode(Config.self, from: Data(contentsOf: url))
+        guard c.sample_rate > 0, c.hop > 0, c.n_mels > 0, c.z_dims > 0, c.chunk_frames > 0, c.window_frames > 0, c.context_frames >= 0,
+              c.keep_from_sample >= 0, c.keep_from_sample < c.keep_to_sample else { throw StudioError.badConfig("studio.json") }
+        return c
+    }
+
     /// The studio in `<dir>` (a pack's Models/nephis-studio), or nil when the pack doesn't ship one.
     public static func load(from dir: URL, computeUnits: MLComputeUnits? = nil) async throws -> NephisStudio? {
         let fm = FileManager.default
-        let cfgURL = dir.appendingPathComponent("studio.json")
-        guard fm.fileExists(atPath: cfgURL.path) else { return nil }
-        let config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: cfgURL))
+        guard let config = try Self.readConfig(in: dir) else { return nil }
         let mc = MLModelConfiguration()
         switch config.compute_units {
         case "ane": mc.computeUnits = .cpuAndNeuralEngine
@@ -105,10 +117,13 @@ public actor NephisStudio {
         }
         if let computeUnits { mc.computeUnits = computeUnits }
         let bp = try MLModel(contentsOf: try await compiled("NephisBlueprint", in: dir), configuration: mc)
+        // Released meanwhile (Listen's background load, NephisFlowSynth.unload): stop before the next model.
+        try Task.checkCancellation()
         // The int8 package when the pack ships it (same sound, half the memory traffic), else the fp16 one.
         let name = config.vocoder_model.flatMap { fm.fileExists(atPath: dir.appendingPathComponent("\($0).mlpackage").path)
             || fm.fileExists(atPath: dir.appendingPathComponent("\($0).mlmodelc").path) ? $0 : nil } ?? "NephisVocoder"
         let vc = try MLModel(contentsOf: try await compiled(name, in: dir), configuration: mc)
+        try Task.checkCancellation()
         var rf: MLModel?, rc: RefinerConfig?
         let rcURL = dir.appendingPathComponent("refiner.json")
         if fm.fileExists(atPath: rcURL.path) {
@@ -129,17 +144,30 @@ public actor NephisStudio {
         self.refinerConfig = refinerConfig
     }
 
-    /// `<name>.mlmodelc` in `dir`, compiling `<name>.mlpackage` once (cached next to it) when only that ships.
+    /// `<name>.mlmodelc` in `dir`, compiling `<name>.mlpackage` once (cached next to it) when only that ships. One
+    /// compile per model at a time (CompiledModels): Listen's studio and the speed test never delete each other's files.
     static func compiled(_ name: String, in dir: URL) async throws -> URL {
+        try await CompiledModels.shared.url(name, in: dir)
+    }
+
+    /// A freshly compiled model put in place in one step: staged next to `dest` first (a copy if the system compiled it
+    /// on another volume), then renamed, so a crash never leaves half a model under the real name. A model installed
+    /// there meanwhile is kept, never deleted; staging folders a crash left behind for `dest` are cleared first.
+    static func install(_ compiled: URL, at dest: URL) throws {
         let fm = FileManager.default
-        let compiledURL = dir.appendingPathComponent("\(name).mlmodelc")
-        if fm.fileExists(atPath: compiledURL.path) { return compiledURL }
-        let package = dir.appendingPathComponent("\(name).mlpackage")
-        guard fm.fileExists(atPath: package.path) else { throw StudioError.missing(name) }
-        let tmp = try await MLModel.compileModel(at: package)
-        try? fm.removeItem(at: compiledURL)
-        try fm.moveItem(at: tmp, to: compiledURL)
-        return compiledURL
+        let dir = dest.deletingLastPathComponent()
+        let prefix = ".\(dest.lastPathComponent)."
+        for old in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where old.hasPrefix(prefix) {
+            try? fm.removeItem(at: dir.appendingPathComponent(old))
+        }
+        let staged = dir.appendingPathComponent(prefix + UUID().uuidString)
+        try fm.moveItem(at: compiled, to: staged)
+        do {
+            try fm.moveItem(at: staged, to: dest)
+        } catch {
+            try? fm.removeItem(at: staged)
+            guard fm.fileExists(atPath: dest.path) else { throw error }
+        }
     }
 
     /// Left context carried from the previous call of the same read: its last audio (44.1 kHz, the blueprint's input)
@@ -192,13 +220,20 @@ public actor NephisStudio {
             lastReport = report
             return (own, report)
         }
+        let context = carryLatents + latents
+        // A sketch narrower than the blueprint takes would be read past (crash plan a5): her plain sound instead.
+        guard context.allSatisfy({ $0.count >= config.z_dims }) else {
+            report.bypassed = true
+            report.bypassReason = "failed: sketch size"
+            lastReport = report
+            throw StudioError.badOutput("sketch: latents shorter than \(config.z_dims)")
+        }
 
         // A call too short for the blueprint (under 87 mel frames with its carried context, about 1 s: a short first
         // line) gets leading silence up to that length, with quiet latents to match (copies of the first one, which sits
         // in the pause a call starts with). Both are dropped from the output with the carried context. Such a call
         // used to fall back to Mimi's sound: a jump in quality on a short first line (studio audit 2026-10-12, A7).
         let perLatent = NephisFlow.samplesPerLatent * config.sample_rate / Self.inputRate
-        let context = carryLatents + latents
         let padLatents = NephisFlow.studioLeadPad(samples: carryPCM.count + padded.count, hop: hop, samplesPerLatent: perLatent)
         report.padLatents = padLatents
         // The padding and the carried context in front; their samples are dropped from the output again.
@@ -238,7 +273,12 @@ public actor NephisStudio {
     /// one sample rate and nothing is dropped (NephisFlowSynth gives it the read's own EQ first, at 24 kHz). Linear
     /// interpolation if even the resampler fails.
     public nonisolated func plainAudio(pcm24: [Float]) -> [Float] {
-        let rate = config.sample_rate
+        Self.plainAudio(pcm24: pcm24, rate: config.sample_rate)
+    }
+
+    /// `plainAudio` without the models (NephisFlowSynth plays it while the studio's models aren't loaded: they load on
+    /// first use and are dropped when memory runs low, crash plan b1). `rate`: the studio's (studio.json).
+    public static func plainAudio(pcm24: [Float], rate: Int) -> [Float] {
         let target = Int((Double(pcm24.count) * Double(rate) / Double(Self.inputRate)).rounded())
         if let r = try? Self.resample(pcm24 + [Float](repeating: 0, count: Self.inputRate / 20), from: Self.inputRate, to: rate) {
             return Self.fit(r, target)
@@ -274,9 +314,13 @@ public actor NephisStudio {
         if plan.count == 1 { return try await melPiece(pcm: pcm, zf: zf, frames: frames, report: &report) }
         var mel = [Float](repeating: 0, count: bands * frames)
         for seg in plan {
+            try Task.checkCancellation()
             let f0 = seg.from, n = seg.to - seg.from
-            let piecePCM = Array(pcm[(f0 * hop)..<min(pcm.count, seg.to * hop)])
+            let lo = f0 * hop, hi = min(pcm.count, seg.to * hop)
+            guard f0 >= 0, lo < hi else { throw StudioError.badOutput("segment \(seg.from)..<\(seg.to) past the audio") }
+            let piecePCM = Array(pcm[lo..<hi])
             let pf = min(n, (piecePCM.count - hop) / hop + 1)
+            guard pf > 0, f0 + pf <= frames else { throw StudioError.badOutput("segment \(seg.from)..<\(seg.to): \(pf) frames") }
             var pieceZ = [Float](repeating: 0, count: dims * pf)
             for d in 0..<dims {
                 for f in 0..<pf { pieceZ[d * pf + f] = zf[d * frames + f0 + f] }
@@ -321,12 +365,14 @@ public actor NephisStudio {
         let t = try MLMultiArray(shape: [1], dataType: .float32)
         let steps = max(1, settings.steps)
         for s in 0..<steps {
+            try Task.checkCancellation()
             t[0] = NSNumber(value: Float(s) / Float(steps))
             let input = try MLDictionaryFeatureProvider(dictionary: ["x_t": xt, "cond": condArray, "t": t])
             guard let vArray = try await model.prediction(from: input).featureValue(for: "velocity")?.multiArrayValue else {
                 throw StudioError.badOutput("velocity")
             }
-            let v = Self.floats(vArray)
+            let v = ModelOutput.floats(vArray)
+            guard v.count == n else { throw StudioError.badOutput("velocity: \(v.count) values, expected \(n)") }
             for i in 0..<n { x[i] += v[i] / Float(steps) }
         }
         let rs = Float(settings.rs)
@@ -337,19 +383,30 @@ public actor NephisStudio {
 
     /// The blueprint on one stretch: PCM + the sketch per mel frame ([dims][frames]) -> her log-mel [bands][frames].
     private func blueprintMel(pcm: [Float], zf: [Float], frames: Int) throws -> [Float] {
+        let dims = config.z_dims, bands = config.n_mels
+        guard !pcm.isEmpty, frames > 0, zf.count >= dims * frames else {
+            throw StudioError.badOutput("blueprint input: \(pcm.count) samples, \(zf.count) sketch values for \(frames) frames")
+        }
         let x = try MLMultiArray(shape: [1, 1, NSNumber(value: pcm.count)], dataType: .float32)
         pcm.withUnsafeBufferPointer { src in
-            x.dataPointer.assumingMemoryBound(to: Float.self).update(from: src.baseAddress!, count: pcm.count)
+            guard let base = src.baseAddress else { return }
+            x.dataPointer.assumingMemoryBound(to: Float.self).update(from: base, count: pcm.count)
         }
-        let z = try MLMultiArray(shape: [1, NSNumber(value: config.z_dims), NSNumber(value: frames)], dataType: .float32)
+        let z = try MLMultiArray(shape: [1, NSNumber(value: dims), NSNumber(value: frames)], dataType: .float32)
         zf.withUnsafeBufferPointer { src in
-            z.dataPointer.assumingMemoryBound(to: Float.self).update(from: src.baseAddress!, count: min(zf.count, config.z_dims * frames))
+            guard let base = src.baseAddress else { return }
+            z.dataPointer.assumingMemoryBound(to: Float.self).update(from: base, count: dims * frames)
         }
         let input = try MLDictionaryFeatureProvider(dictionary: ["pcm44": x, "z_frames": z])
         guard let mel = try blueprint.prediction(from: input).featureValue(for: "mel")?.multiArrayValue else {
             throw StudioError.badOutput("mel")
         }
-        let m = Self.floats(mel), bands = config.n_mels, mf = m.count / bands
+        let m = ModelOutput.floats(mel)
+        // [1, bands, frames'] with frames' close to ours, or the call plays her plain sound (never read past it).
+        let shape = mel.shape.map(\.intValue)
+        guard let mf = NephisFlow.studioMelFrames(shape: shape, count: m.count, bands: bands, frames: frames) else {
+            throw StudioError.badOutput("mel shape \(shape), expected [1, \(bands), \(frames)]")
+        }
         // A LayerNorm can overflow fp16 on quiet frames (on the Neural Engine): such a call plays Mimi's sound instead.
         guard NephisFlow.allFinite(m) else { throw StudioError.badOutput("mel: not finite") }
         // The model's own frame count may differ by one from ours: re-pack to exactly [bands][frames].
@@ -366,10 +423,15 @@ public actor NephisStudio {
     private func vocode(melValues: [Float], frames: Int, report: inout Report) async throws -> [Float] {
         let bands = config.n_mels, chunk = config.chunk_frames, ctx = config.context_frames, win = config.window_frames
         let stride = melValues.count / bands  // [bands][frames], row-major
+        guard frames > 0, stride >= frames, chunk > 0, win > 0 else {
+            throw StudioError.badOutput("vocoder input: \(melValues.count) mel values for \(frames) frames")
+        }
         var out: [Float] = []
         out.reserveCapacity(frames * config.hop)
         var start = 0
         while start < frames {
+            // Released meanwhile (NephisFlowSynth.unload cancels its calls): stop between windows, and the models go.
+            try Task.checkCancellation()
             let w0 = Date()
             let w = try MLMultiArray(shape: [1, NSNumber(value: bands), NSNumber(value: win)], dataType: .float32)
             let wp = w.dataPointer.assumingMemoryBound(to: Float.self)
@@ -383,9 +445,10 @@ public actor NephisStudio {
             guard let pcm = try await vocoder.prediction(from: input).featureValue(for: "pcm44")?.multiArrayValue else {
                 throw StudioError.badOutput("pcm44")
             }
-            let samples = Self.floats(pcm)
-            let keep = samples[min(config.keep_from_sample, samples.count)..<min(config.keep_to_sample, samples.count)]
-            out.append(contentsOf: keep)
+            let samples = ModelOutput.floats(pcm)
+            let keepFrom = min(config.keep_from_sample, samples.count), keepTo = min(config.keep_to_sample, samples.count)
+            guard keepFrom < keepTo else { throw StudioError.badOutput("pcm44: \(samples.count) samples") }
+            out.append(contentsOf: samples[keepFrom..<keepTo])
             start += chunk
             report.vocoderMs += Date().timeIntervalSince(w0) * 1000
             // Cooling rest: same sound, lower average power while the phone is warm.
@@ -453,20 +516,6 @@ public actor NephisStudio {
         return out
     }
 
-    static func floats(_ a: MLMultiArray) -> [Float] {
-        let n = a.count
-        switch a.dataType {
-        case .float32:
-            return Array(UnsafeBufferPointer(start: a.dataPointer.assumingMemoryBound(to: Float.self), count: n))
-        #if arch(arm64)
-        case .float16:
-            return Array(UnsafeBufferPointer(start: a.dataPointer.assumingMemoryBound(to: Float16.self), count: n)).map(Float.init)
-        #endif
-        default:
-            return (0..<n).map { a[$0].floatValue }
-        }
-    }
-
     static func resample(_ x: [Float], from: Int, to: Int) throws -> [Float] {
         guard from != to else { return x }
         guard let inFmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(from), channels: 1, interleaved: false),
@@ -490,6 +539,30 @@ public actor NephisStudio {
         }
         if let err { throw err }
         return Array(UnsafeBufferPointer(start: outBuf.floatChannelData![0], count: Int(outBuf.frameLength)))
+    }
+}
+
+/// One compile per model at a time (crash plan a5): a second loader of the same model waits for the first one's compile
+/// instead of compiling it again and deleting the files the first one is loading from.
+actor CompiledModels {
+    static let shared = CompiledModels()
+    private var compiling: [URL: Task<URL, Error>] = [:]
+
+    func url(_ name: String, in dir: URL) async throws -> URL {
+        let dest = dir.appendingPathComponent("\(name).mlmodelc")
+        if let running = compiling[dest] { return try await running.value }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dest.path) { return dest }
+        let package = dir.appendingPathComponent("\(name).mlpackage")
+        guard fm.fileExists(atPath: package.path) else { throw NephisStudio.StudioError.missing(name) }
+        let job = Task.detached(priority: .userInitiated) { () async throws -> URL in
+            let tmp = try await MLModel.compileModel(at: package)
+            try NephisStudio.install(tmp, at: dest)
+            return dest
+        }
+        compiling[dest] = job
+        defer { compiling[dest] = nil }
+        return try await job.value
     }
 }
 

@@ -17,6 +17,15 @@
 //  - lead-ins, recognition and extra takes only when the caller can afford them (`ExpressiveLine.leadIn/takes`:
 //    HybridSpeechEngine asks for them when playback is far enough ahead).
 //
+//  Memory (crash plan 2026-10-12, build 321 closed by iOS for memory):
+//  - a release frees: `unload` cancels the load, her studio's load, the prepares and the decodes still running (each
+//    checks between its steps, and her studio between vocoder windows), and a load that finishes after it keeps nothing
+//    (LoadGeneration); an engine once released never loads again; `unloadAndWait` returns once they have let go of the
+//    models;
+//  - her studio's models load in the background once Pocket is up (not inside `load`, never in a call's path), only
+//    with ~1,000 MB free, and are dropped when free memory falls under ~500 MB; the calls meanwhile play her plain sound
+//    at the studio's rate, with the reason in the call log ("loading", "memory: 480 MB free").
+//
 
 import ExpressiveCore
 import FluidAudio
@@ -69,7 +78,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Her studio on this call (the player's log). `studioRead`: the read runs through the studio, so the stream is
         /// at its rate and decode set the call's whole tone (the player adds no EQ). `studioUsed`: the call is her
         /// studio sound; otherwise `bypassReason` says why it is Mimi's sound with the read's own EQ ("hurry", "heat",
-        /// "empty", "failed: …"). Without a studio: false, false, nil.
+        /// "empty", "failed: …", "loading": its models still loading, "memory: 480 MB free": dropped or not loaded for
+        /// lack of memory). Without a studio: false, false, nil.
         public var studioRead = false
         public var studioUsed = false
         public var bypassReason: String?
@@ -107,15 +117,32 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
 
     private let assets: Assets
     private var transcriber: NephisTranscriber?
+    /// Memory left before iOS closes the app, MB (os_proc_available_memory, from the app); nil = unknown, never refuses.
+    private let freeMemoryMB: @Sendable () -> Double?
     private var manager: PocketTtsManager?
     private var decoder: PocketTtsLatentDecoder?
     private var scratch: PocketTtsLatentDecoder?
-    /// Her studio, when the pack ships one (the stream is then 44.1 kHz).
+    /// Her studio's settings (studio.json, read at load) when the pack ships one: the read is then at its rate (44.1
+    /// kHz) and her pieces get the end guard, whether its models are loaded or not.
+    private var studioConfig: NephisStudio.Config?
+    /// Her studio's models: loaded in the background behind Pocket's (startStudioLoad), dropped when memory runs low.
     private var studio: NephisStudio?
+    /// Her studio's models loading (no call waits for it): a release cancels it, `unloadAndWait` waits for it.
+    private var studioLoading: Task<Void, Never>?
+    /// Why her studio's models aren't loaded now (low memory, a failed load), and the wait before they may load again.
+    private var studioOff: String?
+    private var studioHold = MemoryHold(base: 120, cap: 1_200)
     /// Her studio's reads only: decodes the latents the end guard asks about (PocketTtsSynthesizer.levelProbe).
     private var tailDecoder: PocketTtsLatentDecoder?
     /// The stream decodes, one after the other in call order.
     private var decodes: Task<Void, Never>?
+    /// The load running, and the releases it must see (a release during a load keeps nothing: crash plan a3).
+    private var loading: Task<Double, Error>?
+    private var generation = LoadGeneration()
+    /// The calls being prepared and decoded (they hold the models while they run): a release cancels them.
+    private var prepareJobs: [Int: Task<Prepared, Error>] = [:]
+    private var decodeJobs: [Int: Task<Decoded, Error>] = [:]
+    private var jobCount = 0
 
     // The read so far.
     private var carry: [[Float]] = []
@@ -141,9 +168,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// A piece whose last latent is louder than this (dBFS) when Pocket stops was cut off, not finished (A6).
     static let audibleEndDB = -40.0
 
-    public init(assets: Assets, transcriber: NephisTranscriber? = nil) {
+    public init(assets: Assets, transcriber: NephisTranscriber? = nil, freeMemoryMB: @escaping @Sendable () -> Double? = { nil }) {
         self.assets = assets
         self.transcriber = transcriber
+        self.freeMemoryMB = freeMemoryMB
     }
 
     public func setTranscriber(_ t: NephisTranscriber?) {
@@ -152,29 +180,95 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
 
     public func load() async throws -> Double {
         if manager != nil { return 0 }
+        // Released before it loaded (ExpressiveService makes a new engine for every load): it never loads afterwards, so
+        // a load that was queued behind a release keeps nothing (crash plan a3).
+        guard generation.value == 0 else { throw ExpressiveEngineError.released }
+        let t0 = Date()
+        // A second caller waits for the load already running instead of loading her twice.
+        if let loading {
+            _ = try await loading.value
+            return Date().timeIntervalSince(t0) * 1000
+        }
+        let ticket = generation.ticket
+        let job = Task { try await self.loadNow(ticket) }
+        loading = job
+        defer { if generation.current(ticket) { loading = nil } }
+        let ms = try await job.value
+        try keep(ticket)
+        // Her studio's models load behind Pocket's, in the background: no call waits for them (crash plan b1).
+        startStudioLoad()
+        return ms
+    }
+
+    /// Pocket's models into locals, kept only if no release came in meanwhile (checked after every wait): a release
+    /// during a load frees what it made instead of the load installing it afterwards. Her studio's settings only: its
+    /// models load afterwards, in the background (startStudioLoad).
+    private func loadNow(_ ticket: Int) async throws -> Double {
         let t0 = Date()
         let m = PocketTtsManager(directory: assets.modelsDirectory, placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
         try await m.initialize()
-        decoder = try await m.makeLatentDecoder()
-        scratch = try await m.makeLatentDecoder()
-        if let dir = assets.studioDirectory { studio = try await NephisStudio.load(from: dir) }
+        try keep(ticket)
+        let d = try await m.makeLatentDecoder()
+        try keep(ticket)
+        let s = try await m.makeLatentDecoder()
+        try keep(ticket)
+        let config = try assets.studioDirectory.flatMap { try NephisStudio.readConfig(in: $0) }
         // The end guard's own decoder (it shares the Mimi model; only its state is new).
-        if studio != nil { tailDecoder = try await m.makeLatentDecoder() }
+        var tail: PocketTtsLatentDecoder?
+        if config != nil {
+            tail = try await m.makeLatentDecoder()
+            try keep(ticket)
+        }
         manager = m
+        decoder = d
+        scratch = s
+        tailDecoder = tail
+        studioConfig = config
         return Date().timeIntervalSince(t0) * 1000
     }
 
+    private func keep(_ ticket: Int) throws {
+        guard generation.current(ticket) else { throw ExpressiveEngineError.released }
+    }
+
+    /// Drops the models. The load, prepares and decodes still running are cancelled and keep nothing; they let go of
+    /// the models at their next check (`unloadAndWait` waits for that).
     public func unload() {
+        generation.release()
+        loading?.cancel()
+        loading = nil
+        studioLoading?.cancel()
+        studioLoading = nil
+        for job in prepareJobs.values { job.cancel() }
+        for job in decodeJobs.values { job.cancel() }
+        prepareJobs = [:]
+        decodeJobs = [:]
         manager = nil
         decoder = nil
         scratch = nil
         studio = nil
+        studioConfig = nil
+        studioOff = nil
         tailDecoder = nil
         preparing?.cancel()
         preparing = nil
         waiting = nil
         decodes = nil
         forget()
+    }
+
+    /// `unload`, returning once what it stopped has ended: the load in progress, her studio's load and the calls running
+    /// (they hold the models until then). The studio test and the next load wait for this (crash plan a1, a3).
+    public func unloadAndWait() async {
+        let load = loading
+        let studioLoad = studioLoading
+        let prepares = Array(prepareJobs.values)
+        let calls = Array(decodeJobs.values)
+        unload()
+        _ = try? await load?.value
+        await studioLoad?.value
+        for job in prepares { _ = try? await job.value }
+        for job in calls { _ = try? await job.value }
     }
 
     private func forget() {
@@ -207,6 +301,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             try Task.checkCancellation()
             return try await self.prepareNow(line, seed: seed)
         }
+        let id = nextJob()
+        prepareJobs[id] = job
+        defer { prepareJobs[id] = nil }
         preparing = job
         waiting = Task { _ = try? await job.value }
         return try await job.value
@@ -214,6 +311,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
 
     private var preparing: Task<Prepared, Error>?
     private var waiting: Task<Void, Never>?
+
+    private func nextJob() -> Int {
+        jobCount += 1
+        return jobCount
+    }
 
     private func prepareNow(_ line: ExpressiveLine, seed: UInt64?) async throws -> Prepared {
         guard let manager, let scratch else { throw ExpressiveEngineError.notLoaded }
@@ -414,47 +516,63 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func decodeReporting(_ p: Prepared) async throws -> (audio: ExpressiveAudio, report: Report) {
         guard let decoder else { throw ExpressiveEngineError.notLoaded }
         let previous = decodes
-        let studio = studio
+        let config = studioConfig
         // The studio was trained on the sketch at Mimi's scale (gta_dump.py: latent × std + mean); the stream holds
         // Pocket's normalized latents, which Mimi denormalizes inside its own model (studio audit 2026-10-12, A4).
-        let sketch: [[Float]] = studio == nil ? [] : assets.projection.denormalized(p.stream)
+        let sketch: [[Float]] = config == nil ? [] : assets.projection.denormalized(p.stream)
         // A call the studio skips or fails gets the tone the read without the studio gets (A3).
         let plainTone = NephisFlow.studioTone(studioUsed: false, moodToneDB: p.toneDB, chain: assets.chain)
+        // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
+        let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?) = { hurry in await self.studioForCall(hurry: hurry) }
         let job = Task { () async throws -> Decoded in
             await previous?.value
             let d0 = Date()
             if p.reset { try await decoder.reset() }
             let mimi = try await decoder.decode(p.stream)
+            // Released meanwhile: stop here, and the models go with this call (crash plan a3).
+            try Task.checkCancellation()
             var out = Decoded(samples: mimi)
-            if let studio {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
-                do {
-                    let r = try await studio.renderReporting(pcm24: mimi, latents: sketch, hurry: p.hurry, continues: !p.reset)
-                    out.samples = r.pcm
-                    out.studioUsed = !r.report.bypassed
-                    out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
-                } catch {
-                    out.bypassReason = "failed: \(error)"
+            if let config {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
+                let ready = await studioFor(p.hurry)
+                try Task.checkCancellation()
+                if let studio = ready.studio {
+                    do {
+                        let r = try await studio.renderReporting(pcm24: mimi, latents: sketch, hurry: p.hurry, continues: !p.reset)
+                        out.samples = r.pcm
+                        out.studioUsed = !r.report.bypassed
+                        out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        out.bypassReason = "failed: \(error)"
+                    }
+                } else {
+                    out.bypassReason = ready.reason ?? "bypassed"
                 }
                 if !out.studioUsed {
                     // Mimi's sound with the read's own EQ (the mood's shelf and her Mimi EQ), applied at Mimi's 24 kHz
                     // where it was tuned, then at the studio's rate: the call sounds like the read without the studio.
                     var toned = mimi
                     plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
-                    out.samples = studio.plainAudio(pcm24: toned)
+                    out.samples = NephisStudio.plainAudio(pcm24: toned, rate: config.sample_rate)
                 }
             }
             out.ms = Date().timeIntervalSince(d0) * 1000
             return out
         }
+        let id = nextJob()
+        decodeJobs[id] = job
+        defer { decodeJobs[id] = nil }
         decodes = Task { _ = try? await job.value }
         let decoded = try await job.value
-        // Without a studio everything stays at Mimi's 24 kHz; with one, the pauses and tone follow its rate.
-        let rate = studio?.config.sample_rate ?? NephisFlow.sampleRate
+        // Without a studio everything stays at Mimi's 24 kHz; with one, the pauses and tone follow its rate (whether
+        // its models rendered this call or not).
+        let rate = config?.sample_rate ?? NephisFlow.sampleRate
         let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
         var samples = NephisFlow.insertSilence(decoded.samples, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
         // The mood's tone, for the read without the studio (the player adds her EQ). In a studio read each call's tone
         // was set above: none on her studio sound, the read's own EQ on Mimi's (one owner per path).
-        if studio == nil { NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate) }
+        if config == nil { NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate) }
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
@@ -468,13 +586,86 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)
         report.sampleRate = rate
-        report.studioRead = studio != nil
+        report.studioRead = config != nil
         report.studioUsed = decoded.studioUsed
         report.bypassReason = decoded.bypassReason
         lastReport = report
         let audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                     chunks: report.takes)
         return (audio, report)
+    }
+
+    // MARK: - Her studio's models (crash plan b1)
+
+    /// Her studio's models for the next call, or nil with the reason the call plays her plain sound instead (its log:
+    /// "loading", "hurry", "memory: 480 MB free", "failed: …"). Never waits for them: they load in the background behind
+    /// Pocket's (startStudioLoad, again from here after a drop), and the calls meanwhile play her plain sound at the
+    /// studio's rate. Dropped when free memory falls under ~500 MB; after a drop or a failed load they wait (2 min,
+    /// doubling, back to 2 min once they have worked 5 minutes) before loading again.
+    private func studioForCall(hurry: Bool) -> (studio: NephisStudio?, reason: String?) {
+        guard assets.studioDirectory != nil else { return (nil, "off") }
+        // Released (this call is cancelled, the models gone): nothing loads for it.
+        guard manager != nil, !Task.isCancelled else { return (nil, "released") }
+        let free = freeMemoryMB()
+        if let studio {
+            guard NephisMemory.short(.studioKeep, freeMB: free), let free else {
+                studioHold.worked(at: Date())
+                return (studio, nil)
+            }
+            dropStudio(NephisMemory.refusal(.studioKeep, freeMB: free))
+            return (nil, studioOff)
+        }
+        // Short of audio: no load started now (it would compete with her generation); the call plays at once.
+        if hurry, studioLoading == nil { return (nil, "hurry") }
+        return (nil, startStudioLoad() ?? "loading")
+    }
+
+    /// Starts loading her studio's models off the calls' path when they may load: Pocket up, no wait after a drop going
+    /// on, ~1,000 MB free. The reason her calls play her plain sound meanwhile ("loading", "memory: …", "failed: …").
+    @discardableResult
+    private func startStudioLoad() -> String? {
+        guard let dir = assets.studioDirectory, manager != nil, studio == nil else { return nil }
+        if studioLoading != nil { return "loading" }
+        if let off = studioOff, studioHold.holds(at: Date()) { return off }
+        let free = freeMemoryMB()
+        if NephisMemory.short(.studioLoad, freeMB: free), let free {
+            dropStudio(NephisMemory.refusal(.studioLoad, freeMB: free))
+            return studioOff
+        }
+        let ticket = generation.ticket
+        studioLoading = Task.detached(priority: .utility) { [weak self] in
+            let result: Result<NephisStudio?, Error>
+            do { result = .success(try await NephisStudio.load(from: dir)) } catch { result = .failure(error) }
+            await self?.studioLoaded(result, ticket: ticket)
+        }
+        return "loading"
+    }
+
+    /// Her studio's models are up, or failed to load. Released meanwhile: kept nothing (they go with the task).
+    private func studioLoaded(_ result: Result<NephisStudio?, Error>, ticket: Int) {
+        guard generation.current(ticket) else { return }
+        studioLoading = nil
+        switch result {
+        case .success(let loaded):
+            studio = loaded
+            studioOff = loaded == nil ? "missing" : nil
+        case .failure(let error):
+            dropStudio("failed: \(error)")
+        }
+    }
+
+    /// Returns once her studio's models loading in the background are up or have failed (at once when none load): the
+    /// next big load (the listening test after the studio test, Kokoro's warm-up) never overlaps them.
+    public func studioSettled() async {
+        await studioLoading?.value
+    }
+
+    /// Her studio's models go (low memory, a failed load) for a while; the calls meanwhile play her plain sound at the
+    /// studio's rate, with `reason` in the call log.
+    private func dropStudio(_ reason: String) {
+        studio = nil
+        studioOff = reason
+        studioHold.release(at: Date())
     }
 
     // MARK: - One take
@@ -495,7 +686,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // it has died away (two latents under -50 dBFS, at most 6 more), and an end-of-speech signal in its first 6
         // steps is ignored (Kyutai's own loop). The tail decoder measures the level it decides on. Without the studio
         // every piece stops exactly where it always did.
-        if studio != nil, let tailDecoder {
+        if studioConfig != nil, let tailDecoder {
             await session.setEndGuard(.audibleTail, levelProbe: PocketTtsSynthesizer.levelProbe(decoder: tailDecoder))
             report.endGuard = true
         }
@@ -517,16 +708,25 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // Where the last piece of text ended (the start of the frames after its end), if the take ends there.
         var endOfText: Int?
         var afterEnd = false
-        for try await frame in session.frames where frame.latent.count == NephisFlow.latentDim {
-            if frame.afterEos, !afterEnd { endOfText = latents.count }
-            afterEnd = frame.afterEos
-            latents.append(frame.latent)
-            guard whole || latents.count <= Self.headEdge else { continue }
-            batch.append(frame.latent)
-            if batch.count == 6 {
-                send(batch)
-                batch = []
+        do {
+            for try await frame in session.frames where frame.latent.count == NephisFlow.latentDim {
+                if frame.afterEos, !afterEnd { endOfText = latents.count }
+                afterEnd = frame.afterEos
+                latents.append(frame.latent)
+                guard whole || latents.count <= Self.headEdge else { continue }
+                batch.append(frame.latent)
+                if batch.count == 6 {
+                    send(batch)
+                    batch = []
+                }
             }
+            // Released or a fresh read (the frames end early when the call is cancelled): stop before decoding the rest.
+            try Task.checkCancellation()
+        } catch {
+            // The decodes already sent hold the scratch decoder and the Mimi model (they aren't cancelled with the call):
+            // they end before this call does, so a fresh read's reset never races them and a release waits for them.
+            _ = try? await analysis?.value
+            throw error
         }
         if !batch.isEmpty { send(batch) }
         if !afterEnd { endOfText = nil }

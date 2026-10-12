@@ -6,11 +6,13 @@
  *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
  *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
  *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
- *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, when the pack may have a studio), then a
- *     fixed passage read aloud through the real Listen path (speech script → Narration.play → HybridSpeechEngine →
- *     the voice, its finishing chain, playback).
+ *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, when the pack may have a studio; it runs alone,
+ *     refuses with too little memory free, frees its own studio and warms Nephis again as Listen has her), then a fixed
+ *     passage read aloud through the real Listen path (speech script → Narration.play → HybridSpeechEngine → the voice,
+ *     its finishing chain, playback). runParts keeps that order (crash plan 2026-10-12, a1/a2).
  *   - The result in plain words, then one "Copy report" with everything a developer needs (combinedReport):
- *     - studio: × real time against live reading's 1.5×, which chip runs each part, heat before → after;
+ *     - studio: × real time against live reading's 1.5×, memory used and free at each step, heat before → after; which
+ *       chip runs each part on its own button ("Where her studio runs": studioTest({placement: true}));
  *     - start: tap → her first word;
  *     - breaks: times the read had to wait for the voice, and for how long (the goal is none: an audiobook never stops);
  *     - other voice: sentences another voice read (the goal is none);
@@ -68,6 +70,9 @@ export function summarize(r: Obj): Line[] {
   lines.push(...studioCallLines(flow));
   if (Number.isFinite(start)) lines.push({ ok: start <= 2000, text: `Started ${(start / 1000).toFixed(1)} s after the tap.` });
   lines.push({ ok: crashes === 0, text: crashes === 0 ? 'No crashes.' : `${crashes} crash${crashes === 1 ? '' : 'es'} during the test.` });
+  // Her model not loaded for lack of free memory (native's flow.memory), in its own plain words.
+  const memory = (flow.memory as Obj | undefined) ?? {};
+  if (Number(memory.refusals ?? 0) > 0 && typeof memory.lastRefusal === 'string') lines.push({ ok: false, text: memory.lastRefusal });
   const word = (v: unknown): string => (typeof v === 'string' ? v : '?');
   const heat = `${word(r.thermalStart)} → ${word(r.thermalEnd)}`;
   lines.push({ ok: r.thermalEnd === 'nominal' || r.thermalEnd === 'fair', text: `Phone heat: ${heat}.` });
@@ -76,7 +81,7 @@ export function summarize(r: Obj): Line[] {
 }
 
 /** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
-const STUDIO_REASON: Record<string, string> = { hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty' };
+const STUDIO_REASON: Record<string, string> = { hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory', loading: 'still loading' };
 
 /**
  * Her studio and her endings in plain words (native's flow.studio and flow.endings; nothing in builds that don't
@@ -215,7 +220,9 @@ export function chipSummary(placement: unknown): string {
 export function studioLines(r: Obj): Line[] {
   if (r.ran !== true) {
     const why = typeof r.error === 'string' ? r.error : 'not available';
-    return [/has no studio/.test(why) ? { ok: true, text: 'Studio: this pack has none, nothing to time.' } : { ok: false, text: `Studio test failed: ${why}` }];
+    if (/has no studio/.test(why)) return [{ ok: true, text: 'Studio: this pack has none, nothing to time.' }];
+    // Refused before it loaded anything (too little memory free): not a failure of her studio.
+    return [{ ok: false, text: `Studio test ${r.refused === true ? 'not run' : 'failed'}: ${why}` }];
   }
   const x = Number(r.timesRealTime);
   const fast = x >= LIVE_X;
@@ -245,6 +252,18 @@ export function combinedReport(o: { status: Obj; studio: StudioKnown; studioTest
     voiceTest: o.voiceTest,
     notes: o.notes.trim() || null,
   };
+}
+
+/**
+ * The test's parts in order: her studio's speed test, then the listening test, unless the test was stopped. True when
+ * the listening test ran. Nothing is released between them (crash plan a2): native's studio test frees its own studio
+ * and returns with Nephis warm again, so the listening test starts as Listen does, never on top of the test's studio.
+ */
+export async function runParts(p: { studio: boolean; studioTest(): Promise<void>; listen(): Promise<void>; going(): boolean }): Promise<boolean> {
+  if (p.studio) await p.studioTest();
+  if (!p.going()) return false;
+  await p.listen();
+  return true;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
@@ -291,6 +310,8 @@ export function openVoiceTest(): void {
   let running = false;
   let listening = false;
   let switching = false;
+  // "Where her studio runs" checking: no other studio test meanwhile (native refuses a second one too).
+  let checking = false;
   let report: Obj | null = null;
   let studioTest: Obj | null = null;
   let status: Obj = {};
@@ -323,6 +344,7 @@ export function openVoiceTest(): void {
     const lines = running ? [] : [...(studioTest ? studioLines(studioTest) : []), ...(report ? summarize(report) : [])];
     const result = lines.length
       ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${lines.map(row).join('')}</div>
+         ${STUDIO && studioTest?.ran === true && !studioTest.placement ? '<button type="button" class="link" data-act="placement" data-testid="voice-test-placement">Where her studio runs</button>' : ''}
          <div class="sec">What did you hear?</div>
          <div class="card" style="padding:4px 14px 14px"><textarea data-f="notes" aria-label="What did you hear?" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div>
          <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy report</button>
@@ -518,9 +540,13 @@ export function openVoiceTest(): void {
     studioTest = null;
     progress = '';
     render();
-    if (STUDIO && studioKnown(status.nephisPack, { has: null, on: null }).has !== false) await runStudio();
-    if (running) await runListen();
-    else progress = 'Stopped.';
+    const listened = await runParts({
+      studio: STUDIO && studioKnown(status.nephisPack, { has: null, on: null }).has !== false,
+      studioTest: runStudio,
+      listen: runListen,
+      going: () => running,
+    });
+    if (!listened) progress = 'Stopped.';
     running = false;
     render();
   };
@@ -538,8 +564,8 @@ export function openVoiceTest(): void {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
     const act = el.dataset.act;
-    if (act === 'run' && !running) void run();
-    if (act === 'long' && !running) void runLong();
+    if (act === 'run' && !running && !checking) void run();
+    if (act === 'long' && !running && !checking) void runLong();
     if (act === 'stop') stop();
     if (act === 'nephis-on' && !running) {
       void ExpressiveVoice.resetCrashes()
@@ -550,6 +576,21 @@ export function openVoiceTest(): void {
         })
         .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`))
         .finally(render);
+    }
+    if (act === 'placement' && !running && !checking) {
+      // Where Core ML runs her studio's models: its own check now (crash plan a1), never inside the speed test.
+      checking = true;
+      el.textContent = 'Checking…';
+      void ExpressiveVoice.studioTest({ placement: true })
+        .then((r) => {
+          if (r.placement && studioTest) studioTest = { ...studioTest, placement: r.placement, placementMemory: r.memory };
+          else toast(typeof r.error === 'string' ? r.error : 'Couldn’t check where her studio runs.');
+        })
+        .catch((err: unknown) => toast(err instanceof Error ? err.message : String(err)))
+        .finally(() => {
+          checking = false;
+          render();
+        });
     }
     if (act === 'share') {
       void ExpressiveVoice.shareRecording().catch((err: unknown) => (el.textContent = err instanceof Error ? err.message : 'Couldn’t share'));

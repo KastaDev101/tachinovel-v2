@@ -38,10 +38,13 @@ public enum ExpressiveEngineError: Error, LocalizedError {
     case notLoaded
     case unsupportedOS(String)
     case modelNotInstalled(String)
+    /// Released while it loaded: the load kept nothing (NephisFlowSynth, crash plan a3).
+    case released
 
     public var errorDescription: String? {
         switch self {
         case .notLoaded: return "The model isn't loaded."
+        case .released: return "The model was released while it loaded."
         case .unsupportedOS(let what): return "\(what) needs iOS 18 or later."
         case .modelNotInstalled(let what): return "\(what) isn't downloaded."
         }

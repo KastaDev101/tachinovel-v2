@@ -50,6 +50,9 @@ final class KokoroService: @unchecked Sendable {
     private var reloadItem: DispatchWorkItem?
     private var idleItem: DispatchWorkItem?
     private var releasedForMemory = false
+    /// The studio speed test runs alone (crash plan a1): loads asked for meanwhile wait for its end (`studioTestEnded`).
+    private var heldForStudioTest = false
+    private var afterStudioTest: [((Status) -> Void)?] = []
     private let log = Logger(subsystem: "app.tachinovel", category: "voice")
 
     /// model-info.json written by tools/fetch-voices.ts (revision, voices, size).
@@ -120,6 +123,11 @@ final class KokoroService: @unchecked Sendable {
             completion?(status)
             return
         }
+        // The studio test runs alone: this load starts when it ends (a chapter being prepared waits instead of failing).
+        if heldForStudioTest {
+            afterStudioTest.append(completion)
+            return
+        }
         let wasLoading = status == .loading
         status = .loading
         let route = self.route
@@ -176,6 +184,31 @@ final class KokoroService: @unchecked Sendable {
     func cancelIdleRelease() {
         idleItem?.cancel()
         idleItem = nil
+    }
+
+    /// The studio speed test runs alone (crash plan a1): free the model now and call back once it is gone
+    /// (KokoroRuntime.release waits for a load in progress first); loads asked for until `studioTestEnded` wait for it.
+    /// Completion on main.
+    func holdForStudioTest(_ completion: @escaping () -> Void) {
+        cancelIdleRelease()
+        dropWarm()
+        heldForStudioTest = true
+        guard let runtime, status == .ready || status == .loading else { return completion() }
+        log.info("voice: releasing the Kokoro model (studio test)")
+        status = .unloaded
+        let done = MainBound(completion)
+        Task.detached {
+            await runtime.release()
+            DispatchQueue.main.async { done.value() }
+        }
+    }
+
+    /// The studio test ended: the loads asked for meanwhile start now.
+    func studioTestEnded() {
+        heldForStudioTest = false
+        let waiting = afterStudioTest
+        afterStudioTest = []
+        for completion in waiting { ensureLoaded(completion) }
     }
 
     private func releaseNow(reason: String) {
@@ -379,13 +412,19 @@ final class KokoroService: @unchecked Sendable {
         // Load only (Core ML compiles the stages for the Neural Engine here, the slow part): no synthesis,
         // so the known iOS 26 Core ML crash can never hit right after launch, only while listening.
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-            guard self.usable, self.status == .unloaded else { return }
-            self.ensureLoaded { status in
-                guard status == .ready else { return }
-                UserDefaults.standard.set(true, forKey: key)
-                // Don't hold the model for nothing: release unless narration started meanwhile.
-                if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
+            let warmUp: () -> Void = {
+                guard self.usable, self.status == .unloaded else { return }
+                self.ensureLoaded { status in
+                    guard status == .ready else { return }
+                    UserDefaults.standard.set(true, forKey: key)
+                    // Don't hold the model for nothing: release unless narration started meanwhile.
+                    if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
+                }
             }
+            // Nephis reads (crash plan a6): her model and then her studio's load, and compile once per build, at launch
+            // (warmNephis); Kokoro's compile runs after them, never at the same time, and not on her first Listen.
+            guard HybridSpeechEngine.nephisCanReadAlone(NarrationController.listenEngine()) else { return warmUp() }
+            ExpressiveService.shared.whenSettled(warmUp)
         }
     }
 }
