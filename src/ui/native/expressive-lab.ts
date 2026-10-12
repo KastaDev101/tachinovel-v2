@@ -33,6 +33,8 @@ interface ExpressiveVoicePlugin {
   renameVoice(o: { id: string; name: string }): Promise<Obj>;
   deleteVoice(o: { id: string }): Promise<Obj>;
   playVoiceSample(o: { id: string | null }): Promise<Obj>;
+  studioTest(): Promise<Obj>;
+  studioEnable(o: { on: boolean }): Promise<Obj>;
 }
 
 /** Events (kept out of the method list above, which mirrors the Swift plugin's methods). */
@@ -137,6 +139,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
   let armed = ''; // "download:<id>" / "remove:<id>": the second tap confirms
   let message = '';
   let messageIsError = false;
+  /** The last Studio speed test, one line (Voice Lab › Her studio). */
+  let studioResult = '';
   let unavailable = false;
   let poll = 0;
   if (opts.message) {
@@ -280,6 +284,15 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
       ${sessionView(obj(st.session))}
       <h2>Speed test</h2>
       ${speedView(obj(st.speedTest))}
+      ${
+        __FLAVOR__ === 'personal'
+          ? `<h2>Her studio (experimental)</h2>
+      <div class="card"><div class="muted">Her 44.1 kHz sound on the phone, from the installed Nephis pack (Models/nephis-studio). The speed test renders 10 s of stand-in audio; only the speed counts.</div>
+      ${studioResult ? `<div class="muted" style="margin-top:6px">${esc(studioResult)}</div>` : ''}
+      <div class="acts"><button type="button" data-act="studio-test">Studio speed test</button>
+      <button type="button" data-act="studio-on">Use studio for Nephis</button><button type="button" data-act="studio-off">Studio off</button></div></div>`
+          : ''
+      }
       <h2>Device</h2>
       <div class="kv">
         <span>Thermal</span><span>${esc(str(dev.thermal))}${dev.lowPower ? ' · Low Power Mode' : ''}</span>
@@ -367,6 +380,24 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
       });
   };
 
+  const studioLine = (r: Obj): string => {
+    if (r.ran !== true) return `Studio: ${str(r.error, 'not available')}`;
+    const n = (v: unknown): string => (typeof v === 'number' ? v.toFixed(v < 10 ? 2 : 0) : '?');
+    const pl = obj(r.placement);
+    const where = Object.keys(pl).length
+      ? `; runs on ${Object.entries(pl)
+          .map(([k, v]) => `${k} ${str(v)}`)
+          .join(', ')}`
+      : '';
+    const hot = r.bypassed === true ? ', bypassed: too hot' : '';
+    const use = r.enabled === true ? 'in use for Nephis' : 'not in use';
+    return (
+      `Studio: ${n(r.timesRealTime)}× real time on ${n(r.audioSeconds)} s (resample ${n(r.resampleMs)} ms, ` +
+      `blueprint ${n(r.blueprintMs)} ms, vocoder ${n(r.vocoderMs)} ms, rest ${n(r.restMs)} ms${hot}; ` +
+      `load ${n(r.loadMs)} ms; thermal ${str(r.thermalBefore)}→${str(r.thermalAfter)}${where}; ${use})`
+    );
+  };
+
   const sampleName = (): string => (sampleId === 'custom' ? 'custom' : sampleId);
 
   root.addEventListener('input', (ev) => {
@@ -437,6 +468,21 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         apply(ExpressiveVoice.speedTest({ engine: id, sample: sampleName(), lines: ls }));
         return;
       }
+      case 'studio-test':
+        studioResult = 'Studio: running (the first run compiles the models, up to a minute)…';
+        render();
+        void ExpressiveVoice.studioTest()
+          .then((r) => (studioResult = studioLine(obj(r))))
+          .catch((err: unknown) => (studioResult = `Studio: ${err instanceof Error ? err.message : String(err)}`))
+          .finally(render);
+        return;
+      case 'studio-on':
+      case 'studio-off':
+        void ExpressiveVoice.studioEnable({ on: act === 'studio-on' })
+          .then((r) => (studioResult = r.enabled === true ? 'Studio: on for Nephis from her next sentence.' : 'Studio: off.'))
+          .catch((err: unknown) => (studioResult = `Studio: ${err instanceof Error ? err.message : String(err)}`))
+          .finally(render);
+        return;
       case 'cancel-speed':
         apply(ExpressiveVoice.cancelSpeedTest());
         return;

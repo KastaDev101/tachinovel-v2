@@ -469,12 +469,13 @@ public enum NephisFlow {
 
     /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with 10 ms fades
     /// into and out of each so the level never steps.
-    public static func insertSilence(_ samples: [Float], pads: [(at: Int, seconds: Double)], sampleRate: Int = sampleRate) -> [Float] {
+    public static func insertSilence(_ samples: [Float], pads: [(at: Int, seconds: Double)], sampleRate: Int = sampleRate,
+                                     samplesPerLatent perLatent: Int = samplesPerLatent) -> [Float] {
         guard !pads.isEmpty else { return samples }
         var out = samples
         let fade = sampleRate / 100
         for pad in pads.sorted(by: { $0.at > $1.at }) {
-            let i = min(out.count, pad.at * samplesPerLatent)
+            let i = min(out.count, pad.at * perLatent)
             for k in 0..<min(fade, i) { out[i - 1 - k] *= Float(k) / Float(fade) }
             for k in 0..<min(fade, out.count - i) { out[i + k] *= Float(k) / Float(fade) }
             out.insert(contentsOf: [Float](repeating: 0, count: Int(pad.seconds * Double(sampleRate))), at: i)

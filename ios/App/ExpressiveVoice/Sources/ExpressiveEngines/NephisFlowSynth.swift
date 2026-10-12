@@ -34,13 +34,17 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public let modelsDirectory: URL?
         /// The pack's chain settings (pauses, prompt sizes), tuned with its model; defaults without a pack.
         public let chain: NephisFlow.Chain
+        /// The pack's studio (`Models/nephis-studio`, NephisStudio.swift): her 44.1 kHz sound from Mimi's 24 kHz
+        /// decode. nil = no studio, the stream stays 24 kHz exactly as before.
+        public let studioDirectory: URL?
         public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil,
-                    chain: NephisFlow.Chain = .init()) {
+                    chain: NephisFlow.Chain = .init(), studioDirectory: URL? = nil) {
             self.calm = calm
             self.moods = moods
             self.projection = projection
             self.modelsDirectory = modelsDirectory
             self.chain = chain
+            self.studioDirectory = studioDirectory
         }
     }
 
@@ -75,6 +79,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var pads: [(at: Int, seconds: Double)] = []
         /// Her tone for the call's mood (NephisFlow.Chain.Mood.toneDB).
         var toneDB = 0.0
+        /// Skip the studio for this call (ExpressiveLine.studio == false: playback is short of audio).
+        var hurry = false
     }
 
     private let assets: Assets
@@ -82,6 +88,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var manager: PocketTtsManager?
     private var decoder: PocketTtsLatentDecoder?
     private var scratch: PocketTtsLatentDecoder?
+    /// Her studio, when the pack ships one (the stream is then 44.1 kHz).
+    private var studio: NephisStudio?
     /// The stream decodes, one after the other in call order.
     private var decodes: Task<Void, Never>?
 
@@ -121,6 +129,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         try await m.initialize()
         decoder = try await m.makeLatentDecoder()
         scratch = try await m.makeLatentDecoder()
+        if let dir = assets.studioDirectory { studio = try await NephisStudio.load(from: dir) }
         manager = m
         return Date().timeIntervalSince(t0) * 1000
     }
@@ -129,6 +138,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         manager = nil
         decoder = nil
         scratch = nil
+        studio = nil
         preparing?.cancel()
         preparing = nil
         waiting = nil
@@ -204,7 +214,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         lastMood = mood
         return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
-                        toneDB: chain.moods[mood]?.toneDB ?? 0)
+                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -337,31 +347,36 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func decode(_ p: Prepared) async throws -> ExpressiveAudio {
         guard let decoder else { throw ExpressiveEngineError.notLoaded }
         let previous = decodes
+        let studio = studio
         let job = Task { () async throws -> (samples: [Float], ms: Double) in
             await previous?.value
             let d0 = Date()
             if p.reset { try await decoder.reset() }
-            let samples = try await decoder.decode(p.stream)
+            var samples = try await decoder.decode(p.stream)
+            if let studio { samples = try await studio.render(pcm24: samples, latents: p.stream, hurry: p.hurry) }  // her 44.1 kHz sound
             return (samples, Date().timeIntervalSince(d0) * 1000)
         }
         decodes = Task { _ = try? await job.value }
         let (decoded, ms) = try await job.value
-        var samples = NephisFlow.insertSilence(decoded, pads: p.pads)
-        NephisFlow.highShelf(&samples, db: p.toneDB)
+        // Without a studio everything stays at Mimi's 24 kHz; with one, the pauses and tone follow its rate.
+        let rate = studio?.config.sample_rate ?? NephisFlow.sampleRate
+        let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
+        var samples = NephisFlow.insertSilence(decoded, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
+        NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate)
         // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
         // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
         let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
         if from != 1 || to != 1 {
-            let ramp = min(samples.count, NephisFlow.sampleRate / 5)
+            let ramp = min(samples.count, rate / 5)
             for i in samples.indices { samples[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
         }
         lastGainDB = p.gainDB
         var report = p.report
         report.decodeMs = ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
-        report.audioMs = Double(samples.count) * 1000 / Double(NephisFlow.sampleRate)
+        report.audioMs = Double(samples.count) * 1000 / Double(rate)
         lastReport = report
-        return ExpressiveAudio(samples: samples, sampleRate: NephisFlow.sampleRate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
+        return ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                chunks: report.takes)
     }
 

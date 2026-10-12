@@ -23,6 +23,7 @@
 //
 
 import Capacitor
+import ExpressiveEngines
 import ExpressiveCore
 import Foundation
 
@@ -50,6 +51,8 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "renameVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "playVoiceSample", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioEnable", returnType: CAPPluginReturnPromise),
     ]
 
     /// A line for hearing a voice that came without a preview.
@@ -292,6 +295,54 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             ExpressiveLabPlayer.shared.stop()
             ExpressiveService.shared.unload(reason: "Voice Lab")
             call.resolve(Self.status())
+        }
+    }
+
+    // MARK: - Her studio (NephisStudio.swift, 2026-10-11 scaffold)
+
+    /// Voice Lab › Studio speed test: loads the installed pack's studio (compiling it on first use), renders 10 s of
+    /// stand-in input twice (the first warms it up) and reports the second: × real time per step, and the thermal
+    /// state before and after. Stand-in input (noise and random sketch) costs the same as speech, so only the speed
+    /// is meaningful, not the sound.
+    @objc func studioTest(_ call: CAPPluginCall) {
+        let dir = NephisModelPack.root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
+            return call.resolve(["ran": false, "error": "The installed Nephis pack has no studio (Models/nephis-studio)."])
+        }
+        Task.detached(priority: .userInitiated) {
+            let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
+            do {
+                let t0 = Date()
+                guard let studio = try await NephisStudio.load(from: dir) else {
+                    return call.resolve(["ran": false, "error": "studio.json is missing."])
+                }
+                let loadMs = Date().timeIntervalSince(t0) * 1000
+                let seconds = 10
+                var rng = SystemRandomNumberGenerator()
+                let pcm = (0..<(NephisStudio.inputRate * seconds)).map { _ in Float.random(in: -0.05...0.05, using: &rng) }
+                let latents = (0..<(seconds * 25 / 2)).map { _ in (0..<32).map { _ in Float.random(in: -1...1, using: &rng) } }
+                _ = try await studio.render(pcm24: pcm, latents: latents)
+                _ = try await studio.render(pcm24: pcm, latents: latents)
+                let r = await studio.lastReport
+                let placement = await NephisStudio.placement(in: dir)
+                call.resolve(["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
+                              "blueprintMs": r.blueprintMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
+                              "timesRealTime": r.timesRealTime, "placement": placement,
+                              "thermalBefore": thermalBefore, "thermalAfter": ProcessInfo.processInfo.thermalState.rawValue,
+                              "enabled": UserDefaults.standard.bool(forKey: "nephisStudio")])
+            } catch {
+                call.resolve(["ran": false, "error": "\(error)"])
+            }
+        }
+    }
+
+    /// Voice Lab › use the studio for Nephis (on/off): her stream becomes 44.1 kHz from her next load.
+    @objc func studioEnable(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? false
+        DispatchQueue.main.async {
+            UserDefaults.standard.set(on, forKey: "nephisStudio")
+            ExpressiveService.shared.reloadNephisModel()
+            call.resolve(["enabled": on])
         }
     }
 

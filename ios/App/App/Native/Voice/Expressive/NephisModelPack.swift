@@ -41,6 +41,15 @@ enum NephisModelPack {
 
     /// The installed pack's root (FluidAudio's models directory for her engine), or nil.
     static var modelsDirectory: URL? { complete(root) ? root : nil }
+    /// The installed pack's studio (Models/nephis-studio: NephisBlueprint, NephisVocoder, studio.json), or nil.
+    /// Used only while the hidden `nephisStudio` default is on: the studio makes the stream 44.1 kHz, and parts of
+    /// the player still assume Mimi's 24 kHz (natural finish, polish), so it stays a Voice Lab experiment for now.
+    static var studioDirectory: URL? {
+        let dir = root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
+        guard complete(root), UserDefaults.standard.bool(forKey: "nephisStudio"),
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else { return nil }
+        return dir
+    }
     /// Her voice files for the installed model (a BuiltInVoices-shaped folder), or nil.
     static var voicesDirectory: URL? { complete(root) ? root.appendingPathComponent("BuiltInVoices", isDirectory: true) : nil }
     /// What the pack says about itself (pack.json: name, made, checkpoint), for the Voice Lab.

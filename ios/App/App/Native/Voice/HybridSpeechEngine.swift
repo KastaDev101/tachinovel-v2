@@ -388,6 +388,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
+                // Her studio (when on) only while playback has a cushion; short of audio, speed comes first.
+                line.studio = bufferedAhead() >= Self.studioAhead
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }
@@ -605,6 +607,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static let leadInAhead = 25.0
+    /// Seconds buffered ahead below which her studio is skipped for a call (NephisStudio, ExpressiveLine.studio).
+    static let studioAhead = 6.0
 
     /// Whether a flow call got as far as its latents (main thread only).
     private final class FlowCall {

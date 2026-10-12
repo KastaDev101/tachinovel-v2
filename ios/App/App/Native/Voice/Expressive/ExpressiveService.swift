@@ -119,7 +119,8 @@ final class ExpressiveService {
             chain = decoded
         }
         return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
-                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain)
+                                      modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain,
+                                      studioDirectory: pack == nil ? nil : NephisModelPack.studioDirectory)
     }
 
     /// Her EQ's top lift for the installed pack's decoder (nil: the shipped one).

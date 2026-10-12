@@ -82,6 +82,9 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var flowLast: Bool?
     public var takes: Int?
     public var leadIn: Bool?
+    /// Nephis flow with her studio (NephisStudio): false = playback is short of audio, skip the studio for this call
+    /// (her sound stays 44.1 kHz, just without the polish); nil = use it.
+    public var studio: Bool?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
