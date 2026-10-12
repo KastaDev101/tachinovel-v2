@@ -338,13 +338,13 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load. A read
     /// plays at one rate (SessionRate), so a Listen read in progress starts its sentence again at the new one (as a
-    /// voice change does); otherwise its next calls would come at the other rate and go to Kokoro.
+    /// voice change does; reloadNephisModel asks for it, as it does for a pack swap); otherwise its next calls would come
+    /// at the other rate and go to Kokoro.
     @objc func studioEnable(_ call: CAPPluginCall) {
         let on = call.getBool("on") ?? false
         DispatchQueue.main.async {
             UserDefaults.standard.set(on, forKey: "nephisStudio")
             ExpressiveService.shared.reloadNephisModel()
-            NotificationCenter.default.post(name: VoiceSettings.changed, object: nil)
             call.resolve(["enabled": on])
         }
     }

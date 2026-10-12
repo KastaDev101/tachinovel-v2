@@ -420,10 +420,17 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         }
                     }
                     switch result {
-                    case .success(let a) where !a.samples.isEmpty && (a.sampleRate == self.sessionRate || (self.studioRead && a.sampleRate > 0)):
+                    case .success(let a) where !a.samples.isEmpty && (a.sampleRate == self.sessionRate || ((self.studioRead || flow) && a.sampleRate > 0)):
                         // Her studio's stream is at the read's rate and goes on at once; anything else in a studio read
                         // (a call made before her studio loaded) is resampled to it first. A 24 kHz read takes 24 kHz
-                        // audio only, as before.
+                        // audio only, as before, except her flow engine's studio rate: a pack with a studio swapped in
+                        // mid-read (ExpressiveService.reloadNephisModel restarts the read at the new rate; this covers
+                        // the calls before that) is resampled down instead of all of it going to Kokoro. Without a
+                        // studio her flow engine is at 24 kHz, so a read without one never gets here.
+                        if !self.studioRead, a.sampleRate != self.sessionRate {
+                            let rate = a.sampleRate
+                            self.log.info("voice: \(id.rawValue, privacy: .public) gave \(rate) Hz in a 24 kHz read (sentence \(i)); resampled")
+                        }
                         var samples = a.samples
                         if flow, self.studioRead, a.sampleRate == NaturalFinish.mimiRate, self.natural != nil {
                             // Her Mimi sound without the studio, in her studio's read: natural delivery adds no EQ at

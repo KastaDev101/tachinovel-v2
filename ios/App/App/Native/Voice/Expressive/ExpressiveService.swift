@@ -128,10 +128,19 @@ final class ExpressiveService {
     /// Her EQ's gentler sibilance for the installed pack (nil: on).
     var nephisSoftSibilance: Bool? { nephisFlowAssets?.chain.softSibilance }
 
-    /// A Nephis model pack was installed or removed: forget her assets; a loaded Nephis engine reloads on next use.
+    /// A Nephis model pack was installed or removed, or her studio switched: forget her assets; a loaded Nephis engine
+    /// reloads on next use.
+    /// A Listen read keeps the rate it started at (SessionRate.forRead in HybridSpeechEngine.enqueue). When her reloaded
+    /// engine will render at another rate (a pack with or without a studio, the studio switch), the read starts its
+    /// sentence again at the new rate, as on a voice change (NarrationController.voiceSettingsChanged; its voiceKey
+    /// carries the rate); otherwise every call at the other rate would be rejected and read again by Kokoro. A swap that
+    /// leaves the rate as it was posts nothing, as before.
     func reloadNephisModel() {
         nephisFlowAssetsCache = nil
         if loadedID == .pocketTts, usesFlow { unload(reason: "new Nephis model") }
+        if SessionRate.forRead(NarrationController.listenEngine()) != NarrationController.shared.speechEngine.sessionRate {
+            NotificationCenter.default.post(name: VoiceSettings.changed, object: nil)
+        }
     }
     /// Nephis (v2): her own file, one read for every line.
     lazy var pocketNephis: Result<PocketVoice, Error> = Result {

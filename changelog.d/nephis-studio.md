@@ -33,6 +33,8 @@
   second more) instead of being cut, which is the clipped final "s".
 - Turning her studio on or off during Listen starts the sentence again with the new sound. Before, her next lines
   went to another voice. Chapters prepared with and without her studio are kept apart.
+- Opening a Nephis pack during Listen (or one installed from Documents after a read has started) that adds or drops
+  her studio also starts the sentence again at the new rate, instead of the rest of the chapter going to another voice.
 
 ### Changed
 
