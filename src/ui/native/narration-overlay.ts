@@ -2,7 +2,8 @@
  * Listening UI layered over the v1 UI (v1 itself is not modified):
  *
  * - Reader: "Listen" in the reader's bottom bar (next to Chapters / Auto-scroll / Night / Appearance, same
- *   style), so it shows and hides with the bars. Tap = listen from the first visible paragraph with the
+ *   style), so it shows and hides with the bars. Tap = listen from the paragraph at the top of the page (v1's
+ *   reading line), or on from the sentence heard last when listening stopped and the page wasn't touched since, with the
  *   novel's voice: Kokoro on device (bundled), the system voice standing in sentence by sentence when Kokoro
  *   can't keep up. While listening it becomes "Player" (opens the Listen player). The sentence script is built from exactly what the reader shows (speech-dom.ts, the v1
  *   narration front-end + the pronunciation lexicon). PC-narrated audio only with Settings › Voices ›
@@ -126,6 +127,10 @@ export function installNarrationOverlay(): void {
   const chapters = new Map<string, ChapterRef>();
   let state: NarrationState = { status: 'idle' };
   let lastUserScroll = 0;
+  /** The sentence heard last (speech: the reader's paragraph and the sentence in it) and when: Listen goes on from it. */
+  let lastSpoken: { chapterPath: string; paragraph: number; sentence?: number; at: number } | null = null;
+  /** A Listen tap is still starting (lexicon, cover, play): another tap meanwhile would start a second read. */
+  let starting = false;
   let paragraphEl: Element | null = null;
   /** Timestamp alignment per chapter (re-made when the reader re-renders the chapter body). */
   const alignments = new Map<string, ChapterAlignment | null>();
@@ -270,43 +275,64 @@ export function installNarrationOverlay(): void {
   }
 
   function listenFromHere(): void {
+    if (starting) return;
     const root = topLayer()?.querySelector<HTMLElement>('[data-testid="screen-reader"]') ?? null;
     if (!root) return;
-    // From the first visible paragraph (the reader hides its bars while reading).
-    const point = locateReadingPoint(root, 8, window.innerHeight);
+    // From v1's reading line, just under the status bar (reader.tsx: the scroller's top + the inset + 1): the paragraph
+    // the reader keeps as its position. 8 px sat inside that band, so Listen began with the paragraph before it,
+    // hidden under the status bar.
+    const scrollerTop = root.querySelector('.reader-scroll')?.getBoundingClientRect().top ?? 0;
+    const line = scrollerTop + (root.querySelector<HTMLElement>('.rd-inset-probe')?.offsetHeight ?? 0) + 1;
+    let point: { chapterPath: string; paragraph: number; sentence?: number } | null = locateReadingPoint(root, line, window.innerHeight);
+    // Listening stopped and the page wasn't touched after the last sentence heard: follow() kept that sentence in the
+    // middle of the screen, so go on from it. From the top line she read again the paragraphs just heard (Kasta,
+    // 2026-10-12: "replays certain lines or paragraphs for no reason"). Only while its paragraph is still on screen.
+    const heard = lastSpoken && lastUserScroll < lastSpoken.at ? lastSpoken : null;
+    const heardBox = heard ? chapterBody(root, heard.chapterPath)?.children[heard.paragraph]?.getBoundingClientRect() : undefined;
+    if (heard && heardBox && heardBox.bottom > line && heardBox.top < window.innerHeight) {
+      point = { chapterPath: heard.chapterPath, paragraph: heard.paragraph, ...(heard.sentence !== undefined ? { sentence: heard.sentence } : {}) };
+    }
     if (!point) return;
     const ref = chapters.get(point.chapterPath);
     const body = chapterBody(root, point.chapterPath);
     if (!ref || !body) return;
     tapFeedback();
+    starting = true;
     const novelName = root.querySelector('.rd-top-novel')?.textContent ?? '';
     const chapterName = root.querySelector('.rd-top-chapter')?.textContent ?? point.chapterPath;
+    const start = { paragraph: point.paragraph, ...(point.sentence !== undefined ? { sentence: point.sentence } : {}) };
     void (async () => {
-      // The novel's pronunciation lexicon (global + its own), then the script from the reader's DOM.
-      const l = await callCore<{ global?: Lexicon; novel?: Lexicon | null }>('narration.lexicon.get', { novelKey: `${ref.pluginId}:${ref.novelPath}` }).catch(() => null);
-      const lexicons = [l?.global, l?.novel].filter((x): x is Lexicon => !!x);
-      let script: DomScript | null = null;
       try {
-        script = domSpeechScript(body, { title: chapterName, lexicons, lists: listMemory(`${ref.pluginId}:${ref.novelPath}`, ref.chapterPath) });
-        speechScripts.set(ref.chapterPath, script);
-        rememberListened(chapterName, script.script);
+        // The novel's pronunciation lexicon (global + its own), then the script from the reader's DOM.
+        const l = await callCore<{ global?: Lexicon; novel?: Lexicon | null }>('narration.lexicon.get', { novelKey: `${ref.pluginId}:${ref.novelPath}` }).catch(() => null);
+        const lexicons = [l?.global, l?.novel].filter((x): x is Lexicon => !!x);
+        let script: DomScript | null = null;
+        try {
+          script = domSpeechScript(body, { title: chapterName, lexicons, lists: listMemory(`${ref.pluginId}:${ref.novelPath}`, ref.chapterPath) });
+          speechScripts.set(ref.chapterPath, script);
+          rememberListened(chapterName, script.script);
+        } catch (err) {
+          console.warn('speech script failed; native splits the paragraphs', err);
+        }
+        // The novel's cover for the lock screen, CarPlay and Control Center (Kasta, 2026-10-09: the square was empty).
+        const coverUrl = await novelCover(ref.pluginId, ref.novelPath);
+        await Narration.play({
+          pluginId: ref.pluginId,
+          novelPath: ref.novelPath,
+          chapterPath: ref.chapterPath,
+          novelName,
+          chapterName,
+          ...(coverUrl ? { coverUrl } : {}),
+          paragraphs: paragraphsOf(body),
+          ...(script && script.script.items.length > 0 ? { script: script.script } : {}),
+          start,
+          autoContinue: true,
+        });
       } catch (err) {
-        console.warn('speech script failed; native splits the paragraphs', err);
+        console.warn('listen failed', err);
+      } finally {
+        starting = false;
       }
-      // The novel's cover for the lock screen, CarPlay and Control Center (Kasta, 2026-10-09: the square was empty).
-      const coverUrl = await novelCover(ref.pluginId, ref.novelPath);
-      await Narration.play({
-        pluginId: ref.pluginId,
-        novelPath: ref.novelPath,
-        chapterPath: ref.chapterPath,
-        novelName,
-        chapterName,
-        ...(coverUrl ? { coverUrl } : {}),
-        paragraphs: paragraphsOf(body),
-        ...(script && script.script.items.length > 0 ? { script: script.script } : {}),
-        start: { paragraph: point.paragraph },
-        autoContinue: true,
-      });
     })();
   }
   toggle.addEventListener('click', () => {
@@ -327,7 +353,24 @@ export function installNarrationOverlay(): void {
     render();
   });
 
-  document.addEventListener('touchmove', () => (lastUserScroll = Date.now()), { passive: true, capture: true });
+  // A drag, not a tap: iOS sends touchmove for a tap's own finger jitter (the bars tap, the Listen tap itself),
+  // which would otherwise discard the resume point and pause follow() for a plain tap.
+  let touchY: number | null = null;
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      touchY = e.touches?.[0]?.clientY ?? null;
+    },
+    { passive: true, capture: true },
+  );
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      const y = e.touches?.[0]?.clientY;
+      if (touchY === null || y === undefined || Math.abs(y - touchY) > 10) lastUserScroll = Date.now();
+    },
+    { passive: true, capture: true },
+  );
 
   function follow(el: Element | null): void {
     if (el && Date.now() - lastUserScroll > 4000) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -396,7 +439,11 @@ export function installNarrationOverlay(): void {
     if (!active()) clearAll();
     render();
   });
-  void Narration.addListener('progress', (p) => void highlight(p));
+  void Narration.addListener('progress', (p) => {
+    // Speech paragraphs are the reader's own; audio's are the manifest's blocks (highlight.ts re-aligns those).
+    if (p.engine !== 'audio') lastSpoken = { chapterPath: p.chapterPath, paragraph: p.paragraph, ...(p.sentence !== undefined ? { sentence: p.sentence } : {}), at: Date.now() };
+    void highlight(p);
+  });
   void Narration.state()
     .then((s) => {
       state = s;

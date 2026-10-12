@@ -92,6 +92,35 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(r.padSeconds, Double(13 - 7 - 2) * NephisFlow.latentSeconds, accuracy: 1e-9)
     }
 
+    func testAFadeOutDecodedWithItsCallIsLeftOutOfTheNextJoin() {
+        let q = [Float](repeating: 0, count: 32), w = [Float](repeating: 1, count: 32)
+        let tail = (0..<10).map { lat(Float($0)) }
+        let tailLevels: [Double] = [-40, -48, -55, -60, -63, -66, -75, -80, -85, -85]   // fade-out: 7 latents
+        let next = [[Float]](repeating: q, count: 4) + [w, w]
+        let headLevels: [Double] = [-85, -85, -85, -85]
+        // A long pause: her 7 fade-out latents went out with the call before; the same stream follows, the pad first.
+        let long = NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: 1.04, tailLevels: tailLevels, headLevels: headLevels)
+        let longAfter = NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: 1.04, tailLevels: tailLevels, headLevels: headLevels, decoded: 7)
+        XCTAssertEqual(longAfter.latents, Array(long.latents.dropFirst(7)))
+        XCTAssertEqual(longAfter.padAt, 0)
+        XCTAssertEqual(longAfter.padSeconds, long.padSeconds, accuracy: 1e-9)
+        // Shorter pauses: the same join minus what was decoded (trims and blends never reach it).
+        for pause in [0.4, 0.5] {
+            let plain = NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: pause)
+            let after = NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: pause, decoded: 2)
+            XCTAssertEqual(after.latents, Array(plain.latents.dropFirst(2)), "pause \(pause)")
+            XCTAssertEqual(after.padAt, plain.padAt.map { $0 - 2 }, "pause \(pause)")
+        }
+        // The whole tail already decoded and a short pause: nothing of it again, no blend into it; the pause takes the
+        // rest from the silence before the next word.
+        let all = NephisFlow.joinPadded(tail: Array(tail.prefix(4)), next: next, head: 4, pause: 0.4, decoded: 4)
+        XCTAssertEqual(all.latents, [q, q, w, w])
+        XCTAssertNil(all.padAt)
+        // Default: nothing decoded before, exactly as without the parameter.
+        XCTAssertEqual(NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: 0.4, decoded: 0).latents,
+                       NephisFlow.joinPadded(tail: tail, next: next, head: 4, pause: 0.4).latents)
+    }
+
     func testRespellingsAreWholeWordsKeepCapitalsAndPacksOverrideThem() throws {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.respelled("Bed. She bought a bag, then a bedroom."), "Bedd. She bawt a bagg, then a bedroom.")

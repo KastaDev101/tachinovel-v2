@@ -396,25 +396,29 @@ public enum NephisFlow {
 
     /// `join`, but a pause longer than its bridge is decoded with only `maxBridge` morph latents; `padAt` is where in
     /// the returned latents `padSeconds` of silence go in the decoded audio (the middle of the bridge).
+    /// `decoded`: the first latents of `tail` already went out with the call before (her fade-out, NephisFlowSynth.read).
+    /// They still count toward the pause, are never trimmed or blended, and are left out of the result.
     public static func joinPadded(tail: [[Float]], next: [[Float]], head: Int, pause: Double, maxBridge: Int = NephisFlow.maxBridge,
-                                  tailLevels: [Double]? = nil, headLevels: [Double]? = nil)
+                                  tailLevels: [Double]? = nil, headLevels: [Double]? = nil, decoded: Int = 0)
         -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
+        let fixed = min(max(0, decoded), tail.count)
         var a = tail, b = next
-        let ov = max(0, min(overlap, a.count - 1, head - 1))
+        let ov = max(0, min(overlap, a.count - fixed - 1, head - 1))
         let want = max(2, Int((pause / latentSeconds).rounded()))
         // A pause longer than her fade-out + lead-in: decode only those (the first `keepTail` latents after the last
         // word, the last `keepHead` before the next) and make all the rest silence. The model's own quiet latents buzz
         // too, not just a morph between them (phone Voice test 2026-10-09, after the bridge cap: shorter, still there).
-        let keepTail = min(a.count, tailLevels.map(fadeOut) ?? Self.keepTail), keepHead = min(head, headLevels.map(leadIn) ?? Self.keepHead)
+        let keepTail = max(fixed, min(a.count, tailLevels.map(fadeOut) ?? Self.keepTail))
+        let keepHead = min(head, headLevels.map(leadIn) ?? Self.keepHead)
         if maxBridge != .max, want > keepTail + keepHead, a.count + head > keepTail + keepHead {
-            return (Array(a.prefix(keepTail)) + Array(b.dropFirst(head - keepHead)), keepTail,
+            return (Array(a.prefix(keepTail).dropFirst(fixed)) + Array(b.dropFirst(head - keepHead)), keepTail - fixed,
                     Double(want - keepTail - keepHead) * latentSeconds)
         }
         let have = a.count + head - ov
         var headLeft = head
         if have > want {
             var extra = have - want
-            let fromTail = min(extra, max(0, a.count - ov - 2))
+            let fromTail = min(extra, max(0, a.count - max(ov + 2, fixed + ov)))
             a.removeLast(fromTail)                 // the silence's far ends: never right after the last word
             extra -= fromTail
             let fromHead = min(extra, max(0, headLeft - ov - 2))
@@ -437,17 +441,18 @@ public enum NephisFlow {
         var padSeconds = 0.0
         if now < want, let last = out.last, let first = b.first {
             let nb = want - now
-            let decoded = min(nb, maxBridge)
-            if decoded < nb {
-                padAt = out.count + decoded / 2
-                padSeconds = Double(nb - decoded) * latentSeconds
+            let bridged = min(nb, maxBridge)
+            if bridged < nb {
+                padAt = out.count + bridged / 2
+                padSeconds = Double(nb - bridged) * latentSeconds
             }
-            out += (0..<decoded).map { k in
-                let w = Float(k + 1) / Float(decoded + 1)
+            out += (0..<bridged).map { k in
+                let w = Float(k + 1) / Float(bridged + 1)
                 return zip(last, first).map { (1 - w) * $0 + w * $1 }
             }
         }
-        return (out + b, padAt, padSeconds)
+        // `out` starts with the tail untouched up to `fixed` (trims and blends stayed after it).
+        return (Array((out + b).dropFirst(fixed)), padAt.map { $0 - fixed }, padSeconds)
     }
 
     /// A high shelf (RBJ) over `x`, from a fresh filter state: one call's mood tone (the call starts in a pause).

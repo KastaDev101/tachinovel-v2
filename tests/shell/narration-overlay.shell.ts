@@ -10,7 +10,9 @@
  *  - the mini player must not cover v1's bottom UI: the tab bar (it covered all five tabs while
  *    listening), the reader's bottom bar, the novel page's Resume button;
  *  - scrolling content gets room at its end, so nothing stays under the player;
- *  - "Open the player" on Listen in the Car leaves the screen's last rows reachable, with centered text.
+ *  - "Open the player" on Listen in the Car leaves the screen's last rows reachable, with centered text;
+ *  - Listen starts on v1's reading line, goes on from the sentence heard last after a stop (until the page is
+ *    touched), and a double tap starts one read.
  * Regression test for the UI crawler findings of 2026-10-06 (docs/qa.md).
  */
 import { readFileSync } from 'node:fs';
@@ -36,7 +38,24 @@ const top = () => shell.page.locator('.nav-root > .layer').last();
 /** What the native side saved through Narration.setVoiceSettings (the mock persists it like UserDefaults). */
 const saved: { speed: number; volume: number; usePCAudio: boolean } = { speed: 1, volume: 1, usePCAudio: false };
 
+/** What the overlay asked native to read (Narration.play's options), in order. */
+const playCalls = (): Record<string, unknown>[] => shell.pluginCalls.filter((c) => c.pluginId === 'Narration' && c.methodName === 'play').map((c) => c.options);
 const readerBars = (): Promise<boolean> => shell.page.evaluate(() => !!document.querySelector('[data-testid="screen-reader"].bars-visible'));
+/** Until the reader's page stops moving (follow() scrolls the spoken sentence into view smoothly). */
+async function scrollSettled(): Promise<void> {
+  let last = Number.NaN;
+  await expect
+    .poll(
+      async () => {
+        const now = await shell.page.evaluate(() => document.querySelector('[data-testid="screen-reader"] .reader-scroll')?.scrollTop ?? 0);
+        const still = now === last;
+        last = now;
+        return still;
+      },
+      { timeout: 3000, interval: 150 },
+    )
+    .toBe(true);
+}
 /** Toggle the reader's bars like a reader does: a tap in the middle of the page. */
 async function tapPageMiddle(): Promise<void> {
   const vp = shell.page.viewportSize() ?? { width: 393, height: 852 };
@@ -155,9 +174,67 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await expect.poll(async () => { const p = await placement('[data-testid="reader-listen"]'); return p ? p.bottom <= p.vh && p.right <= p.vw : null; }, { timeout: 3000 }).toBe(true);
   });
 
-  it('starts listening from the page; while listening it opens the player and the mini player follows the bars', async () => {
+  it("Listen starts at the paragraph on v1's reading line (just under the status bar), not the one above it", async () => {
+    // The phone's status-bar band (the PC shell has none): the inset probe as tall as the third paragraph's top, so
+    // that paragraph sits on the reading line the way v1 restores a position. Listen read from 8 px: the paragraph above.
+    const k = await shell.page.evaluate(() => {
+      const body = document.querySelector<HTMLElement>('[data-testid="screen-reader"] .rd-chapter[data-path] .rd-body');
+      const probe = document.querySelector<HTMLElement>('[data-testid="screen-reader"] .rd-inset-probe');
+      const scroller = document.querySelector('[data-testid="screen-reader"] .reader-scroll');
+      const p = body?.children[2];
+      if (!probe || !scroller || !p) return -1;
+      probe.style.height = `${Math.round(p.getBoundingClientRect().top - scroller.getBoundingClientRect().top)}px`;
+      return 2;
+    });
+    expect(k).toBe(2);
+    const before = playCalls().length;
     await top().getByTestId('reader-listen').click();
-    await expect.poll(() => shell.pluginCalls.filter((c) => c.pluginId === 'Narration' && c.methodName === 'play').length, { timeout: 5000 }).toBe(1);
+    await expect.poll(() => playCalls().length, { timeout: 5000 }).toBe(before + 1);
+    expect(playCalls().at(-1)?.start).toEqual({ paragraph: 2 });
+    expect(playCalls().at(-1)?.chapterPath).toBe('novel/alpha/1');
+    await shell.page.evaluate(() => document.querySelector<HTMLElement>('[data-testid="screen-reader"] .rd-inset-probe')?.style.removeProperty('height'));
+  });
+
+  it('after listening stopped, Listen goes on from the sentence heard last (no paragraphs read again), until the page is touched', async () => {
+    // follow() keeps the sentence heard in the middle of the screen; from the top line she read the paragraphs above it again.
+    shell.emitPluginEvent('Narration', 'progress', { chapterPath: 'novel/alpha/1', engine: 'speech', paragraph: 2, sentence: 1 });
+    shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
+    await scrollSettled();
+    let before = playCalls().length;
+    await top().getByTestId('reader-listen').click();
+    await expect.poll(() => playCalls().length, { timeout: 5000 }).toBe(before + 1);
+    expect(playCalls().at(-1)?.start).toEqual({ paragraph: 2, sentence: 1 });
+    // A touch scroll since: the reader's own position again (the reading line), from the paragraph's start.
+    const lineParagraph = await shell.page.evaluate(() => {
+      document.dispatchEvent(new Event('touchmove'));
+      const scroller = document.querySelector('[data-testid="screen-reader"] .reader-scroll');
+      const line = (scroller?.getBoundingClientRect().top ?? 0) + (document.querySelector<HTMLElement>('[data-testid="screen-reader"] .rd-inset-probe')?.offsetHeight ?? 0) + 1;
+      const kids = [...(document.querySelector('[data-testid="screen-reader"] .rd-chapter[data-path] .rd-body')?.children ?? [])];
+      return kids.findIndex((el) => el.getBoundingClientRect().bottom > line);
+    });
+    expect(lineParagraph).toBeGreaterThanOrEqual(0);
+    expect(lineParagraph).not.toBe(2);
+    before = playCalls().length;
+    await top().getByTestId('reader-listen').click();
+    await expect.poll(() => playCalls().length, { timeout: 5000 }).toBe(before + 1);
+    expect(playCalls().at(-1)?.start).toEqual({ paragraph: lineParagraph });
+  });
+
+  it('a second tap while Listen is still starting starts one read, not two', async () => {
+    const before = playCalls().length;
+    await top().getByTestId('reader-listen').evaluate((el) => {
+      (el as HTMLElement).click();
+      (el as HTMLElement).click();
+    });
+    await expect.poll(() => playCalls().length, { timeout: 5000 }).toBe(before + 1);
+    await shell.page.waitForTimeout(300);
+    expect(playCalls().length).toBe(before + 1);
+  });
+
+  it('starts listening from the page; while listening it opens the player and the mini player follows the bars', async () => {
+    const before = playCalls().length;
+    await top().getByTestId('reader-listen').click();
+    await expect.poll(() => playCalls().length, { timeout: 5000 }).toBe(before + 1);
     // NarrationPlugin answers play() and then reports its state, which shows the mini player.
     shell.emitPluginEvent('Narration', 'state', {
       status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1 - Nightmare Begins',

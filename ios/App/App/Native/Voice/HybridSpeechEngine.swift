@@ -384,6 +384,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             if flow {
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
                 line.flowReset = i != flowNext
+                if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }
                 line.flowLast = members.last == segments.count - 1
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
@@ -401,7 +402,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     guard let self, g == self.gen, self.scheduler != nil else { return }
                     if flow {
                         if !prepared.done { self.flowBusy = false }
-                        if case .failure = result { self.flowNext = -1 }
+                        if case .failure = result {
+                            self.flowNext = -1
+                            ExpressiveService.shared.countEvidence(\.failedCalls)
+                        }
                     }
                     switch result {
                     case .success(let a) where a.sampleRate == 24_000 && !a.samples.isEmpty:
@@ -667,8 +671,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         pumpRender()
         var unit = NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)
         unit.flow = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+        let flowUnit = unit.flow
         nf.render(unit) { [weak self] pieces in
             guard let self, g == self.gen, self.scheduler != nil else { return }
+            // Voice test evidence: a sentence the cut left without audio is rendered again.
+            if flowUnit {
+                for k in members.indices where k >= pieces.count || pieces[k].frames.isEmpty {
+                    ExpressiveService.shared.countEvidence(\.emptyPieces)
+                }
+            }
             for (k, j) in members.enumerated() {
                 let buf = k < pieces.count ? self.makeBuffer(pieces[k].frames) : nil
                 self.scheduler?.renderDone(j, ok: buf != nil)
@@ -1176,10 +1187,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             if self.scheduler != nil, self.queued.isEmpty, let i = self.appleSegment, !self.appleDirect {
                 self.epoch += 1
                 self.player.stop()
+                ExpressiveService.shared.countEvidence(\.configReplays)
                 if !self.paused { self.speakApple(i, reason: self.lastFallback ?? .queueDry, restart: true) }
                 return
             }
             guard self.scheduler != nil, !self.queued.isEmpty else { return }
+            ExpressiveService.shared.countEvidence(\.configReplays)
             let replay = self.queued
             self.queued.removeAll()
             self.epoch += 1

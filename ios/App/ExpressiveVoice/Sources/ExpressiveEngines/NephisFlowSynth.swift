@@ -1,7 +1,8 @@
 //
 //  NephisFlowSynth.swift — Pocket TTS reading as Nephis, as one continuous read (ExpressiveCore/NephisFlow.swift
 //  explains the method). Calls must come in reading order: each one continues from the previous (carry-over voice
-//  prompt, lead-in, the join into it), and the audio returned for a call starts with the pause before it.
+//  prompt, lead-in, the join into it), and the audio returned for a call starts with the pause before it (her fade-out
+//  after the last word ends the call before).
 //
 //  Needs the vendored FluidAudio's latent access (ios/App/Vendor/FluidAudio/README.md): sessions yield latents only,
 //  one PocketTtsLatentDecoder decodes the whole read, a second one (reset per take) decodes takes for analysis.
@@ -98,6 +99,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var pendingTail: [[Float]] = []
     /// The levels of `pendingTail` (where her fade-out dies away).
     private var pendingTailLevels: [Double] = []
+    /// The first latents of `pendingTail` already decoded with the call before: her fade-out after its last word.
+    private var pendingDecoded = 0
     private var context: [Float] = []
     private var lastText: String?
     private var lastClip: [Float]?
@@ -150,6 +153,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         carry = []
         pendingTail = []
         pendingTailLevels = []
+        pendingDecoded = 0
         context = []
         lastText = nil
         lastClip = nil
@@ -322,14 +326,21 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var joined: (latents: [[Float]], padAt: Int?, padSeconds: Double) = (latents, nil, 0)
         if started && !pendingTail.isEmpty {
             joined = NephisFlow.joinPadded(tail: pendingTail, next: latents, head: silence.head, pause: pause,
-                                           tailLevels: pendingTailLevels, headLevels: Array(levels.prefix(silence.head)))
+                                           tailLevels: pendingTailLevels, headLevels: Array(levels.prefix(silence.head)),
+                                           decoded: pendingDecoded)
         }
         var stream = joined.latents
         // The trailing silence waits for the next piece's join (unless it is the read's very last piece).
         let keep = last && line.flowLast == true ? 0 : min(silence.tail, stream.count)
         pendingTail = Array(stream.suffix(keep))
         pendingTailLevels = Array(levels.suffix(keep))
-        stream.removeLast(keep)
+        // A call's last piece: her fade-out after the last word (to -68 dB, NephisFlow.fadeOut) is decoded with it. Held
+        // back for the next call, it was lost to a fresh read and heard on its own after any wait for that call: a soft
+        // final "s" went missing (Kasta, 2026-10-12: "the marching colossus" without its s). The next join still counts
+        // it toward the pause (`decoded`): a long pause decodes exactly as before, a short one no longer trims into her
+        // fade-out. Pieces inside a call are decoded together anyway: unchanged.
+        pendingDecoded = last ? min(keep, NephisFlow.fadeOut(pendingTailLevels)) : 0
+        stream.removeLast(keep - pendingDecoded)
 
         carry = Array((carry + latents).suffix(assets.chain.carryFrames))
         context = Array(best.audio.suffix(3 * NephisFlow.sampleRate))

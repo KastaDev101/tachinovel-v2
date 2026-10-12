@@ -706,12 +706,25 @@ final class ExpressiveService {
         var recognizeMs = 0.0
         var decodeMs = 0.0
         var last: NephisFlowSynth.Report?
+        /// Voice test evidence for lines heard twice or cut short (HybridSpeechEngine counts them): calls that started
+        /// her read afresh (each Listen starts one), calls that failed (their sentences are read again), sentences left
+        /// without audio when a call's audio was cut into sentences (rendered again), and audio route changes that
+        /// replayed the sentence playing from its start.
+        var readRestarts = 0
+        var failedCalls = 0
+        var emptyPieces = 0
+        var configReplays = 0
     }
 
     private(set) var flowStats = FlowStats()
 
     func resetFlowStats() {
         flowStats = FlowStats()
+    }
+
+    /// One more of a Voice test counter (main thread, like recordFlow).
+    func countEvidence(_ counter: WritableKeyPath<FlowStats, Int>) {
+        flowStats[keyPath: counter] += 1
     }
 
     private func recordFlow(_ r: NephisFlowSynth.Report) {
@@ -873,10 +886,13 @@ final class ExpressiveService {
     /// Nephis's flow numbers (NephisFlowSynth.Report summed): × real time end to end, and where the time goes.
     private func flowSnapshot() -> Any {
         let f = flowStats
-        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0] as [String: Any] }
+        let evidence: [String: Any] = ["readRestarts": f.readRestarts, "failedCalls": f.failedCalls, "emptyPieces": f.emptyPieces,
+                                       "configReplays": f.configReplays]
+        guard f.calls > 0 else { return ["active": usesFlow, "calls": 0, "evidence": evidence] as [String: Any] }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
             "active": usesFlow, "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened,
+            "evidence": evidence,
             "audioSeconds": Self.r1(f.audioMs / 1000),
             // Seconds of work per second of audio, stage by stage (render overlaps the analysis decode; the
             // stream decode overlaps the next call's render in Listen).
