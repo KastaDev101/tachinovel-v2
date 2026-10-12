@@ -520,7 +520,7 @@ export function openVoicesScreen(): void {
       <div class="sec">Voice</div>
       ${nephisCard(info)}
       ${NARRATOR_SETTINGS_ROW}
-      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">2 or 15 minutes, with a report to copy</span></div><span aria-hidden="true">›</span></button></div>
+      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">Run it, then copy the report</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>

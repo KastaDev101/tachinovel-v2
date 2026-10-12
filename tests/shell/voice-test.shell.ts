@@ -1,0 +1,146 @@
+/**
+ * Settings › Voices › Voice test (src/ui/native/voice-test.ts) in the PC shell, personal flavor: the one page for
+ * testing Nephis, reached without hidden taps. Against canned ExpressiveVoice / Narration plugins:
+ *  - the top says which pack is installed, that it has her studio and whether the studio is on; the switch sends
+ *    ExpressiveVoice.studioEnable;
+ *  - Run the test runs the studio speed test, then the listening test (Narration.play), and says how it went in
+ *    plain words;
+ *  - Copy report copies one combined report (pack, studio state and test, the listening test, notes);
+ *  - none of the Voice Lab's developer controls appear, and every control has a name for VoiceOver.
+ * Screenshots: .cache/shell-shots/voice-test-top.png, voice-test.png
+ */
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildAll } from '../../tools/build.ts';
+import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+
+const root = path.resolve(import.meta.dirname, '..', '..');
+const shots = path.join(root, '.cache', 'shell-shots');
+let shell: PcShell;
+let studioOn = false;
+
+const status = (): Record<string, unknown> => ({
+  available: true,
+  app: '2.0.0-alpha.8 (8)',
+  crashes: { total: 0, consecutive: 0, disabled: false, lastContext: null, lastAt: null },
+  device: { thermal: 'nominal', memoryMB: 240, availableMB: 3100, lowPower: false, os: 'Version 26.6.1' },
+  engines: [],
+  session: { state: 'idle' },
+  nephisPack: { name: 'nephis-r9', made: '2026-10-11', studio: true, studioOn },
+  flow: { active: true, calls: 12, perAudioSecond: { call: 0.1 }, renderX: 10, listen: { breaks: 0, breakSeconds: 0, otherVoiceSentences: 0 } },
+});
+
+const calls = (plugin: string, method: string): Record<string, unknown>[] =>
+  shell.pluginCalls.filter((c) => c.pluginId === plugin && c.methodName === method).map((c) => c.options);
+
+describe('Settings › Voices › Voice test (PC shell)', () => {
+  beforeAll(async () => {
+    mkdirSync(shots, { recursive: true });
+    const www = path.join(root, '.cache', 'shell-www-voice-test');
+    await buildAll({ flavor: 'personal', ads: false, dev: false, outDir: www });
+    shell = await startPcShell({ wwwDir: www, core: { routes: {}, answers: [] }, initStorage: { 'tachinovel.tips.reader': '1' } });
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({
+      voices: [{ id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' }],
+      defaultVoice: 'af_heart',
+      kokoroEnabled: true,
+      usePCAudio: false,
+      kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
+      apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
+    }));
+    for (const m of ['status', 'resetStats']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, status);
+    shell.pluginReplies.set('ExpressiveVoice.recordStart', () => ({ recording: true }));
+    shell.pluginReplies.set('ExpressiveVoice.recordStop', () => ({ saved: false, bytes: 0 }));
+    shell.pluginReplies.set('ExpressiveVoice.studioEnable', (o) => {
+      studioOn = o.on === true;
+      return { enabled: studioOn };
+    });
+    shell.pluginReplies.set('ExpressiveVoice.studioTest', () => ({
+      ran: true, loadMs: 900, audioSeconds: 10, resampleMs: 20, blueprintMs: 1500, refinerMs: 0, vocoderMs: 2400, restMs: 0, bypassed: false,
+      timesRealTime: 2.34, placement: { 'blueprint.ane': 40, 'vocoder.ane': 90, 'vocoder.cpu': 10 }, thermalBefore: 0, thermalAfter: 1, enabled: studioOn,
+    }));
+    // The passage "plays": her first word, then the end.
+    shell.pluginReplies.set('Narration.play', () => {
+      setTimeout(() => shell.emitPluginEvent('Narration', 'progress', { paragraph: 0 }), 150);
+      setTimeout(() => shell.emitPluginEvent('Narration', 'state', { status: 'ended' }), 1400);
+      return {};
+    });
+  });
+
+  afterAll(async () => {
+    await shell?.close();
+  });
+
+  it('shows the pack and her studio, switches it, runs the whole test and copies one report', async () => {
+    const page = shell.page;
+    await page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
+    const skip = page.getByTestId('onboarding-skip');
+    if (await skip.isVisible().catch(() => false)) await skip.click();
+    await page.getByTestId('tab-more').click();
+    await page.getByTestId('more-voices').click();
+    await page.getByTestId('screen-voices').getByTestId('voices-test').click();
+    const screen = page.getByTestId('voice-test');
+    await screen.waitFor({ timeout: 5000 });
+
+    // The status block, then the switch (the pack has a studio, which is off).
+    const pack = screen.getByTestId('voice-test-pack');
+    await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Nephis pack: nephis-r9 (made 2026-10-11).');
+    expect(await pack.textContent()).toContain('Her studio: in this pack.');
+    expect(await pack.textContent()).toContain('Studio: off.');
+    const toggle = screen.getByRole('checkbox', { name: 'Her studio' });
+    expect(await toggle.isChecked()).toBe(false);
+    await toggle.click();
+    await expect.poll(() => calls('ExpressiveVoice', 'studioEnable')).toEqual([{ on: true }]);
+    await expect.poll(() => pack.textContent()).toContain('Studio: on (she reads at 44.1 kHz).');
+    expect(await screen.getByRole('checkbox', { name: 'Her studio' }).isChecked()).toBe(true);
+    await page.waitForTimeout(450); // slide-in
+    await page.screenshot({ path: path.join(shots, 'voice-test-top.png') });
+
+    // One button runs the studio speed test, then the listening test.
+    await screen.getByRole('button', { name: 'Run the test' }).click();
+    await expect.poll(() => calls('ExpressiveVoice', 'studioTest').length, { timeout: 5000 }).toBe(1);
+    await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(1);
+    const result = screen.getByTestId('voice-test-result');
+    await result.waitFor({ timeout: 10_000 });
+    const text = (await result.textContent()) ?? '';
+    expect(text).toContain('Studio: 2.3× real time — fast enough for live reading.');
+    expect(text).toContain('Chips: blueprint 100% Neural Engine; vocoder 90% Neural Engine, 10% CPU.');
+    expect(text).toContain('Studio heat: nominal → fair.');
+    expect(text).toContain('Studio is on for Nephis.');
+    expect(text).toContain('No breaks: it never stopped to wait for the voice.');
+    expect(text).toContain('Speed: 10.0× real time (goal 8×).');
+    expect(await screen.getByTestId('voice-test-progress').textContent()).toBe('Done. Copy the report below.');
+    expect(await screen.getByRole('button', { name: 'Run it again' }).count()).toBe(1);
+
+    // No developer controls on this page.
+    const all = (await screen.textContent()) ?? '';
+    expect(all).not.toMatch(/Speed test|Import voice|Mix a voice|Experimental|Free the model|Studio off|Use studio for Nephis/);
+
+    // One Copy report: everything in one JSON.
+    await screen.getByRole('textbox', { name: 'What did you hear?' }).fill('a click at 0:40');
+    await page.evaluate(() => {
+      const w = window as unknown as { __copied?: string };
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (t: string) => Promise.resolve(void (w.__copied = t)) } });
+    });
+    await screen.getByTestId('voice-test-copy').click();
+    await expect.poll(() => screen.getByTestId('voice-test-copy').textContent()).toBe('Copied');
+    const copied = JSON.parse(await page.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? '{}')) as Record<string, unknown>;
+    expect(copied.kind).toBe('nephis-test');
+    expect(copied.pack).toEqual({ name: 'nephis-r9', made: '2026-10-11', studio: true, studioOn: true });
+    expect(copied.studio).toMatchObject({ has: true, on: true, test: { ran: true, timesRealTime: 2.34 } });
+    expect(copied.voiceTest).toMatchObject({ kind: 'voice-test', ended: true });
+    expect(copied.notes).toBe('a click at 0:40');
+    expect(copied.device).toMatchObject({ thermal: 'nominal' });
+
+    // Every control has a name VoiceOver can read.
+    const unnamed = await screen.evaluate((el) =>
+      [...el.querySelectorAll<HTMLElement>('button, input, textarea, [role="button"]')]
+        .filter((c) => !(c.getAttribute('aria-label') ?? c.textContent ?? '').trim())
+        .map((c) => c.outerHTML.slice(0, 80)),
+    );
+    expect(unnamed).toEqual([]);
+
+    await page.screenshot({ path: path.join(shots, 'voice-test.png'), fullPage: true });
+    expect(shell.pageErrors).toEqual([]);
+  });
+});

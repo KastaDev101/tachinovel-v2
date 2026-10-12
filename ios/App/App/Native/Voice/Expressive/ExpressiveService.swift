@@ -824,8 +824,15 @@ final class ExpressiveService {
             return d
         }
         let crash = sentinel.current
+        // The installed Nephis pack and its studio, for Settings › Voices › Voice test (one testing page).
+        let pack: Any = NephisModelPack.modelsDirectory == nil ? NSNull() : [
+            "name": NephisModelPack.info?["name"] ?? NSNull(), "made": NephisModelPack.info?["made"] ?? NSNull(),
+            "studio": FileManager.default.fileExists(atPath: NephisModelPack.root.appendingPathComponent("Models/nephis-studio/studio.json").path),
+            "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio"),
+        ] as [String: Any]
         var out: [String: Any] = [
             "available": store != nil,
+            "nephisPack": pack,
             "engines": engines,
             "freeMB": free.map { Int($0 / 1_048_576) } ?? NSNull(),
             "memoryWarnings": memoryWarnings,

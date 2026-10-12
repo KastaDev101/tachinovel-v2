@@ -300,7 +300,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - Her studio (NephisStudio.swift, 2026-10-11 scaffold)
 
-    /// Voice Lab › Studio speed test: loads the installed pack's studio (compiling it on first use), renders 10 s of
+    /// Settings › Voices › Voice test (studio speed test): loads the installed pack's studio (compiling it on first use), renders 10 s of
     /// stand-in input twice (the first warms it up) and reports the second: × real time per step, and the thermal
     /// state before and after. Stand-in input (noise and random sketch) costs the same as speech, so only the speed
     /// is meaningful, not the sound.
@@ -336,7 +336,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Voice Lab › use the studio for Nephis (on/off): her stream becomes 44.1 kHz from her next load.
+    /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load.
     @objc func studioEnable(_ call: CAPPluginCall) {
         let on = call.getBool("on") ?? false
         DispatchQueue.main.async {

@@ -12,3 +12,9 @@
   edge; the last sound of a sentence (a final "s") is no longer clipped; long paragraphs are rendered in overlapping
   pieces instead of failing past 40 seconds; and if the studio fails for a sentence, her normal sound plays instead of
   nothing. The studio now also covers the first lines of a session.
+
+### Changed
+
+- Settings › Voices › Voice test is now the one testing page: which Nephis pack is installed and whether it has her
+  studio, a studio switch, one Run the test (studio speed test + 2-minute listen), a plain-words result and one Copy
+  report. The hidden Voice Lab is no longer needed for testing.
