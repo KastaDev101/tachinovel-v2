@@ -13,7 +13,7 @@
 //  finetune/wsl/studio_port.py. Packages are compiled once on the device and cached next to them.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreML
 import Foundation
 
@@ -181,7 +181,7 @@ public actor NephisStudio {
                 }
             }
             let input = try MLDictionaryFeatureProvider(dictionary: ["mel": w])
-            guard let pcm = try vocoder.prediction(from: input).featureValue(for: "pcm44")?.multiArrayValue else {
+            guard let pcm = try await vocoder.prediction(from: input).featureValue(for: "pcm44")?.multiArrayValue else {
                 throw StudioError.badOutput("pcm44")
             }
             let samples = Self.floats(pcm)
