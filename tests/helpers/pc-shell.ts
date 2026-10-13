@@ -32,7 +32,8 @@ function swiftPluginMethods(rel: string): string[] {
 export const PLUGINS: Record<string, Record<string, Rtype>> = {
   Core: { call: 'promise' },
   TachiNative: { setKeepAwake: 'promise', consumeRecovery: 'promise' },
-  DiagFolder: { status: 'promise', menu: 'promise' },
+  // Exactly the methods DiagnosticsFolder.swift registers (status, menu, storage, cleanStorage).
+  DiagFolder: Object.fromEntries(swiftPluginMethods('Shell/DiagnosticsFolder.swift').map((m) => [m, 'promise'])),
   // Exactly the methods NarrationPlugin.swift registers (read from the Swift source, so they can't drift).
   Narration: Object.fromEntries(swiftPluginMethods('Narration/NarrationPlugin.swift').map((m) => [m, 'promise'])),
   // Voice Lab › Experimental engines (ExpressiveVoicePlugin.swift).

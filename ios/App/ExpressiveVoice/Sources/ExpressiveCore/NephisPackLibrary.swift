@@ -116,9 +116,7 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
     public var totalBytes: Int64 { list().reduce(0) { $0 + $1.bytes } }
 
     private func activeUnlocked() -> String? {
-        guard let d = try? Data(contentsOf: root.appendingPathComponent(Self.activeName)),
-              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
-              let id = o["id"] as? String, let dir = try? directory(id), Self.isComplete(dir) else { return nil }
+        guard let id = activeNameUnlocked(), let dir = try? directory(id), Self.isComplete(dir) else { return nil }
         return id
     }
 
@@ -229,6 +227,36 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
         } catch {
             return false
         }
+    }
+
+    /// Folders in the library that hold no usable pack: unpacks left behind (`.incoming-…`, also removed at launch by
+    /// `migrate`) and pack folders missing files. Never the folder active.json names. Call only while nothing installs.
+    public func leftoverFolders() -> [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        let active = activeNameUnlocked()
+        return ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).compactMap { name in
+            let url = root.appendingPathComponent(name, isDirectory: true)
+            if name.hasPrefix(Self.stagingPrefix) { return url }
+            guard Self.isValidID(name), name != active, !Self.isComplete(url) else { return nil }
+            return url
+        }
+    }
+
+    /// Paths (standardized) a clean-up must never touch: every complete pack and the one active.json names.
+    public func protectedFolders() -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        var out = Set(listUnlocked().map { root.appendingPathComponent($0.id, isDirectory: true).standardizedFileURL.path })
+        if let active = activeNameUnlocked() { out.insert(root.appendingPathComponent(active, isDirectory: true).standardizedFileURL.path) }
+        return out
+    }
+
+    /// The id active.json names, complete or not.
+    private func activeNameUnlocked() -> String? {
+        guard let d = try? Data(contentsOf: root.appendingPathComponent(Self.activeName)),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+        return o["id"] as? String
     }
 
     // MARK: - Helpers

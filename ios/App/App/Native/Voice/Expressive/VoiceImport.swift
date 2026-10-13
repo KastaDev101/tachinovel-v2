@@ -83,9 +83,9 @@ enum VoiceImportInbox {
             }
         }
         if let coordinationError { result = .failure(coordinationError) }
-        // A copy iOS made in our Documents/Inbox ("Copy to TachiNovel"): Files shows that folder, so tidy it up.
+        // A copy iOS made for us (Documents/Inbox, which Files shows, or tmp/…-Inbox): tidy it up.
         if let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first,
-           url.standardizedFileURL.path.hasPrefix(documents.appendingPathComponent("Inbox").standardizedFileURL.path + "/") {
+           StorageMap.isSystemInboxCopy(url, documents: documents, tmp: fm.temporaryDirectory) {
             try? fm.removeItem(at: url)
         }
         return result

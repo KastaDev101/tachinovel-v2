@@ -1,7 +1,8 @@
 /**
  * Phone QA loop on the PC: v1's Diagnostics screen shows the "Diagnostics Folder" row (build patch,
- * tools/v1-qa.ts), it opens the native menu (DiagFolder.menu), shows the linked folder's name, and the UI
- * keeps its short event trail in localStorage for the native mirror.
+ * tools/v1-qa.ts), it opens the native menu (DiagFolder.menu), shows the linked folder's name (or that it is
+ * disconnected), and the UI keeps its short event trail in localStorage for the native mirror. v1's Storage page
+ * shows the native app's Voices & models row, its panel and Clean Up.
  */
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -47,6 +48,37 @@ describe('Diagnostics folder (PC shell)', () => {
     expect(lines).toContain('tab: more');
     expect(lines).toContain('settings: about');
     expect(lines).toContain('diagnostics');
+    expect(shell.pageErrors).toEqual([]);
+  });
+
+  it('says when the folder stopped working', async () => {
+    const row = top().getByTestId('diagnostics-folder');
+    shell.pluginReplies.set('DiagFolder.menu', () => ({ linked: true, name: 'diagnostics', lastMirror: null, state: 'disconnected', problem: 'The folder isn’t there any more' }));
+    await row.click();
+    await expect.poll(() => row.textContent(), { timeout: 5000 }).toContain('Disconnected – tap to reconnect');
+  });
+
+  it('Storage › Voices & models lists the categories and cleans up only the leftovers', async () => {
+    const entry = (key: string, bytes: number, leftover = false) => ({ key, label: key, note: '', bytes, count: 1, leftover });
+    const kept = [entry('packActive', 455e6), entry('packsOther', 410e6), entry('modelPocket', 368e6), entry('reading', 30e6)];
+    const report = (leftovers: ReturnType<typeof entry>[]) => ({ entries: [...kept, ...leftovers], totalBytes: 2e9, appBytes: 520e6 });
+    shell.pluginReplies.set('DiagFolder.storage', () => report([entry('leftoverInbox', 440e6, true)]));
+    shell.pluginReplies.set('DiagFolder.cleanStorage', () => ({ removed: 1, bytes: 440e6, report: report([entry('leftoverInbox', 0, true)]) }));
+    await top().getByTestId('nav-back').click();
+    await waitStack(2);
+    await top().getByTestId('nav-back').click();
+    await waitStack(1);
+    await shell.page.getByTestId('more-storage').click();
+    await waitStack(2);
+    const row = top().getByTestId('storage-native');
+    await expect.poll(() => row.textContent(), { timeout: 5000 }).toContain('440 MB to clean up');
+    await row.click();
+    const panel = shell.page.locator('[data-testid="native-storage"]');
+    await expect.poll(() => panel.locator('[data-testid="native-storage-leftovers"]').count(), { timeout: 5000 }).toBe(1);
+    await expect.poll(() => panel.textContent()).toContain('packActive');
+    await panel.locator('[data-testid="native-storage-clean"]').click();
+    await expect.poll(() => shell.pluginCalls.some((c) => c.pluginId === 'DiagFolder' && c.methodName === 'cleanStorage')).toBe(true);
+    await expect.poll(() => panel.locator('[data-testid="native-storage-clean-none"]').count(), { timeout: 5000 }).toBe(1);
     expect(shell.pageErrors).toEqual([]);
   });
 });

@@ -53,6 +53,7 @@ enum NephisModelPack {
     static func open(_ url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try install(from: url) }
+            removeCopy(url, installed: (try? result.get()) != nil)
             DispatchQueue.main.async {
                 switch result {
                 case .success(let name):
@@ -64,6 +65,62 @@ enum NephisModelPack {
                 }
             }
         }
+    }
+
+    /// After "Open in TachiNovel": the copy iOS made of a file shared from another app (Documents/Inbox, tmp/…-Inbox:
+    /// 350-500 MB per pack, kept for ever before 2026-10-13) goes either way; a pack in the app's own Documents folder
+    /// goes once it is installed (as `installFromDocuments` does). A file opened in place anywhere else is the user's.
+    private static func removeCopy(_ url: URL, installed: Bool) {
+        let fm = FileManager.default
+        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let inDocuments = url.standardizedFileURL.deletingLastPathComponent().path == docs.standardizedFileURL.path
+        guard StorageMap.isSystemInboxCopy(url, documents: docs, tmp: fm.temporaryDirectory) || (installed && inDocuments) else { return }
+        do { try fm.removeItem(at: url) } catch {
+            log.error("expressive: couldn’t remove the copy \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Storage (Settings › Storage › Voices & models, the Diagnostics folder's storage.json)
+
+    /// Installs running now (any thread): their staging folder and source file aren't leftovers.
+    private static let installLock = NSLock()
+    private static let installCount = Box(0)
+    static var installing: Bool {
+        installLock.lock()
+        defer { installLock.unlock() }
+        return installCount.value > 0
+    }
+
+    private static func counted<T>(_ body: () throws -> T) rethrows -> T {
+        installLock.lock()
+        installCount.value += 1
+        installLock.unlock()
+        defer {
+            installLock.lock()
+            installCount.value -= 1
+            installLock.unlock()
+        }
+        return try body()
+    }
+
+    static var storageLocations: StorageLocations {
+        let fm = FileManager.default
+        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return StorageLocations(applicationSupport: fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0], documents: docs,
+                                library: fm.urls(for: .libraryDirectory, in: .userDomainMask)[0], tmp: fm.temporaryDirectory,
+                                container: docs.deletingLastPathComponent(), bundle: Bundle.main.bundleURL)
+    }
+
+    /// Bytes per category (a walk of the whole container: off the main thread).
+    static func storageReport() -> StorageReport {
+        StorageMap.scan(storageLocations, library: library, installing: installing)
+    }
+
+    /// Remove copies and unfinished unpacks (never a complete pack, a model, the reading app's store or a recording).
+    static func cleanLeftovers() -> (removed: Int, bytes: Int64) {
+        let result = StorageMap.clean(storageLocations, library: library, installing: installing)
+        log.info("storage: removed \(result.removed) leftovers, \(result.bytes) bytes")
+        return result
     }
 
     /// The Documents install in progress, and the files that failed this session (by name, size and date, so a fresh
@@ -121,6 +178,10 @@ enum NephisModelPack {
     /// Unpack `url` (a tar) into a fresh folder, check it, then add it to the library as the active pack (a pack with
     /// the same name and date replaces its old copy). Returns the pack's name.
     static func install(from url: URL) throws -> String {
+        try counted { try unpackAndAdd(url) }
+    }
+
+    private static func unpackAndAdd(_ url: URL) throws -> String {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let staging = try library.stagingDirectory()

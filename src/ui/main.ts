@@ -19,6 +19,7 @@ import { Narration } from './native/narration.ts';
 import { installNarrationOverlay } from './native/narration-overlay.ts';
 import { installOtaUi } from './native/ota-ui.ts';
 import { installRecovery } from './native/recovery.ts';
+import { installNativeStorage } from './native/storage-native.ts';
 import { runSmokeTour } from './native/smoke.ts';
 import { ensureNephis } from './native/voices-ui.ts';
 import { installV1Hooks } from './native/v1-hooks.ts';
@@ -31,6 +32,7 @@ void ensureNephis();
 installDiagnosticsOverlay();
 void installRecovery();
 installQaFolder();
+installNativeStorage();
 runSmokeTour();
 // Web updates and imported voices ("Open in TachiNovel" for .tnvoice files): personal flavor only (compiled out
 // of the store flavor).

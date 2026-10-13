@@ -128,6 +128,10 @@ final class VoiceRun: @unchecked Sendable {
 
     private var busy: Bool { sentinels.contains { $0.inFlight } }
 
+    /// A voice works right now: narration playing, or a model call in flight (a Voice test, Drive prep). The
+    /// Diagnostics folder copies every minute meanwhile (DiagnosticsFolder.swift).
+    var working: Bool { playing || busy }
+
     /// In the background with nothing playing and no model call running: iOS may close the app from here, no crash.
     private func idleCheck() {
         guard !foreground, !playing, !busy else { return }
