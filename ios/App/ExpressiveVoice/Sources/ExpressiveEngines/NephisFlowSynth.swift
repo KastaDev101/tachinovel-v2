@@ -618,6 +618,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var studio: NephisStudio.Report? = nil
         var units: String? = nil
         var off: String? = nil
+        /// What the breath polish did with the call (nil: not polished).
+        var polish: BreathPolish.Report? = nil
     }
 
     /// `decode`, with this call's report (studio used or why not, rate, mood: the player's log; `lastReport` may
@@ -633,6 +635,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let plainTone = NephisFlow.studioTone(studioUsed: false, moodToneDB: p.toneDB, chain: assets.chain)
         // A call the studio rendered: its sound as made, or with her EQ after it when the pack asks ("eqAfterStudio").
         let studioTone = NephisFlow.studioTone(studioUsed: true, moodToneDB: p.toneDB, chain: assets.chain)
+        // Her breaths as air (pack "breathPolish"; nil = off): on the studio's sound before its EQ, at the call's rate.
+        let breathPolish = assets.chain.breathPolish
         // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
         let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?, n: Int) = { hurry in await self.studioForCall(hurry: hurry) }
         let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, paced in
@@ -663,6 +667,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                                                                  check: studioCheck)
                         out.samples = r.pcm
                         out.studioUsed = !r.report.bypassed
+                        if out.studioUsed, let breathPolish {
+                            out.polish = BreathPolish.apply(&out.samples, sampleRate: config.sample_rate, settings: breathPolish)
+                            if !p.hurry, let polish = out.polish { note("breath polish: call \(ready.n): \(polish.summary)") }
+                        }
                         if out.studioUsed, studioTone.mimiEQ != nil { studioTone.apply(&out.samples, sampleRate: config.sample_rate) }
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
                         out.studio = r.report
@@ -683,6 +691,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                     plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
                     out.samples = NephisStudio.plainAudio(pcm24: toned, rate: config.sample_rate)
                 }
+            }
+            // A call without her studio's sound (no studio, skipped, failed): polished only when the pack says "plainToo".
+            if !out.studioUsed, let breathPolish, breathPolish.plainToo {
+                out.polish = BreathPolish.apply(&out.samples, sampleRate: config?.sample_rate ?? NephisFlow.sampleRate, settings: breathPolish)
             }
             out.ms = Date().timeIntervalSince(d0) * 1000
             return out

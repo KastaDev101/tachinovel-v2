@@ -35,6 +35,7 @@ let package = Package(
             dependencies: ["ExpressiveCore", .product(name: "FluidAudio", package: "FluidAudio")]
         ),
         .executableTarget(name: "ExpressiveBench", dependencies: ["ExpressiveCore", "ExpressiveEngines"]),
-        .testTarget(name: "ExpressiveCoreTests", dependencies: ["ExpressiveCore"]),
+        // Resources: BreathPolish's PC test vector (a 4 s piece of her studio read and what the PC made of it).
+        .testTarget(name: "ExpressiveCoreTests", dependencies: ["ExpressiveCore"], resources: [.copy("Resources")]),
     ]
 )

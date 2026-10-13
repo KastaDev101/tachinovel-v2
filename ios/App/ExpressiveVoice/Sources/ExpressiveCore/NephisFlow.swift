@@ -182,6 +182,11 @@ public enum NephisFlow {
         /// her whole tone, as every pack before. For a pack whose studio is brighter than she should sound (Kasta,
         /// 2026-10-13: the darker tone, with the studio).
         public var eqAfterStudio = false
+        /// Her breaths as air (BreathPolish, pack.json "breathPolish": {} = the phone's tuned values, any field overrides
+        /// one): the vocoder's pitched buzz in her breaths and in the air of breathy words rebuilt from their own smoothed
+        /// spectrum with new phase, on each call her studio rendered (and with "plainToo" the others), at the call's rate,
+        /// before "eqAfterStudio". Absent or unreadable: off, every call exactly as before (Kasta, 2026-10-13).
+        public var breathPolish: BreathPolish.Settings?
         /// Words this model says wrong, respelled the way it says them right (whole words, any case); a pack's list
         /// replaces these entries one by one ("" drops one).
         public var respell: [String: String] = NephisFlow.herRespell
@@ -296,6 +301,7 @@ public enum NephisFlow {
             highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
             softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
             eqAfterStudio = (try? c.decodeIfPresent(Bool.self, forKey: .eqAfterStudio)) ?? false
+            breathPolish = try? c.decodeIfPresent(BreathPolish.Settings.self, forKey: .breathPolish)
             // A form this version doesn't know (or not a string) reads the app's text: a newer pack still plays.
             text = (try? c.decodeIfPresent(String.self, forKey: .text)).flatMap(PocketTextForm.init(rawValue:)) ?? .app
             for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
