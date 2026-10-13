@@ -22,6 +22,12 @@
 //  playVoiceSample                {id | null}: the voice's preview, else Chatterbox Nano reads a line in that voice
 //  event "voiceImport"            {ok, message, id?}: a .tnvoice opened with "Open in TachiNovel" (SceneDelegate)
 //
+//  Nephis model packs (personal flavor, NephisModelPack.swift; Settings › Voices › Voice packs). Each answers
+//  {packs: [{id, name, made, studio, bytes, active}], active, totalBytes}:
+//  nephisPacks                    the packs on this iPhone, the most recently added first
+//  selectNephisPack               {id}: she reads with it from her next sentence (what installing one does)
+//  deleteNephisPack               {id}: deleting hers switches her to the next pack in the list, or to none
+//
 
 import Capacitor
 import Darwin
@@ -56,6 +62,9 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "playVoiceSample", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "studioTest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "studioEnable", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nephisPacks", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selectNephisPack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteNephisPack", returnType: CAPPluginReturnPromise),
     ]
 
     /// A line for hearing a voice that came without a preview.
@@ -315,8 +324,8 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     /// starts as Listen does). `placement: true`: only where Core ML runs each model (MLComputePlan), on its own. One at a
     /// time: a second one while one runs is refused (`busy`).
     @objc func studioTest(_ call: CAPPluginCall) {
-        let dir = NephisModelPack.root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
+        guard let dir = NephisModelPack.active?.appendingPathComponent("Models/nephis-studio", isDirectory: true),
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
             return call.resolve(["ran": false, "error": "The installed Nephis pack has no studio (Models/nephis-studio)."])
         }
         let placementOnly = call.getBool("placement") ?? false
@@ -408,6 +417,50 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             UserDefaults.standard.set(on, forKey: "nephisStudio")
             ExpressiveService.shared.reloadNephisModel()
             call.resolve(["enabled": on])
+        }
+    }
+
+    // MARK: - Her model packs
+
+    private static func packs() -> [String: Any] {
+        let library = NephisModelPack.library
+        let active = library.activeID
+        let packs = library.list()
+        return [
+            "packs": packs.map { p -> [String: Any] in
+                ["id": p.id, "name": p.name, "made": p.made.map { $0 as Any } ?? NSNull(), "studio": p.studio,
+                 "bytes": Int(p.bytes), "active": p.id == active]
+            },
+            "active": active.map { $0 as Any } ?? NSNull(),
+            "totalBytes": Int(packs.reduce(Int64(0)) { $0 + $1.bytes }),
+        ]
+    }
+
+    @objc func nephisPacks(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(Self.packs()) }
+    }
+
+    @objc func selectNephisPack(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("No pack", "INVALID_ARGS") }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.select(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func deleteNephisPack(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("No pack", "INVALID_ARGS") }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.delete(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
         }
     }
 

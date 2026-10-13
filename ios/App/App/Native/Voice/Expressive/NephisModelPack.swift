@@ -4,8 +4,9 @@
 //  (Models/pocket-tts-coreml/v2.1/english/…, FluidAudio's cache layout) and her voice files for that model
 //  (BuiltInVoices/pocket/nephis*.pocketvoice + speaker-projection.bin). It is an uncompressed tar, opened from
 //  Files or the share sheet ("Open in TachiNovel", SceneDelegate) or dropped into the app's Documents folder
-//  (Finder / Apple Devices file sharing). It unpacks into Application Support and Nephis reads with it from her
-//  next load. Nothing in it is executed: CoreML models are data the system compiles, the rest is numbers.
+//  (Finder / Apple Devices file sharing). It unpacks into the pack library (several packs side by side, one active:
+//  ExpressiveCore NephisPackLibrary; Settings › Voices › Voice packs switches and deletes) and Nephis reads with it
+//  from her next load. Nothing in it is executed: CoreML models are data the system compiles, the rest is numbers.
 //
 
 import ExpressiveCore
@@ -16,52 +17,39 @@ enum NephisModelPack {
     static let fileExtension = "tnmodel"
     static let didInstall = Notification.Name("TachiNovelNephisModelInstalled")
     private static let log = Logger(subsystem: "app.tachinovel", category: "voice-expressive")
-    private static let language = "Models/pocket-tts/v2.1/english"  // FluidAudio's folder for Repo.pocketTts
 
-    /// Files a pack must hold (relative to its root) before it replaces anything.
-    static let required = [
-        "\(language)/cond_prefill_ane.mlmodelc/model.mil", "\(language)/cond_prefill_ane.mlmodelc/weights/weight.bin",
-        "\(language)/flowlm_step_ane.mlmodelc/model.mil", "\(language)/flowlm_step_ane.mlmodelc/weights/weight.bin",
-        "\(language)/flow_decoder_fused.mlmodelc/model.mil", "\(language)/flow_decoder_fused.mlmodelc/weights/weight.bin",
-        "\(language)/mimi_decoder.mlmodelc/model.mil",
-        "\(language)/constants_bin/bos_emb.bin", "\(language)/constants_bin/bos_before_voice.bin",
-        "\(language)/constants_bin/text_embed_table.bin", "\(language)/constants_bin/tokenizer.model",
-        "BuiltInVoices/pocket/nephis.pocketvoice", "BuiltInVoices/pocket/nephis.json",
-        "BuiltInVoices/pocket/speaker-projection.bin", "BuiltInVoices/pocket/speaker-projection.json",
-    ]
-
-    static var root: URL {
+    /// Every pack on this iPhone and the one she reads with (ExpressiveCore NephisPackLibrary: Application
+    /// Support/NephisPacks). First use moves the single pack older builds kept (Application Support/NephisModel) in.
+    static let library: NephisPackLibrary = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("NephisModel", isDirectory: true)
-    }
+        let lib = NephisPackLibrary(root: base.appendingPathComponent("NephisPacks", isDirectory: true))
+        if lib.migrate(legacy: base.appendingPathComponent("NephisModel", isDirectory: true)) {
+            log.info("expressive: Nephis model pack moved into the pack library")
+        }
+        try? FileManager.default.removeItem(at: base.appendingPathComponent("NephisModel.incoming", isDirectory: true))
+        return lib
+    }()
 
-    static func complete(_ dir: URL) -> Bool {
-        required.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
-    }
-
-    /// The installed pack's root (FluidAudio's models directory for her engine), or nil.
-    static var modelsDirectory: URL? { complete(root) ? root : nil }
-    /// The installed pack's studio (Models/nephis-studio: NephisBlueprint, NephisVocoder, studio.json), or nil.
+    /// The active pack's root (FluidAudio's models directory for her engine), or nil.
+    static var active: URL? { library.activeDirectory }
+    static var modelsDirectory: URL? { active }
+    /// The active pack's studio (Models/nephis-studio: NephisBlueprint, NephisVocoder, studio.json), or nil.
     /// Used only while the hidden `nephisStudio` default is on (Settings › Voices › Voice test's studio switch): the
     /// studio makes her stream 44.1 kHz, and a read with it plays at that rate (SessionRate in HybridSpeechEngine.swift).
     static var studioDirectory: URL? {
+        guard let root = active, UserDefaults.standard.bool(forKey: "nephisStudio") else { return nil }
         let dir = root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
-        guard complete(root), UserDefaults.standard.bool(forKey: "nephisStudio"),
-              FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else { return nil }
-        return dir
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) ? dir : nil
     }
-    /// Her voice files for the installed model (a BuiltInVoices-shaped folder), or nil.
-    static var voicesDirectory: URL? { complete(root) ? root.appendingPathComponent("BuiltInVoices", isDirectory: true) : nil }
-    /// What the pack says about itself (pack.json: name, made, checkpoint), for the Voice Lab.
-    static var info: [String: Any]? {
-        guard complete(root), let d = try? Data(contentsOf: root.appendingPathComponent("pack.json")) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
-    }
+    /// Her voice files for the active model (a BuiltInVoices-shaped folder), or nil.
+    static var voicesDirectory: URL? { active?.appendingPathComponent("BuiltInVoices", isDirectory: true) }
+    /// What the active pack says about itself (pack.json: name, made, checkpoint), for the Voice Lab.
+    static var info: [String: Any]? { active.flatMap(NephisPackLibrary.info(in:)) }
 
     static func handles(_ url: URL) -> Bool { url.isFileURL && url.pathExtension.lowercased() == fileExtension }
 
-    /// "Open in TachiNovel" or a pack found in Documents: unpack off the main thread, then swap it in. The UI hears
-    /// about it through the voice-import event (same message banner).
+    /// "Open in TachiNovel" or a pack found in Documents: unpack off the main thread, then add it to the library as the
+    /// active pack. The UI hears about it through the voice-import event (same message banner).
     static func open(_ url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try install(from: url) }
@@ -109,36 +97,32 @@ enum NephisModelPack {
         }
     }
 
-    /// Unpack `url` (a tar) into a fresh folder, check it, then replace the installed pack. Returns the pack's name.
+    /// Unpack `url` (a tar) into a fresh folder, check it, then add it to the library as the active pack (a pack with
+    /// the same name and date replaces its old copy). Returns the pack's name.
     static func install(from url: URL) throws -> String {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let fm = FileManager.default
-        let staging = root.deletingLastPathComponent().appendingPathComponent("NephisModel.incoming", isDirectory: true)
-        try? fm.removeItem(at: staging)
-        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
-        do {
-            try Tar.extract(url, into: staging)
-            guard complete(staging) else { throw PackError.notAPack("files are missing") }
-            try? fm.removeItem(at: root)
-            try fm.moveItem(at: staging, to: root)
-        } catch {
-            try? fm.removeItem(at: staging)
-            throw error
-        }
-        var noBackup = URLResourceValues()
-        noBackup.isExcludedFromBackup = true  // ~330 MB, rebuilt from the PC any time
-        var r = root
-        try? r.setResourceValues(noBackup)
-        let name = (info?["name"] as? String) ?? url.deletingPathExtension().lastPathComponent
+        let staging = try library.stagingDirectory()
+        defer { try? FileManager.default.removeItem(at: staging) }  // gone already when it was added
+        try Tar.extract(url, into: staging)
+        guard NephisPackLibrary.isComplete(staging) else { throw PackError.notAPack("files are missing") }
+        let name = try library.add(staged: staging, fallbackName: url.deletingPathExtension().lastPathComponent).pack.name
         log.info("expressive: Nephis model pack \(name, privacy: .public) installed")
         return name
     }
 
-    /// Remove the installed pack: she reads with Kyutai's released model again.
-    static func remove() {
-        try? FileManager.default.removeItem(at: root)
-        ExpressiveService.shared.reloadNephisModel()
+    /// Settings › Voices › Voice packs: she reads with `id` from her next load (what installing one does).
+    static func select(_ id: String) throws {
+        let before = library.activeID
+        try library.activate(id)
+        if before != id { ExpressiveService.shared.reloadNephisModel() }
+    }
+
+    /// Settings › Voices › Voice packs: delete a pack; deleting hers switches her to the next one (or to Kyutai's
+    /// released model when it was the last).
+    static func delete(_ id: String) throws {
+        let before = library.activeID
+        if try library.delete(id) != before { ExpressiveService.shared.reloadNephisModel() }
     }
 }
 

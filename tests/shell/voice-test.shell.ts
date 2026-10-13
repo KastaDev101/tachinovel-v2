@@ -110,7 +110,7 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
 
     // The status block, then the switch (the pack has a studio, which is off).
     const pack = screen.getByTestId('voice-test-pack');
-    await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Nephis pack: nephis-r9 (made 2026-10-11).');
+    await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Nephis pack in use: nephis-r9 (made 2026-10-11).');
     expect(await pack.textContent()).toContain('Her studio: in this pack.');
     expect(await pack.textContent()).toContain('Studio: off.');
     const toggle = screen.getByRole('checkbox', { name: 'Her studio' });

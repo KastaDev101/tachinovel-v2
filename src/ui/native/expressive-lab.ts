@@ -38,6 +38,10 @@ interface ExpressiveVoicePlugin {
   /** placement: only where Core ML runs her studio's models (MLComputePlan), on its own. */
   studioTest(o?: { placement?: boolean }): Promise<Obj>;
   studioEnable(o: { on: boolean }): Promise<Obj>;
+  /** Nephis's model packs on this iPhone (voice-packs.ts normalizes the answer); select/delete answer the same. */
+  nephisPacks(): Promise<Obj>;
+  selectNephisPack(o: { id: string }): Promise<Obj>;
+  deleteNephisPack(o: { id: string }): Promise<Obj>;
 }
 
 /** Events (kept out of the method list above, which mirrors the Swift plugin's methods). */

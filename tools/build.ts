@@ -44,7 +44,9 @@ const BUDGETS_KB: Record<string, number> = {
   // Kokoro's three backups, sub-pages) plus the Voice Lab scene-reading test; Kasta asked for the cleanup.
   // 760 → 770 (2026-10-12, nephis-studio): the raw text form (src/core/narration/raw-text.ts, ~5.7 KB) runs in the
   // UI's speech script so a pack can read the text as written (lab Q1: 0 vs 6 of 147 last words lost).
-  'index.html': 770,
+  // 770 → 780 (2026-10-13, pack-picker): Settings › Voices › Voice packs (src/ui/native/voice-packs.ts, ~5.4 KB),
+  // several Nephis packs side by side; main was at 767.7 KB.
+  'index.html': 780,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,

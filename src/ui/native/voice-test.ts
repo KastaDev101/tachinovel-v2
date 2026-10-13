@@ -1,8 +1,8 @@
 /**
  * Settings › Voices › Voice test: the one page for testing Nephis (Kasta, 2026-10-12: "everything in one page …
  * run the test, then copy report. Something super simple"). No hidden taps: the Voice Lab is for developers only.
- *   - Top (personal flavor): which Nephis pack is installed, whether it has her studio, whether the studio is on, and
- *     the studio switch (ExpressiveVoice.studioEnable) when the pack has one.
+ *   - Top (personal flavor): which Nephis pack she reads with (Settings › Voices › Voice packs), whether it has her
+ *     studio, whether the studio is on, and the studio switch (ExpressiveVoice.studioEnable) when the pack has one.
  *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
  *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
  *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
@@ -164,7 +164,7 @@ export function statusLines(pack: unknown, k: StudioKnown): string[] {
     pack === undefined
       ? 'Nephis pack: this app version doesn’t say which.'
       : p
-        ? `Nephis pack: ${typeof p.name === 'string' && p.name ? p.name : 'unnamed'}${made}.`
+        ? `Nephis pack in use: ${typeof p.name === 'string' && p.name ? p.name : 'unnamed'}${made}.`
         : 'Nephis pack: none installed (she reads with the voice the app came with).',
     k.has === null ? 'Her studio: the test checks whether this pack has one.' : k.has ? 'Her studio: in this pack.' : 'Her studio: not in this pack.',
   ];

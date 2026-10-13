@@ -1,7 +1,8 @@
 /**
  * Voices UI (v2 additions over the unchanged v1 UI):
  *
- *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): the 28 Kokoro
+ *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): Nephis, her Voice packs
+ *    (voice-packs.ts, personal flavor) and the Voice test; the 28 Kokoro
  *    voices, grouped by accent and gender with the best graded first, with ▶ samples and the default one;
  *    the Apple voice that stands in when Kokoro can't keep up (with the "download a Premium voice" hint);
  *    Kokoro on/off, pronunciations, In the car (what the car's side buttons do, prepared audio storage),
@@ -22,6 +23,7 @@ import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { openVoiceTest } from './voice-test.ts';
+import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { groupVoices } from './voice-groups.ts';
 import { ExpressiveVoice, openExpressiveLab } from './expressive-lab.ts';
 import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
@@ -430,6 +432,9 @@ function backupCard(info: VoiceSettingsInfo, selected: string): string {
 
 const NARRATOR_SETTINGS_ROW = `<div class="card"><button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Voice settings</b><span class="sub">Moods, AI scene reading, studio sound, system messages</span></div><span aria-hidden="true">›</span></button></div>`;
 
+/** Nephis's model packs (.tnmodel) are a personal-flavor feature (NephisModelPack.swift). */
+const PACKS = __FLAVOR__ === 'personal';
+
 /** Settings › Voices › Narrator settings: natural delivery's switches. */
 function openNarratorSettings(onDone: () => void): void {
   const p = panel('Voice settings', 'narrator-settings');
@@ -533,6 +538,7 @@ export function openVoicesScreen(): void {
       <div class="sec">Voice</div>
       ${nephisCard(info)}
       ${NARRATOR_SETTINGS_ROW}
+      ${PACKS ? '<div class="card"><button type="button" class="row" data-act="voice-packs" data-testid="voices-packs"><div class="main"><b>Voice packs</b><span class="sub" data-packs>…</span></div><span aria-hidden="true">›</span></button></div>' : ''}
       <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">Run it, then copy the report</span></div><span aria-hidden="true">›</span></button></div>
       ${status}
       <div class="sec">Pronunciations</div>
@@ -554,6 +560,14 @@ export function openVoicesScreen(): void {
         if (el) el.textContent = storageLine(normalizeDriveStatus(s));
       })
       .catch(() => undefined);
+    if (PACKS) {
+      void ExpressiveVoice.nephisPacks()
+        .then(normalizePacks, () => null)
+        .then((list) => {
+          const el = p.body.querySelector('[data-packs]');
+          if (el) el.textContent = packsSummary(list);
+        });
+    }
     if (info.usePCAudio) {
       void Narration.audioFolder()
         .then((f) => {
@@ -598,6 +612,9 @@ export function openVoicesScreen(): void {
         return;
       case 'voice-test':
         openVoiceTest();
+        return;
+      case 'voice-packs':
+        openVoicePacks(render);
         return;
       case 'kokoro-all':
         openKokoroVoices(null, () => void load());

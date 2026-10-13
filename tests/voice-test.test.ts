@@ -134,7 +134,7 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
     ]);
     const pack = { name: 'nephis-r9', made: '2026-10-11', studio: true, studioOn: false };
     expect(statusLines(pack, studioKnown(pack, { has: false, on: true }))).toEqual([
-      'Nephis pack: nephis-r9 (made 2026-10-11).',
+      'Nephis pack in use: nephis-r9 (made 2026-10-11).',
       'Her studio: in this pack.',
       'Studio: off.',
     ]);

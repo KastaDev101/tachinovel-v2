@@ -1124,12 +1124,13 @@ final class ExpressiveService {
             if let l = lastLoad[id] { d["lastLoadMs"] = Self.r1(l.ms); d["lastLoadCold"] = l.cold }
             return d
         }
-        // The installed Nephis pack and its studio, for Settings › Voices › Voice test (one testing page).
-        let pack: Any = NephisModelPack.modelsDirectory == nil ? NSNull() : [
-            "name": NephisModelPack.info?["name"] ?? NSNull(), "made": NephisModelPack.info?["made"] ?? NSNull(),
-            "studio": FileManager.default.fileExists(atPath: NephisModelPack.root.appendingPathComponent("Models/nephis-studio/studio.json").path),
-            "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio"),
-        ] as [String: Any]
+        // The active Nephis pack and its studio, for Settings › Voices › Voice test (one testing page).
+        let pack: Any = NephisModelPack.active.map { root -> [String: Any] in
+            let info = NephisPackLibrary.info(in: root)
+            return ["name": info?["name"] ?? NSNull(), "made": info?["made"] ?? NSNull(),
+                    "studio": FileManager.default.fileExists(atPath: root.appendingPathComponent("Models/nephis-studio/studio.json").path),
+                    "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio")]
+        } ?? NSNull()
         var out: [String: Any] = [
             "available": store != nil,
             "nephisPack": pack,
