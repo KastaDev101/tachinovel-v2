@@ -136,10 +136,10 @@ final class NephisMasterTests: XCTestCase {
     }
 
     private static let expected: [NephisMaster.Preset: Expected] = [
-        .minimal: Expected(lufs: -18.154, bands: [8.136, 2.805, 0.0, -4.101, -10.217, -12.005, -11.208], pads: [-68.1, -68.12, -67.95], latency: 1834, gain: 11.011),
-        .clean: Expected(lufs: -17.817, bands: [7.386, 3.323, 0.0, -5.724, -12.725, -15.246, -14.885], pads: [-68.04, -68.1, -67.89], latency: 2054, gain: 10.832),
-        .warm: Expected(lufs: -17.777, bands: [7.867, 3.75, 0.0, -6.055, -13.053, -15.616, -15.418], pads: [-70.07, -69.81, -70.0], latency: 2054, gain: 10.127),
-        .crisp: Expected(lufs: -17.873, bands: [7.392, 3.334, 0.0, -5.198, -11.995, -14.454, -13.784], pads: [-68.03, -68.1, -67.92], latency: 2054, gain: 10.773),
+        .minimal: Expected(lufs: -17.984, bands: [8.136, 2.805, 0.0, -4.101, -10.217, -12.005, -11.208], pads: [-68.1, -68.12, -67.95], latency: 1834, gain: 11.181),
+        .clean: Expected(lufs: -17.779, bands: [7.386, 3.323, 0.0, -5.724, -12.725, -15.245, -14.884], pads: [-68.04, -68.1, -67.89], latency: 2054, gain: 10.833),
+        .warm: Expected(lufs: -17.751, bands: [7.867, 3.75, 0.0, -6.055, -13.053, -15.617, -15.42], pads: [-70.06, -69.81, -70.0], latency: 2054, gain: 10.156),
+        .crisp: Expected(lufs: -17.836, bands: [7.392, 3.334, 0.0, -5.198, -11.994, -14.452, -13.782], pads: [-68.02, -68.1, -67.92], latency: 2054, gain: 10.752),
     ]
 
     func testEveryPresetMatchesThePythonTwinOnTheFixedVector() {

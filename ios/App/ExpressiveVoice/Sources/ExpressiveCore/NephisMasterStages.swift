@@ -406,7 +406,7 @@ struct MasterLoudness: Sendable {
     private let target: Double
     private var cached: Double?
     private var dirty = false
-    /// What the limiter takes off on average (dB), added back to the gain.
+    /// What the limiter takes off the loudness (dB), added back to the gain (MasterParams.limiterLoss).
     var loss = 0.0
 
     init(clock c: MasterClock, target: Double) {

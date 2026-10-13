@@ -124,6 +124,7 @@ public struct NephisMaster: Sendable {
         loudness = MasterLoudness(clock: clock, target: settings.lufs)
         room = settings.roomTone ? MasterRoom(p.room, clock: clock) : nil
         limiter = MasterLimiter(clock: clock, ceilingDB: settings.ceilingDB)
+        loudness.loss = p.limiterLoss
     }
 
     /// Samples the output lags the input (fixed for the read).
@@ -148,7 +149,6 @@ public struct NephisMaster: Sendable {
         }
         var y = tone.run(x)
         stages.run(&y, phase: phase, cr: cr)
-        loudness.loss = limiter.loss
         let gain = loudness.measure(y, phase: phase, cr: cr)
         room?.run(&y, gainDB: gain, cr: cr)
         for i in y.indices { y[i] *= Float(pow(10, gain[i] / 20)) }
@@ -217,6 +217,9 @@ struct MasterParams: Sendable {
     let saturate: Colour?
     let excite: Colour?
     let room: Room
+    /// What the limiter takes off the loudness (dB), added to the gain: fixed per preset (0.04-0.25 measured on three
+    /// reads), so the audio never depends on where the calls split (a running estimate read once per call did: CI).
+    let limiterLoss: Double
 
     /// The EQ's sections (kind, Hz, Q); each preset gives their gains (dB).
     static let eqShape: [(kind: MasterSection.Kind, hz: Double, q: Double)] = [
@@ -229,25 +232,29 @@ struct MasterParams: Sendable {
         switch preset {
         case .minimal:
             return MasterParams(hpf: 0, eq: [], deEss: nil, expand: nil, level: nil, comp: nil, glue: 0, saturate: nil, excite: nil,
-                                room: Room(offset: -2, cap: -68, bed: -8, noise: [658.3, 7.58, 193.9, 7.87, 3997.0, 0.785, 11545.0, 0.69]))
+                                room: Room(offset: -2, cap: -68, bed: -8, noise: [658.3, 7.58, 193.9, 7.87, 3997.0, 0.785, 11545.0, 0.69]),
+                                limiterLoss: 0.17)
         case .clean:
             return MasterParams(hpf: 75, eq: [-0.94, 2.03, 0.97, -2.94, -2.01, 2.46],
                                 deEss: DeEss(lo: 5000, hi: 9000, q: 0.90, ratio: 3, maxGR: 5, seed: 20.5), expand: exp, level: level,
                                 comp: Comp(ratio: 2, q: 0.70, knee: 6, attack: 20, release: 200, maxGR: 3.5), glue: 0, saturate: nil, excite: nil,
-                                room: Room(offset: -2, cap: -68, bed: -8, noise: [753.2, 6.93, 236.9, 7.84, 3712.5, 0.853, 14182.0, 0.539]))
+                                room: Room(offset: -2, cap: -68, bed: -8, noise: [753.2, 6.93, 236.9, 7.84, 3712.5, 0.853, 14182.0, 0.539]),
+                                limiterLoss: 0.09)
         case .warm:
             return MasterParams(hpf: 65, eq: [-0.2, 2.63, 0.62, -4.51, -1.38, 3.22],
                                 deEss: DeEss(lo: 5000, hi: 9000, q: 0.80, ratio: 3, maxGR: 6, seed: 19.1),
                                 expand: Expand(above: 10, knee: 8, maxGR: 4, close: 150, open: 3), level: level,
                                 comp: Comp(ratio: 2.5, q: 0.65, knee: 6, attack: 20, release: 200, maxGR: 4), glue: 0.2,
                                 saturate: Colour(level: -30, k: 1.6, bias: 0.2, lo: 0, hi: 0, hp: 0, lp: 4000, mix0: 0.135), excite: nil,
-                                room: Room(offset: -3, cap: -70, bed: -8, noise: [392.1, 9.74, 514.9, 9.26, 3780.3, 0.658, 12808.7, 0.527]))
+                                room: Room(offset: -3, cap: -70, bed: -8, noise: [392.1, 9.74, 514.9, 9.26, 3780.3, 0.658, 12808.7, 0.527]),
+                                limiterLoss: 0.04)
         case .crisp:
             return MasterParams(hpf: 80, eq: [-0.95, 2.05, 0.75, -0.93, -2.91, 1.27],
                                 deEss: DeEss(lo: 5500, hi: 10000, q: 0.90, ratio: 3, maxGR: 5, seed: 20.7), expand: exp, level: level,
                                 comp: Comp(ratio: 2, q: 0.70, knee: 6, attack: 20, release: 200, maxGR: 3.5), glue: 0, saturate: nil,
                                 excite: Colour(level: -38, k: 3, bias: 0, lo: 3000, hi: 7500, hp: 7000, lp: 16500, mix0: 0.26),
-                                room: Room(offset: -2, cap: -68, bed: -8, noise: [755.1, 6.29, 237.7, 8.68, 3680.7, 0.983, 13934.8, 0.663]))
+                                room: Room(offset: -2, cap: -68, bed: -8, noise: [755.1, 6.29, 237.7, 8.68, 3680.7, 0.983, 13934.8, 0.663]),
+                                limiterLoss: 0.10)
         }
     }
 }
