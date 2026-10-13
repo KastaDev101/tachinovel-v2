@@ -314,8 +314,8 @@ final class HybridSchedulerTests: XCTestCase {
             HybridScheduler.callGroup(from: i, count: lengths.count, limit: limit, canCut: canCut, length: { lengths[$0] }, joins: { $0 != 3 })
         }
         XCTAssertEqual(group(0, 400, true), [0, 1, 2], "up to the next sentence that doesn't join (a paragraph start)")
-        XCTAssertEqual(group(0, 61, true), [0, 1, 2], "10 + 1 + 20 + 1 + 30 characters fit")
-        XCTAssertEqual(group(0, 60, true), [0, 1])
+        XCTAssertEqual(group(0, 62, true), [0, 1, 2], "10 + 1 + 20 + 1 + 30 characters fit")
+        XCTAssertEqual(group(0, 61, true), [0, 1])
         XCTAssertEqual(group(0, 400, false), [0], "no cutter: one sentence per call")
         XCTAssertEqual(group(3, 400, true), [3], "the last sentence")
     }
