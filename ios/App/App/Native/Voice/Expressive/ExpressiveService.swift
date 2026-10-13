@@ -1025,6 +1025,8 @@ final class ExpressiveService {
             // Her studio's work on the call (nil/0 when it never ran): × real time, where the time went, vocoder pieces.
             "studioX": r.studioX.map { r2($0) } ?? NSNull(), "blueprintMs": r1(r.studioBlueprintMs), "vocoderMs": r1(r.studioVocoderMs),
             "restMs": r1(r.studioRestMs), "studioPieces": r.studioPieces, "studioPiecesPlanned": r.studioPiecesPlanned,
+            // Her mastering on the call (pack chain "master"): its preset and loudness gain; null when off.
+            "master": r.masterPreset ?? NSNull(), "masterGainDB": r.masterGainDB.map { r1($0) } ?? NSNull(),
         ]
     }
 

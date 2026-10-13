@@ -195,6 +195,11 @@ public enum NephisFlow {
         /// better (tachinovel-tts-lab Q1, 2026-10-12, c7-1500: no last word lost against 6 of 147, no runaway against 3,
         /// her pauses after "..." closer to hers). Absent or anything else = the app's text, as every pack before.
         public var text: PocketTextForm = .app
+        /// Her mastering (NephisMaster, pack.json "master": {"preset": "clean"|"warm"|"crisp"|"minimal", "lufs", "ceiling",
+        /// "roomTone"}): room tone in the silence pads, de-esser, gentle dynamics, colour, -18 LUFS and a -1 dBTP limiter, one
+        /// chain over the whole read at the call's rate. Absent or unreadable: off, every call exactly as before (Kasta,
+        /// 2026-10-13: "the SOUND of better audio quality").
+        public var master: NephisMaster.Settings?
 
         /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
         /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
@@ -318,6 +323,7 @@ public enum NephisFlow {
             for (name, seconds) in Self.clampedDialogue(packGaps) {
                 dialogueGaps[name] = seconds
             }
+            master = try? c.decodeIfPresent(NephisMaster.Settings.self, forKey: .master)
         }
     }
 

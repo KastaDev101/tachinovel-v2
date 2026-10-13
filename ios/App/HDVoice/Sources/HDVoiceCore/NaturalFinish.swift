@@ -112,6 +112,10 @@ public struct NaturalFinish: Sendable {
         /// Nephis's flow engine: the samples are one continuous stream that already holds the pause before the unit
         /// and every join; nothing is trimmed, faded, padded, re-leveled or spliced (`renderFlow`).
         public var flow = false
+        /// A flow call her mastering chain already finished (NephisMaster, pack chain "master": her EQ before it, its own
+        /// high-pass, a true-peak limiter at the end): `renderFlow` adds no thump filter, EQ or soft limit on top, only
+        /// the listener's speed and the cut into sentences.
+        public var mastered = false
 
         public init(samples: [Float], chunkEnds: [Int] = [], lines: [Line], speed: Double = 1, expressive: Bool, nonVerbals: [Int: NonVerbalPack.Item] = [:]) {
             self.samples = samples
@@ -305,14 +309,18 @@ public struct NaturalFinish: Sendable {
         let lines = u.lines.isEmpty ? [Line(params: nil, letters: 1, pause: 0)] : u.lines
         var speech = u.samples
         guard !speech.isEmpty else { lastReport = report; return lines.map { _ in Piece(frames: [], speechSeconds: 0) } }
-        StartupSound.removeThump(&speech, sampleRate: sampleRate)
-        if sampleRate == Self.mimiRate { tilt?.apply(&speech, sampleRate: sampleRate) }
-        let g = Float(pow(10, Self.flowGainDB / 20))
-        let room = Self.peakCeiling - Self.flowKnee
-        for i in speech.indices {
-            let v = speech[i] * g
-            let a = abs(v)
-            speech[i] = a <= Self.flowKnee ? v : (v < 0 ? -1 : 1) * (Self.flowKnee + room * Float(tanh(Double((a - Self.flowKnee) / room))))
+        // A mastered call is finished (its limiter is the last word on its peaks): a filter or soft limit here would
+        // move them again.
+        if !u.mastered {
+            StartupSound.removeThump(&speech, sampleRate: sampleRate)
+            if sampleRate == Self.mimiRate { tilt?.apply(&speech, sampleRate: sampleRate) }
+            let g = Float(pow(10, Self.flowGainDB / 20))
+            let room = Self.peakCeiling - Self.flowKnee
+            for i in speech.indices {
+                let v = speech[i] * g
+                let a = abs(v)
+                speech[i] = a <= Self.flowKnee ? v : (v < 0 ? -1 : 1) * (Self.flowKnee + room * Float(tanh(Double((a - Self.flowKnee) / room))))
+            }
         }
         let speed = u.speed.isFinite && u.speed > 0 ? u.speed : 1
         if abs(speed - 1) > 0.002 { speech = TimeStretch.wsola(speech, tempo: speed, sampleRate: sampleRate) }

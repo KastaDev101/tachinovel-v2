@@ -116,6 +116,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var studioPiecesPlanned = 0
         public var studioUnits: String?
         public var studioOff: String?
+        /// Her mastering on this call (pack chain "master"): its preset, and the loudness gain it was at (dB). nil: off.
+        public var masterPreset: String?
+        public var masterGainDB: Double?
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -188,6 +191,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// The mood of the paragraph just read (its paragraph pause follows it), and the level it played at.
     private var lastMood: String?
     private var lastGainDB = 0.0
+    /// Her mastering over the read (pack chain "master"; nil while off): one chain, call after call, so levels, filters
+    /// and delay lines carry across the joins (NephisMaster).
+    private var master: NephisMaster?
     private var started = false
     public private(set) var lastReport = Report()
 
@@ -720,6 +726,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             for i in samples.indices { samples[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
         }
         lastGainDB = p.gainDB
+        // Her mastering (pack chain "master"; off = nothing here runs). Without her studio her EQ comes first, here: the
+        // player gives it after this otherwise, which would be after the limiter. A fresh read starts a fresh chain.
+        let masterSettings = assets.chain.master
+        if masterSettings != nil, config == nil { NephisFlow.MimiEQ(chain: assets.chain).apply(&samples, sampleRate: rate) }
+        let mastered = NephisMaster.apply(&master, settings: masterSettings, to: &samples, sampleRate: rate, restart: p.reset)
         var report = p.report
         report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
@@ -738,9 +749,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         report.studioUnits = decoded.units
         report.studioOff = decoded.off ?? (config == nil ? nil : studioTooSlow)
+        report.masterPreset = mastered ? masterSettings?.preset.rawValue : nil
+        report.masterGainDB = mastered ? master?.gainDB : nil
         lastReport = report
-        let audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
+        var audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                     chunks: report.takes)
+        audio.mastered = mastered
         return (audio, report)
     }
 

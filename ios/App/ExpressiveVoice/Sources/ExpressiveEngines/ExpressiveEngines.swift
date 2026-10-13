@@ -28,6 +28,8 @@ public struct ExpressiveAudio: Sendable {
     /// for a chunked one-shot engine.
     public let firstAudioMs: Double
     public let chunks: Int
+    /// Finished by her mastering chain (NephisMaster, pack chain "master"): the player adds no EQ or limiting of its own.
+    public var mastered = false
 
     public var durationMs: Double { sampleRate > 0 ? Double(samples.count) * 1000 / Double(sampleRate) : 0 }
     /// Audio seconds per synthesis second (> 1 = faster than real time).
