@@ -28,16 +28,33 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// The page's answer, or nil after the time limit (main actor).
-@MainActor
-private final class PageAnswer {
-    private var continuation: CheckedContinuation<String?, Never>?
-
-    init(_ continuation: CheckedContinuation<String?, Never>) { self.continuation = continuation }
+/// The page's answer, or nil after the time limit: the first `finish` wins (any thread).
+private final class PageAnswer: @unchecked Sendable {  // @unchecked: state guarded by `lock`
+    private let lock = NSLock()
+    private var result: String??
+    private var waiter: CheckedContinuation<String?, Never>?
 
     func finish(_ value: String?) {
-        continuation?.resume(returning: value)
-        continuation = nil
+        lock.lock()
+        guard result == nil else { return lock.unlock() }
+        result = .some(value)
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume(returning: value)
+    }
+
+    func value() async -> String? {
+        await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            lock.lock()
+            if let r = result {
+                lock.unlock()
+                c.resume(returning: r)
+            } else {
+                waiter = c
+                lock.unlock()
+            }
+        }
     }
 }
 
@@ -338,17 +355,13 @@ extension DiagnosticsFolder {
     private func refreshPage() async {
         guard let webView else { return }
         let js = "JSON.stringify({trail: localStorage.getItem('tachinovel.v2.trail'), route: localStorage.getItem('tachinovel.v2.screen')})"
-        let text: String? = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-            let answer = PageAnswer(continuation)
-            webView.evaluateJavaScript(js) { value, _ in
-                let text = value as? String
-                Task { @MainActor in answer.finish(text) }
-            }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                answer.finish(nil)
-            }
+        let answer = PageAnswer()
+        webView.evaluateJavaScript(js) { value, _ in answer.finish(value as? String) }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            answer.finish(nil)
         }
+        let text = await answer.value()
         guard let text, let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return }
         page = ((obj["trail"] as? String) ?? "[]", (obj["route"] as? String) ?? "null")
     }
