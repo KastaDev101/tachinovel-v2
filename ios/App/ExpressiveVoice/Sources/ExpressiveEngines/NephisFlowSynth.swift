@@ -333,15 +333,15 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let pieces = try await plan(manager, text: text, clip: clip)
         let mood = assets.moods[line.role] != nil ? line.role : "calm"
         let chain = assets.chain
-        // Before a paragraph: her pause after the paragraph before, in its mood; the director's own when it asks for
-        // more (a scene break, a title) or there is no paragraph before.
-        let director = (line.pauseBefore ?? 0.6) * chain.paragraphGapScale
-        let paragraphPause = lastMood.flatMap { chain.moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
+        // Before the call: her pause after the paragraph before, in its mood (the director's own when it asks for more);
+        // inside a paragraph her pause after a sentence; where dialogue hands over, hers there (Chain.callPause).
+        let callPause = chain.callPause(pauseBefore: line.pauseBefore, after: lastText, mood: lastMood, next: pieces[0],
+                                        handover: line.handover)
         var stream: [[Float]] = []
         var pads: [(at: Int, seconds: Double)] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
-            let pause = k == 0 ? paragraphPause : chain.gap(after: pieces[k - 1], mood: mood)
+            let pause = k == 0 ? callPause : chain.gap(after: pieces[k - 1], mood: mood)
             let r = try await read(piece, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
                                    seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
             if let at = r.padAt { pads.append((at: stream.count + at, seconds: r.padSeconds)) }

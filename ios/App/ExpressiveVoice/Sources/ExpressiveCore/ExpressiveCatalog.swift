@@ -88,6 +88,10 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     /// Nephis flow, raw text form (a pack whose chain says "text": "raw", NephisFlow.Chain.text): the call's text as
     /// written (the script's `delivery.raw` per sentence, else its text); nil = `text`. Only such a pack reads it.
     public var raw: String?
+    /// Nephis flow: dialogue across the pause before this call (the script's, after the sentence before it): the same
+    /// speaker goes on, another one replies, or dialogue turns into narration or back; nil = none known (the engine then
+    /// reads it from the quotation marks). She takes her own pause there (NephisFlow.Chain.callPause).
+    public var handover: NephisFlow.Handover?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text

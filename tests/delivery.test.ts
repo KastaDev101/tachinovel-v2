@@ -471,6 +471,16 @@ describe('pauses: the context model', () => {
     expect(torches?.naturalMs).toBeLessThanOrEqual(Math.ceil(650 * 1.1));
   });
 
+  it('name the dialogue handover after a sentence (Nephis takes her own pause there), nothing for narration', () => {
+    const s = script(
+      '<p>“You came back after all these years,” she said quietly. “I never thought you would.”</p><p>“We should leave before the storm comes.</p>' +
+        '<p>“The road will flood by nightfall.”</p><p>He ran.</p><p>The door shut.</p>',
+    );
+    // "she said quietly." → a quote; a new quote paragraph (a reply); a quote left open (the same speaker goes on); a
+    // quote → narration; narration → narration.
+    expect(s.items.map((i) => i.handover ?? null)).toEqual(['switch', 'exchange', 'sameSpeaker', 'switch', null, null]);
+  });
+
   it('vary evenly both ways', () => {
     let shorter = 0;
     for (let seed = 0; seed < 4000; seed++) if (pauseJitter(seed) < 1) shorter++;

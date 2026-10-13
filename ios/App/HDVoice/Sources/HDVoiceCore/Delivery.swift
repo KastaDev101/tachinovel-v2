@@ -274,9 +274,13 @@ public struct NaturalSentence: Sendable, Equatable {
     public var performed: Bool { voice != nil }
     /// A LitRPG system message (the script's kind "system").
     public var system: Bool
+    /// Dialogue across the pause after it (the script's "handover"): "sameSpeaker" (the same speaker goes on),
+    /// "exchange" (another one replies) or "switch" (dialogue turns into narration or back); nil = none, or an older
+    /// script. Only Nephis's flow uses it (her own pause there: ExpressiveCore NephisFlow.Handover).
+    public var handover: String?
 
     public init(params: DeliveryParams = .neutral, mood: DeliveryMood = .calm, line: String? = nil, breath: BreathPoint? = nil, speaks: Bool = false, chunk: Int? = nil,
-                voice: String? = nil, system: Bool = false) {
+                voice: String? = nil, system: Bool = false, handover: String? = nil) {
         self.params = params
         self.mood = mood
         self.line = line
@@ -285,7 +289,11 @@ public struct NaturalSentence: Sendable, Equatable {
         self.chunk = chunk
         self.voice = voice
         self.system = system
+        self.handover = handover
     }
+
+    /// The handovers the script may name.
+    public static let handovers: Set<String> = ["sameSpeaker", "exchange", "switch"]
 
     /// The reads of the narrator voice the script may name.
     public static let voices: Set<String> = ["performed", "tense", "sad", "tender"]
@@ -302,7 +310,8 @@ public struct NaturalSentence: Sendable, Equatable {
         let speaks = (o["role"] as? String) == "dialogue" || parts.contains { (($0 as? [String: Any])?["role"] as? String) == "dialogue" }
         return NaturalSentence(params: params, mood: mood, line: validLine(o["line"]), breath: (o["breath"] as? String).flatMap(BreathPoint.init(rawValue:)),
                                speaks: speaks, chunk: (o["chunk"] as? NSNumber)?.intValue, voice: (o["voice"] as? String).flatMap { Self.voices.contains($0) ? $0 : nil },
-                               system: (o["kind"] as? String) == "system")
+                               system: (o["kind"] as? String) == "system",
+                               handover: (o["handover"] as? String).flatMap { Self.handovers.contains($0) ? $0 : nil })
     }
 
     /// From a Voice Lab line's `natural` object (delivery.ts LineDelivery).

@@ -425,6 +425,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     return sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t
                 }.joined(separator: " ")
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
+                // Dialogue across that pause (the script's): she takes her own pause there, not a paragraph's.
+                line.handover = i > 0 ? segments[i - 1].natural?.handover.flatMap(NephisFlow.Handover.init(script:)) : nil
                 line.flowReset = i != flowNext
                 if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }
                 line.flowLast = members.last == segments.count - 1

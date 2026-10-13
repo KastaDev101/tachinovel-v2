@@ -316,6 +316,7 @@ final class ChapterRenderer: @unchecked Sendable {
         if members[0] > 0 {
             let prev = items[members[0] - 1]
             line.pauseBefore = min(1.4, max(0.35, (prev.naturalMs ?? prev.pauseMs) / 1000))
+            line.handover = prev.natural?.handover.flatMap(NephisFlow.Handover.init(script:))
         }
         line.flowReset = next == 0
         line.flowLast = next == groups.count - 1

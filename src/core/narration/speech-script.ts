@@ -30,7 +30,8 @@
  *              that asks for it (raw-text.ts); the displayed text and its offsets never change,
  *   naturalMs  the natural pause after it (relaxed pacing ±15 %, ×1.2 after "…", a command's room to land), when it differs
  *              from relaxedMs/pauseMs,
- *   breath     a natural place for a breath after it (a paragraph start, a long sentence-final pause; never inside
+ *   handover   dialogue across that pause: the same speaker goes on, a reply ("exchange"), dialogue ↔ narration ("switch"),
+ *   breath    a natural place for a breath after it (a paragraph start, a long sentence-final pause; never inside
  *              a quotation that goes on, never in a back-and-forth).
  * The script carries `delivery` (DELIVERY_HEADER: the mood table and the audio tunables) once.
  *
@@ -121,6 +122,9 @@ export interface SpeechItem {
   delivery?: DeliveryJson;
   /** Natural delivery: the pause after it (ms at 1.0×), when it differs from relaxedMs (or pauseMs). */
   naturalMs?: number;
+  /** Natural delivery: dialogue across the pause after it (the same speaker goes on, another one replies, dialogue
+   * turns into narration or back); Nephis takes her own pause there (NephisFlow.Handover). */
+  handover?: 'sameSpeaker' | 'exchange' | 'switch';
   /** Natural delivery: a breath may go in the pause after it (native's lung budget decides; never adds time). */
   breath?: BreathPoint;
   /** Natural delivery: the breath-group chunk (one Nano call) the sentence belongs to; consecutive ids. */
@@ -363,6 +367,7 @@ function naturalDelivery(blocks: readonly SourceBlock[], items: SpeechItem[], me
         seed: pauseSeed(it.hash, it.id),
       }) + (cue && context !== 'command' ? pauseAfter(cue) : 0);
     if (natural !== relaxed) it.naturalMs = natural;
+    if (context === 'sameSpeaker' || context === 'exchange' || context === 'switch') it.handover = context;
     const next = items[i + 1];
     const breath = breathPoint(
       { block: it.block, kind: it.kind, speaks: (directed[i]?.dialogueShare ?? 0) > 0 },

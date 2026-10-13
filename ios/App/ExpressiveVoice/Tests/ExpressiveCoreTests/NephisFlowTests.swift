@@ -153,6 +153,99 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"highShelfDB": 4}"#.utf8)).highShelfDB, 4)
     }
 
+    // MARK: - The pause before a call (Q6: inside a paragraph; #9: dialogue at her own pace)
+
+    func testAMoodChangeInsideAParagraphGetsHerSentencePauseNotAParagraphs() {
+        let chain = NephisFlow.Chain()
+        // Narration read calm, then the same paragraph goes on tense (the script's 0.52 s there): her calm pause after
+        // a sentence, not the 1.04 s after a paragraph.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.52, after: "The hall went quiet.", mood: "calm", next: "Something moved."), 0.84)
+        // Back from tense: her tense pause after a sentence.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.52, after: "Something moved.", mood: "tense", next: "It was only the wind."), 0.58)
+    }
+
+    func testACallSplitAtTheLengthLimitGetsHerSentencePause() {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.48, after: "He kept talking about the old days.", mood: "wry", next: "Nobody listened."), 0.58)
+    }
+
+    func testTheFirstSentenceAloneAtAFastStartGetsHerSentencePause() {
+        let chain = NephisFlow.Chain()
+        // Listen with nothing buffered sends the first sentence alone; the rest of its paragraph follows inside it.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.35, after: "The rain had stopped.", mood: "calm", next: "We walked on."), 0.84)
+    }
+
+    func testACallInsideAParagraphAfterATrailingOffGetsHerTrailPause() {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.62, after: "I waited...", mood: "calm", next: "Nobody came."), 0.9)
+    }
+
+    func testParagraphsSceneBreaksAndVoiceLabLinesKeepTheirPause() {
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.92, after: "The hall went quiet.", mood: "calm", next: "Morning came."), 1.04, "a paragraph")
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.92, after: "They ran.", mood: "intense", next: "Morning came."), 0.54)
+        XCTAssertEqual(chain.callPause(pauseBefore: 1.4, after: "The hall went quiet.", mood: "calm", next: "Morning came."), 1.4, "a scene break")
+        XCTAssertEqual(chain.callPause(pauseBefore: 1.4, after: "“Go.”", mood: "calm", next: "“Now.”", handover: .reply), 1.4,
+                       "a scene break even in dialogue")
+        XCTAssertEqual(chain.callPause(pauseBefore: nil, after: "The hall went quiet.", mood: "calm", next: "Morning came."), 1.04,
+                       "no pause from the app (the Voice Lab): as before")
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.5, after: nil, mood: nil, next: "Morning came."), 0.5, "a read's first call: as before")
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.92, after: "The hall went quiet.", mood: "unknown", next: "Morning came."), 0.92)
+    }
+
+    func testDialogueTakesHerOwnPauseFromTheScript() {
+        let chain = NephisFlow.Chain()
+        // A reply in a new quote paragraph (the script's exchange, ~0.58 s): 0.66, not 1.04 (before) or 0.84 (Q6 alone).
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.58, after: "“Are you coming?”", mood: "calm", next: "“Not yet.”", handover: .reply), 0.66)
+        // Prepared for the drive with a longer pause there: still hers.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.92, after: "“Are you coming?”", mood: "calm", next: "“Not yet.”", handover: .reply), 0.66)
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.45, after: "“Wait for me.", mood: "calm", next: "Please.”", handover: .sameSpeaker), 0.50)
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.65, after: "He sighed.", mood: "calm", next: "“Fine.”", handover: .narration), 0.66)
+        // Never longer than her pause otherwise: intense stays quicker.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.5, after: "“Run!”", mood: "intense", next: "“Now!”", handover: .reply), 0.46)
+        // The script's handover wins over the quotation marks (these look like a reply).
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.92, after: "“Are you coming?”", mood: "calm", next: "“Not yet.”", handover: .sameSpeaker), 0.50)
+        // Narration on both sides: no handover, her sentence pause.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.5, after: "He sighed.", mood: "calm", next: "She left."), 0.84)
+        XCTAssertEqual(NephisFlow.Handover(script: "exchange"), .reply)
+        XCTAssertEqual(NephisFlow.Handover(script: "sameSpeaker"), .sameSpeaker)
+        XCTAssertEqual(NephisFlow.Handover(script: "switch"), .narration)
+        XCTAssertNil(NephisFlow.Handover(script: "paragraph"))
+    }
+
+    func testWithoutTheScriptTheQuotationMarksTellTheHandover() {
+        XCTAssertEqual(NephisFlow.handover(after: "“Are you coming?”", before: "“Not yet.”"), .reply)
+        XCTAssertEqual(NephisFlow.handover(after: "\"Are you coming?\"", before: "\"Not yet.\""), .reply)
+        XCTAssertEqual(NephisFlow.handover(after: "“We should leave before the storm.", before: "“The road floods.”"), .sameSpeaker,
+                       "a quote paragraph left open: the same speaker goes on")
+        XCTAssertEqual(NephisFlow.handover(after: "He sighed.", before: "“Fine.”"), .narration)
+        XCTAssertEqual(NephisFlow.handover(after: "“Fine.”", before: "He sighed."), .narration)
+        XCTAssertEqual(NephisFlow.handover(after: "“Fine,” he said.", before: "“Go.”"), .narration)
+        XCTAssertNil(NephisFlow.handover(after: "He sighed.", before: "She left."))
+        XCTAssertNil(NephisFlow.handover(after: "“We should leave before", before: "the storm.”"), "unsure: no change")
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.58, after: "“Are you coming?”", mood: "calm", next: "“Not yet.”"), 0.66)
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.45, after: "“We should leave.", mood: "calm", next: "“Now.”"), 0.50)
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.62, after: "“We should leave before", mood: "calm", next: "the storm.”"), 0.84,
+                       "unsure: her sentence pause (Q6)")
+    }
+
+    func testAPackCanTuneHerDialoguePausesPerMood() throws {
+        let pack = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"""
+            {"dialogueGaps": {"reply": 9, "bogus": 0.3},
+             "moods": {"tender": {"sentence": 0.7, "trail": 0.48, "paragraph": 0.78, "gainDB": 0, "dialogue": {"reply": 0.72, "narration": 0.01}}}}
+            """#.utf8))
+        XCTAssertEqual(pack.dialogueGaps["reply"], 2, "clamped")
+        XCTAssertNil(pack.dialogueGaps["bogus"], "names it doesn't know are dropped")
+        XCTAssertEqual(pack.dialogueGaps["sameSpeaker"], 0.50, "the ones it leaves out keep hers")
+        XCTAssertEqual(pack.moods["tender"]?.dialogue?["narration"], 0.1, "clamped")
+        // A mood's own value is used as given, even above her sentence pause.
+        XCTAssertEqual(pack.callPause(pauseBefore: 0.58, after: "“Stay.”", mood: "tender", next: "“I will.”", handover: .reply), 0.72)
+        // Calm has none: the chain's reply gap (2 s here) never makes the pause longer than her sentence pause.
+        XCTAssertEqual(pack.callPause(pauseBefore: 0.58, after: "“Stay.”", mood: "calm", next: "“I will.”", handover: .reply), 0.84)
+        XCTAssertNil(NephisFlow.Chain().moods["calm"]?.dialogue, "her moods carry none: the chain's gaps")
+    }
+
     func testAPackCanAskForTheTextAsWritten() throws {
         let v42 = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"carryFrames": 12}"#.utf8))
         XCTAssertEqual(v42.text, .app, "no \"text\": the app's text, as every pack before")

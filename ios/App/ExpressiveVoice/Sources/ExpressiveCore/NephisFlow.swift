@@ -113,6 +113,9 @@ public enum NephisFlow {
         public var carryFrames = 12
         /// Her timing and level per mood (the director's mood names); a mood not listed uses the gaps above.
         public var moods: [String: Mood] = NephisFlow.herMoods
+        /// Her pause where dialogue hands over at a call's start, by `Handover` name (seconds): never longer than the
+        /// pause the call would get otherwise. A mood's own `dialogue` values replace these.
+        public var dialogueGaps: [String: Double] = NephisFlow.herDialogueGaps
         /// Her EQ's lift above 2.5 kHz for this pack's decoder (dB); nil = the shipped +5.95 (VoiceTilt.nephis).
         public var highShelfDB: Double?
         /// Her EQ's gentler sibilance (5.5-9 kHz turned down where it sticks out); nil = on. Off for a pack whose
@@ -160,9 +163,48 @@ public enum NephisFlow {
             /// Her tone in this mood against calm, as a 2.5 kHz shelf (dB; nil = none): the model makes tender and
             /// awe brighter than she is, sad and dread duller (PC chain, r13: 0.95 dB off on average, 0.10 with it).
             public var toneDB: Double?
-            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double, toneDB: Double? = nil) {
+            /// Her pause where dialogue hands over in this mood, by `Handover` name (seconds; nil = the chain's
+            /// `dialogueGaps`). Used as given, even when longer than her sentence pause (a pack measured it).
+            public var dialogue: [String: Double]?
+            public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double, toneDB: Double? = nil,
+                        dialogue: [String: Double]? = nil) {
                 self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB; self.toneDB = toneDB
+                self.dialogue = dialogue
             }
+        }
+
+        /// The pause before a call's first word (NephisFlowSynth.prepareNow). `pauseBefore`: the app's pause after the
+        /// sentence before (nil = 0.6, a Voice Lab line); `lastText`/`lastMood`: the piece read last and its mood (nil
+        /// at a read's start); `next`: the call's first piece; `handover`: dialogue across the pause, from the script
+        /// (nil = read from the quotation marks).
+        /// - Her pause after the paragraph before, in its mood; the director's own when it asks for more (a scene
+        ///   break, a title) or there is no mood (as before).
+        /// - A call that starts inside a paragraph (`pauseBefore` under `paragraphPauseFrom`: a mood change, the call
+        ///   length limit, the first sentence alone at a fast start) gets her pause after a sentence (`gap`) instead:
+        ///   a paragraph pause there was an extra ~1 s hole (tachinovel-tts-lab Q6).
+        /// - Where dialogue hands over (same speaker, a reply, dialogue ↔ narration), her own pause there: about
+        ///   0.66 s, never longer than the pause above (a mood's `dialogue` value as given) (lab idea #9).
+        public func callPause(pauseBefore: Double?, after lastText: String?, mood lastMood: String?, next: String,
+                              handover: NephisFlow.Handover? = nil) -> Double {
+            let director = (pauseBefore ?? 0.6) * paragraphGapScale
+            let paragraph = lastMood.flatMap { moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
+            // A read's first call (no join), a line without the app's pause (the Voice Lab), a scene break: as before.
+            guard let lastText, let before = pauseBefore, director <= 1.3 else { return paragraph }
+            let inside = before < NephisFlow.paragraphPauseFrom
+            var pause = inside ? gap(after: lastText, mood: lastMood) : paragraph
+            guard let kind = handover ?? NephisFlow.handover(after: lastText, before: next) else { return pause }
+            if let own = lastMood.flatMap({ moods[$0]?.dialogue?[kind.rawValue] }) { return own }
+            if let hers = dialogueGaps[kind.rawValue] { pause = min(pause, hers) }
+            return pause
+        }
+
+        /// Dialogue gaps from a pack: the names `Handover` knows, clamped to sane values.
+        static func clampedDialogue(_ gaps: [String: Double]) -> [String: Double] {
+            var out: [String: Double] = [:]
+            for (name, seconds) in gaps where NephisFlow.Handover(rawValue: name) != nil {
+                out[name] = min(2, max(0.1, seconds))
+            }
+            return out
         }
 
         /// The pause after a piece ending `piece`, in `mood`: her `trail` after one trailing off ("…", "...", also before
@@ -196,7 +238,12 @@ public enum NephisFlow {
             for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
                 moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
                                    paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)),
-                                   toneDB: m.toneDB.map { min(4, max(-4, $0)) })
+                                   toneDB: m.toneDB.map { min(4, max(-4, $0)) }, dialogue: m.dialogue.map(Self.clampedDialogue))
+            }
+            // A pack's dialogue gaps replace these one by one, clamped.
+            let packGaps = try c.decodeIfPresent([String: Double].self, forKey: .dialogueGaps) ?? [:]
+            for (name, seconds) in Self.clampedDialogue(packGaps) {
+                dialogueGaps[name] = seconds
             }
         }
     }
@@ -225,6 +272,61 @@ public enum NephisFlow {
         "triumph": .init(sentence: 0.48, trail: 0.5, paragraph: 0.65, gainDB: 3.8),
         "cold": .init(sentence: 0.54, trail: 0.6, paragraph: 0.72, gainDB: 1.6),
     ]
+
+    /// A pause before a call shorter than this (seconds, the app's) is inside a paragraph: HybridSpeechEngine's
+    /// paragraphPause, which never groups sentences across one.
+    public static let paragraphPauseFrom = 0.7
+
+    /// Dialogue across the pause before a call: the same speaker goes on (a quotation that continues), another one
+    /// replies (a new quote paragraph after a quote), or dialogue turns into narration or back. The script's names:
+    /// "sameSpeaker", "exchange", "switch" (src/core/narration/delivery.ts pauseContext).
+    public enum Handover: String, Sendable, Codable, Equatable, CaseIterable {
+        case sameSpeaker
+        case reply
+        case narration
+
+        /// From the script's handover name; nil for any other.
+        public init?(script: String) {
+            switch script {
+            case "sameSpeaker": self = .sameSpeaker
+            case "exchange": self = .reply
+            case "switch": self = .narration
+            default: return nil
+            }
+        }
+    }
+
+    /// Her pauses where dialogue hands over (her ElevenLabs reading, word-aligned, v4 chunks; tachinovel-tts-lab
+    /// quote_gaps.py, 2026-10-12): a reply between quote paragraphs 0.65 median / 0.66 mean, dialogue ↔ narration
+    /// 0.62-0.71 (inside a paragraph and across one), the same speaker going on inside one quotation 0.50. Calm puts
+    /// 0.84 s after a sentence and 1.04 s after a paragraph, which made conversations drag.
+    public static let herDialogueGaps: [String: Double] = [
+        Handover.sameSpeaker.rawValue: 0.50, Handover.reply.rawValue: 0.66, Handover.narration.rawValue: 0.66,
+    ]
+
+    /// The handover between `previous` (the piece read last) and `next` (the call's first piece), from their quotation
+    /// marks, for a call without the script's: a closed quote then a quote is a reply (the app's pause can't tell a new
+    /// paragraph there: the script's reply pause is under `paragraphPauseFrom` too), a quotation left open then a quote is
+    /// the same speaker going on; a quote on one side only is narration. nil = no dialogue on either side, or a
+    /// quotation left open into text that doesn't start with a quote (unsure: no change).
+    public static func handover(after previous: String, before next: String) -> Handover? {
+        let a = previous.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = next.trimmingCharacters(in: .whitespacesAndNewlines)
+        var open = false
+        for ch in a {
+            switch ch {
+            case "“", "«", "「": open = true
+            case "”", "»", "」": open = false
+            case "\"": open.toggle()
+            default: break
+            }
+        }
+        let endsSpoken = open || a.last.map { "”»」\"".contains($0) } == true
+        let startsSpoken = b.first.map { "“«「\"".contains($0) } == true
+        if endsSpoken && startsSpoken { return open ? .sameSpeaker : .reply }
+        if open { return nil }
+        return endsSpoken != startsSpoken ? .narration : nil
+    }
 
     /// The voice prompt for a paragraph: her clip (its first `clipFrames`), half the previous mood's clip and half
     /// this one's at a mood change, then the carry-over (the conditioning of the last latents she said).

@@ -61,6 +61,10 @@
   word never waits for it (her plain sound until it is up, "still loading" in the report), and steps aside when memory
   runs low ("low memory"). Kokoro's first-launch warm-up runs after hers instead of at the same time, and broken studio
   outputs play her plain sound instead of crashing.
+- Nephis no longer leaves an extra second of silence when her mood changes in the middle of a paragraph: she pauses
+  there as she does between sentences.
+- Nephis keeps conversations moving: between a quoted line and a reply, or a quote and the narration around it, she
+  pauses about 0.66 s (0.5 s when the same speaker goes on), as in her own recordings, instead of a full paragraph pause.
 
 ### Changed
 
