@@ -76,3 +76,4 @@
   studio, a studio switch, one Run the test (studio speed test + 2-minute listen), a plain-words result and one Copy
   report. The hidden Voice Lab is no longer needed for testing.
 - Diagnostics folder: the app's own voice log (native os_log lines, last hour) is copied as native.log, and a problem report adds native-log.txt, so a read that played nothing without crashing is explained on the PC.
+- Nephis with Natural delivery off no longer repeats passages: each of her calls reads one sentence (only natural delivery can cut a paragraph's audio back into sentences; before, a whole paragraph's audio played as its first sentence and was read again from each sentence after it).

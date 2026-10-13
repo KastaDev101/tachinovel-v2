@@ -203,6 +203,27 @@ public struct HybridScheduler: Sendable {
         slots[j] = .pending
     }
 
+    /// The sentences one model call reads, from `i` (of `count`): `i`, then each next sentence `joins` lets into the call
+    /// (`joins(j)`: j may follow j - 1 in it) while the text stays within `limit` characters (`length`, a space between
+    /// sentences). Only when the call's audio can be cut back into one buffer per sentence (`canCut`: natural delivery's
+    /// cutter); otherwise one sentence per call. Uncut, the whole call became its first sentence's buffer and the rest
+    /// were rendered again from the next sentence on, so each buffer replayed the rest of its group (Voice test
+    /// 2026-10-13, Nephis with Natural delivery off: every passage heard again, one sentence later each time).
+    public static func callGroup(from i: Int, count: Int, limit: Int, canCut: Bool, length: (Int) -> Int, joins: (Int) -> Bool) -> [Int] {
+        guard canCut else { return [i] }
+        var out = [i]
+        var total = length(i)
+        var j = i + 1
+        while j < count, joins(j) {
+            let next = length(j)
+            guard total + 1 + next <= limit else { break }
+            total += 1 + next
+            out.append(j)
+            j += 1
+        }
+        return out
+    }
+
     /// A render finished. A segment Apple took in the meantime stays taken (the audio is discarded).
     /// The synthesis of i is done but its audio is still being finished (the clean chain runs off the main thread):
     /// the next render may start; i becomes ready with `renderDone` once its buffer exists.

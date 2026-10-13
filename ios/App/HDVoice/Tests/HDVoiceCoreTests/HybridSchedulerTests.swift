@@ -307,4 +307,84 @@ final class HybridSchedulerTests: XCTestCase {
         while let i = s.nextRender() { s.renderDone(i, ok: true) }
         XCTAssertTrue(s.allRendered, "the next chapter's first sentences may be rendered now")
     }
+
+    func testCallGroupOnlyGroupsWhatCanBeCutApart() {
+        let lengths = [10, 20, 30, 40]
+        let group = { (i: Int, limit: Int, canCut: Bool) in
+            HybridScheduler.callGroup(from: i, count: lengths.count, limit: limit, canCut: canCut, length: { lengths[$0] }, joins: { $0 != 3 })
+        }
+        XCTAssertEqual(group(0, 400, true), [0, 1, 2], "up to the next sentence that doesn't join (a paragraph start)")
+        XCTAssertEqual(group(0, 61, true), [0, 1, 2], "10 + 1 + 20 + 1 + 30 characters fit")
+        XCTAssertEqual(group(0, 60, true), [0, 1])
+        XCTAssertEqual(group(0, 400, false), [0], "no cutter: one sentence per call")
+        XCTAssertEqual(group(3, 400, true), [3], "the last sentence")
+    }
+
+    /// The Voice test of 2026-10-13 (build 328, Nephis, Natural delivery off): its sentences' lengths as the report gave
+    /// them, its paragraph starts the read didn't join (11, 15, 16).
+    private static let lanternRoad = [28, 167, 138, 102, 33, 35, 20, 23, 42, 56, 26, 44, 154, 112, 67, 25, 44]
+
+    /// HybridSpeechEngine's flow path for one read, each call finished at once: the call starts at `nextRender`, its
+    /// sentences are `callGroup`'s (one sentence while less than 4 s is buffered: the first two calls), taken with
+    /// `extendRender`. With natural delivery the call is cut into one buffer per sentence; without it (renderedGroup) the
+    /// whole call is its first sentence's buffer and the rest are handed back. `canCut` is what the call grouping is
+    /// told. Returns what each played buffer reads, in play order, the calls, and the calls that started the read
+    /// afresh (not at `flowNext`: the report's readRestarts).
+    private func flowRead(natural: Bool, canCut: Bool) -> (heard: [[Int]], calls: Int, restarts: Int) {
+        let lengths = Self.lanternRoad
+        var s = HybridScheduler(count: lengths.count, kokoro: .ready, config: .init(ahead: 36, patient: true))
+        var buffers: [Int: [Int]] = [:]
+        var heard: [[Int]] = []
+        var flowNext = -1, calls = 0, restarts = 0
+        while true {
+            while let i = s.nextRender() {
+                let limit = calls < 2 ? lengths[i] : 400
+                let group = HybridScheduler.callGroup(from: i, count: lengths.count, limit: limit, canCut: canCut,
+                                                      length: { lengths[$0] }, joins: { ![11, 15, 16].contains($0) })
+                let members = [i] + (group.count > 1 ? s.extendRender(i, through: group[group.count - 1]) : [])
+                if i != flowNext { restarts += 1 }
+                flowNext = members[members.count - 1] + 1
+                calls += 1
+                if natural || members.count == 1 {
+                    for j in members {
+                        s.renderDone(j, ok: true)
+                        buffers[j] = [j]
+                    }
+                } else {
+                    for j in members.dropFirst() { s.releaseRender(j) }
+                    s.renderDone(i, ok: true)
+                    buffers[i] = members
+                }
+            }
+            switch s.decide(now: 0) {
+            case .kokoro(let i):
+                heard.append(buffers[i] ?? [])
+                s.started(i)
+                s.finished(i)
+            case .finished:
+                return (heard, calls, restarts)
+            case let other:
+                XCTFail("unexpected \(other)")
+                return (heard, calls, restarts)
+            }
+        }
+    }
+
+    func testFlowReadWithoutNaturalDeliveryHearsEverySentenceOnce() {
+        // Before: grouped although nothing could cut the call apart. The report's numbers (17 calls, 12 read restarts)
+        // and the recording: sentence 2's buffer read 2…8, then 3…10 from 41 s, 4…10 from 69 s, 5…10 from 89 s.
+        let before = flowRead(natural: false, canCut: true)
+        XCTAssertEqual(before.calls, 17)
+        XCTAssertEqual(before.restarts, 12)
+        XCTAssertEqual(Array(before.heard.prefix(6)), [[0], [1], Array(2...8), Array(3...10), Array(4...10), Array(5...10)])
+        // Now: one sentence per call, each heard once, in order; the read continues from call to call (one fresh start).
+        let after = flowRead(natural: false, canCut: false)
+        XCTAssertEqual(after.heard, Self.lanternRoad.indices.map { [$0] })
+        XCTAssertEqual(after.restarts, 1)
+        // Natural delivery on: still whole paragraphs per call, cut into sentences, each heard once.
+        let natural = flowRead(natural: true, canCut: true)
+        XCTAssertEqual(natural.heard, Self.lanternRoad.indices.map { [$0] })
+        XCTAssertEqual(natural.restarts, 1)
+        XCTAssertLessThan(natural.calls, after.calls)
+    }
 }

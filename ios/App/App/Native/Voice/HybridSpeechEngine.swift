@@ -612,19 +612,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     /// Nephis's flow: sentence i and the ones after it in the same paragraph (never across a paragraph break, so the
-    /// model never reads one as a comma), same read, up to `limit` characters.
+    /// model never reads one as a comma), same read, up to `limit` characters. Only with natural delivery, whose cutter
+    /// gives each sentence of the call its own buffer (renderedGroup); without it, one sentence per call, as chunkGroup.
     private func flowGroup(from i: Int, limit: Int) -> [Int] {
-        var out = [i]
-        var length = Self.readText(segments[i], expressive: true).count
-        var j = i
-        while j + 1 < segments.count, (segments[j].naturalPause ?? segments[j].pauseAfter) < Self.paragraphPause, read(for: j) == read(for: j + 1) {
-            let next = Self.readText(segments[j + 1], expressive: true).count
-            guard length + 1 + next <= limit else { break }
-            length += 1 + next
-            j += 1
-            out.append(j)
-        }
-        return out
+        HybridScheduler.callGroup(from: i, count: segments.count, limit: limit, canCut: natural != nil,
+                                  length: { Self.readText(segments[$0], expressive: true).count },
+                                  joins: { j in
+                                      (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause && read(for: j - 1) == read(for: j)
+                                  })
     }
 
     /// A pause this long or longer ends a paragraph (the script's paragraph and scene pauses).
