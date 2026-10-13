@@ -356,7 +356,7 @@ extension DiagnosticsFolder {
         guard let webView else { return }
         let js = "JSON.stringify({trail: localStorage.getItem('tachinovel.v2.trail'), route: localStorage.getItem('tachinovel.v2.screen')})"
         let answer = PageAnswer()
-        webView.evaluateJavaScript(js) { value, _ in answer.finish(value as? String) }
+        ask(webView, js, answer)
         Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             answer.finish(nil)
@@ -366,18 +366,17 @@ extension DiagnosticsFolder {
         page = ((obj["trail"] as? String) ?? "[]", (obj["route"] as? String) ?? "null")
     }
 
+    /// The completion-handler call from a synchronous function (in an async one the compiler asks for the async variant,
+    /// which can't be given a time limit).
+    private func ask(_ webView: WKWebView, _ js: String, _ answer: PageAnswer) {
+        webView.evaluateJavaScript(js) { value, _ in answer.finish(value as? String) }
+    }
+
     /// Copy now (`force`) or when due. `completion` runs once the copy is over (whatever happened; `health` says).
     func mirror(force: Bool, completion: (@Sendable () -> Void)? = nil) {
-        let root: URL
-        switch resolveLink() {
-        case .unlinked:
+        guard case .ok(let root) = resolveLink() else {
             completion?()
             return
-        case .broken:
-            completion?()
-            return
-        case .ok(let url):
-            root = url
         }
         if copying {
             if force { again = true }
