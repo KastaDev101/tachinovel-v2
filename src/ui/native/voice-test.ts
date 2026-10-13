@@ -68,6 +68,7 @@ export function summarize(r: Obj): Line[] {
   ];
   if (speed > 0) lines.push({ ok: speed >= 8, text: `Speed: ${speed.toFixed(1)}× real time (goal 8×).` });
   lines.push(...studioCallLines(flow));
+  lines.push(...pacingLines(flow));
   if (Number.isFinite(start)) lines.push({ ok: start <= 2000, text: `Started ${(start / 1000).toFixed(1)} s after the tap.` });
   lines.push({ ok: crashes === 0, text: crashes === 0 ? 'No crashes.' : `${crashes} crash${crashes === 1 ? '' : 'es'} during the test.` });
   // Her model not loaded for lack of free memory (native's flow.memory), in its own plain words.
@@ -78,6 +79,26 @@ export function summarize(r: Obj): Line[] {
   lines.push({ ok: r.thermalEnd === 'nominal' || r.thermalEnd === 'fair', text: `Phone heat: ${heat}.` });
   if (r.ended !== true) lines.push({ ok: false, text: 'The test was stopped before the end.' });
   return lines;
+}
+
+/**
+ * Her render pacing in plain words (native's flow.pacing, heat plan 2026-10-13; nothing in builds that don't report
+ * it): seconds of her audio made against seconds played, the share of the time she was working (duty cycle) and the
+ * cushion she renders to. Worth a look when she made more than the cushion (plus a paragraph) beyond what played.
+ */
+export function pacingLines(flow: Obj): Line[] {
+  const p = (flow.pacing as Obj | undefined) ?? {};
+  const made = Number(p.generatedSeconds ?? NaN);
+  const played = Number(p.playedSeconds ?? NaN);
+  const cushion = Number(p.cushionSeconds ?? NaN);
+  if (!Number.isFinite(made) || !Number.isFinite(played) || !Number.isFinite(cushion) || made <= 0) return [];
+  const duty = Math.round(Number(p.dutyCycle ?? 0) * 100);
+  const holds = Number(p.holds ?? 0);
+  const rests = `${holds} rest${holds === 1 ? '' : 's'} at the cushion`;
+  return [{
+    ok: made - played <= cushion + 15,
+    text: `Pacing: ${made.toFixed(0)} s of her audio made for ${played.toFixed(0)} s played; working ${duty}% of the time (cushion ${cushion.toFixed(0)} s, ${rests}).`,
+  }];
 }
 
 /** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
@@ -420,6 +441,8 @@ export function openVoiceTest(): void {
         breaks: listen.breaks ?? null,
         otherVoice: listen.otherVoiceSentences ?? null,
         audioSeconds: flow.audioSeconds ?? null,
+        // Her pacing (heat plan 2026-10-13): made vs played, duty cycle, the cushion for the heat now.
+        pacing: flow.pacing ?? null,
       });
       say(`Recording: ${clock(minutes * 60_000 - (Date.now() - t0))} left. Play any chapter with Listen and keep TachiNovel open.`);
       for (let i = 0; i < 50 && running; i++) await sleep(300);

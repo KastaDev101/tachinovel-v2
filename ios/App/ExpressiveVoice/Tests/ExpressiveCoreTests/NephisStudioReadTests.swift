@@ -28,6 +28,26 @@ final class NephisStudioReadTests: XCTestCase {
         XCTAssertEqual(x, before)
     }
 
+    func testAPackCanAskForHerEQAfterTheStudio() throws {
+        // "eqAfterStudio": true (Kasta 2026-10-13, the darker tone with the studio): a rendered call gets her EQ at the
+        // studio's rate, still no mood shelf; a skipped call is unchanged. Absent or not a bool: off, as before.
+        let darker = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"highShelfDB": 2, "eqAfterStudio": true}"#.utf8))
+        XCTAssertTrue(darker.eqAfterStudio)
+        let eq = NephisFlow.MimiEQ(highShelfDB: 2, softSibilance: true)
+        XCTAssertEqual(NephisFlow.studioTone(studioUsed: true, moodToneDB: -1.5, chain: darker), NephisFlow.StudioTone(moodShelfDB: 0, mimiEQ: eq))
+        XCTAssertEqual(NephisFlow.studioTone(studioUsed: false, moodToneDB: -1.5, chain: darker), NephisFlow.StudioTone(moodShelfDB: -1.5, mimiEQ: eq))
+        XCTAssertFalse(NephisFlow.Chain().eqAfterStudio)
+        let odd = try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"eqAfterStudio": "yes"}"#.utf8))
+        XCTAssertFalse(odd.eqAfterStudio, "a value this version can't read keeps the pack playing as before")
+        // Applied at 44.1 kHz it is exactly her EQ at that rate.
+        var x = (0..<44_100).map { Float(sin(2 * Double.pi * 300 * Double($0) / 44_100) * 0.1) }
+        var expected = x
+        eq.apply(&expected, sampleRate: 44_100)
+        NephisFlow.studioTone(studioUsed: true, moodToneDB: 3, chain: darker).apply(&x, sampleRate: 44_100)
+        XCTAssertEqual(x, expected)
+        XCTAssertNotEqual(x[30_000], Float(sin(2 * Double.pi * 300 * 30_000 / 44_100) * 0.1), "her EQ changed the sound")
+    }
+
     func testASkippedCallGetsTheMoodShelfThenHerEQ() {
         // The same as the read without the studio: decode's mood shelf, then the player's EQ.
         var x = (0..<24_000).map { (i: Int) -> Float in

@@ -558,6 +558,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let sketch: [[Float]] = config == nil ? [] : assets.projection.denormalized(p.stream)
         // A call the studio skips or fails gets the tone the read without the studio gets (A3).
         let plainTone = NephisFlow.studioTone(studioUsed: false, moodToneDB: p.toneDB, chain: assets.chain)
+        // A call the studio rendered: its sound as made, or with her EQ after it when the pack asks ("eqAfterStudio").
+        let studioTone = NephisFlow.studioTone(studioUsed: true, moodToneDB: p.toneDB, chain: assets.chain)
         // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
         let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?, n: Int) = { hurry in await self.studioForCall(hurry: hurry) }
         let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, paced in
@@ -588,6 +590,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                                                                  check: studioCheck)
                         out.samples = r.pcm
                         out.studioUsed = !r.report.bypassed
+                        if out.studioUsed, studioTone.mimiEQ != nil { studioTone.apply(&out.samples, sampleRate: config.sample_rate) }
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
                         out.studio = r.report
                         if !p.hurry { out.off = await studioDone(ready.n, r.report, studio.computeUnits, p.paced) }

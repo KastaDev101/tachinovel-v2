@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chipSummary, combinedReport, runParts, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
+import { chipSummary, combinedReport, pacingLines, runParts, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
 import { nephisOffLine } from '../src/ui/native/voices-ui.ts';
 
 describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () => {
@@ -63,6 +63,17 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
       listen: { breaks: 0, breakSeconds: 0, otherVoiceSentences: 0 },
     }).map((l) => l.text);
     expect(lines.slice(2, 5)).toEqual(['Speed: 10.0× real time (goal 8×).', 'Her studio rendered all 4 of her calls.', 'Endings: none of 10 was cut off.']);
+  });
+
+  it('says how she paced her renders: made vs played, working time and the cushion', () => {
+    expect(pacingLines({ pacing: { generatedSeconds: 150.2, playedSeconds: 118, cushionSeconds: 120, dutyCycle: 0.14, holds: 3 } })).toEqual([
+      { ok: true, text: 'Pacing: 150 s of her audio made for 118 s played; working 14% of the time (cushion 120 s, 3 rests at the cushion).' },
+    ]);
+    // Flat out (the 2026-10-13 Voice test: 222 s made in 101 s, with little played): worth a look.
+    expect(pacingLines({ pacing: { generatedSeconds: 222, playedSeconds: 40, cushionSeconds: 60, dutyCycle: 1, holds: 1 } })[0]?.ok).toBe(false);
+    // Older builds and reads without her say nothing.
+    expect(pacingLines({})).toEqual([]);
+    expect(pacingLines({ pacing: { generatedSeconds: 0, playedSeconds: 0, cushionSeconds: 120 } })).toEqual([]);
   });
 
   it('the passage exercises the long paragraphs, dialogue, "…" and a system line', () => {

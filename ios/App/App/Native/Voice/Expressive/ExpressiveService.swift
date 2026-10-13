@@ -1205,8 +1205,13 @@ final class ExpressiveService {
             "refusals": f.memoryRefusals, "lastRefusal": f.lastMemoryRefusal ?? NSNull(), "warnings": memoryWarnings,
             "restingSeconds": Int(memoryHold.remaining(at: Date()).rounded(.up)), "freeMB": Self.freeMemoryMB().map { Self.r1($0) } ?? NSNull(),
         ]
+        // Her render pacing (heat plan 2026-10-13): cushion target, seconds generated vs played, duty cycle.
+        let pacing = NarrationController.shared.speechEngine.pacingReport
+        // Her pack's tone EQ after the studio (chain "eqAfterStudio"; loaded assets only, as textForm).
+        let eqAfterStudio = nephisFlowAssetsCache.flatMap { $0 }?.chain.eqAfterStudio ?? false
         guard f.calls > 0 else {
-            return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm, "memory": memory] as [String: Any]
+            return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm, "memory": memory,
+                    "pacing": pacing, "eqAfterStudio": eqAfterStudio] as [String: Any]
         }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
@@ -1219,7 +1224,7 @@ final class ExpressiveService {
                                "recognize": Self.r2(f.recognizeMs / audio), "decode": Self.r2(f.decodeMs / audio),
                                "call": Self.r2(f.totalMs / audio)],
             "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
-            "sessionRate": sessionRate,
+            "sessionRate": sessionRate, "pacing": pacing, "eqAfterStudio": eqAfterStudio,
         ]
         // Her studio (B7): calls it rendered, why it skipped the others, the rates and moods, and every call in order
         // (`callLog`, to line up with the recording).

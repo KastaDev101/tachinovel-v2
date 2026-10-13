@@ -132,6 +132,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var paceItem: DispatchWorkItem?
     /// When her last call's latents were ready (the pacing gap counts from there).
     private var lastFlowDone: Date?
+    /// Her cushion (heat plan 2026-10-13): renders stop once it is banked and start again when playback has drawn it
+    /// down (RenderPacer); also the read's generated/played seconds and duty cycle for the Voice test report.
+    private var pacer = RenderPacer()
+    /// When the read stopped (the report's duty cycle counts the read's time only); nil while it goes on.
+    private var sessionEnded: Date?
     private var waiting = false
     private var paused = false
     private var loudness = LoudnessMatcher()
@@ -176,6 +181,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // 24 kHz: a studio read never matches it, so her studio sound gets no polish EQ (its tone is NephisFlowSynth's).
         polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
         sessionStart = Date()
+        sessionEnded = nil
+        pacer = RenderPacer()
         firstAudioLogged = false
         currentSource = nil
         lastFallback = nil
@@ -189,7 +196,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             // Nephis: no breaths ("no breaths please", Kasta), her own sound, the start-up sound turned down.
             let nephis = listenEngine == .pocketTts && d.isNephis
             let source: (any BreathSource)? = d.breaths && !nephis ? (pack.isEmpty ? ProceduralBreath() as any BreathSource : Self.breaths(at: rate)) : nil
-            // Her studio sets her whole tone (NephisFlowSynth): no EQ on top of it. Without it, her EQ as before.
+            // Her studio sets her whole tone (NephisFlowSynth): no EQ on top of it here. A pack asking for her EQ after
+            // the studio (chain "eqAfterStudio") gets it there, call by call at 44.1 kHz. Without it, her EQ as before.
             let tilt: VoiceTilt? = listenEngine == .pocketTts ? (nephis ? (studioRead ? nil : Self.nephisTilt) : VoiceTilt.pocketTts) : nil
             natural = NaturalFinisher(NaturalFinish(audio: audio, studioSound: d.studioSound, breaths: source, sampleRate: rate,
                                                     seed: UInt64(truncatingIfNeeded: gen), tilt: tilt, plain: nephis))
@@ -243,7 +251,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         sceneBusy = false
         cancelWait()
         waiting = false
-        if let s = scheduler { lastScheduler = s }
+        if let s = scheduler {
+            lastScheduler = s
+            sessionEnded = Date()
+        }
         scheduler = nil
         if graphReady { player.stop() }
         if synth.isSpeaking || synth.isPaused { synth.stopSpeaking(at: .immediate) }
@@ -376,17 +387,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
             return
         }
+        // Her cushion banked: no render until playback has drawn it down (RenderPacer, with a look again scheduled).
+        if nephisOnly, holdForCushion() { return }
         if nephisOnly, let wait = paceWait() {
-            if paceItem == nil {
-                let g = gen
-                let item = DispatchWorkItem { [weak self] in
-                    guard let self, g == self.gen else { return }
-                    self.paceItem = nil
-                    self.pumpRender()
-                }
-                paceItem = item
-                DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
-            }
+            schedulePace(after: wait)
             return
         }
         guard let i = scheduler?.nextRender() else { return prewarmLookahead() }
@@ -445,9 +449,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
             // A flow call frees the next one when its latents are ready (`prepared`), or here if it failed before.
             let prepared = FlowCall()
+            // The report's duty cycle: from this call's start to its audio (calls in flight together count once).
+            pacer.callStarted(now: Date().timeIntervalSince(sessionStart))
             let handle: (Result<ExpressiveAudio, Error>) -> Void = { [weak self] result in
                 self?.onMain {
                     guard let self, g == self.gen, self.scheduler != nil else { return }
+                    let made = (try? result.get()).map { $0.sampleRate > 0 ? Double($0.samples.count) / Double($0.sampleRate) : 0 } ?? 0
+                    self.pacer.callEnded(now: Date().timeIntervalSince(self.sessionStart), audioSeconds: made)
                     if flow {
                         if !prepared.done { self.flowBusy = false }
                         if case .failure = result {
@@ -659,9 +667,55 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Audio banked before her renders slow to a steady pace (seconds).
     static let paceFrom = 60.0
 
+    /// Her cushion is banked (RenderPacer: 120 s, 60 s from "fair" heat): hold her renders until playback has drawn it
+    /// down by the refill (30 s, 20 s warm), and look again about then. Never while playback waits for audio. The
+    /// Voice test's listening part reads through here too (Narration.play), so it is paced exactly as Listen is.
+    private func holdForCushion() -> Bool {
+        let now = Date().timeIntervalSince(sessionStart)
+        guard !waiting else {
+            pacer.release(now: now)
+            return false
+        }
+        let thermal = ProcessInfo.processInfo.thermalState.rawValue
+        let buffered = bufferedAhead()
+        guard pacer.hold(buffered: buffered, thermal: thermal, now: now) else { return false }
+        schedulePace(after: RenderPacer.recheck(buffered: buffered, thermal: thermal))
+        return true
+    }
+
+    /// pumpRender again after `wait` seconds (one look scheduled at a time; a new read cancels it).
+    private func schedulePace(after wait: TimeInterval) {
+        guard paceItem == nil else { return }
+        let g = gen
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, g == self.gen else { return }
+            self.paceItem = nil
+            self.pumpRender()
+        }
+        paceItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
+    }
+
+    /// Her render pacing in the read playing or the last one (Voice test report, heat plan 2026-10-13): the cushion
+    /// she renders to and the level she renders again below, seconds generated (her audio) and played (every voice),
+    /// the duty cycle (share of the read's time with her calls in flight), and the holds at the cushion.
+    var pacingReport: [String: Any] {
+        let p = pacer
+        let now = (sessionEnded ?? Date()).timeIntervalSince(sessionStart)
+        let thermal = ProcessInfo.processInfo.thermalState.rawValue
+        let r1 = { (x: Double) in (x * 10).rounded() / 10 }
+        return [
+            "cushionSeconds": p.lastTarget, "resumeBelowSeconds": RenderPacer.resumeBelow(thermal: thermal),
+            "cushionNow": RenderPacer.target(thermal: thermal), "bufferedSeconds": r1(scheduler == nil ? 0 : bufferedAhead()),
+            "generatedSeconds": r1(p.generatedSeconds), "playedSeconds": r1(p.playedSeconds), "readSeconds": r1(now),
+            "busySeconds": r1(p.busy(at: now)), "dutyCycle": (p.dutyCycle(at: now) * 100).rounded() / 100,
+            "holds": p.holds, "heldSeconds": r1(p.held(at: now)), "holding": p.holding,
+        ]
+    }
+
     /// How long to wait before her next call: none while less than `paceFrom` is banked (she renders flat out to
-    /// build the cushion), then a gap after each call (1.5 s, 3 s past two minutes, doubled from "fair" heat), so the
-    /// chip runs at part duty instead of bursting.
+    /// build the first minute), then a gap after each call (1.5 s, doubled from "fair" heat) until the cushion is
+    /// banked (holdForCushion), so the chip runs at part duty instead of bursting.
     private func paceWait() -> TimeInterval? {
         let buffered = bufferedAhead()
         guard buffered > Self.paceFrom, let done = lastFlowDone else { return nil }
@@ -921,6 +975,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func kokoroFinished(_ i: Int, gen g: Int, epoch e: Int) {
         guard g == gen, e == epoch, queued.first == i else { return }
         queued.removeFirst()
+        if let heard = buffers[i] { pacer.played(seconds: Double(heard.frameLength) / heard.format.sampleRate) }
         buffers[i] = nil
         scheduler?.finished(i)
         let id = segments[i].id

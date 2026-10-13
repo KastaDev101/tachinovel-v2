@@ -122,6 +122,11 @@ public enum NephisFlow {
         /// decoder already matches her S sounds: on the phone it pulled them to 6.1 kHz, hers sit at 6.35-6.4 (duller,
         /// a little lispy; Voice test 2026-10-09).
         public var softSibilance: Bool?
+        /// Her tone EQ (MimiEQ: the lift above, the warmth, the gentler sibilance) also on the calls her studio
+        /// rendered, after it, at its 44.1 kHz (pack.json "eqAfterStudio": true). Off (the default): her studio sound is
+        /// her whole tone, as every pack before. For a pack whose studio is brighter than she should sound (Kasta,
+        /// 2026-10-13: the darker tone, with the studio).
+        public var eqAfterStudio = false
         /// Words this model says wrong, respelled the way it says them right (whole words, any case); a pack's list
         /// replaces these entries one by one ("" drops one).
         public var respell: [String: String] = NephisFlow.herRespell
@@ -229,6 +234,7 @@ public enum NephisFlow {
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
             highShelfDB = try c.decodeIfPresent(Double.self, forKey: .highShelfDB).map { min(8, max(-2, $0)) }
             softSibilance = try c.decodeIfPresent(Bool.self, forKey: .softSibilance)
+            eqAfterStudio = (try? c.decodeIfPresent(Bool.self, forKey: .eqAfterStudio)) ?? false
             // A form this version doesn't know (or not a string) reads the app's text: a newer pack still plays.
             text = (try? c.decodeIfPresent(String.self, forKey: .text)).flatMap(PocketTextForm.init(rawValue:)) ?? .app
             for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
@@ -856,8 +862,11 @@ extension NephisFlow {
         }
     }
 
+    /// A rendered call with the pack's "eqAfterStudio": her EQ, applied at the studio's rate (still no mood shelf, as
+    /// before for a rendered call).
     public static func studioTone(studioUsed: Bool, moodToneDB: Double, chain: Chain) -> StudioTone {
-        studioUsed ? StudioTone(moodShelfDB: 0, mimiEQ: nil) : StudioTone(moodShelfDB: moodToneDB, mimiEQ: MimiEQ(chain: chain))
+        guard studioUsed else { return StudioTone(moodShelfDB: moodToneDB, mimiEQ: MimiEQ(chain: chain)) }
+        return StudioTone(moodShelfDB: 0, mimiEQ: chain.eqAfterStudio ? MimiEQ(chain: chain) : nil)
     }
 }
 
