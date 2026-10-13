@@ -143,9 +143,39 @@ final class VoiceRun: @unchecked Sendable {
     private func beat() {
         let labels: (chapter: String?, voice: String?) = playing ? NarrationController.shared.runLabels : (nil, nil)
         let footprint = VoiceLab.memoryFootprintMB()
+        let busyNames = sentinels.filter { $0.inFlight }.map(\.name)
         journal.beat(RunHeartbeat(at: Date(), chapter: labels.chapter, voice: labels.voice, thermal: ExpressiveService.thermalName(),
                                   memoryMB: footprint >= 0 ? (footprint * 10).rounded() / 10 : nil, availableMB: Self.availableMB(),
-                                  busy: sentinels.filter { $0.inFlight }.map(\.name), foreground: foreground, playing: playing))
+                                  busy: busyNames, foreground: foreground, playing: playing))
+        Self.appendBeatLine(memoryMB: footprint, availableMB: Self.availableMB(), voice: labels.voice, chapter: labels.chapter,
+                            busy: busyNames, playing: playing, foreground: foreground)
+    }
+
+    /// The heartbeat as one line in logs/voice-beat.log, which survives a memory kill (the process's own os_log doesn't)
+    /// and is mirrored to the Diagnostics folder: what memory did, second by second, before iOS closed the app.
+    /// Kept under ~256 KB (the older half is dropped).
+    private static func appendBeatLine(memoryMB: Double, availableMB: Double?, voice: String?, chapter: String?,
+                                       busy: [String], playing: Bool, foreground: Bool) {
+        let logs = CoreHost.shared.localAppDir.appendingPathComponent("logs", isDirectory: true)
+        let url = logs.appendingPathComponent("voice-beat.log")
+        let clock = DateFormatter()
+        clock.dateFormat = "HH:mm:ss"
+        let line = "\(clock.string(from: Date())) mem \(Int(memoryMB)) MB free \(availableMB.map { String(Int($0)) } ?? "?") MB"
+            + " thermal \(ExpressiveService.thermalName()) voice \(voice ?? "-") playing \(playing) fg \(foreground)"
+            + " busy \(busy.joined(separator: ",")) chapter \(chapter ?? "-")\n"
+        let fm = FileManager.default
+        try? fm.createDirectory(at: logs, withIntermediateDirectories: true)
+        if let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 256 * 1024,
+           let data = try? Data(contentsOf: url) {
+            try? Data(data.suffix(128 * 1024)).write(to: url, options: .atomic)
+        }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+        } else {
+            try? Data(line.utf8).write(to: url)
+        }
     }
 
     /// Memory left before iOS's limit for the app, MB (nil where the system doesn't say).
