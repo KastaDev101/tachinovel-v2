@@ -401,14 +401,15 @@ struct MasterSection: Sendable, Equatable {
 }
 
 /// A cascade of biquads whose state carries over from one call to the next. With Accelerate each section is one
-/// vDSP_deq22 pass (direct form I), its state the two inputs and two outputs before the call, kept here explicitly:
-/// the same audio whether a read comes in one call or in many.
+/// vDSP_deq22D pass (direct form I, double precision), its state the two inputs and two outputs before the call, kept
+/// here explicitly: the same audio whether a read comes in one call or in many. (Single precision, vDSP_biquad or
+/// vDSP_deq22, gave answers up to 1.7e-4 apart for the same audio split differently: CI 2026-10-13.)
 struct MasterCascade: Sendable {
     let sections: [MasterSection]
     #if canImport(Accelerate)
-    private let coefficients: [[Float]]
+    private let coefficients: [[Double]]
     /// Per section: x[n-2], x[n-1], y[n-2], y[n-1].
-    private var state: [Float]
+    private var state: [Double]
     #else
     private var z: [Double]
     #endif
@@ -416,8 +417,8 @@ struct MasterCascade: Sendable {
     init(_ sections: [MasterSection]) {
         self.sections = sections
         #if canImport(Accelerate)
-        coefficients = sections.map { [Float($0.b0), Float($0.b1), Float($0.b2), Float($0.a1), Float($0.a2)] }
-        state = [Float](repeating: 0, count: 4 * sections.count)
+        coefficients = sections.map { [$0.b0, $0.b1, $0.b2, $0.a1, $0.a2] }
+        state = [Double](repeating: 0, count: 4 * sections.count)
         #else
         z = [Double](repeating: 0, count: 2 * sections.count)
         #endif
@@ -428,22 +429,22 @@ struct MasterCascade: Sendable {
         guard !sections.isEmpty, !x.isEmpty else { return x }
         #if canImport(Accelerate)
         let n = x.count
-        var input = [Float](repeating: 0, count: n + 2)
-        var output = [Float](repeating: 0, count: n + 2)
-        for i in 0..<n { input[i + 2] = x[i] }
+        var input = [Double](repeating: 0, count: n + 2)
+        var output = [Double](repeating: 0, count: n + 2)
+        for i in 0..<n { input[i + 2] = Double(x[i]) }
         for k in coefficients.indices {
             input[0] = state[4 * k]
             input[1] = state[4 * k + 1]
             output[0] = state[4 * k + 2]
             output[1] = state[4 * k + 3]
-            vDSP_deq22(input, 1, coefficients[k], &output, 1, vDSP_Length(n))
+            vDSP_deq22D(input, 1, coefficients[k], &output, 1, vDSP_Length(n))
             state[4 * k] = input[n]
             state[4 * k + 1] = input[n + 1]
             state[4 * k + 2] = output[n]
             state[4 * k + 3] = output[n + 1]
             swap(&input, &output)
         }
-        return Array(input[2...])
+        return input[2...].map { Float($0) }
         #else
         var y = x
         for i in y.indices {
