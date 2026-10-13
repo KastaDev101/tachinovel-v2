@@ -192,4 +192,27 @@ final class NephisGuardsTests: XCTestCase {
         XCTAssertEqual(StudioPace.words(0.04), "0.04x real time")
         XCTAssertEqual(StudioPace.words(2.26), "2.3x real time")
     }
+
+    // MARK: - The Voice test's studio speed test against the clock (2026-10-13: pack 7's studio never finished)
+
+    func testTheStudioSpeedTestStopsWhenOutOfTimeOrTooSlow() {
+        // The warm-up only keeps to the clock: its first run prepares the models, so its pace says nothing yet.
+        XCTAssertNil(StudioTestBudget.verdict(projectedX: 0.2, elapsedSeconds: 30, paced: false))
+        XCTAssertEqual(StudioTestBudget.verdict(projectedX: 0.2, elapsedSeconds: 60, paced: false), "timed out after 60 s")
+        // The timed render stops as soon as it can no longer reach real time.
+        XCTAssertEqual(StudioTestBudget.verdict(projectedX: 0.3, elapsedSeconds: 12, paced: true), "studio too slow: 0.3x real time")
+        XCTAssertNil(StudioTestBudget.verdict(projectedX: 1.0, elapsedSeconds: 12, paced: true))
+        XCTAssertNil(StudioTestBudget.verdict(projectedX: 2.4, elapsedSeconds: 59.9, paced: true))
+        // Out of time wins over the pace.
+        XCTAssertEqual(StudioTestBudget.verdict(projectedX: 0.3, elapsedSeconds: 61, paced: true), "timed out after 60 s")
+        XCTAssertEqual(StudioTestBudget.left(elapsedSeconds: 15), 45)
+        XCTAssertEqual(StudioTestBudget.left(elapsedSeconds: 75), 0)
+    }
+
+    func testAFailedStudioLoadSaysWhenMemoryWasShort() {
+        XCTAssertEqual(StudioTestBudget.loadFailure("Error 5", freeMB: 412.4), "not enough memory to load the studio (412 MB free)")
+        XCTAssertEqual(StudioTestBudget.loadFailure("Error 5", freeMB: 2_400), "couldn't load the studio: Error 5")
+        // Unknown free memory (the simulator) is never the reason.
+        XCTAssertEqual(StudioTestBudget.loadFailure("Error 5", freeMB: nil), "couldn't load the studio: Error 5")
+    }
 }

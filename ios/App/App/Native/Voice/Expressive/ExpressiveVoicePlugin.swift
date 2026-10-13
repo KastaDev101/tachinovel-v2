@@ -61,6 +61,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "deleteVoice", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "playVoiceSample", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "studioTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioTestStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "studioEnable", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nephisPacks", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selectNephisPack", returnType: CAPPluginReturnPromise),
@@ -323,6 +324,9 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     /// before the result goes back, and Nephis is warmed again first when she is Listen's voice (the listening test then
     /// starts as Listen does). `placement: true`: only where Core ML runs each model (MLComputePlan), on its own. One at a
     /// time: a second one while one runs is refused (`busy`).
+    /// Against the clock (StudioTestBudget, 2026-10-13: pack 7's full studio on a hot phone never finished): load and both
+    /// renders share 60 s, and the timed render stops once it projects under real time; then `gaveUp` with the reason
+    /// in `error` ("studio too slow: 0.3x real time", "timed out after 60 s"). `studioTestStop` cancels it (`stopped`).
     @objc func studioTest(_ call: CAPPluginCall) {
         guard let dir = NephisModelPack.active?.appendingPathComponent("Models/nephis-studio", isDirectory: true),
               FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
@@ -338,14 +342,41 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
             if NarrationController.shared.status == .playing { NarrationController.shared.pause() }
             let sentinel = ExpressiveService.shared.sentinel
             ExpressiveService.shared.clearForStudioTest {
-                Task.detached(priority: .userInitiated) {
+                let task = Task.detached(priority: .userInitiated) {
                     let out = await Self.runStudioTest(dir: dir, placementOnly: placementOnly, sentinel: sentinel)
                     DispatchQueue.main.async {
                         ExpressiveService.shared.studioTestEnded { call.resolve(out) }
                     }
                 }
+                ExpressiveService.shared.studioTestTask = task
+                // Stop came while the other models were still being released.
+                if ExpressiveService.shared.studioTestStopAsked { task.cancel() }
             }
         }
+    }
+
+    /// The Voice test's Stop during the studio speed test: cancels it (it stops between Core ML's models and pieces, and
+    /// answers `stopped`); `stopping` false when no studio test runs.
+    @objc func studioTestStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let service = ExpressiveService.shared
+            guard service.studioTestRunning else { return call.resolve(["stopping": false]) }
+            service.studioTestStopAsked = true
+            service.studioTestTask?.cancel()
+            call.resolve(["stopping": true])
+        }
+    }
+
+    /// Why the studio test stopped early: a verdict of StudioTestBudget at `step`, or a pack whose studio.json is gone.
+    private enum StudioTestEnd: Error {
+        case gaveUp(String, step: String)
+        case noStudio
+    }
+
+    /// One of the test's renders: its report (nil when the clock cut it off inside a piece), and why it gave up, if it did.
+    private struct TimedRender: Sendable {
+        let report: NephisStudio.Report?
+        let gaveUp: String?
     }
 
     /// The studio test itself, once nothing else holds a model (studioTest).
@@ -371,40 +402,113 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
         var out: [String: Any]
         var ok = false
+        var loaded = false
+        let t0 = Date()
+        let elapsed: @Sendable () -> Double = { Date().timeIntervalSince(t0) }
         sentinel.begin("studio test \(system)")
         do {
-            let t0 = Date()
-            // The test's own studio lives in this block only: freed before the result goes back.
-            if let studio = try await NephisStudio.load(from: dir) {
-                let loadMs = Date().timeIntervalSince(t0) * 1000
-                note("loaded")
-                let seconds = 10
-                var rng = SystemRandomNumberGenerator()
-                let pcm = (0..<(NephisStudio.inputRate * seconds)).map { _ in Float.random(in: -0.05...0.05, using: &rng) }
-                let latents = (0..<(seconds * 25 / 2)).map { _ in (0..<32).map { _ in Float.random(in: -1...1, using: &rng) } }
-                _ = try await studio.render(pcm24: pcm, latents: latents)
-                note("render 1")
-                _ = try await studio.render(pcm24: pcm, latents: latents)
-                note("render 2")
-                let r = await studio.lastReport
+            // The test's own studio lives in this block only: freed before the result goes back. Its load keeps to the
+            // budget too (Core ML only sees a stop between its models; past the budget the test stops waiting for it).
+            let made = try await Self.within(StudioTestBudget.left(elapsedSeconds: elapsed())) { () async throws -> NephisStudio in
+                guard let s = try await NephisStudio.load(from: dir) else { throw StudioTestEnd.noStudio }
+                return s
+            }
+            guard let studio = made else { throw StudioTestEnd.gaveUp(StudioTestBudget.timeoutWords, step: "load") }
+            loaded = true
+            let loadMs = elapsed() * 1000
+            note("loaded")
+            let seconds = 10
+            var rng = SystemRandomNumberGenerator()
+            let pcm = (0..<(NephisStudio.inputRate * seconds)).map { _ in Float.random(in: -0.05...0.05, using: &rng) }
+            let latents = (0..<(seconds * 25 / 2)).map { _ in (0..<32).map { _ in Float.random(in: -1...1, using: &rng) } }
+            // The warm-up's first run prepares the models: only the clock counts for it.
+            let warm = try await Self.timedRender(studio, pcm: pcm, latents: latents, paced: false, elapsed: elapsed)
+            note("render 1")
+            if let why = warm.gaveUp { throw StudioTestEnd.gaveUp(why, step: "warm-up") }
+            let timed = try await Self.timedRender(studio, pcm: pcm, latents: latents, paced: true, elapsed: elapsed)
+            note("render 2")
+            if let why = timed.gaveUp {
+                out = ["ran": false, "gaveUp": true, "step": "timed render", "error": why, "loadMs": loadMs,
+                       "timesRealTime": timed.report?.projectedX ?? NSNull(), "pieces": timed.report?.pieces ?? 0,
+                       "piecesPlanned": timed.report?.piecesPlanned ?? 0, "computeUnits": studio.computeUnits]
+            } else if let r = timed.report {
                 out = ["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
                        "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
                        "timesRealTime": r.timesRealTime, "pieces": r.pieces, "computeUnits": studio.computeUnits]
                 ok = true
             } else {
-                out = ["ran": false, "error": "studio.json is missing."]
+                out = ["ran": false, "gaveUp": true, "step": "timed render", "error": StudioTestBudget.timeoutWords]
             }
+        } catch StudioTestEnd.gaveUp(let why, let step) {
+            out = ["ran": false, "gaveUp": true, "step": step, "error": why]
+        } catch StudioTestEnd.noStudio {
+            out = ["ran": false, "error": "studio.json is missing."]
         } catch {
-            out = ["ran": false, "error": "\(error)"]
+            if error is CancellationError || Task.isCancelled {
+                out = ["ran": false, "stopped": true, "error": "stopped"]
+            } else if !loaded {
+                out = ["ran": false, "error": StudioTestBudget.loadFailure("\(error)", freeMB: ExpressiveService.freeMemoryMB())]
+            } else {
+                out = ["ran": false, "error": "\(error)"]
+            }
         }
         sentinel.end(success: ok)
         _ = malloc_zone_pressure_relief(nil, 0)
         note("released")
+        out["seconds"] = ExpressiveService.r1(elapsed())
         out["memory"] = memory
         out["thermalBefore"] = thermalBefore
         out["thermalAfter"] = ProcessInfo.processInfo.thermalState.rawValue
         out["enabled"] = UserDefaults.standard.bool(forKey: "nephisStudio")
         return out
+    }
+
+    /// One render of the speed test, against the budget: between pieces its check stops it (out of time; under real time
+    /// when `paced`), and a piece Core ML never returns from is cut off by the clock.
+    private static func timedRender(_ studio: NephisStudio, pcm: [Float], latents: [[Float]], paced: Bool,
+                                    elapsed: @escaping @Sendable () -> Double) async throws -> TimedRender {
+        let check: NephisStudio.Check = { x in StudioTestBudget.verdict(projectedX: x, elapsedSeconds: elapsed(), paced: paced) }
+        let rendered = try await Self.within(StudioTestBudget.left(elapsedSeconds: elapsed())) { () async throws -> NephisStudio.Report in
+            try await studio.renderReporting(pcm24: pcm, latents: latents, check: check).report
+        }
+        guard let report = rendered else { return TimedRender(report: nil, gaveUp: StudioTestBudget.timeoutWords) }
+        // Gave up mid-call: bypassed with the check's reason and its projected pace (a heat skip has no projection).
+        let gaveUp = report.bypassed && report.projectedX != nil ? (report.bypassReason ?? StudioTestBudget.timeoutWords) : nil
+        return TimedRender(report: report, gaveUp: gaveUp)
+    }
+
+    /// `work`'s value, or nil when `seconds` pass first. Then (or when the caller is cancelled: Stop, which throws
+    /// CancellationError) the work is cancelled and the caller waits up to StudioTestBudget.graceSeconds for it to wind
+    /// down, so its memory is gone before Nephis warms again; Core ML only sees a cancel between its models and pieces.
+    private static func within<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async throws -> T) async throws -> T? {
+        let first = RaceGate<Result<T?, Error>>()
+        let ended = RaceGate<Bool>()
+        let task = Task {
+            let r: Result<T?, Error>
+            do { r = .success(try await work()) } catch { r = .failure(error) }
+            first.finish(r)
+            ended.finish(true)
+        }
+        let clock = Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+            first.finish(.success(nil))
+        }
+        let result = await withTaskCancellationHandler {
+            await first.value()
+        } onCancel: {
+            first.finish(.failure(CancellationError()))
+        }
+        clock.cancel()
+        if !ended.isFinished {
+            task.cancel()
+            let grace = Task {
+                try? await Task.sleep(nanoseconds: UInt64(StudioTestBudget.graceSeconds * 1_000_000_000))
+                ended.finish(false)
+            }
+            _ = await ended.value()
+            grace.cancel()
+        }
+        return try result.get()
     }
 
     /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load. A read
@@ -516,6 +620,46 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             ExpressiveService.shared.resetCrashes()
             call.resolve(Self.status())
+        }
+    }
+}
+
+/// The first of several racers to finish wins (a later `finish` is ignored); `value` waits for it. Any thread (the
+/// studio speed test's clock against its work, ExpressiveVoicePlugin.within).
+final class RaceGate<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: T?
+    private var waiters: [CheckedContinuation<T, Never>] = []
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return result != nil
+    }
+
+    func finish(_ value: T) {
+        lock.lock()
+        guard result == nil else {
+            lock.unlock()
+            return
+        }
+        result = value
+        let waiting = waiters
+        waiters = []
+        lock.unlock()
+        for c in waiting { c.resume(returning: value) }
+    }
+
+    func value() async -> T {
+        await withCheckedContinuation { (c: CheckedContinuation<T, Never>) in
+            lock.lock()
+            if let r = result {
+                lock.unlock()
+                c.resume(returning: r)
+                return
+            }
+            waiters.append(c)
+            lock.unlock()
         }
     }
 }

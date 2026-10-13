@@ -37,6 +37,8 @@ interface ExpressiveVoicePlugin {
   playVoiceSample(o: { id: string | null }): Promise<Obj>;
   /** placement: only where Core ML runs her studio's models (MLComputePlan), on its own. */
   studioTest(o?: { placement?: boolean }): Promise<Obj>;
+  /** Stop during the studio speed test: native cancels it (it then answers `stopped`). */
+  studioTestStop(): Promise<Obj>;
   studioEnable(o: { on: boolean }): Promise<Obj>;
   /** Nephis's model packs on this iPhone (voice-packs.ts normalizes the answer); select/delete answer the same. */
   nephisPacks(): Promise<Obj>;

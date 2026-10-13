@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chipSummary, combinedReport, pacingLines, runParts, safetyLines, statusLines, studioCallLines, studioKnown, studioLines, studioReads, summarize, TEST_PASSAGE } from '../src/ui/native/voice-test.ts';
+import {
+  chipSummary, combinedReport, pacingLines, runParts, safetyLines, settle, statusLines, studioCallLines, studioKnown, studioLines, studioReads, studioTestPlan, summarize,
+  TEST_PASSAGE,
+} from '../src/ui/native/voice-test.ts';
 import { nephisOffLine } from '../src/ui/native/voices-ui.ts';
 
 describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () => {
@@ -134,6 +137,46 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
     order.length = 0;
     expect(await runParts(parts(true, () => false))).toBe(false);
     expect(order).toEqual(['studio test']);
+  });
+
+  it('times her studio only when it is switched on (2026-10-13: pack 7’s studio, switched off, never let the test start)', () => {
+    // Off: skipped, and the result says so; the listening test starts at once.
+    expect(studioTestPlan({ has: true, on: false }, true)).toBe('off');
+    expect(studioLines({ ran: false, skipped: 'off' })).toEqual([{ ok: true, text: 'Studio off: speed test skipped.' }]);
+    // On: timed first.
+    expect(studioTestPlan({ has: true, on: true }, true)).toBe('run');
+    // On or off not known yet: nothing loads the studio.
+    expect(studioTestPlan({ has: true, on: null }, true)).toBe('off');
+    expect(studioTestPlan({ has: null, on: null }, true)).toBe('none');
+    // No studio in the pack, or the store flavor (no studio at all): no line, no test.
+    expect(studioTestPlan({ has: false, on: null }, true)).toBe('none');
+    expect(studioTestPlan({ has: true, on: true }, false)).toBe('none');
+  });
+
+  it('says in plain words why the studio speed test stopped early, and that it was stopped', () => {
+    expect(studioLines({ ran: false, gaveUp: true, step: 'timed render', error: 'studio too slow: 0.3x real time', timesRealTime: 0.3 })).toEqual([
+      { ok: false, text: 'Studio speed test stopped early: studio too slow: 0.3x real time. With the studio on, Listen uses her plain sound when it can’t keep up.' },
+    ]);
+    expect(studioLines({ ran: false, gaveUp: true, step: 'load', error: 'timed out after 60 s' })[0]?.text).toContain('stopped early: timed out after 60 s.');
+    expect(studioLines({ ran: false, gaveUp: true, error: 'no answer after 120 s' })[0]?.text).toContain('stopped early: no answer after 120 s.');
+    expect(studioLines({ ran: false, error: 'not enough memory to load the studio (412 MB free)' })).toEqual([
+      { ok: false, text: 'Studio test failed: not enough memory to load the studio (412 MB free)' },
+    ]);
+    expect(studioLines({ ran: false, stopped: true, error: 'stopped' })).toEqual([{ ok: false, text: 'Studio speed test stopped.' }]);
+  });
+
+  it('stops waiting for the studio speed test on Stop or when it never answers', async () => {
+    const never = new Promise<string>(() => undefined);
+    // Answered in time: its value.
+    expect(await settle(Promise.resolve('done'), { stopped: never.then(() => undefined), ms: 1000 })).toEqual({ how: 'done', value: 'done' });
+    // Stop wins over a test that is still working.
+    let stop = (): void => undefined;
+    const stopped = new Promise<void>((res) => (stop = res));
+    const pending = settle(never, { stopped, ms: 60_000 });
+    stop();
+    expect(await pending).toEqual({ how: 'stopped' });
+    // No answer at all: the wait ends by itself.
+    expect(await settle(never, { stopped: new Promise<void>(() => undefined), ms: 10 })).toEqual({ how: 'timeout' });
   });
 
   it('says when her model wasn’t loaded for lack of memory, and counts low memory as a studio reason', () => {

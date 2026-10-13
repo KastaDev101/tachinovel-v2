@@ -93,6 +93,11 @@ final class ExpressiveService {
     private var reloadItem: DispatchWorkItem?
     /// The studio speed test runs alone: no expressive model loads meanwhile.
     private(set) var studioTestRunning = false
+    /// The studio speed test's work while it runs (main thread), so the Voice test's Stop can cancel it
+    /// (ExpressiveVoice.studioTestStop); `studioTestStopAsked`: Stop came before the work started (while the other
+    /// models were still being released), so it is cancelled as soon as it starts.
+    var studioTestTask: Task<Void, Never>?
+    var studioTestStopAsked = false
     /// The engine released last, still letting go of its models (its load and calls ending): the next load waits for it.
     private var teardown: Task<Void, Never>?
     /// The load running (or done) for the engine loaded now: a release waits for it to end before freeing what it made
@@ -752,6 +757,7 @@ final class ExpressiveService {
     /// read waits for her). `ready` (main) once their models are gone.
     func clearForStudioTest(_ ready: @escaping () -> Void) {
         studioTestRunning = true
+        studioTestStopAsked = false
         cancelSpeedTest(reason: "stopped: the studio test")
         cancelIdleRelease()
         unload(reason: "studio test")
@@ -770,6 +776,8 @@ final class ExpressiveService {
     /// (main) once she and her studio's models are up, or couldn't load.
     func studioTestEnded(_ done: @escaping () -> Void) {
         studioTestRunning = false
+        studioTestTask = nil
+        studioTestStopAsked = false
         warmNephis()
         NotificationCenter.default.post(name: Self.statusChanged, object: nil)
         whenSettled {

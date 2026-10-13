@@ -170,6 +170,38 @@ public struct StudioPace: Equatable, Sendable {
     }
 }
 
+/// The Voice test's studio speed test against the clock (2026-10-13: with the full tiled studio on a hot phone it never
+/// finished, so the Voice test never reached its listening test). Loading and both renders share `totalSeconds`; the
+/// timed render (not the warm-up, whose first run prepares the models) also stops once it projects under
+/// StudioPace.minimum. Each verdict is the result's error, in plain words.
+public enum StudioTestBudget {
+    /// The whole test: load, warm-up render and timed render.
+    public static let totalSeconds = 60.0
+    /// After stopping a step (out of time, or Stop), how long the test waits for that step's work to wind down so its
+    /// memory is gone before Nephis warms again; past it the result goes back anyway.
+    public static let graceSeconds = 10.0
+
+    public static var timeoutWords: String { "timed out after \(Int(totalSeconds)) s" }
+
+    /// Seconds of the budget left after `elapsedSeconds` (never negative).
+    public static func left(elapsedSeconds: Double) -> Double { max(0, totalSeconds - elapsedSeconds) }
+
+    /// Asked between a render's pieces: why to stop the test now, or nil to go on. `paced`: the timed render.
+    public static func verdict(projectedX: Double, elapsedSeconds: Double, paced: Bool) -> String? {
+        if elapsedSeconds >= totalSeconds { return timeoutWords }
+        if paced && StudioPace.tooSlow(projectedX) { return "studio too slow: \(StudioPace.words(projectedX))" }
+        return nil
+    }
+
+    /// A studio load that failed: short of memory in plain words (what is free now), else the error itself.
+    public static func loadFailure(_ error: String, freeMB: Double?) -> String {
+        if let freeMB, NephisMemory.short(.studioTest, freeMB: freeMB) {
+            return "not enough memory to load the studio (\(NephisMemory.grouped(freeMB)) MB free)"
+        }
+        return "couldn't load the studio: \(error)"
+    }
+}
+
 public enum ModelOutput {
     /// A Core ML output as Float, in its logical (shape) order: the studio's models output Float16, and an output can
     /// be laid out with padded strides, which reading `dataPointer` as a flat buffer gets wrong or reads past.

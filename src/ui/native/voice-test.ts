@@ -6,8 +6,9 @@
  *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
  *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
  *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
- *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, when the pack may have a studio; it runs alone,
- *     refuses with too little memory free, frees its own studio and warms Nephis again as Listen has her), then a fixed
+ *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, only when her studio is switched on; it runs
+ *     alone, refuses with too little memory free, keeps to a 60 s budget and stops once it can't reach real time, frees
+ *     its own studio and warms Nephis again as Listen has her; Stop cancels it: studioTestStop), then a fixed
  *     passage read aloud through the real Listen path (speech script → Narration.play → HybridSpeechEngine → the voice,
  *     its finishing chain, playback). runParts keeps that order (crash plan 2026-10-12, a1/a2).
  *   - The result in plain words, then one "Copy report" with everything a developer needs (combinedReport):
@@ -252,6 +253,14 @@ export function chipSummary(placement: unknown): string {
 
 /** The studio speed test (ExpressiveVoice.studioTest) in plain words. */
 export function studioLines(r: Obj): Line[] {
+  // The studio switch is off: Listen doesn't use her studio, so there is nothing to time (2026-10-13).
+  if (r.skipped === 'off') return [{ ok: true, text: 'Studio off: speed test skipped.' }];
+  if (r.stopped === true) return [{ ok: false, text: 'Studio speed test stopped.' }];
+  // Native's budget (StudioTestBudget): too slow for real time, out of time, short of memory.
+  if (r.gaveUp === true) {
+    const why = typeof r.error === 'string' ? r.error : 'timed out';
+    return [{ ok: false, text: `Studio speed test stopped early: ${why}. With the studio on, Listen uses her plain sound when it can’t keep up.` }];
+  }
   if (r.ran !== true) {
     const why = typeof r.error === 'string' ? r.error : 'not available';
     if (/has no studio/.test(why)) return [{ ok: true, text: 'Studio: this pack has none, nothing to time.' }];
@@ -286,6 +295,34 @@ export function combinedReport(o: { status: Obj; studio: StudioKnown; studioTest
     voiceTest: o.voiceTest,
     notes: o.notes.trim() || null,
   };
+}
+
+/**
+ * What Run does with her studio's speed test (2026-10-13: with the switch off it still loaded pack 7's full studio,
+ * which never finished): 'run' only when her studio is on; 'off' when the pack has one that is switched off (skipped,
+ * and the result says so); 'none' when there is no studio, or it isn't known to be there.
+ */
+export function studioTestPlan(k: StudioKnown, studioFlavor: boolean): 'run' | 'off' | 'none' {
+  if (!studioFlavor || k.has === false) return 'none';
+  if (k.on === true) return 'run';
+  return k.has === true ? 'off' : 'none';
+}
+
+/** No answer from native's studio test this long (its own budget is 60 s, then Nephis warms again): stop waiting. */
+export const STUDIO_WAIT_MS = 120_000;
+
+/**
+ * `work`, unless `stopped` resolves first (Stop) or `ms` pass (a native test that never answers can't hold the Voice
+ * test): then how it ended, and the work is left to finish on its own.
+ */
+export async function settle<T>(work: Promise<T>, o: { stopped: Promise<void>; ms: number }): Promise<{ how: 'done'; value: T } | { how: 'stopped' | 'timeout' }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ how: 'timeout' }>((res) => (timer = setTimeout(() => res({ how: 'timeout' }), o.ms)));
+  try {
+    return await Promise.race([work.then((value) => ({ how: 'done' as const, value })), o.stopped.then(() => ({ how: 'stopped' as const })), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -353,6 +390,8 @@ export function openVoiceTest(): void {
   let progress = '';
   let notes = '';
   let recorded = false;
+  // Ends the wait for the studio speed test (Stop), while it runs.
+  let stopStudio: (() => void) | null = null;
 
   const row = (l: Line): string => `<div class="row"><span aria-hidden="true">${l.ok ? '✓' : '⚠'}</span><div class="main">${esc(l.text)}</div></div>`;
 
@@ -390,7 +429,7 @@ export function openVoiceTest(): void {
           '<button type="button" class="btn alt" data-act="copy" data-testid="voice-test-copy">Copy report</button>';
     p.body.innerHTML = `${nephis}${safetyCard}
       <div class="sec">Test</div>
-      <p class="note">${STUDIO ? 'Times her studio, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.</p>
+      <p class="note">${STUDIO ? 'Times her studio when it’s on, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.</p>
       <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : lines.length ? 'Run it again' : 'Run the test'}</button>
       <p class="note" data-testid="voice-test-progress">${esc(progress)}</p>
       ${result}
@@ -475,8 +514,27 @@ export function openVoiceTest(): void {
 
   /** Her studio's speed test; what it finds also says whether the pack has a studio and whether it is on. */
   const runStudio = async (): Promise<void> => {
-    say('Running studio speed test… the first run prepares her models (up to a minute).');
-    const r = await ExpressiveVoice.studioTest().catch((err: unknown): Obj => ({ ran: false, error: err instanceof Error ? err.message : String(err) }));
+    const t0 = Date.now();
+    // Native's own budget is 60 s; then it frees its studio and warms Nephis again before it answers.
+    const tick = (): void => {
+      const ms = Date.now() - t0;
+      say(ms < 62_000 ? `Running studio speed test… ${clock(ms)} (it gives up by itself after 1:00).` : `Studio speed test ending: getting Nephis ready again… ${clock(ms)}`);
+    };
+    tick();
+    const ticker = setInterval(tick, 1000);
+    const stopped = new Promise<void>((res) => (stopStudio = res));
+    const work = ExpressiveVoice.studioTest().catch((err: unknown): Obj => ({ ran: false, error: err instanceof Error ? err.message : String(err) }));
+    const end = await settle(work, { stopped, ms: STUDIO_WAIT_MS });
+    clearInterval(ticker);
+    stopStudio = null;
+    // Stopped, or no answer: native's test is cancelled (older builds without studioTestStop: it ends on its own).
+    if (end.how !== 'done') void ExpressiveVoice.studioTestStop().catch(() => undefined);
+    const r: Obj =
+      end.how === 'done'
+        ? end.value
+        : end.how === 'stopped'
+          ? { ran: false, stopped: true, error: 'stopped' }
+          : { ran: false, gaveUp: true, error: `no answer after ${STUDIO_WAIT_MS / 1000} s` };
     studioTest = r;
     if (r.ran === true) known = { has: true, on: r.enabled === true };
     else if (typeof r.error === 'string' && /has no studio/.test(r.error)) known = { has: false, on: null };
@@ -572,15 +630,20 @@ export function openVoiceTest(): void {
     progress = failed || (ended ? 'Done. Copy the report below.' : 'Stopped.');
   };
 
-  /** Run the test: the studio (unless native says the pack has none), then the listening test. */
+  /** Run the test: her studio's speed test when the studio is on, then the listening test. */
   const run = async (): Promise<void> => {
     running = true;
     report = null;
     studioTest = null;
     progress = '';
     render();
+    // The switch as native has it now: the speed test runs only with her studio on.
+    status = await ExpressiveVoice.status().catch((): Obj => status);
+    known = studioKnown(status.nephisPack, known);
+    const plan = studioTestPlan(known, STUDIO);
+    if (plan === 'off') studioTest = { ran: false, skipped: 'off' };
     const listened = await runParts({
-      studio: STUDIO && studioKnown(status.nephisPack, { has: null, on: null }).has !== false,
+      studio: plan === 'run',
       studioTest: runStudio,
       listen: runListen,
       going: () => running,
@@ -592,6 +655,7 @@ export function openVoiceTest(): void {
 
   const stop = (): void => {
     running = false;
+    stopStudio?.();
     if (listening) void Narration.stop().catch(() => undefined);
   };
   // Leaving the page ends the test (the panel's Back closes it).

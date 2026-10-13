@@ -3,7 +3,8 @@
  * testing Nephis, reached without hidden taps. Against canned ExpressiveVoice / Narration plugins:
  *  - the top says which pack is installed, that it has her studio and whether the studio is on; the switch sends
  *    ExpressiveVoice.studioEnable;
- *  - Run the test runs the studio speed test (native returns with Nephis warm again), then the listening test
+ *  - Run the test runs the studio speed test when her studio is on (native returns with Nephis warm again; with it
+ *    off the speed test is skipped and the result says so), then the listening test
  *    (Narration.play), in that order, and says how it went in plain words; where her studio's models run is its own
  *    button ("Where her studio runs": studioTest {placement: true});
  *  - Copy report copies one combined report (pack, studio state and test, the listening test, notes);
@@ -113,6 +114,15 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Nephis pack in use: nephis-r9 (made 2026-10-11).');
     expect(await pack.textContent()).toContain('Her studio: in this pack.');
     expect(await pack.textContent()).toContain('Studio: off.');
+    // Studio off (2026-10-13: pack 7's studio, switched off, still loaded for the speed test, which never finished):
+    // no speed test, straight to the listening test, and the result says it was skipped.
+    await screen.getByRole('button', { name: 'Run the test' }).click();
+    await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(1);
+    const skipped = screen.getByTestId('voice-test-result');
+    await skipped.waitFor({ timeout: 10_000 });
+    expect(await skipped.textContent()).toContain('Studio off: speed test skipped.');
+    expect(calls('ExpressiveVoice', 'studioTest')).toEqual([]);
+
     const toggle = screen.getByRole('checkbox', { name: 'Her studio' });
     expect(await toggle.isChecked()).toBe(false);
     await toggle.click();
@@ -124,13 +134,14 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
 
     // One button runs the studio speed test, then the listening test (crash plan a2: native's studio test frees its own
     // studio and returns with Nephis warm again, so nothing is released in between and the start is Listen's).
-    await screen.getByRole('button', { name: 'Run the test' }).click();
+    await screen.getByRole('button', { name: 'Run it again' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'studioTest').length, { timeout: 5000 }).toBe(1);
-    await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(1);
+    await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(2);
     const steps = shell.pluginCalls
       .map((c) => `${c.pluginId}.${c.methodName}`)
       .filter((s) => ['ExpressiveVoice.studioTest', 'ExpressiveVoice.unload', 'Narration.play'].includes(s));
-    expect(steps).toEqual(['ExpressiveVoice.studioTest', 'Narration.play']);
+    expect(steps).toEqual(['Narration.play', 'ExpressiveVoice.studioTest', 'Narration.play']);
+    expect(calls('ExpressiveVoice', 'studioTestStop')).toEqual([]);
     const result = screen.getByTestId('voice-test-result');
     await result.waitFor({ timeout: 10_000 });
     expect(await result.textContent()).toContain('Studio: 2.3× real time — fast enough for live reading.');

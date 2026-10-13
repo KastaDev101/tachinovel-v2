@@ -66,23 +66,44 @@ enum NephisModelPack {
         }
     }
 
-    /// A pack copied into Documents (file sharing): install it once, then remove the copy. Called at launch.
+    /// The Documents install in progress, and the files that failed this session (by name, size and date, so a fresh
+    /// copy of a file is tried again but a broken one isn't retried at every return to the app). Main thread only.
+    private static let documentsInstall = Box((running: false, failed: Set<String>()))
+
+    /// A pack copied into Documents (file sharing): install it once, then remove the copy. Called at launch and whenever
+    /// the app becomes active again (a pack copied in while it sat in the background), one install at a time. Main thread.
     static func installFromDocuments() {
+        guard !documentsInstall.value.running else { return }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        guard let files = try? FileManager.default.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil),
-              let pack = files.first(where: handles) else { return }
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: docs, includingPropertiesForKeys: keys) else { return }
+        let failed = documentsInstall.value.failed
+        guard let found = files.filter(handles).lazy.map({ ($0, documentsKey($0)) }).first(where: { !failed.contains($0.1) }) else { return }
+        let (pack, key) = found
+        documentsInstall.value.running = true
         DispatchQueue.global(qos: .utility).async {
             do {
                 let name = try install(from: pack)
                 try? FileManager.default.removeItem(at: pack)
                 DispatchQueue.main.async {
+                    documentsInstall.value.running = false
                     ExpressiveService.shared.reloadNephisModel()
                     post(ok: true, message: "Nephis’s trained voice “\(name)” is installed.")
                 }
             } catch {
                 log.error("expressive: Nephis model pack in Documents: \(error.localizedDescription, privacy: .public)")
+                DispatchQueue.main.async {
+                    documentsInstall.value.running = false
+                    documentsInstall.value.failed.insert(key)
+                }
             }
         }
+    }
+
+    /// A Documents file as name, size and date: the same file isn't tried twice in a session, a new copy is.
+    private static func documentsKey(_ url: URL) -> String {
+        let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return "\(url.lastPathComponent)|\(v?.fileSize ?? -1)|\(v?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
     }
 
     private static func post(ok: Bool, message: String) {

@@ -36,7 +36,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // still fires when the app as a whole goes to the background.
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground),
                                                name: UIApplication.didEnterBackgroundNotification, object: nil)
+        // A Nephis pack copied into Documents while the app sat in the background installs on return, not only at launch.
+        NotificationCenter.default.addObserver(self, selector: #selector(didBecomeActive),
+                                               name: UIApplication.didBecomeActiveNotification, object: nil)
         return true
+    }
+
+    @objc private func didBecomeActive() {
+        NephisModelPack.installFromDocuments()
     }
 
     @objc private func didEnterBackground() {
