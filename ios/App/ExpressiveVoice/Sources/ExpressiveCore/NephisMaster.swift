@@ -21,7 +21,8 @@
 //               lookahead, 80 ms release; a sample never exceeds the ceiling).
 //
 //  Latency: 5 ms (pause quieting) + 40 ms (room tone) + 1.5 ms (limiter); the same for the whole read, so every call
-//  keeps its length. Cost: about 20-30 M operations per second of audio (master_stream.py ops), biquads on vDSP.
+//  keeps its length. Cost at 44.1 kHz: about 8 (minimal) to 21 (crisp) M operations per second of audio
+//  (master_stream.py ops; 7-33 biquad sections, on vDSP).
 //
 
 import Foundation
@@ -399,27 +400,15 @@ struct MasterSection: Sendable, Equatable {
     }
 }
 
-#if canImport(Accelerate)
-/// vDSP's biquad setup for a cascade (immutable once made; destroyed with the last copy that holds it).
-final class MasterBiquadSetup: @unchecked Sendable {
-    let setup: vDSP_biquad_Setup
-
-    init?(_ sections: [MasterSection]) {
-        let coefficients = sections.flatMap { [$0.b0, $0.b1, $0.b2, $0.a1, $0.a2] }
-        guard let s = vDSP_biquad_CreateSetup(coefficients, vDSP_Length(sections.count)) else { return nil }
-        setup = s
-    }
-
-    deinit { vDSP_biquad_DestroySetup(setup) }
-}
-#endif
-
-/// A cascade of biquads whose state carries over from one call to the next (vDSP where available).
+/// A cascade of biquads whose state carries over from one call to the next. With Accelerate each section is one
+/// vDSP_deq22 pass (direct form I), its state the two inputs and two outputs before the call, kept here explicitly:
+/// the same audio whether a read comes in one call or in many.
 struct MasterCascade: Sendable {
     let sections: [MasterSection]
     #if canImport(Accelerate)
-    private let setup: MasterBiquadSetup?
-    private var delay: [Float]
+    private let coefficients: [[Float]]
+    /// Per section: x[n-2], x[n-1], y[n-2], y[n-1].
+    private var state: [Float]
     #else
     private var z: [Double]
     #endif
@@ -427,8 +416,8 @@ struct MasterCascade: Sendable {
     init(_ sections: [MasterSection]) {
         self.sections = sections
         #if canImport(Accelerate)
-        setup = sections.isEmpty ? nil : MasterBiquadSetup(sections)
-        delay = [Float](repeating: 0, count: 2 * sections.count + 2)
+        coefficients = sections.map { [Float($0.b0), Float($0.b1), Float($0.b2), Float($0.a1), Float($0.a2)] }
+        state = [Float](repeating: 0, count: 4 * sections.count)
         #else
         z = [Double](repeating: 0, count: 2 * sections.count)
         #endif
@@ -438,19 +427,23 @@ struct MasterCascade: Sendable {
     mutating func run(_ x: [Float]) -> [Float] {
         guard !sections.isEmpty, !x.isEmpty else { return x }
         #if canImport(Accelerate)
-        guard let s = setup else { return x }
-        var y = [Float](repeating: 0, count: x.count)
-        let n = vDSP_Length(x.count)
-        delay.withUnsafeMutableBufferPointer { d in
-            x.withUnsafeBufferPointer { xp in
-                y.withUnsafeMutableBufferPointer { yp in
-                    if let dd = d.baseAddress, let xx = xp.baseAddress, let yy = yp.baseAddress {
-                        vDSP_biquad(s.setup, dd, xx, 1, yy, 1, n)
-                    }
-                }
-            }
+        let n = x.count
+        var input = [Float](repeating: 0, count: n + 2)
+        var output = [Float](repeating: 0, count: n + 2)
+        for i in 0..<n { input[i + 2] = x[i] }
+        for k in coefficients.indices {
+            input[0] = state[4 * k]
+            input[1] = state[4 * k + 1]
+            output[0] = state[4 * k + 2]
+            output[1] = state[4 * k + 3]
+            vDSP_deq22(input, 1, coefficients[k], &output, 1, vDSP_Length(n))
+            state[4 * k] = input[n]
+            state[4 * k + 1] = input[n + 1]
+            state[4 * k + 2] = output[n]
+            state[4 * k + 3] = output[n + 1]
+            swap(&input, &output)
         }
-        return y
+        return Array(input[2...])
         #else
         var y = x
         for i in y.indices {

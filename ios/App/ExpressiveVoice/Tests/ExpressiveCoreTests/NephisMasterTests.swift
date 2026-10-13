@@ -221,6 +221,28 @@ final class NephisMasterTests: XCTestCase {
         }
     }
 
+    func testAFilterCascadeCarriesItsStateAcrossCalls() {
+        // The tone EQ of "crisp" (low and high sections), one call against calls of 1, 2, 3... samples.
+        let fs = Double(Self.fs)
+        let sections = MasterSection.butterworth4(.hp, 80, fs: fs) + [MasterSection(.peak, 450, q: 1, db: 2, fs: fs),
+                                                                     MasterSection(.highShelf, 2300, q: 0.7071, db: -3, fs: fs)]
+        let x = Self.vector(seconds: 1)
+        var one = MasterCascade(sections), many = MasterCascade(sections)
+        let whole = one.run(x)
+        var split: [Float] = []
+        var at = 0, size = 1
+        while at < x.count {
+            let end = min(x.count, at + size)
+            split += many.run(Array(x[at..<end]))
+            at = end
+            size = size % 50 + 1
+        }
+        XCTAssertEqual(whole.count, split.count)
+        var worst: Float = 0
+        for i in whole.indices { worst = max(worst, abs(whole[i] - split[i])) }
+        XCTAssertLessThan(worst, 1e-6)
+    }
+
     func testTheLimiterNeverPassesTheCeiling() {
         // Hot audio pushed 10 dB past its loudness by the target: square-ish waves, single-sample spikes at full scale,
         // a sibilant hiss, in odd-sized calls.
@@ -270,7 +292,7 @@ final class NephisMasterTests: XCTestCase {
             }
             XCTAssertLessThan(longest, Self.fs / 100, "\(preset): a cut to digital silence")
             for pad in Self.pads {
-                let r = (Int(pad.a * Double(Self.fs)) + chain.latency)..<(Int(pad.b * Double(Self.fs)) + chain.latency)
+                let r = (Int(pad.a * Double(Self.fs)) + chain.latency)..<min(y.count, Int(pad.b * Double(Self.fs)) + chain.latency)
                 let level = Self.rms(y, r)
                 XCTAssertGreaterThan(level, -85, "\(preset): room tone in the pad at \(pad.a) s")
                 XCTAssertLessThan(level, -60, "\(preset): room tone stays far under her (\(pad.a) s)")
