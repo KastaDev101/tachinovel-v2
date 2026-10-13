@@ -132,9 +132,11 @@ final class SceneReader {
         }
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), available, !asks.isEmpty {
+            // Through MainBound (used on main only): Swift 6.3.3 crashed diagnosing the bare capture (CI 2026-10-13).
+            let done = MainBound(completion)
             Task.detached(priority: .utility) {
                 let out = await Self.askSenses(asks)
-                DispatchQueue.main.async { completion(out) }
+                DispatchQueue.main.async { done.value(out) }
             }
             return
         }

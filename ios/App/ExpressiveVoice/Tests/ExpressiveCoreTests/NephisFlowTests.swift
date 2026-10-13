@@ -226,8 +226,10 @@ final class NephisFlowTests: XCTestCase {
         let chain = NephisFlow.Chain()
         XCTAssertEqual(chain.callPause(pauseBefore: 0.58, after: "“Are you coming?”", mood: "calm", next: "“Not yet.”"), 0.66)
         XCTAssertEqual(chain.callPause(pauseBefore: 0.45, after: "“We should leave.", mood: "calm", next: "“Now.”"), 0.50)
-        XCTAssertEqual(chain.callPause(pauseBefore: 0.62, after: "“We should leave before", mood: "calm", next: "the storm.”"), 0.84,
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.62, after: "He sighed.", mood: "calm", next: "She left."), 0.84,
                        "unsure: her sentence pause (Q6)")
+        // Split mid-sentence (inside a quote here): a comma's beat, not a sentence pause (car ride 2026-10-13).
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.62, after: "“We should leave before", mood: "calm", next: "the storm.”"), chain.clauseGap)
     }
 
     func testAPackCanTuneHerDialoguePausesPerMood() throws {
