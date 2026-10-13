@@ -51,13 +51,65 @@ public enum NephisFlow {
         }
     }
 
-    /// Latents of silence before the first word and after the last one.
-    public static func silence(_ levels: [Double]) -> (head: Int, tail: Int) {
+    /// Latents of silence before the first word and after the last one. With `hiss` (per latent, `hiss(_:)`), a soft
+    /// fricative under `silenceDB` (the "s" opening "Sunny", the one closing "eyes") is part of its word, not silence:
+    /// the joins never trim or blend it (car ride 2026-10-13: "s" sounds cut or stuttering).
+    public static func silence(_ levels: [Double], hiss: [Double]? = nil) -> (head: Int, tail: Int) {
+        let quiet = { (k: Int) in levels[k] < silenceDB && !isFricative(k, levels: levels, hiss: hiss) }
         var head = 0
-        while head < levels.count, levels[head] < silenceDB { head += 1 }
+        while head < levels.count, quiet(head) { head += 1 }
         var tail = 0
-        while tail < levels.count - head, levels[levels.count - 1 - tail] < silenceDB { tail += 1 }
+        while tail < levels.count - head, quiet(levels.count - 1 - tail) { tail += 1 }
         return (head, tail)
+    }
+
+    // MARK: - Fricatives
+
+    /// Hiss from this on (`hiss(_:)`) is a fricative: "s", "sh", "f", "th". Voiced sound (a vowel, an "uh", a hum) stays
+    /// under 0.3, breath noise under about 0.5.
+    public static let hissFrom = 0.6
+
+    /// Each latent's hiss in decoded `audio`: the energy of the sample-to-sample differences against the energy itself,
+    /// 2 × (1 − the lag-1 correlation). About 2 for an "s" (4-8 kHz at 24 kHz), under 0.1 for a vowel. Energy-weighted, so
+    /// the noise floor of a quiet latent hardly counts; a silent latent is 0.
+    public static func hiss(_ audio: [Float], samplesPerLatent perLatent: Int = samplesPerLatent) -> [Double] {
+        guard perLatent > 1 else { return [] }
+        let n = audio.count / perLatent
+        return (0..<n).map { k in
+            var energy = 0.0, diff = 0.0
+            let lo = k * perLatent
+            for i in lo..<(lo + perLatent) {
+                let v = Double(audio[i])
+                energy += v * v
+                if i > lo { let d = v - Double(audio[i - 1]); diff += d * d }
+            }
+            return energy > 1e-12 ? diff / energy : 0
+        }
+    }
+
+    /// Latent k is an audible fricative: above `quietDB` and hissing (`hiss` known for it).
+    static func isFricative(_ k: Int, levels: [Double], hiss: [Double]?) -> Bool {
+        guard let hiss, k >= 0, k < hiss.count, k < levels.count else { return false }
+        return levels[k] > quietDB && hiss[k] >= hissFrom
+    }
+
+    /// Where the word whose loud part starts at `on` really begins when it opens with a fricative ("Still", "Spell",
+    /// "Sky", "Sunny"): the hissing latents right before it, across up to two quiet latents (the closure of the "t" in
+    /// "st"). `on` when there are none, or without `hiss`.
+    static func fricativeStart(_ levels: [Double], hiss: [Double]?, on: Int) -> Int {
+        guard hiss != nil else { return on }
+        var k = on - 1
+        var closure = 0
+        while k >= 0, closure < 2, !isFricative(k, levels: levels, hiss: hiss), levels[k] < silenceDB {
+            k -= 1
+            closure += 1
+        }
+        var start = on
+        while k >= 0, isFricative(k, levels: levels, hiss: hiss) {
+            start = k
+            k -= 1
+        }
+        return start
     }
 
     // MARK: - Carry-over
@@ -105,6 +157,9 @@ public enum NephisFlow {
         /// Pause between the pieces of one paragraph, and after a piece ending in "…" or ":" (seconds).
         public var pieceGap = 0.45
         public var ellipsisGap = 0.8
+        /// Pause after a piece that ends mid-sentence (Pocket split a long sentence at a comma, or the script did): a
+        /// comma's beat, not a sentence's (car ride 2026-10-13: "the processing cut mid sentence").
+        public var clauseGap = 0.25
         /// Scales the pause before a paragraph (the director's natural pause).
         public var paragraphGapScale = 1.0
         /// Voice-prompt frames from her mood clip, and from what she just said (carry-over); at most 125 together.
@@ -189,8 +244,10 @@ public enum NephisFlow {
         ///   a paragraph pause there was an extra ~1 s hole (tachinovel-tts-lab Q6).
         /// - Where dialogue hands over (same speaker, a reply, dialogue ↔ narration), her own pause there: about
         ///   0.66 s, never longer than the pause above (a mood's `dialogue` value as given) (lab idea #9).
+        /// - The first call of the next chapter in the same read (`chapterStart`): the chapter break, `chapterPause`.
         public func callPause(pauseBefore: Double?, after lastText: String?, mood lastMood: String?, next: String,
-                              handover: NephisFlow.Handover? = nil) -> Double {
+                              handover: NephisFlow.Handover? = nil, chapterStart: Bool = false) -> Double {
+            if chapterStart, lastText != nil { return NephisFlow.chapterPause }
             let director = (pauseBefore ?? 0.6) * paragraphGapScale
             let paragraph = lastMood.flatMap { moods[$0]?.paragraph }.map { director > 1.3 ? director : $0 } ?? director
             // A read's first call (no join), a line without the app's pause (the Voice Lab), a scene break: as before.
@@ -215,8 +272,11 @@ public enum NephisFlow {
         /// The pause after a piece ending `piece`, in `mood`: her `trail` after one trailing off ("…", "...", also before
         /// a closing quote: 'Ready, set..."') or ending in ":", else her `sentence`. Only the raw text form keeps
         /// ellipses (the app's form makes each one a comma or a period), so only its pieces trail off.
+        /// A piece that ends mid-sentence (in a comma, a semicolon or a word: the sentence goes on in the next piece) gets
+        /// `clauseGap` whatever the mood.
         public func gap(after piece: String, mood: String?) -> Double {
             let t = piece.trimmingCharacters(in: .whitespaces)
+            if NephisFlow.endsMidSentence(t) { return clauseGap }
             let core = t.replacingOccurrences(of: #"["'”’»)\]]+$"#, with: "", options: .regularExpression)
             let trailing = core.hasSuffix("…") || core.hasSuffix("...") || t.hasSuffix(":")
             if let m = mood.flatMap({ moods[$0] }) { return trailing ? m.trail : m.sentence }
@@ -229,6 +289,7 @@ public enum NephisFlow {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             pieceGap = try c.decodeIfPresent(Double.self, forKey: .pieceGap) ?? pieceGap
             ellipsisGap = try c.decodeIfPresent(Double.self, forKey: .ellipsisGap) ?? ellipsisGap
+            clauseGap = min(0.8, max(0.08, (try? c.decodeIfPresent(Double.self, forKey: .clauseGap)) ?? clauseGap))
             paragraphGapScale = try c.decodeIfPresent(Double.self, forKey: .paragraphGapScale) ?? paragraphGapScale
             clipFrames = min(125, max(1, try c.decodeIfPresent(Int.self, forKey: .clipFrames) ?? clipFrames))
             carryFrames = min(125 - clipFrames, max(0, try c.decodeIfPresent(Int.self, forKey: .carryFrames) ?? carryFrames))
@@ -282,6 +343,69 @@ public enum NephisFlow {
     /// A pause before a call shorter than this (seconds, the app's) is inside a paragraph: HybridSpeechEngine's
     /// paragraphPause, which never groups sentences across one.
     public static let paragraphPauseFrom = 0.7
+
+    /// Her pause between two chapters read on in one read (HybridSpeechEngine appends the next chapter while this one
+    /// plays; car ride 2026-10-13: the change took far too long, "about 1 second" wanted).
+    public static let chapterPause = 1.0
+
+    /// `text` ends mid-sentence: in a comma, a semicolon, a word or a number, so the sentence goes on in what follows. A
+    /// colon, a dash or an ellipsis is a pause of its own; a sentence mark, a closing quote or bracket ends one.
+    public static func endsMidSentence(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
+        return last == "," || last == ";" || last.isLetter || last.isNumber
+    }
+
+    // MARK: - Pieces of a call
+
+    /// One flow piece of a call (NephisFlowSynth.plan): its text, and whether it is part of a longer sentence (`open`:
+    /// it starts mid-sentence, or the sentence goes on in the next piece). Pocket reads an open piece as it stands: no
+    /// capital, no full stop added, no padding, so it isn't spoken as a sentence of its own.
+    public struct PlannedPiece: Equatable, Sendable {
+        public var text: String
+        public var open: Bool
+        public init(text: String, open: Bool) {
+            self.text = text
+            self.open = open
+        }
+    }
+
+    /// Pocket's chunks of a call as flow pieces, one piece per chunk. A sentence too long for one generation comes as a
+    /// chunk and its mid-sentence continuations (split at a comma). Merged back into one piece, Pocket split it again
+    /// inside that piece's take, ended the first part with an added full stop and started the rest afresh from the voice
+    /// prompt: a restart in the middle of the sentence that no join ever edited (car ride 2026-10-13: "the processing cut
+    /// mid sentence"). As pieces of their own they are read as parts of one sentence (`open`) and joined like any piece,
+    /// at a comma's pause (`Chain.clauseGap`, from `Chain.gap(after:mood:)`).
+    public static func plannedPieces(_ chunks: [(text: String, isMidSentence: Bool)]) -> [PlannedPiece] {
+        chunks.indices.map { k in
+            let goesOn = k + 1 < chunks.count && chunks[k + 1].isMidSentence
+            return PlannedPiece(text: chunks[k].text, open: chunks[k].isMidSentence || goesOn)
+        }
+    }
+
+    // MARK: - Runaways
+
+    /// A take ran on: one of its text chunks never signalled the end of speech and ran into its frame budget
+    /// (FluidAudio's ChunkEnd.eosStep nil). Pocket then says the text again or mumbles on for seconds; nothing after the
+    /// text's end is trimmed, because no end is known (car ride 2026-10-13: a chapter title read twice).
+    public static func ranOn(eosSteps: [Int?]) -> Bool {
+        eosSteps.contains { $0 == nil }
+    }
+
+    /// Her pace, pauses inside a sentence included (calm, about 160 words a minute).
+    public static let secondsPerWord = 0.38
+
+    /// Where to end a take that ran on and couldn't be taken again: the first real pause (5 latents, 400 ms, under
+    /// `silenceDB`) once 60 % of the text's length at her pace has been said, keeping `keepTail` latents of it (her
+    /// fade-out). nil = no such pause (the take is kept whole).
+    public static func runawayEnd(levels: [Double], words: Int) -> Int? {
+        let from = max(1, Int((Double(max(1, words)) * secondsPerWord * 0.6 / latentSeconds).rounded()))
+        var k = from
+        while k + 5 <= levels.count {
+            if (k..<k + 5).allSatisfy({ levels[$0] < silenceDB }) { return min(levels.count, k + keepTail) }
+            k += 1
+        }
+        return nil
+    }
 
     /// Dialogue across the pause before a call: the same speaker goes on (a quotation that continues), another one
     /// replies (a new quote paragraph after a quote), or dialogue turns into narration or back. The script's names:
@@ -416,24 +540,29 @@ public enum NephisFlow {
     // MARK: - Clean-up
 
     /// Latents to drop at the very start of a read: the model's "uh" before the first word (up to the quiet dip
-    /// before it, at most about a second in), never the word.
-    public static func openingDrop(_ levels: [Double]) -> Int {
-        guard let on = (0..<max(0, levels.count - 1)).first(where: { levels[$0] > speechDB && levels[$0 + 1] > speechDB }),
-              on > 0, on <= 14 else { return 0 }
+    /// before it, at most about a second in), never the word. With `hiss`, a word opening with a fricative starts at
+    /// its hiss: the "s" of "Still" (quieter than the vowel, with the "t"'s closure as a dip after it) is never taken
+    /// for an "uh" (car ride 2026-10-13: "s" sounds cut).
+    public static func openingDrop(_ levels: [Double], hiss: [Double]? = nil) -> Int {
+        guard let loud = (0..<max(0, levels.count - 1)).first(where: { levels[$0] > speechDB && levels[$0 + 1] > speechDB }),
+              loud <= 14 else { return 0 }
+        let on = fricativeStart(levels, hiss: hiss, on: loud)
+        guard on > 0 else { return 0 }
         let dip = (0..<on).min(by: { levels[$0] < levels[$1] }) ?? 0
         return (levels[0...dip].max() ?? levels[dip]) > levels[dip] + 6 ? dip : 0
     }
 
     /// Latents of noise before a piece's first word inside a read (an "uh", a mumble): an audible sound in the first
     /// second, at least 6 dB under the speech that follows and followed by a dip, never a word (words are as loud as
-    /// the speech after them). 0 = none.
-    public static func leadingNoise(_ levels: [Double]) -> Int {
-        guard let on = (0..<max(0, levels.count - 1)).first(where: { levels[$0] > speechDB && levels[$0 + 1] > speechDB }),
-              on > 1, on <= 14,
-              let sound = (0..<on).first(where: { levels[$0] > silenceDB }), sound + 1 < on else { return 0 }
+    /// the speech after them; with `hiss`, a word's opening fricative counts as the word: `openingDrop`). 0 = none.
+    public static func leadingNoise(_ levels: [Double], hiss: [Double]? = nil) -> Int {
+        guard let loud = (0..<max(0, levels.count - 1)).first(where: { levels[$0] > speechDB && levels[$0 + 1] > speechDB }),
+              loud <= 14 else { return 0 }
+        let on = fricativeStart(levels, hiss: hiss, on: loud)
+        guard on > 1, let sound = (0..<on).first(where: { levels[$0] > silenceDB }), sound + 1 < on else { return 0 }
         let dip = (sound + 1..<on).min(by: { levels[$0] < levels[$1] }) ?? sound
         let before = levels[sound..<dip].max() ?? -100
-        let after = levels[on..<min(levels.count, on + 10)]
+        let after = levels[loud..<min(levels.count, loud + 10)]
         let speech = after.reduce(0, +) / Double(after.count)
         guard before > silenceDB, before > levels[dip] + 6, before < speech - 6 else { return 0 }
         return dip

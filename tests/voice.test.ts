@@ -58,6 +58,20 @@ describe('speech script (v1 narration front-end → native sentences)', () => {
     expect(s.items.map((i) => i.paragraph)).toEqual([0, 1, 2]);
   });
 
+  it('a chapter whose first line is its title has the title once (car ride 2026-10-13: a title heard twice)', () => {
+    // Stonescape's Shadow Slave 3000 as served: the title line without a dash, then the text. The core names the
+    // chapter "Chapter 3000 - …" (its list), the reader may pass the bare title: one title sentence either way, so a
+    // title heard twice came from the voice, not the script (NephisFlow.ranOn: a take that ran on past its text).
+    const blocks = htmlToBlocks(
+      '<p>Chapter 3000 Memories of Oblivion</p><p>Sunny had regained his fate and was remembered by the world.</p><p>Chapter 3000 was long.</p>',
+    );
+    for (const title of ['Chapter 3000 - Memories of Oblivion', 'Memories of Oblivion', undefined]) {
+      const s = speechScript(blocks, title ? { title } : {});
+      expect(s.items.filter((i) => i.kind === 'title').map((i) => i.text), String(title)).toEqual(['Chapter 3000. Memories of Oblivion.']);
+      expect(s.items.filter((i) => /oblivion/i.test(i.text))).toHaveLength(1);
+    }
+  });
+
   it('lexicons: global first, then the novel', () => {
     const store = emptyLexiconStore();
     store.global.entries.push({ match: 'Sunny', say: 'Sunny' });

@@ -81,6 +81,9 @@ public actor PocketTtsSession {
     /// TachiNovel: true = a run of sentence marks ("...", "?!") ends one sentence when text is chunked
     /// (`PocketTtsSynthesizer.splitSentences(keepsRuns:)`); false = FluidAudio's own split.
     private var keepsPunctuationRuns = false
+    /// TachiNovel: the text enqueued is part of a longer sentence (`setKeepsSentenceOpen`): every chunk is normalized
+    /// as mid-sentence (no capital, no full stop added, no padding).
+    private var keepsSentenceOpen = false
     /// TachiNovel: how each chunk ends (`setEndGuard`); `.off` = FluidAudio's own stop.
     private var endGuard = PocketTtsSynthesizer.EndGuard.off
     /// TachiNovel: the levels the guard needs when this session yields latents only.
@@ -109,6 +112,14 @@ public actor PocketTtsSession {
     /// (call before enqueueing text), as in Kyutai's pocket_tts; off (the default) is FluidAudio's own split.
     public func setKeepsPunctuationRuns(_ on: Bool) {
         keepsPunctuationRuns = on
+    }
+
+    /// TachiNovel: the text enqueued from now on is part of a longer sentence that the caller generates in pieces (call
+    /// before enqueueing text): each chunk is normalized as a mid-sentence one (`normalizeText(isMidSentence: true)`: its
+    /// casing and trailing comma kept, no full stop or padding added), so a clause isn't spoken as a sentence of its own.
+    /// Off (the default): FluidAudio's own normalization.
+    public func setKeepsSentenceOpen(_ on: Bool) {
+        keepsSentenceOpen = on
     }
 
     /// TachiNovel: how each chunk ends, from now on (call before enqueueing text; `PocketTtsSynthesizer.EndGuard`).
@@ -308,7 +319,7 @@ public actor PocketTtsSession {
 
                     try await generateChunk(
                         text: chunk.text,
-                        isMidSentence: chunk.isMidSentence,
+                        isMidSentence: chunk.isMidSentence || keepsSentenceOpen,  // TachiNovel
                         chunkIndex: chunkIndex,
                         chunkCount: chunks.count,
                         utteranceIndex: utteranceIndex

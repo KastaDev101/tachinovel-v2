@@ -219,6 +219,15 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     /// The next chapter's text, fetched ahead (the chapter change needs no network).
     private var prefetched: Chapter?
     private var prefetchingPath: String?
+    /// The next chapter, appended to the speech engine's read (`appendNext`): its sentences carry `generation` in their
+    /// ids, and the read (`engine.session`) it was appended to, from sentence `start`.
+    private struct AppendedChapter {
+        let chapter: Chapter
+        let generation: Int
+        let read: Int
+        let start: Int
+    }
+    private var appendedNext: AppendedChapter?
     /// Background time across a chapter change (nothing plays for a moment).
     private var transitionTask: UIBackgroundTaskIdentifier = .invalid
     /// Silence between chapters: from the end of a chapter to the first sound of the next (last 10, ms).
@@ -274,12 +283,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         stopAudio()
         mode = .speech
         chapter = ch
+        appendedNext = nil
         if prefetched?.chapterPath == ch.chapterPath { prefetched = nil }
-        if let script = ch.script {
-            items = Self.items(for: script)
-        } else {
-            items = Self.items(for: ch.paragraphs, paragraphPause: paragraphPause, scenePause: scenePause)
-        }
+        items = chapterItems(ch)
         refreshNarrator()
         timeline = ChapterTimeline(items.map { ChapterTimeline.Sentence(characters: $0.text.count, pause: pause(of: $0)) })
         resetSentenceClock()
@@ -370,6 +376,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         sleepTimer?.cancel()
         KokoroService.shared.scheduleIdleRelease()
         prefetched = nil
+        appendedNext = nil
         NowPlayingCenter.shared.clear()
         endTransition()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -933,6 +940,12 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         }
     }
 
+    /// A chapter's sentences: from its script, else split from its paragraphs.
+    private func chapterItems(_ ch: Chapter) -> [Item] {
+        if let script = ch.script { return Self.items(for: script) }
+        return Self.items(for: ch.paragraphs, paragraphPause: paragraphPause, scenePause: scenePause)
+    }
+
     private func enqueueFromCurrent() {
         // Pauses scale with the speed, like the speech itself (front-end pauses are at 1.0x).
         let speed = Double(max(0.5, rate))
@@ -944,7 +957,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         engine.kokoroVoice = kokoroVoiceForSpeech()
         engine.explicitAppleVoice = voiceIdentifier
         engine.listenEngine = Self.listenEngine()
+        engine.continuesIntoNext = autoContinue && chapter?.nextPath != nil
         appliedVoiceKey = voiceKey()
+        appendedNext = nil
         engine.enqueue(segs)
         resetSentenceClock()
         if let pre = prefetched { warmUp(pre) }
@@ -1027,6 +1042,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         }
         if autoContinue, chapter?.nextPath != nil || (mode == .audio && nextAudioChapter() != nil) {
             chapterEndedAt = ProcessInfo.processInfo.systemUptime
+            // The next chapter already follows on in the read (and wasn't prepared for the drive since): no stop.
+            if mode == .speech, let a = appendedNext, a.chapter.chapterPath == chapter?.nextPath, a.read == engine.session,
+               engine.follows(at: a.start), preparedChapter(pluginId: a.chapter.pluginId, novelPath: a.chapter.novelPath, chapterPath: a.chapter.chapterPath) == nil {
+                return handOff(a)
+            }
             return nextChapter()
         }
         if mode == .audio, audioOrigin == .pc, let key = audioChapter?.novelKey { clearAudioPosition(novelKey: key) }
@@ -1076,6 +1096,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
             if self.chapter?.nextPath == nil {
                 self.chapter?.nextPath = fetched.nextPath
                 self.chapter?.nextName = fetched.nextName
+                // A next chapter to run on into: her last call keeps its trailing silence for that join.
+                if self.appendedNext == nil, self.mode == .speech { self.engine.continuesIntoNext = self.autoContinue && fetched.nextPath != nil }
             }
             if self.chapter?.prevPath == nil {
                 self.chapter?.prevPath = fetched.prevPath
@@ -1087,7 +1109,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     /// Fetch the next chapter's text ahead (no network needed at the change, works offline) and let Kokoro
     /// render its first sentences while this chapter ends.
     private func prefetchNext() {
-        guard let ch = chapter, let next = ch.nextPath, prefetched?.chapterPath != next, prefetchingPath != next else { return }
+        guard let ch = chapter, let next = ch.nextPath else { return }
+        // Fetched already (before this read began, say): it still has to follow on in the read.
+        if let pre = prefetched, pre.chapterPath == next {
+            if appendedNext?.chapter.chapterPath != next { _ = appendNext(pre) }
+            return
+        }
+        guard prefetchingPath != next else { return }
         if preparedChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next) != nil { return } // on disk already
         prefetchingPath = next
         fetchChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next, novelName: ch.novelName) { [weak self] fetched in
@@ -1099,11 +1127,58 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         }
     }
 
-    /// Kokoro renders the first sentences of `ch` once the current chapter is fully rendered.
+    /// The next chapter's text is here: it follows on in the speech engine's read (`appendNext`); failing that, Kokoro
+    /// renders its first sentences into its warm cache once the current chapter is fully rendered (as before).
     private func warmUp(_ ch: Chapter) {
-        guard mode == .speech, let script = ch.script else { return }
+        guard mode == .speech else { return }
+        if appendNext(ch) { return }
+        guard let script = ch.script else { return }
         let speed = Double(max(0.5, rate))
         engine.lookahead = Self.items(for: script).prefix(2).map { it in speechSegment(it, id: -1, speed: speed) }
+    }
+
+    /// Appends the next chapter's sentences to the read playing, so they are rendered ahead like the rest and the read
+    /// runs on into them (HybridSpeechEngine.append): the chapter change is her chapter pause (about a second), not a
+    /// stop, a fetch and a cold start (car ride 2026-10-13: the change between chapters took far too long). Only for the
+    /// chapter that auto-continue plays next as speech: not when it was prepared for the drive or PC audio may play it.
+    /// Their ids carry the generation the chapter gets when the read reaches it (`handOff`).
+    private func appendNext(_ next: Chapter) -> Bool {
+        guard mode == .speech, autoContinue, status != .loading, let ch = chapter, ch.nextPath == next.chapterPath,
+              ch.pluginId == next.pluginId, ch.novelPath == next.novelPath, !VoiceSettings.shared.prefs.usePCAudio,
+              preparedChapter(pluginId: next.pluginId, novelPath: next.novelPath, chapterPath: next.chapterPath) == nil else { return false }
+        if let a = appendedNext, a.chapter.chapterPath == next.chapterPath, a.read == engine.session, engine.follows(at: a.start) { return true }
+        let nextItems = chapterItems(next)
+        guard !nextItems.isEmpty else { return false }
+        let g = generation + 1
+        let speed = Double(max(0.5, rate))
+        let segs = nextItems.enumerated().map { k, it in speechSegment(it, id: g * 100_000 + k, speed: speed) }
+        let start = engine.segmentCount
+        guard engine.append(segs) else { return false }
+        appendedNext = AppendedChapter(chapter: next, generation: g, read: engine.session, start: start)
+        // The read now ends with the appended chapter: whether another one follows is that chapter's.
+        engine.continuesIntoNext = next.nextPath != nil
+        return true
+    }
+
+    /// This chapter ended and the read runs on into the next one, appended ahead (`appendNext`): the controller takes the
+    /// next chapter over without stopping the voice (its first sentence follows after her chapter pause).
+    private func handOff(_ a: AppendedChapter) {
+        generation = a.generation
+        chapter = a.chapter
+        if prefetched?.chapterPath == a.chapter.chapterPath { prefetched = nil }
+        appendedNext = nil
+        items = chapterItems(a.chapter)
+        timeline = ChapterTimeline(items.map { ChapterTimeline.Sentence(characters: $0.text.count, pause: pause(of: $0)) })
+        resetSentenceClock()
+        current = 0
+        endedWhilePaused = nil
+        engine.continuesIntoNext = autoContinue && a.chapter.nextPath != nil
+        CoreHost.shared.log.notice("narration: next chapter follows on (no stop): \(a.chapter.chapterPath, privacy: .public)")
+        NowPlayingCenter.shared.setArtwork(cover: a.chapter.coverUrl)
+        // It ended while paused and Play was pressed: the read goes on from the next chapter's first sentence.
+        if engine.isPaused { engine.resume() }
+        set(.playing, jump: true)
+        if a.chapter.nextPath == nil || a.chapter.prevPath == nil { lookUpNext(for: a.chapter) }
     }
 
     private func saveProgress(force: Bool, finished: Bool = false) {

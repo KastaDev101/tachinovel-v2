@@ -361,4 +361,101 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(blended.count, NephisFlow.clipFrames)
         XCTAssertEqual(blended.frames.first, 3, "a mood change starts with the previous mood's clip")
     }
+
+    // MARK: - Car ride 2026-10-13
+
+    /// Per-latent hiss for a level pattern: `s` marks the fricatives, everything else voiced.
+    private func hiss(_ levels: [Double], fricatives: Set<Int>) -> [Double] {
+        levels.indices.map { fricatives.contains($0) ? 1.8 : 0.1 }
+    }
+
+    func testHissTellsAnSFromVoicedSound() {
+        func tone(_ hz: Double) -> [Float] { (0..<NephisFlow.samplesPerLatent).map { Float(0.1 * sin(2 * Double.pi * hz * Double($0) / 24_000)) } }
+        let h = NephisFlow.hiss(tone(6_500) + tone(180) + [Float](repeating: 0, count: NephisFlow.samplesPerLatent))
+        XCTAssertEqual(h.count, 3)
+        XCTAssertGreaterThan(h[0], 1.5, "an \"s\" (6.5 kHz)")
+        XCTAssertLessThan(h[1], 0.1, "a voiced hum (180 Hz)")
+        XCTAssertEqual(h[2], 0, "silence")
+        XCTAssertGreaterThan(NephisFlow.hissFrom, h[1])
+        XCTAssertLessThan(NephisFlow.hissFrom, h[0])
+    }
+
+    func testTheSOfStillIsNeverDroppedAsAnUh() {
+        // "Still" at a piece's start: the "s" (-36 dB), the "t"'s closure (-55 dB), then the vowel. Read by levels alone it
+        // looked like an "uh" and a dip, so the "s" was cut ("till"): "s sounds that get cut" on the car ride.
+        let still: [Double] = [-60, -60, -36, -55] + [Double](repeating: -20, count: 12)
+        XCTAssertEqual(NephisFlow.leadingNoise(still), 3, "before: everything up to the closure dropped, the s with it")
+        XCTAssertEqual(NephisFlow.leadingNoise(still, hiss: hiss(still, fricatives: [2])), 0, "the s is the word's")
+        // A real "uh" before "Still" still goes, and the s stays.
+        let uhStill: [Double] = [-60, -34, -33, -55, -36, -55] + [Double](repeating: -20, count: 12)
+        XCTAssertEqual(NephisFlow.leadingNoise(uhStill, hiss: hiss(uhStill, fricatives: [4])), 3)
+        // A hissing sound isn't a word when nothing hisses: an "uh" as before.
+        let uh: [Double] = [-60, -34, -33, -35, -55, -58] + [Double](repeating: -20, count: 12)
+        XCTAssertEqual(NephisFlow.leadingNoise(uh, hiss: hiss(uh, fricatives: [])), 5)
+        // The very start of a read: the same for the opening drop.
+        let opening: [Double] = [-52, -36, -62] + [Double](repeating: -20, count: 10)
+        XCTAssertEqual(NephisFlow.openingDrop(opening), 2, "before: the s dropped")
+        XCTAssertEqual(NephisFlow.openingDrop(opening, hiss: hiss(opening, fricatives: [1])), 0)
+        let uhOpening: [Double] = [-34, -33, -36, -40, -59, -64, -50, -25, -15, -14]
+        XCTAssertEqual(NephisFlow.openingDrop(uhOpening, hiss: hiss(uhOpening, fricatives: [])), 5, "an opening uh still goes")
+    }
+
+    func testASoftSAtEitherEndIsPartOfItsWordNotSilence() {
+        // "…eyes" ends in an s under -40 dB, "Sunny" opens with one: counted as silence, the joins trimmed and blended them.
+        let levels: [Double] = [-70, -70, -45, -20, -20, -20, -46, -70, -70]
+        XCTAssertEqual(NephisFlow.silence(levels).head, 3)
+        XCTAssertEqual(NephisFlow.silence(levels).tail, 3)
+        let kept = NephisFlow.silence(levels, hiss: hiss(levels, fricatives: [2, 6]))
+        XCTAssertEqual(kept.head, 2)
+        XCTAssertEqual(kept.tail, 2)
+        // Quiet hiss (under -50 dB) is still silence: only an audible s counts.
+        let quiet: [Double] = [-70, -55, -20, -20]
+        XCTAssertEqual(NephisFlow.silence(quiet, hiss: hiss(quiet, fricatives: [1])).head, 2)
+    }
+
+    func testALongSentenceSplitByPocketIsReadAsOneSentenceWithAComma() throws {
+        // Pocket splits a sentence too long for one generation at a comma. Merged into one piece, it split it again in the
+        // take, ended the first part with a full stop and restarted: "the processing cut mid sentence".
+        let pieces = NephisFlow.plannedPieces([
+            (text: "Ironically enough, on the same day, the memories of most humans in the world were wiped clean,", isMidSentence: false),
+            (text: "of the events that had transpired in the last few years.", isMidSentence: true),
+            (text: "Some remembered more.", isMidSentence: false),
+        ])
+        XCTAssertEqual(pieces.map(\.open), [true, true, false], "both parts read as parts of one sentence; the next sentence as before")
+        XCTAssertEqual(pieces.count, 3, "each part is a piece of its own (joined like any piece)")
+        let chain = NephisFlow.Chain()
+        XCTAssertEqual(chain.gap(after: pieces[0].text, mood: "calm"), chain.clauseGap, "a comma's beat between the parts")
+        XCTAssertEqual(chain.gap(after: pieces[1].text, mood: "calm"), 0.84, "her sentence pause after the sentence")
+        XCTAssertEqual(chain.gap(after: "the memories of most humans in the world", mood: "intense"), chain.clauseGap, "whatever the mood")
+        XCTAssertEqual(chain.gap(after: "They waited:", mood: "calm"), 0.9, "a colon keeps her trail pause")
+        // A call that starts inside a sentence (the script split it there): the comma's beat, not her sentence pause.
+        XCTAssertEqual(chain.callPause(pauseBefore: 0.25, after: "the memories of most humans in the world", mood: "calm", next: "were wiped clean."),
+                       chain.clauseGap)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"clauseGap": 0.3}"#.utf8)).clauseGap, 0.3)
+        XCTAssertEqual(try JSONDecoder().decode(NephisFlow.Chain.self, from: Data(#"{"clauseGap": 9}"#.utf8)).clauseGap, 0.8, "clamped")
+        XCTAssertEqual(NephisFlow.plannedPieces([(text: "One sentence.", isMidSentence: false)]), [NephisFlow.PlannedPiece(text: "One sentence.", open: false)])
+    }
+
+    func testTheNextChapterStartsAfterHerChapterPause() {
+        let chain = NephisFlow.Chain()
+        for mood in ["calm", "intense", "tender"] {
+            XCTAssertEqual(chain.callPause(pauseBefore: 0.9, after: "The hall went quiet.", mood: mood, next: "Chapter 12. Rain.", chapterStart: true),
+                           NephisFlow.chapterPause, mood)
+        }
+        XCTAssertEqual(NephisFlow.chapterPause, 1, accuracy: 0.2, "about a second")
+        // A read's very first call (nothing before it): as before.
+        XCTAssertEqual(chain.callPause(pauseBefore: nil, after: nil, mood: nil, next: "Chapter 12. Rain.", chapterStart: true), 0.6)
+    }
+
+    func testATakeThatRanOnPastItsTitleIsCutAfterIt() {
+        // "Chapter three thousand. Memories of Oblivion." (6 words): no end of speech, so Pocket ran to its frame budget and
+        // said the title again. The cut: the first real pause once the title's length has been said, her fade-out kept.
+        XCTAssertTrue(NephisFlow.ranOn(eosSteps: [31, nil]))
+        XCTAssertFalse(NephisFlow.ranOn(eosSteps: [31, 18]))
+        XCTAssertFalse(NephisFlow.ranOn(eosSteps: []))
+        let speech = [Double](repeating: -20, count: 14), beat = [Double](repeating: -60, count: 3)
+        let levels = speech + beat + [Double](repeating: -20, count: 15) + [Double](repeating: -62, count: 8) + [Double](repeating: -20, count: 30)
+        XCTAssertEqual(NephisFlow.runawayEnd(levels: levels, words: 6), 32 + NephisFlow.keepTail, "after the title, before it starts again")
+        XCTAssertNil(NephisFlow.runawayEnd(levels: [Double](repeating: -20, count: 60), words: 6), "no pause: kept whole")
+    }
 }

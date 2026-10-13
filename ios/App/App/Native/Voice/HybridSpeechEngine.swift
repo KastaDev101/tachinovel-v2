@@ -47,6 +47,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// its warm cache, so the chapter change starts with Kokoro at once (NarrationController sets them).
     var lookahead: [SpeechSegment] = []
     private var prewarming = false
+    /// Where each chapter appended to this read starts (`append`): no call groups sentences across one, and Nephis's
+    /// first call there gets the chapter break as its pause.
+    private var chapterStarts: Set<Int> = []
+    /// Another chapter follows this read's last sentence (NarrationController: auto-continue with a next chapter), so her
+    /// last call keeps its trailing silence for the join into it instead of ending the read there.
+    var continuesIntoNext = false
+    /// When the read began waiting for its next sentence after it had started (the log's underruns); nil = not waiting.
+    private var waitBegan: Date?
     /// Listen › the expressive engine that reads chapters (DeliverySettings.listenEngine; Chatterbox Nano = the
     /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
     /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
@@ -162,6 +170,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     var isSpeaking: Bool { scheduler != nil && (!queued.isEmpty || appleSegment != nil || waiting) }
     var isPaused: Bool { paused }
+    /// This read (a new one with every enqueue and stop): what an `append` made belongs to it.
+    var session: Int { gen }
+    /// Sentences in this read, appended chapters included (the index the next `append` starts at).
+    var segmentCount: Int { segments.count }
+    /// A chapter appended at sentence `start` is still part of this read.
+    func follows(at start: Int) -> Bool { scheduler != nil && chapterStarts.contains(start) }
 
     /// The source of the sentence playing now (for the UI), and the scheduler snapshot.
     var snapshot: HybridScheduler? { scheduler ?? lastScheduler }
@@ -175,6 +189,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         useRate(SessionRate.forRead(listenEngine))
         let rate = sessionRate
         lookahead = []
+        chapterStarts = []
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -249,6 +264,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         briefAsked = false
         sceneNext = 0
         sceneBusy = false
+        chapterStarts = []
+        waitBegan = nil
         cancelWait()
         waiting = false
         if let s = scheduler {
@@ -269,6 +286,30 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         segments.removeAll()
         paused = false
         stopOutput()
+    }
+
+    /// The next chapter's sentences, after this read's last one (NarrationController, once the next chapter's text is
+    /// fetched): they are rendered ahead like the rest, so the read runs on into the next chapter with a chapter pause,
+    /// not a stop and a cold start (car ride 2026-10-13: the change between chapters took far too long; the next chapter
+    /// only began rendering once this one had ended, and Nephis's first line then came from a cold start). Nephis's flow
+    /// carries on across the break (her voice continues; `NephisFlow.chapterPause` before its first call). False when
+    /// there is no read to append to.
+    @discardableResult
+    func append(_ segs: [SpeechSegment]) -> Bool {
+        guard scheduler != nil, !segs.isEmpty else { return false }
+        let start = segments.count
+        segments += segs
+        scheduler?.append(segs.count)
+        chapterStarts.insert(start)
+        // The new chapter starts a paragraph, and so does each paragraph in it (a late render there waits longer).
+        let starts = (start..<segments.count).filter { $0 == start || !Self.sameChunk(segments[$0 - 1], segments[$0]) }
+        scheduler?.paragraphStarts.formUnion(starts)
+        // Kokoro's warm cache for the next chapter isn't needed any more: it renders the chapter itself now.
+        lookahead = []
+        log.notice("voice: next chapter appended at sentence \(start): \(segs.count) sentences")
+        pumpRender()
+        if waiting { advance() }
+        return true
     }
 
     func pause() {
@@ -350,12 +391,22 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         switch d {
         case .kokoro(let i):
             waiting = false
+            logWaitEnded(at: i)
             playKokoro(i)
         case .apple(let i, let reason):
             waiting = false
+            logWaitEnded(at: i)
             if kokoroCanStandIn(reason) { return standInWithKokoro(i, reason: reason) }
             speakApple(i, reason: reason, restart: false)
         case .wait(let t):
+            // A break the listener hears (the read had started): when it began, what it waits for, what is buffered.
+            if waitBegan == nil, scheduler?.started == true, let s = scheduler {
+                waitBegan = Date()
+                let next = s.cursor
+                let state = s.isReady(next) ? "ready" : s.rendering == next ? "rendering" : "not rendered"
+                let ahead = bufferedAhead()
+                log.notice("voice: waiting for sentence \(next) (\(state, privacy: .public)); \(ahead, format: .fixed(precision: 1)) s buffered\(self.chapterStarts.contains(next) ? " (a chapter start)" : "", privacy: .public)")
+            }
             waiting = true
             let item = DispatchWorkItem { [weak self] in self?.advance() }
             waitItem = item
@@ -369,6 +420,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func cancelWait() {
         waitItem?.cancel()
         waitItem = nil
+    }
+
+    /// The wait logged by `advance` is over: sentence i plays after it (native.log, with the wait's length).
+    private func logWaitEnded(at i: Int) {
+        guard let began = waitBegan else { return }
+        waitBegan = nil
+        let seconds = Date().timeIntervalSince(began)
+        log.notice("voice: sentence \(i) after a \(seconds, format: .fixed(precision: 2)) s wait")
     }
 
     // MARK: - Kokoro
@@ -429,11 +488,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     return sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t
                 }.joined(separator: " ")
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
-                // Dialogue across that pause (the script's): she takes her own pause there, not a paragraph's.
-                line.handover = i > 0 ? segments[i - 1].natural?.handover.flatMap(NephisFlow.Handover.init(script:)) : nil
+                // Dialogue across that pause (the script's): she takes her own pause there, not a paragraph's. The first
+                // call of an appended chapter gets the chapter break instead.
+                let chapterStart = chapterStarts.contains(i)
+                line.handover = i > 0 && !chapterStart ? segments[i - 1].natural?.handover.flatMap(NephisFlow.Handover.init(script:)) : nil
+                if chapterStart { line.chapterStart = true }
                 line.flowReset = i != flowNext
                 if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }
-                line.flowLast = members.last == segments.count - 1
+                // The read's last call (its trailing silence played too), unless another chapter is to follow on.
+                line.flowLast = members.last == segments.count - 1 && !continuesIntoNext
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
@@ -613,7 +676,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         var out = [i]
         var length = Self.readText(segments[i], expressive: true).count
         var j = i
-        while j + 1 < segments.count, Self.sameChunk(segments[j], segments[j + 1]), read(for: j) == read(for: j + 1) {
+        while j + 1 < segments.count, !chapterStarts.contains(j + 1), Self.sameChunk(segments[j], segments[j + 1]), read(for: j) == read(for: j + 1) {
             let next = Self.readText(segments[j + 1], expressive: true).count
             guard length + 1 + next <= limit else { break }
             length += 1 + next
@@ -626,12 +689,15 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Nephis's flow: sentence i and the ones after it in the same paragraph (never across a paragraph break, so the
     /// model never reads one as a comma), same read, up to `limit` characters. Only with natural delivery, whose cutter
     /// gives each sentence of the call its own buffer (renderedGroup); without it, one sentence per call, as chunkGroup.
+    /// Never across a chapter appended to the read; a sentence the script split mid-way stays in one call (callGroup).
     private func flowGroup(from i: Int, limit: Int) -> [Int] {
         HybridScheduler.callGroup(from: i, count: segments.count, limit: limit, canCut: natural != nil,
                                   length: { Self.readText(segments[$0], expressive: true).count },
                                   joins: { j in
-                                      (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause && read(for: j - 1) == read(for: j)
-                                  })
+                                      !chapterStarts.contains(j) && (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause
+                                          && read(for: j - 1) == read(for: j)
+                                  },
+                                  continues: { j in HybridScheduler.endsMidSentence(segments[j - 1].kokoroText) })
     }
 
     /// A pause this long or longer ends a paragraph (the script's paragraph and scene pauses).

@@ -320,6 +320,90 @@ final class HybridSchedulerTests: XCTestCase {
         XCTAssertEqual(group(3, 400, true), [3], "the last sentence")
     }
 
+    // MARK: - Car ride 2026-10-13
+
+    /// Plays the read the way the engine does (one sentence after the other, each render finishing at once when the
+    /// window allows), calling `append` once sentence `at` has started. Returns the sentences heard and whether the read
+    /// ended (`.finished`) before `total` sentences were heard.
+    private func playRead(count: Int, total: Int, appendAt at: Int?, appended: Int) -> (heard: [Int], endedEarly: Bool) {
+        var s = HybridScheduler(count: count, kokoro: .ready, config: .init(ahead: 36, patient: true))
+        var heard: [Int] = []
+        var didAppend = false
+        while heard.count < total {
+            _ = renderAll(&s)
+            switch s.decide(now: Double(heard.count)) {
+            case .kokoro(let i):
+                s.started(i)
+                heard.append(i)
+                if let at, i == at, !didAppend {
+                    s.append(appended)
+                    didAppend = true
+                    _ = renderAll(&s)
+                }
+                s.finished(i)
+            case .finished:
+                return (heard, true)
+            case let other:
+                XCTFail("unexpected \(other)")
+                return (heard, true)
+            }
+        }
+        return (heard, false)
+    }
+
+    func testTheNextChapterAppendedWhileThisOnePlaysIsReadOnWithoutAStop() {
+        // Before: the read ended with its chapter; the next chapter was a new read that only began rendering then.
+        let before = playRead(count: 6, total: 10, appendAt: nil, appended: 0)
+        XCTAssertEqual(before.heard, Array(0..<6))
+        XCTAssertTrue(before.endedEarly, "the chapter's end was the read's end")
+        // Now: appended at two thirds of the chapter, its sentences are rendered ahead and play right after.
+        let after = playRead(count: 6, total: 10, appendAt: 4, appended: 4)
+        XCTAssertEqual(after.heard, Array(0..<10))
+        XCTAssertFalse(after.endedEarly)
+        // Rendered before the chapter's last sentence ends: the next chapter's first sentence is ready at the change.
+        var s = HybridScheduler(count: 3, kokoro: .ready, config: .init(ahead: 36, patient: true))
+        _ = renderAll(&s)
+        XCTAssertTrue(s.allRendered)
+        XCTAssertEqual(s.decide(now: 0), .kokoro(0))
+        s.started(0)
+        s.append(2)
+        XCTAssertEqual(s.count, 5)
+        XCTAssertFalse(s.allRendered, "the appended chapter is pending")
+        XCTAssertEqual(renderAll(&s), [3, 4])
+        s.finished(0)
+        XCTAssertEqual(s.decide(now: 1), .kokoro(1))
+        s.finished(1)
+        XCTAssertEqual(s.decide(now: 2), .kokoro(2))
+        s.finished(2)
+        XCTAssertEqual(s.decide(now: 3), .kokoro(3), "no wait at the chapter change")
+        XCTAssertEqual(s.underruns, 0)
+        XCTAssertEqual(s.waitedSeconds, 0)
+        s.append(0)
+        XCTAssertEqual(s.count, 5, "nothing to append: unchanged")
+    }
+
+    func testACallNeverEndsInsideASentenceTheScriptSplit() {
+        // A 530-character sentence the front-end split in two (the first part ends without a sentence mark), then a short
+        // one. Before, the 400-character limit ended the call between the two parts: her sentence pause, and any wait
+        // for the next call, fell in the middle of the sentence.
+        let lengths = [280, 250, 40]
+        let texts = ["Ironically enough, on the same day, the memories of most humans in the world", "were wiped clean of the events.", "Sunny smiled."]
+        let group = { (limit: Int, continues: Bool) in
+            HybridScheduler.callGroup(from: 0, count: lengths.count, limit: limit, canCut: true, length: { lengths[$0] }, joins: { _ in true },
+                                      continues: { continues && HybridScheduler.endsMidSentence(texts[$0 - 1]) })
+        }
+        XCTAssertEqual(group(400, false), [0], "before")
+        XCTAssertEqual(group(400, true), [0, 1], "the rest of the sentence comes along; the next sentence doesn't")
+        XCTAssertEqual(group(280, true), [0, 1], "also when the first part goes alone at a fast start")
+        XCTAssertEqual(group(200, true), [0], "never more than twice the limit")
+        XCTAssertTrue(HybridScheduler.endsMidSentence("the memories of most humans,"))
+        XCTAssertTrue(HybridScheduler.endsMidSentence("the memories of most humans in the world"))
+        XCTAssertFalse(HybridScheduler.endsMidSentence("He ran."))
+        XCTAssertFalse(HybridScheduler.endsMidSentence("“Run!”"))
+        XCTAssertFalse(HybridScheduler.endsMidSentence("[You have received a Memory]"))
+        XCTAssertFalse(HybridScheduler.endsMidSentence("And then…"))
+    }
+
     /// The Voice test of 2026-10-13 (build 328, Nephis, Natural delivery off): its sentences' lengths as the report gave
     /// them, its paragraph starts the read didn't join (11, 15, 16).
     private static let lanternRoad = [28, 167, 138, 102, 33, 35, 20, 23, 42, 56, 26, 44, 154, 112, 67, 25, 44]
