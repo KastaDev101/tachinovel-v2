@@ -350,7 +350,10 @@ export function openVoiceTest(): void {
          <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy report</button>
          ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the recording</button>' : ''}
          <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
-      : '';
+      : running
+        ? ''
+        : // No finished test (it never played, or the app was closed mid-test): the report still has the voice's state.
+          '<button type="button" class="btn alt" data-act="copy" data-testid="voice-test-copy">Copy report</button>';
     p.body.innerHTML = `${nephis}${safetyCard}
       <div class="sec">Test</div>
       <p class="note">${STUDIO ? 'Times her studio, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.</p>
