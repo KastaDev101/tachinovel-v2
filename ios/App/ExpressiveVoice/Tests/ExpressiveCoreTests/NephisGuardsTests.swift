@@ -160,4 +160,36 @@ final class NephisGuardsTests: XCTestCase {
         XCTAssertNil(NephisFlow.studioMelFrames(shape: [25_600], count: 25_600, bands: 128, frames: 200), "flat")
         XCTAssertNil(NephisFlow.studioMelFrames(shape: [1, 128, 200], count: 128 * 200, bands: 128, frames: 0), "nothing asked for")
     }
+
+    // MARK: - Her studio against the clock (2026-10-13: a studio Voice test played nothing for over a minute)
+
+    func testACallsPaceIsProjectedFromItsPiecesSoFar() {
+        // 10 s of audio, 1 s before the vocoder, 2 of 8 pieces in 3 s: 1 + 3 + 9 = 13 s for 10 s of audio.
+        XCTAssertEqual(StudioPace.projected(audioMs: 10_000, fixedMs: 1_000, piecesMs: 3_000, done: 2, pieces: 8), 10.0 / 13, accuracy: 1e-9)
+        // Before any piece only the work so far counts (the best the call can still do).
+        XCTAssertEqual(StudioPace.projected(audioMs: 4_000, fixedMs: 8_000, piecesMs: 0, done: 0, pieces: 6), 0.5, accuracy: 1e-9)
+        // Every piece done: what it took.
+        XCTAssertEqual(StudioPace.projected(audioMs: 6_000, fixedMs: 500, piecesMs: 2_500, done: 5, pieces: 5), 2, accuracy: 1e-9)
+        // Nothing measured yet never divides by zero.
+        XCTAssertEqual(StudioPace.projected(audioMs: 3_000, fixedMs: 0, piecesMs: 0, done: 0, pieces: 4), 3_000)
+        // Under real time is too slow for Listen; real time itself keeps up.
+        XCTAssertTrue(StudioPace.tooSlow(0.99))
+        XCTAssertFalse(StudioPace.tooSlow(1.0))
+        XCTAssertFalse(StudioPace.tooSlow(4.2))
+    }
+
+    func testThreeSlowCallsInARowSwitchTheStudioOffForTheSession() {
+        var pace = StudioPace()
+        XCTAssertNil(pace.record(0.4))
+        XCTAssertNil(pace.record(0.6))
+        // A call that kept up starts the count over.
+        XCTAssertNil(pace.record(1.3))
+        XCTAssertEqual(pace.slowInARow, 0)
+        XCTAssertNil(pace.record(0.5))
+        XCTAssertNil(pace.record(0.45))
+        XCTAssertEqual(pace.record(0.4), "studio too slow: 0.4x real time")
+        XCTAssertEqual(pace.slowInARow, StudioPace.dropAfter)
+        XCTAssertEqual(StudioPace.words(0.04), "0.04x real time")
+        XCTAssertEqual(StudioPace.words(2.26), "2.3x real time")
+    }
 }

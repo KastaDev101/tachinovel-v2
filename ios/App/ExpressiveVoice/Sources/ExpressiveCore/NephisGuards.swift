@@ -6,7 +6,8 @@
 //  - MemoryHold: the wait after a memory warning before a released model loads again, doubling when it happens again;
 //  - LoadGeneration: a release that a load still running sees, so the load keeps nothing;
 //  - ModelOutput.floats: a Core ML output read safely, whatever its scalar type and memory layout;
-//  - NephisFlow.studioMelFrames: the blueprint's output shape checked before it is read.
+//  - NephisFlow.studioMelFrames: the blueprint's output shape checked before it is read;
+//  - StudioPace: her studio against the clock (2026-10-13: a studio pack's Voice test played nothing for over a minute).
 //
 
 import CoreML
@@ -129,6 +130,44 @@ public struct LoadGeneration: Equatable, Sendable {
     public mutating func release() { value &+= 1 }
     /// A load started with `ticket` may keep what it made.
     public func current(_ ticket: Int) -> Bool { ticket == value }
+}
+
+/// Her studio against the clock (2026-10-13: with a studio pack the Voice test played nothing for over a minute; every
+/// call went through a studio running slower than real time, and each call's audio waits for the call before it). Between
+/// its pieces a Listen call gives up on the studio (her plain sound for that call) once it can no longer finish at
+/// `minimum` × real time; `dropAfter` such calls in a row switch the studio off for the rest of the session.
+public struct StudioPace: Equatable, Sendable {
+    /// × real time a Listen call's studio must keep: seconds of audio per second of its work, rests included.
+    public static let minimum = 1.0
+    /// Calls in a row under `minimum` that switch the studio off for the session.
+    public static let dropAfter = 3
+
+    /// Calls in a row so far under `minimum`.
+    public private(set) var slowInARow = 0
+
+    public init() {}
+
+    /// A call's × real time if it finishes at its pace so far: `fixedMs` spent before the vocoder (resample, blueprint,
+    /// refiner), `piecesMs` on its first `done` of `pieces` vocoder pieces (rests included), `audioMs` its audio. Before
+    /// any piece (`done` 0) the vocoder's share is unknown: the work so far alone (the best the call can still do).
+    public static func projected(audioMs: Double, fixedMs: Double, piecesMs: Double, done: Int, pieces: Int) -> Double {
+        let left = done > 0 ? piecesMs / Double(done) * Double(max(0, pieces - done)) : 0
+        return audioMs / max(1, fixedMs + piecesMs + left)
+    }
+
+    public static func tooSlow(_ timesRealTime: Double) -> Bool { timesRealTime < minimum }
+
+    /// "0.4x real time" (two decimals under 0.1x).
+    public static func words(_ timesRealTime: Double) -> String {
+        String(format: timesRealTime < 0.1 ? "%.2fx real time" : "%.1fx real time", timesRealTime)
+    }
+
+    /// One Listen call the studio worked on, at `timesRealTime` (measured, or projected when it gave up mid-call): the
+    /// reason to switch the studio off for the session once `dropAfter` calls in a row were too slow, else nil.
+    public mutating func record(_ timesRealTime: Double) -> String? {
+        slowInARow = Self.tooSlow(timesRealTime) ? slowInARow + 1 : 0
+        return slowInARow >= Self.dropAfter ? "studio too slow: \(Self.words(timesRealTime))" : nil
+    }
 }
 
 public enum ModelOutput {

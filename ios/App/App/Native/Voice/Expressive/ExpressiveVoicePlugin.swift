@@ -389,7 +389,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
                 let r = await studio.lastReport
                 out = ["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
                        "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
-                       "timesRealTime": r.timesRealTime]
+                       "timesRealTime": r.timesRealTime, "pieces": r.pieces, "computeUnits": studio.computeUnits]
                 ok = true
             } else {
                 out = ["ran": false, "error": "studio.json is missing."]

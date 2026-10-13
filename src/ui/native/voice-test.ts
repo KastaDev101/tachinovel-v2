@@ -81,7 +81,10 @@ export function summarize(r: Obj): Line[] {
 }
 
 /** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
-const STUDIO_REASON: Record<string, string> = { hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory', loading: 'still loading' };
+const STUDIO_REASON: Record<string, string> = {
+  hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory', loading: 'still loading',
+  slow: 'too slow', 'studio too slow': 'switched off as too slow',
+};
 
 /**
  * Her studio and her endings in plain words (native's flow.studio and flow.endings; nothing in builds that don't
@@ -104,6 +107,16 @@ export function studioCallLines(flow: Obj): Line[] {
         : { ok: false, text: `Her studio rendered ${used} of ${calls} calls; ${calls - used} were her plain sound${why ? ` (${why})` : ''}.` },
     );
   }
+  // Its speed on her calls (native gives up on a call it can't finish at `minimumX`, and switches it off for the read
+  // after a few such calls in a row), and the compute units its models were loaded with.
+  const last = Number(studio.lastX ?? NaN);
+  if (Number.isFinite(last)) {
+    const slowest = Number(studio.slowestX ?? last);
+    const minimum = Number(studio.minimumX ?? 1);
+    const units = typeof studio.units === 'string' ? `, on ${studio.units}` : '';
+    lines.push({ ok: slowest >= minimum, text: `Studio speed: ${last.toFixed(1)}× real time last, ${slowest.toFixed(1)}× slowest (needs ${minimum.toFixed(1)}×${units}).` });
+  }
+  if (typeof studio.off === 'string') lines.push({ ok: false, text: `Her studio was switched off for the rest of the read (${studio.off}).` });
   const endings = (flow.endings as Obj | undefined) ?? {};
   const pieces = Number(endings.pieces ?? 0);
   if (pieces > 0) {

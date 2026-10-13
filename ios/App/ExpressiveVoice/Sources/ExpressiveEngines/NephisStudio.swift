@@ -68,8 +68,20 @@ public actor NephisStudio {
         /// Latents of leading silence added to a call too short for the blueprint (trimmed off again).
         public var padLatents = 0
         public var thermal = 0
+        /// Vocoder pieces (windows) rendered, of those the call needed.
+        public var pieces = 0
+        public var piecesPlanned = 0
+        /// The call's × real time when its `check` gave up on it mid-call (StudioPace.projected); nil otherwise.
+        public var projectedX: Double?
         public var timesRealTime: Double { audioMs / max(1, resampleMs + blueprintMs + refinerMs + vocoderMs + restMs) }
+        /// × real time of the studio's work on the call: measured when it rendered the call, projected when it gave up on
+        /// it; nil when it never ran (skipped, failed).
+        public var speedX: Double? { bypassed ? projectedX : timesRealTime }
     }
+
+    /// Asked between the studio's pieces with the call's projected × real time (StudioPace.projected): a reason to give
+    /// up on the call (her plain sound for it, the reason in her call log), or nil to go on.
+    public typealias Check = @Sendable (_ projectedX: Double) -> String?
 
     /// Heat policy (quality first, then speed, then heat): the studio runs at full speed while the phone is cool,
     /// rests between vocoder windows when it warms up (same sound, lower power), and steps aside when it is hot
@@ -84,10 +96,16 @@ public actor NephisStudio {
         public init() {}
     }
 
-    public enum StudioError: Error { case missing(String), badOutput(String), badConfig(String) }
+    public enum StudioError: Error {
+        case missing(String), badOutput(String), badConfig(String)
+        /// A call's `check` gave up on it (why, and its projected × real time then).
+        case gaveUp(String, Double)
+    }
 
     public static let inputRate = 24_000
     public nonisolated let config: Config
+    /// The compute units its models were loaded with ("cpu+ane", "cpu+gpu", "all", "cpu"): the logs and the Voice test.
+    public nonisolated let computeUnits: String
     private let blueprint: MLModel
     private let vocoder: MLModel
     private let refiner: MLModel?
@@ -116,6 +134,7 @@ public actor NephisStudio {
         default: mc.computeUnits = .all
         }
         if let computeUnits { mc.computeUnits = computeUnits }
+        let units = Self.unitsName(mc.computeUnits)
         let bp = try MLModel(contentsOf: try await compiled("NephisBlueprint", in: dir), configuration: mc)
         // Released meanwhile (Listen's background load, NephisFlowSynth.unload): stop before the next model.
         try Task.checkCancellation()
@@ -130,14 +149,27 @@ public actor NephisStudio {
             rc = try JSONDecoder().decode(RefinerConfig.self, from: Data(contentsOf: rcURL))
             rf = try MLModel(contentsOf: try await compiled("NephisRefiner", in: dir), configuration: mc)
         }
-        return NephisStudio(config: config, blueprint: bp, vocoder: vc, refiner: rf, refinerConfig: rc)
+        return NephisStudio(config: config, blueprint: bp, vocoder: vc, refiner: rf, refinerConfig: rc, computeUnits: units)
+    }
+
+    /// MLComputeUnits in a word, for the logs.
+    static func unitsName(_ u: MLComputeUnits) -> String {
+        switch u {
+        case .cpuOnly: return "cpu"
+        case .cpuAndGPU: return "cpu+gpu"
+        case .cpuAndNeuralEngine: return "cpu+ane"
+        case .all: return "all"
+        @unknown default: return "other"
+        }
     }
 
     public var heat = HeatPolicy()
     public func setHeatPolicy(_ p: HeatPolicy) { heat = p }
 
-    init(config: Config, blueprint: MLModel, vocoder: MLModel, refiner: MLModel? = nil, refinerConfig: RefinerConfig? = nil) {
+    init(config: Config, blueprint: MLModel, vocoder: MLModel, refiner: MLModel? = nil, refinerConfig: RefinerConfig? = nil,
+         computeUnits: String = "all") {
         self.config = config
+        self.computeUnits = computeUnits
         self.blueprint = blueprint
         self.vocoder = vocoder
         self.refiner = refiner
@@ -191,9 +223,12 @@ public actor NephisStudio {
     }
 
     /// `render`, with this call's report (`lastReport` may already be a later call's by the time a caller reads it).
-    /// A failure throws after recording itself in `lastReport` (bypassed, "failed: …").
-    public func renderReporting(pcm24: [Float], latents: [[Float]], hurry: Bool = false, continues: Bool = false) async throws
-        -> (pcm: [Float], report: Report) {
+    /// A failure throws after recording itself in `lastReport` (bypassed, "failed: …"). `check`: asked between the
+    /// blueprint's segments and the vocoder's pieces; when it gives up on the call (too slow for playback, memory), the
+    /// call returns Mimi's sound at the studio's rate, bypassed with its reason, like a skip (2026-10-13: a studio slower
+    /// than real time held every call of a read behind it). Nil (the speed test): the studio always finishes.
+    public func renderReporting(pcm24: [Float], latents: [[Float]], hurry: Bool = false, continues: Bool = false,
+                                check: Check? = nil) async throws -> (pcm: [Float], report: Report) {
         var report = Report()
         guard !pcm24.isEmpty, !latents.isEmpty else {
             report.bypassed = true
@@ -203,7 +238,8 @@ public actor NephisStudio {
         if !continues { carryPCM = []; carryLatents = [] }
         let thermal = ProcessInfo.processInfo.thermalState
         report.thermal = thermal.rawValue
-        var t0 = Date()
+        let started = Date()
+        var t0 = started
         let target = Int((Double(pcm24.count) * Double(config.sample_rate) / Double(Self.inputRate)).rounded())
         // 50 ms of silence past the end, so the resampler's filter tail and the mel framing cover the last real sample
         // (a cut final "s" otherwise). The model's own 11.5 kHz low-pass makes the result independent of the resampler.
@@ -251,16 +287,26 @@ public actor NephisStudio {
             for f in 0..<frames { zf[d * frames + f] = zReal[d * realFrames + min(f, realFrames - 1)] }
         }
 
+        let pace = Pace(check: check, audioMs: Double(target) * 1000 / Double(config.sample_rate), started: started)
         do {
             t0 = Date()
-            let mel = try await melSegmented(pcm: pcm, zf: zf, frames: frames, report: &report)
+            let mel = try await melSegmented(pcm: pcm, zf: zf, frames: frames, pace: pace, report: &report)
             report.blueprintMs = Date().timeIntervalSince(t0) * 1000 - report.refinerMs
 
-            let out = try await vocode(melValues: mel, frames: frames, report: &report)
+            let out = try await vocode(melValues: mel, frames: frames, pace: pace, report: &report)
             let mine = NephisFlow.studioTrim(out, lead: lead, count: target)
             report.audioMs = Double(mine.count) * 1000 / Double(config.sample_rate)
             lastReport = report
             return (mine, report)
+        } catch StudioError.gaveUp(let why, let x) {
+            // Too slow for playback (or memory): Mimi's sound at the studio's rate for this call, like a skip.
+            if report.blueprintMs == 0 { report.blueprintMs = max(0, Date().timeIntervalSince(t0) * 1000 - report.refinerMs) }  // gave up inside it
+            report.bypassed = true
+            report.bypassReason = why
+            report.projectedX = x
+            report.audioMs = Double(own.count) * 1000 / Double(config.sample_rate)
+            lastReport = report
+            return (own, report)
         } catch {
             report.bypassed = true
             report.bypassReason = "failed: \(error)"
@@ -305,16 +351,34 @@ public actor NephisStudio {
 
     // MARK: - Steps
 
+    /// A call's clock and its `check` (renderReporting): asked between the blueprint's segments and the vocoder's pieces.
+    private struct Pace {
+        let check: Check?
+        let audioMs: Double
+        let started: Date
+
+        /// Throws `gaveUp` when the check gives up on the call at its projected pace (StudioPace.projected).
+        func checkpoint(fixedMs: Double, piecesMs: Double = 0, done: Int = 0, pieces: Int = 0) throws {
+            guard let check else { return }
+            let x = StudioPace.projected(audioMs: audioMs, fixedMs: fixedMs, piecesMs: piecesMs, done: done, pieces: pieces)
+            if let why = check(x) { throw StudioError.gaveUp(why, x) }
+        }
+
+        var elapsedMs: Double { Date().timeIntervalSince(started) * 1000 }
+    }
+
     /// Blueprint (+ refiner) for the whole call, in overlapping segments when it is longer than the models take at
     /// once (NephisFlow.studioSegments: none shorter than the blueprint takes). Returns her log-mel, [bands][frames]
     /// row-major.
-    private func melSegmented(pcm: [Float], zf: [Float], frames: Int, report: inout Report) async throws -> [Float] {
+    private func melSegmented(pcm: [Float], zf: [Float], frames: Int, pace: Pace, report: inout Report) async throws -> [Float] {
         let bands = config.n_mels, dims = config.z_dims, hop = config.hop
         let plan = NephisFlow.studioSegments(frames: frames, length: Self.segmentFrames, context: Self.segmentContext)
         if plan.count == 1 { return try await melPiece(pcm: pcm, zf: zf, frames: frames, report: &report) }
         var mel = [Float](repeating: 0, count: bands * frames)
-        for seg in plan {
+        for (k, seg) in plan.enumerated() {
             try Task.checkCancellation()
+            // Between segments: the work so far alone already under the pace gives up (the vocoder is still to come).
+            if k > 0 { try pace.checkpoint(fixedMs: pace.elapsedMs) }
             let f0 = seg.from, n = seg.to - seg.from
             let lo = f0 * hop, hi = min(pcm.count, seg.to * hop)
             guard f0 >= 0, lo < hi else { throw StudioError.badOutput("segment \(seg.from)..<\(seg.to) past the audio") }
@@ -420,7 +484,7 @@ public actor NephisStudio {
         return m
     }
 
-    private func vocode(melValues: [Float], frames: Int, report: inout Report) async throws -> [Float] {
+    private func vocode(melValues: [Float], frames: Int, pace: Pace, report: inout Report) async throws -> [Float] {
         let bands = config.n_mels, chunk = config.chunk_frames, ctx = config.context_frames, win = config.window_frames
         let stride = melValues.count / bands  // [bands][frames], row-major
         guard frames > 0, stride >= frames, chunk > 0, win > 0 else {
@@ -428,10 +492,15 @@ public actor NephisStudio {
         }
         var out: [Float] = []
         out.reserveCapacity(frames * config.hop)
+        report.piecesPlanned = (frames + chunk - 1) / chunk
+        let fixedMs = report.resampleMs + report.blueprintMs + report.refinerMs
         var start = 0
         while start < frames {
             // Released meanwhile (NephisFlowSynth.unload cancels its calls): stop between windows, and the models go.
             try Task.checkCancellation()
+            // Still on pace for playback (and memory)? Before the first piece the work so far alone, then the pieces so far
+            // projected over the rest (StudioPace.projected).
+            try pace.checkpoint(fixedMs: fixedMs, piecesMs: report.vocoderMs + report.restMs, done: report.pieces, pieces: report.piecesPlanned)
             let w0 = Date()
             let w = try MLMultiArray(shape: [1, NSNumber(value: bands), NSNumber(value: win)], dataType: .float32)
             let wp = w.dataPointer.assumingMemoryBound(to: Float.self)
@@ -450,6 +519,7 @@ public actor NephisStudio {
             guard keepFrom < keepTo else { throw StudioError.badOutput("pcm44: \(samples.count) samples") }
             out.append(contentsOf: samples[keepFrom..<keepTo])
             start += chunk
+            report.pieces += 1
             report.vocoderMs += Date().timeIntervalSince(w0) * 1000
             // Cooling rest: same sound, lower average power while the phone is warm.
             let share: Double

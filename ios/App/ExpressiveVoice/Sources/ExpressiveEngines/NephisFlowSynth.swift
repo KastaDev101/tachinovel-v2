@@ -26,6 +26,12 @@
 //    with ~1,000 MB free, and are dropped when free memory falls under ~500 MB; the calls meanwhile play her plain sound
 //    at the studio's rate, with the reason in the call log ("loading", "memory: 480 MB free").
 //
+//  Her studio against the clock (2026-10-13: with a studio pack the Voice test played nothing for over a minute; each
+//  call's audio waits for the call before it, so one studio call slower than real time held the whole read): a Listen
+//  call's studio gives up between its pieces once it can't finish at real time (StudioPace; her plain sound for that call,
+//  "slow: 0.4x real time"), and three such calls in a row switch it off for the rest of this engine's life ("studio too
+//  slow: …"). Every studio call's numbers go to the app's log (`log`, native.log) and to the call's report.
+//
 
 import ExpressiveCore
 import FluidAudio
@@ -96,6 +102,18 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var extraLatents = 0
         public var earlyEos = 0
         public var endGuard = false
+        /// Her studio's work on the call (2026-10-13): × real time (measured, or projected when it gave up mid-call; nil
+        /// when it never ran), blueprint (+ refiner), vocoder and rest time, and vocoder pieces done of those planned.
+        /// `studioUnits`: the compute units its models were loaded with; `studioOff`: why it is off for the rest of the
+        /// session (too slow), nil while it may run.
+        public var studioX: Double?
+        public var studioBlueprintMs = 0.0
+        public var studioVocoderMs = 0.0
+        public var studioRestMs = 0.0
+        public var studioPieces = 0
+        public var studioPiecesPlanned = 0
+        public var studioUnits: String?
+        public var studioOff: String?
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -113,6 +131,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var toneDB = 0.0
         /// Skip the studio for this call (ExpressiveLine.studio == false: playback is short of audio).
         var hurry = false
+        /// A Listen call (ExpressiveLine.studio set): its studio keeps to real time (StudioPace). Drive prep and the
+        /// Voice Lab (nil) aren't played as they render: their studio always finishes.
+        var paced = false
     }
 
     private let assets: Assets
@@ -132,6 +153,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// Why her studio's models aren't loaded now (low memory, a failed load), and the wait before they may load again.
     private var studioOff: String?
     private var studioHold = MemoryHold(base: 120, cap: 1_200)
+    /// Her studio's pace over Listen's calls, and why it is off for the rest of this engine's life (too slow on this
+    /// phone now): it never loads again then. A new engine (every load of hers) starts afresh.
+    private var studioPace = StudioPace()
+    private var studioTooSlow: String?
+    /// Calls her studio has worked on (the log's call numbers).
+    private var studioCalls = 0
+    /// The app's log (native.log): her studio's load and every call it works on, in one line each.
+    private let log: @Sendable (String) -> Void
     /// Her studio's reads only: decodes the latents the end guard asks about (PocketTtsSynthesizer.levelProbe).
     private var tailDecoder: PocketTtsLatentDecoder?
     /// The stream decodes, one after the other in call order.
@@ -168,10 +197,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// A piece whose last latent is louder than this (dBFS) when Pocket stops was cut off, not finished (A6).
     static let audibleEndDB = -40.0
 
-    public init(assets: Assets, transcriber: NephisTranscriber? = nil, freeMemoryMB: @escaping @Sendable () -> Double? = { nil }) {
+    public init(assets: Assets, transcriber: NephisTranscriber? = nil, freeMemoryMB: @escaping @Sendable () -> Double? = { nil },
+                log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.assets = assets
         self.transcriber = transcriber
         self.freeMemoryMB = freeMemoryMB
+        self.log = log
     }
 
     public func setTranscriber(_ t: NephisTranscriber?) {
@@ -350,7 +381,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         lastMood = mood
         report.mood = mood
         return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
-                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false)
+                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -509,6 +540,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var ms = 0.0
         var studioUsed = false
         var bypassReason: String? = nil
+        /// Her studio's own report for the call (nil: it never got the call), its compute units, and why it is off for
+        /// the session (too slow) once this call is counted.
+        var studio: NephisStudio.Report? = nil
+        var units: String? = nil
+        var off: String? = nil
     }
 
     /// `decode`, with this call's report (studio used or why not, rate, mood: the player's log; `lastReport` may
@@ -523,7 +559,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // A call the studio skips or fails gets the tone the read without the studio gets (A3).
         let plainTone = NephisFlow.studioTone(studioUsed: false, moodToneDB: p.toneDB, chain: assets.chain)
         // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
-        let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?) = { hurry in await self.studioForCall(hurry: hurry) }
+        let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?, n: Int) = { hurry in await self.studioForCall(hurry: hurry) }
+        let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, paced in
+            await self.studioCallDone(n, r, units: units, paced: paced)
+        }
+        let studioCheck = Self.studioCheck(paced: p.paced, freeMemoryMB: freeMemoryMB)
+        let note = log
         let job = Task { () async throws -> Decoded in
             await previous?.value
             let d0 = Date()
@@ -536,15 +577,25 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                 let ready = await studioFor(p.hurry)
                 try Task.checkCancellation()
                 if let studio = ready.studio {
+                    out.units = studio.computeUnits
+                    if !p.hurry {
+                        // Before the work: a call that never finishes still shows in the log.
+                        let seconds = Double(mimi.count) / Double(NephisFlow.sampleRate)
+                        note("studio: call \(ready.n) started: \(String(format: "%.1f", seconds)) s of audio\(p.paced ? "" : " (no time limit)")")
+                    }
                     do {
-                        let r = try await studio.renderReporting(pcm24: mimi, latents: sketch, hurry: p.hurry, continues: !p.reset)
+                        let r = try await studio.renderReporting(pcm24: mimi, latents: sketch, hurry: p.hurry, continues: !p.reset,
+                                                                 check: studioCheck)
                         out.samples = r.pcm
                         out.studioUsed = !r.report.bypassed
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
+                        out.studio = r.report
+                        if !p.hurry { out.off = await studioDone(ready.n, r.report, studio.computeUnits, p.paced) }
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
                         out.bypassReason = "failed: \(error)"
+                        note("studio: call \(ready.n) failed: \(error); her plain sound")
                     }
                 } else {
                     out.bypassReason = ready.reason ?? "bypassed"
@@ -589,6 +640,16 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         report.studioRead = config != nil
         report.studioUsed = decoded.studioUsed
         report.bypassReason = decoded.bypassReason
+        if let s = decoded.studio, !p.hurry {
+            report.studioX = s.speedX
+            report.studioBlueprintMs = s.blueprintMs + s.refinerMs
+            report.studioVocoderMs = s.vocoderMs
+            report.studioRestMs = s.restMs
+            report.studioPieces = s.pieces
+            report.studioPiecesPlanned = s.piecesPlanned
+        }
+        report.studioUnits = decoded.units
+        report.studioOff = decoded.off ?? (config == nil ? nil : studioTooSlow)
         lastReport = report
         let audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                     chunks: report.takes)
@@ -602,22 +663,64 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// Pocket's (startStudioLoad, again from here after a drop), and the calls meanwhile play her plain sound at the
     /// studio's rate. Dropped when free memory falls under ~500 MB; after a drop or a failed load they wait (2 min,
     /// doubling, back to 2 min once they have worked 5 minutes) before loading again.
-    private func studioForCall(hurry: Bool) -> (studio: NephisStudio?, reason: String?) {
-        guard assets.studioDirectory != nil else { return (nil, "off") }
+    /// `n`: the call's number in her studio's log (0 without the studio).
+    private func studioForCall(hurry: Bool) -> (studio: NephisStudio?, reason: String?, n: Int) {
+        guard assets.studioDirectory != nil else { return (nil, "off", 0) }
         // Released (this call is cancelled, the models gone): nothing loads for it.
-        guard manager != nil, !Task.isCancelled else { return (nil, "released") }
+        guard manager != nil, !Task.isCancelled else { return (nil, "released", 0) }
+        // Too slow on this phone now: off for the rest of this engine's life (studioCallDone).
+        if let studioTooSlow { return (nil, studioTooSlow, 0) }
         let free = freeMemoryMB()
         if let studio {
             guard NephisMemory.short(.studioKeep, freeMB: free), let free else {
                 studioHold.worked(at: Date())
-                return (studio, nil)
+                if !hurry { studioCalls += 1 }
+                return (studio, nil, studioCalls)
             }
             dropStudio(NephisMemory.refusal(.studioKeep, freeMB: free))
-            return (nil, studioOff)
+            return (nil, studioOff, 0)
         }
         // Short of audio: no load started now (it would compete with her generation); the call plays at once.
-        if hurry, studioLoading == nil { return (nil, "hurry") }
-        return (nil, startStudioLoad() ?? "loading")
+        if hurry, studioLoading == nil { return (nil, "hurry", 0) }
+        return (nil, startStudioLoad() ?? "loading", 0)
+    }
+
+    /// Between her studio's pieces (NephisStudio.Check): too little memory left gives up on the call (and drops the
+    /// studio: studioCallDone), and a Listen call (`paced`) also gives up once it can't finish at real time.
+    static func studioCheck(paced: Bool, freeMemoryMB: @escaping @Sendable () -> Double?) -> NephisStudio.Check {
+        { x in
+            if let free = freeMemoryMB(), NephisMemory.short(.studioKeep, freeMB: free) { return NephisMemory.refusal(.studioKeep, freeMB: free) }
+            return paced && StudioPace.tooSlow(x) ? "slow: \(StudioPace.words(x))" : nil
+        }
+    }
+
+    /// A call her studio worked on: its numbers in one line of the app's log; a call it gave up on for memory drops it (as
+    /// a memory check before a call does); a Listen call's pace counts toward switching it off for the session
+    /// (StudioPace: three calls in a row under real time). Returns why it is off for the session, if it now is.
+    private func studioCallDone(_ n: Int, _ r: NephisStudio.Report, units: String, paced: Bool) -> String? {
+        log(Self.studioLine(n, r, units: units))
+        let forMemory = r.bypassed && r.bypassReason?.hasPrefix("memory") == true
+        if forMemory, let why = r.bypassReason { dropStudio(why) }
+        if paced, !forMemory, let x = r.speedX, let reason = studioPace.record(x), studioTooSlow == nil {
+            studioTooSlow = reason
+            studio = nil
+            studioOff = reason
+            log("studio: off for the rest of this session: \(reason) (\(StudioPace.dropAfter) calls in a row under "
+                + "\(StudioPace.words(StudioPace.minimum))); her plain sound from here")
+        }
+        return studioTooSlow
+    }
+
+    /// One studio call for the log: "studio: call 3: 0.42x real time, gave up (slow: 0.4x real time) after 2 of 9
+    /// pieces; 4.1 s audio, blueprint 1210 ms, vocoder 2400 ms, rest 0 ms, units cpu+ane, heat serious".
+    static func studioLine(_ n: Int, _ r: NephisStudio.Report, units: String) -> String {
+        let heat = ["nominal", "fair", "serious", "critical"]
+        let speed = r.speedX.map { StudioPace.words($0) } ?? "?"
+        let outcome = r.bypassed ? "gave up (\(r.bypassReason ?? "?")) after \(r.pieces) of \(r.piecesPlanned) pieces"
+            : "\(r.pieces) of \(r.piecesPlanned) pieces"
+        let h = heat.indices.contains(r.thermal) ? heat[r.thermal] : "?"
+        return "studio: call \(n): \(speed), \(outcome); \(String(format: "%.1f", r.audioMs / 1000)) s audio, blueprint "
+            + "\(Int(r.blueprintMs + r.refinerMs)) ms, vocoder \(Int(r.vocoderMs)) ms, rest \(Int(r.restMs)) ms, units \(units), heat \(h)"
     }
 
     /// Starts loading her studio's models off the calls' path when they may load: Pocket up, no wait after a drop going
@@ -625,6 +728,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     @discardableResult
     private func startStudioLoad() -> String? {
         guard let dir = assets.studioDirectory, manager != nil, studio == nil else { return nil }
+        if let studioTooSlow { return studioTooSlow }
         if studioLoading != nil { return "loading" }
         if let off = studioOff, studioHold.holds(at: Date()) { return off }
         let free = freeMemoryMB()
@@ -634,21 +738,24 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         let ticket = generation.ticket
         studioLoading = Task.detached(priority: .utility) { [weak self] in
+            let t0 = Date()
             let result: Result<NephisStudio?, Error>
             do { result = .success(try await NephisStudio.load(from: dir)) } catch { result = .failure(error) }
-            await self?.studioLoaded(result, ticket: ticket)
+            await self?.studioLoaded(result, ticket: ticket, ms: Date().timeIntervalSince(t0) * 1000)
         }
         return "loading"
     }
 
     /// Her studio's models are up, or failed to load. Released meanwhile: kept nothing (they go with the task).
-    private func studioLoaded(_ result: Result<NephisStudio?, Error>, ticket: Int) {
+    private func studioLoaded(_ result: Result<NephisStudio?, Error>, ticket: Int, ms: Double) {
         guard generation.current(ticket) else { return }
         studioLoading = nil
         switch result {
         case .success(let loaded):
             studio = loaded
             studioOff = loaded == nil ? "missing" : nil
+            let free = freeMemoryMB().map { "\(Int($0)) MB" } ?? "unknown"
+            log(loaded.map { "studio: loaded in \(Int(ms)) ms, compute units \($0.computeUnits), free memory \(free)" } ?? "studio: missing")
         case .failure(let error):
             dropStudio("failed: \(error)")
         }
@@ -666,6 +773,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         studio = nil
         studioOff = reason
         studioHold.release(at: Date())
+        log("studio: off for now: \(reason)")
     }
 
     // MARK: - One take

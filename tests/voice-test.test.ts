@@ -44,6 +44,18 @@ describe('Settings › Voices › Voice test (src/ui/native/voice-test.ts)', () 
       { ok: true, text: 'Endings: 1 of 100 was cut off while still audible (1.0%; goal under 2%).' },
     ]);
     expect(studioCallLines({})).toEqual([]);
+    // Its speed and the switch-off for the read (2026-10-13: a studio slower than real time left the test silent).
+    expect(studioCallLines({
+      studio: { calls: 6, used: 2, reasons: { hurry: 1, slow: 2, 'studio too slow': 1 }, lastX: 0.42, slowestX: 0.38, minimumX: 1, units: 'cpu+ane', off: 'studio too slow: 0.4x real time' },
+    })).toEqual([
+      { ok: false, text: 'Her studio rendered 2 of 6 calls; 4 were her plain sound (1 short of audio, 2 too slow, 1 switched off as too slow).' },
+      { ok: false, text: 'Studio speed: 0.4× real time last, 0.4× slowest (needs 1.0×, on cpu+ane).' },
+      { ok: false, text: 'Her studio was switched off for the rest of the read (studio too slow: 0.4x real time).' },
+    ]);
+    expect(studioCallLines({ studio: { calls: 3, used: 3, lastX: 2.5, slowestX: 1.8, minimumX: 1 } })).toEqual([
+      { ok: true, text: 'Her studio rendered all 3 of her calls.' },
+      { ok: true, text: 'Studio speed: 2.5× real time last, 1.8× slowest (needs 1.0×).' },
+    ]);
     // In the plain-words result, after the speed.
     const lines = summarize({
       ended: true, firstAudioMs: 1200, crashesDuringTest: 0, thermalStart: 'nominal', thermalEnd: 'nominal',

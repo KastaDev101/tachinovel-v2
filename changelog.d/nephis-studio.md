@@ -27,7 +27,7 @@
 - Nephis studio: each sentence is rendered with the end of the one before it, so starts no longer begin from a cold
   edge; the last sound of a sentence (a final "s") is no longer clipped; long paragraphs are rendered in overlapping
   pieces instead of failing past 40 seconds; and if the studio fails for a sentence, her normal sound plays instead of
-  nothing. The studio now also covers the first lines of a session.
+  nothing.
 - Listen no longer reads lines again: after a stop it goes on from the sentence heard last (it used to start from the
   top of the page, paragraphs above it), it starts from the first paragraph on the page rather than the one hidden under
   the status bar, and a quick second tap no longer starts the read twice. Nephis keeps the soft end of her last word (a final

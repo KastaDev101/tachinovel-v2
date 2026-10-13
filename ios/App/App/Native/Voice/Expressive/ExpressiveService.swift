@@ -387,9 +387,14 @@ final class ExpressiveService {
         }
         // Nephis reads as one continuous flow (NephisFlowSynth): carry-over, lead-ins, blended joins, best takes. Her
         // studio's models load in the background once she is up and go when memory runs low (it asks how much is free).
+        // Her studio's load and every call it works on (speed, compute units, why it gave up or went off) go to the log
+        // at notice level, so native.log in the Diagnostics folder keeps them (2026-10-13: a studio Voice test played
+        // nothing and left no numbers).
         let flowAssets = nephis ? nephisFlowAssets : nil
+        let studioLog = Logger(subsystem: "app.tachinovel", category: "voice-studio")
         let flow: (any ExpressiveSynthesizer)? = flowAssets.map {
-            NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber(), freeMemoryMB: { ExpressiveService.freeMemoryMB() })
+            NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber(), freeMemoryMB: { ExpressiveService.freeMemoryMB() },
+                            log: { studioLog.notice("\($0, privacy: .public)") })
         }
         // What Nephis needs free to load (crash plan a4): Pocket's room; her studio's models load behind it, in the
         // background, with their own check (NephisFlowSynth.startStudioLoad).
@@ -919,6 +924,12 @@ final class ExpressiveService {
         /// Loads of her model refused for lack of free memory (crash plan a4), and the last refusal in plain words.
         var memoryRefusals = 0
         var lastMemoryRefusal: String?
+        /// Her studio's speed (2026-10-13: a studio Voice test played nothing): × real time of the last call it worked on
+        /// and the slowest, the compute units its models were loaded with, and why it went off for the session (too slow).
+        var studioLastX: Double?
+        var studioSlowestX: Double?
+        var studioUnits: String?
+        var studioOff: String?
 
         static let logLimit = 400
 
@@ -948,6 +959,12 @@ final class ExpressiveService {
         memoryHold.worked(at: Date())
         flowStats.log.append(FlowStats.Call(n: flowStats.calls + 1, atMs: flowStats.audioMs, report: r))
         if flowStats.log.count > FlowStats.logLimit { flowStats.log.removeFirst(flowStats.log.count - FlowStats.logLimit) }
+        if let x = r.studioX {
+            flowStats.studioLastX = x
+            flowStats.studioSlowestX = min(flowStats.studioSlowestX ?? x, x)
+        }
+        if let units = r.studioUnits { flowStats.studioUnits = units }
+        if let off = r.studioOff { flowStats.studioOff = off }
         if r.studioRead {
             flowStats.studioCalls += 1
             if r.studioUsed {
@@ -997,6 +1014,9 @@ final class ExpressiveService {
             "n": c.n, "atS": r1(c.atMs / 1000), "seconds": r1(r.audioMs / 1000), "engine": "nephis", "mood": r.mood, "rate": r.sampleRate,
             "studio": studioWord(r), "reason": r.bypassReason.map { String($0.prefix(160)) } ?? NSNull(),
             "pieces": r.pieces, "endedAudible": r.piecesEndingAudible, "tailsExtended": r.tailsExtended,
+            // Her studio's work on the call (nil/0 when it never ran): × real time, where the time went, vocoder pieces.
+            "studioX": r.studioX.map { r2($0) } ?? NSNull(), "blueprintMs": r1(r.studioBlueprintMs), "vocoderMs": r1(r.studioVocoderMs),
+            "restMs": r1(r.studioRestMs), "studioPieces": r.studioPieces, "studioPiecesPlanned": r.studioPiecesPlanned,
         ]
     }
 
@@ -1203,8 +1223,12 @@ final class ExpressiveService {
         ]
         // Her studio (B7): calls it rendered, why it skipped the others, the rates and moods, and every call in order
         // (`callLog`, to line up with the recording).
+        // Its speed (× real time; Listen keeps it at StudioPace.minimum or gives up per call), the compute units its models
+        // were loaded with, and why it went off for the session.
         let studio: [String: Any] = ["calls": f.studioCalls, "used": f.studioUsed, "bypassed": f.studioCalls - f.studioUsed,
-                                     "reasons": f.bypassReasons]
+                                     "reasons": f.bypassReasons, "lastX": f.studioLastX.map { Self.r2($0) } ?? NSNull(),
+                                     "slowestX": f.studioSlowestX.map { Self.r2($0) } ?? NSNull(), "minimumX": StudioPace.minimum,
+                                     "units": f.studioUnits ?? NSNull(), "off": f.studioOff ?? NSNull()]
         out["studio"] = studio
         out["rates"] = Dictionary(uniqueKeysWithValues: f.rates.map { (String($0.key), $0.value) })
         out["moods"] = f.moods

@@ -433,9 +433,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
-                // Her studio (when on): always before playback starts (the first lines get it too), then only while
-                // playback has a cushion; short of audio, speed comes first.
-                line.studio = !player.isPlaying || bufferedAhead() >= Self.studioAhead
+                // Her studio (when on) only while playback has a cushion; short of audio, speed comes first. Not forced
+                // before playback starts: her first lines are her plain sound (at the studio's rate), so her voice starts
+                // at once. Forcing it there (8e86b7b) left a studio pack's Voice test silent for over a minute: every
+                // call before the first audio went through a studio slower than real time, and each call's audio waits
+                // for the one before it (2026-10-13). The studio also gives up on a call it can't finish at real time
+                // (NephisFlowSynth, StudioPace).
+                line.studio = bufferedAhead() >= Self.studioAhead
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }
