@@ -645,11 +645,15 @@ export function installNarrationOverlay(): void {
   /** Back in the app: native kept narrating (lock screen, CarPlay) while the WebView slept; catch up with it. */
   async function syncOnReturn(): Promise<void> {
     try {
-      state = await Narration.state();
+      // Bounded: a state call that never answers must not leave the highlight frozen (`returning` blocks it).
+      const s = await Promise.race([Narration.state(), new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 2000))]);
+      if (s) state = s;
     } catch {
       // keep the last known state
     }
     returning = false;
+    // Hidden again meanwhile: the next return syncs.
+    if (document.visibilityState === 'hidden') return;
     render();
     const t = returnTarget(state, heard, hiddenAt);
     if (!t) return;
