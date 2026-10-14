@@ -39,6 +39,7 @@
  */
 import { compactLists, type ListMemory } from './lists.ts';
 import { rawTextReader } from './raw-text.ts';
+import { withUserPronunciations } from './user-pronunciations.ts';
 import { blockAnchor, buildScript, renderPhonemeRuns, renderPlain, type FrontendOptions, type Lexicon, type SourceBlock } from '@v1tts/frontend.ts';
 import {
   alternateSpeakers,
@@ -207,7 +208,9 @@ function dialogueShare(it: SpeechItem): number {
 
 const SPEAKABLE = /[\p{L}\p{N}]/u;
 
-export function speechScript(blocks: readonly SourceBlock[], opts: SpeechScriptOptions = {}): SpeechScript {
+export function speechScript(blocks: readonly SourceBlock[], options: SpeechScriptOptions = {}): SpeechScript {
+  // The user's pronunciations as each engine needs them, before anything reads the lexicons (user-pronunciations.ts).
+  const opts = withUserPronunciations(options);
   const script = buildScript(blocks, opts);
   const items: SpeechItem[] = [];
   for (const seg of script.segments) {

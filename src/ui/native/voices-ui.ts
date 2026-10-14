@@ -19,6 +19,7 @@
  * Vanilla DOM like car-mode.ts: these screens live outside v1's navigation stack.
  */
 import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } from '@v1tts/frontend.ts';
+import { engineEntry } from '../../core/narration/user-pronunciations.ts';
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
@@ -928,7 +929,7 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
   const render = (): void => {
     const rows = lex.entries
       .map(
-        (e, i) => `<div class="row"><div class="main"><b>${esc(e.match)}</b><span class="sub">${e.say ? `says “${esc(e.say)}”` : ''}${e.say && e.ipa ? ' · ' : ''}${e.ipa ? `/${esc(e.ipa)}/` : ''}</span></div>
+        (e, i) => `<div class="row"><div class="main" data-act="edit" data-i="${i}" role="button" tabindex="0" aria-label="Change ${esc(e.match)}"><b>${esc(e.match)}</b><span class="sub">${e.say ? `says “${esc(e.say)}”` : ''}${e.say && e.ipa ? ' · ' : ''}${e.ipa ? `/${esc(e.ipa)}/` : ''}</span></div>
         <button type="button" class="play" data-act="test" data-i="${i}" aria-label="Hear ${esc(e.match)}">${ICON.play}</button>
         <button type="button" class="del" data-act="delete" data-i="${i}" aria-label="Delete ${esc(e.match)}">✕</button></div>`,
       )
@@ -939,11 +940,11 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
       <div class="sec">Add a word</div>
       <div class="card" style="padding:4px 14px 14px">
         <input type="text" data-f="match" placeholder="Word as written (e.g. Nephis)" autocapitalize="off" autocomplete="off">
-        <input type="text" data-f="say" placeholder="Say it like (e.g. Neff-iss)" autocapitalize="off" autocomplete="off">
+        <input type="text" data-f="say" placeholder="Say it like (e.g. NEF-iss)" autocapitalize="off" autocomplete="off">
         <input type="text" data-f="ipa" placeholder="Kokoro phonemes, optional (e.g. nˈɛfɪs)" autocapitalize="off" autocomplete="off" spellcheck="false">
         <button type="button" class="btn" data-act="add">Add</button>
       </div>
-      <p class="note">“Say it like” works with every voice. Phonemes (misaki notation, as in the PC narrator’s lexicon) are exact for Kokoro.</p>
+      <p class="note">“Say it like” works with every voice: hyphens between syllables, the stressed one in capitals (NEF-iss, say-SHAHN), or any spelling that sounds right. Tap a word to change it. Phonemes (misaki notation, as in the PC narrator’s lexicon) are exact for Kokoro.</p>
       <button type="button" class="btn alt" data-act="paste-toggle">${pasteOpen ? 'Hide' : 'Paste a lexicon (JSON)'}</button>
       ${pasteOpen ? '<textarea data-f="paste" placeholder=\'{"schemaVersion":1,"entries":[{"match":"Nephis","ipa":"nˈɛfɪs"}]}\'></textarea><button type="button" class="btn" data-act="paste">Merge</button>' : ''}`;
   };
@@ -965,13 +966,24 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
         void save(upsertEntry(lex, { match, ...(say ? { say } : {}), ...(ipa ? { ipa } : {}) }));
         return;
       }
+      case 'edit': {
+        const e = lex.entries[i];
+        if (!e) return;
+        for (const [name, value] of [['match', e.match], ['say', e.say ?? ''], ['ipa', e.ipa ?? '']] as const) {
+          const input = p.body.querySelector<HTMLInputElement>(`[data-f="${name}"]`);
+          if (input) input.value = value;
+        }
+        p.body.querySelector<HTMLInputElement>('[data-f="say"]')?.focus();
+        return;
+      }
       case 'delete': {
         const entries = lex.entries.filter((_, k) => k !== i);
         void save({ schemaVersion: 1, entries });
         return;
       }
       case 'test': {
-        const e = lex.entries[i];
+        // As narration reads it: a stress respelling ("NEF-iss") as its plain form and phonemes (user-pronunciations.ts).
+        const e = lex.entries[i] ? engineEntry(lex.entries[i]) : undefined;
         if (!e) return;
         // Kokoro says it the way narration will: the phonemes if given, else the respelling.
         const word = e.say ?? e.match;

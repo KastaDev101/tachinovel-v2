@@ -46,7 +46,10 @@ const BUDGETS_KB: Record<string, number> = {
   // UI's speech script so a pack can read the text as written (lab Q1: 0 vs 6 of 147 last words lost).
   // 770 → 780 (2026-10-13, pack-picker): Settings › Voices › Voice packs (src/ui/native/voice-packs.ts, ~5.4 KB),
   // several Nephis packs side by side; main was at 767.7 KB.
-  'index.html': 780,
+  // 780 → 795 (2026-10-14, name-pronunciations): "Pronounce" on a selected name in the reader and its panel
+  // (src/ui/native/pronounce-ui.ts, ~8 KB) and stress respellings for every engine (user-pronunciations.ts, ~5 KB);
+  // main was at 779.2 KB.
+  'index.html': 795,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,
