@@ -39,6 +39,12 @@ how it works. Help › Listening in the app has the short version.
   synthesis, playback, the chapter changes and progress saving. (This uses the audio background mode and
   a `.playback`/`.spokenAudio` audio session, so TachiNovel is the Now Playing app. A background-time
   assertion covers the moment between chapters.)
+- **Back in the app, you're where the listen is.** The listening position is your reading progress: it
+  is saved every few seconds and as soon as a new chapter starts, so the library, History and Resume show
+  the chapter you are listening to. When you open the app again with the reader on screen, it jumps to the
+  sentence being read (opening the chapter narration went on to) and marks it briefly. While the screen is
+  on, the reader follows the voice; scroll the page yourself and it stays where you put it, with a **Back
+  to narration** pill to return.
 
 ## Prepare for the drive
 

@@ -4,8 +4,10 @@
 //  - Runs entirely natively (main thread), so it keeps going when the WebView is suspended.
 //  - Text comes from the reader DOM (UI-initiated play: exact highlight alignment) or from the core
 //    (`narration.chapterText`: lock screen auto-continue, CarPlay "Continue listening").
-//  - Position follows narration: progress.save goes to the core every few seconds and at chapter end,
-//    so the reader resumes where listening stopped (v1 ChapterPosition.paragraph).
+//  - Position follows narration: progress.save goes to the core every few seconds, at chapter end and at once
+//    when a new chapter starts, so the reader resumes where listening stopped (v1 ChapterPosition.paragraph) and
+//    the library / History show the chapter being listened to. Back in the app, the reader jumps to the spoken
+//    sentence (src/ui/native/narration-follow.ts).
 //  - Audio session .playback + .spokenAudio (not mixable → eligible as Now Playing app); interruptions
 //    pause/resume; unplugging headphones / leaving the car pauses.
 //  - Speech: Kokoro on device (HybridSpeechEngine, the bundled model) with the Apple voice taking over
@@ -207,6 +209,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private var current = 0
     private var generation = 0
     private var lastSavedAt = Date.distantPast
+    /// The chapter the last progress.save was for: the first position in a new chapter is saved at once, so the
+    /// library, History and the reader point at the chapter being listened to (not the one before it for 5 s).
+    private var lastSavedChapterPath: String?
     private var sleepTimer: DispatchWorkItem?
     private var errorMessage: String?
     /// Speech: chapter time (Now Playing, seeking by time), refined as sentences are spoken.
@@ -1194,8 +1199,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
             paragraph = it.paragraph
             percent = finished ? 1 : Double(current) / Double(max(1, items.count))
         }
-        guard force || Date().timeIntervalSince(lastSavedAt) > 5 else { return }
+        guard force || ch.chapterPath != lastSavedChapterPath || Date().timeIntervalSince(lastSavedAt) > 5 else { return }
         lastSavedAt = Date()
+        lastSavedChapterPath = ch.chapterPath
         var args: [String: Any] = [
             "pluginId": ch.pluginId, "novelPath": ch.novelPath, "chapterPath": ch.chapterPath,
             "position": ["percent": percent, "paragraph": paragraph, "offset": 0] as [String: Any],
