@@ -48,7 +48,9 @@ const BUDGETS_KB: Record<string, number> = {
   // several Nephis packs side by side; main was at 767.7 KB.
   // 780 → 800 (2026-10-13, narration-follow): the reader follows the narration and jumps to the spoken sentence
   // back in the app after CarPlay / a locked phone (src/ui/native/narration-follow.ts + overlay, ~8 KB); 786.7 KB.
-  'index.html': 800,
+  // 800 → 815 (2026-10-14, name-pronunciations): "Pronounce" on a selected name in the reader and its panel
+  // (src/ui/native/pronounce-ui.ts, ~8 KB) and stress respellings for every engine (user-pronunciations.ts, ~5 KB).
+  'index.html': 815,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,
