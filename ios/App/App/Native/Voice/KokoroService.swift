@@ -323,10 +323,13 @@ final class KokoroService: @unchecked Sendable {
         let sentinel = self.sentinel
         let context = "\(voice) \(route.rawValue) \(text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
         let done = MainBound(completion)
+        // Heteronyms its lexicon says one way only ("she had read it", "they live here", "wind the clock") as phoneme
+        // runs in their sense (HDVoiceCore Heteronyms; every Kokoro sentence passes here, the warm cache's too).
+        let spoken = Heteronyms.kokoroRuns(text: text, runs: runs)
         Task.detached(priority: .userInitiated) {
             sentinel.begin(context)
             let result: Result<KokoroAudio, Error>
-            do { result = .success(try await runtime.synthesize(text: text, runs: runs, voice: voice, speed: speed)) } catch { result = .failure(error) }
+            do { result = .success(try await runtime.synthesize(text: text, runs: spoken, voice: voice, speed: speed)) } catch { result = .failure(error) }
             if case .success = result { sentinel.end(success: true) } else { sentinel.end(success: false) }
             DispatchQueue.main.async {
                 if case .success = result { self.backoff.reset() }

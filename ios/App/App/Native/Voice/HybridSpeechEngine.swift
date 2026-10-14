@@ -67,7 +67,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
     private var chapterBrief: String?
     private var briefAsked = false
-    /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling].
+    /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling, "" = as written];
+    /// Heteronyms.pocketText uses them where its rules only guessed.
     private var sceneSenses: [Int: [String: String]] = [:]
     static let sceneWindow = 10
     static let sceneContext = 3
@@ -467,10 +468,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let group = flow ? flowGroup(from: i, limit: flowLimit) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
             // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
-            // Homographs said in the sense the AI director read (Nephis: "reed" for "she likes to read").
+            // Heteronyms respelled in their sense (HDVoiceCore Heteronyms: "reed" for "she likes to read", "led" for "lead
+            // pipes"), the AI director's sense where the rules only guessed.
             let text = members.map { j in
                 let t = StyleMapper.plainText(Self.readText(segments[j], expressive: true))
-                return id == .pocketTts ? sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t : t
+                return id == .pocketTts ? Heteronyms.pocketText(t, overrides: sceneSenses[j] ?? [:]) : t
             }.joined(separator: " ")
             // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
             // (tense, sad, tender); the script never puts two reads in one call.
@@ -485,7 +487,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 // engine picks one of the two): the script's raw form where it has one, else the sentence's text.
                 line.raw = members.map { j in
                     let t = StyleMapper.plainText(segments[j].natural?.params.raw ?? segments[j].kokoroText)
-                    return sceneSenses[j].map { SceneReader.respell(t, $0) } ?? t
+                    return Heteronyms.pocketText(t, overrides: sceneSenses[j] ?? [:])
                 }.joined(separator: " ")
                 line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
                 // Dialogue across that pause (the script's): she takes her own pause there, not a paragraph's. The first
