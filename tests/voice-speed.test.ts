@@ -65,6 +65,9 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(text).toContain('Her studio rendered 4 of 6 calls (others: 1 short of audio at the start, as in Listen, 1 too slow).');
     expect(text).toContain('Phone heat: fair → serious, Low Power Mode on.');
     expect(lines.filter((l) => !l.ok).length).toBe(4);
+    // Skipped only at the start, short of audio, as Listen does: fine.
+    const start = speedLines(report({ studio: { read: true, calls: 6, used: 5, reasons: { hurry: 1 }, studioEQCalls: 5 } }));
+    expect(start.find((l) => l.text.startsWith('Her studio rendered 5 of 6'))?.ok).toBe(true);
   });
 
   it('says why it didn’t run', () => {

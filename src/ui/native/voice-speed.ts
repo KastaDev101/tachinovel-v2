@@ -58,14 +58,14 @@ export function speedLines(r: Obj): Line[] {
   const calls = num(studio.calls);
   const used = num(studio.used);
   if (studio.read === true && calls > 0) {
-    const why = Object.entries(obj(studio.reasons))
-      .filter(([, n]) => num(n) > 0)
-      .map(([k, n]) => `${num(n)} ${STUDIO_REASON[k] ?? k}`)
-      .join(', ');
+    const reasons = Object.entries(obj(studio.reasons)).filter(([, n]) => num(n) > 0);
+    const why = reasons.map(([k, n]) => `${num(n)} ${STUDIO_REASON[k] ?? k}`).join(', ');
+    // Skipped only while the first audio was short (Listen does the same: her voice starts at once): as designed.
+    const byDesign = reasons.every(([k]) => k === 'hurry');
     lines.push(
       used >= calls
         ? { ok: true, text: `Her studio rendered all ${calls} calls.` }
-        : { ok: false, text: `Her studio rendered ${used} of ${calls} calls${why ? ` (others: ${why})` : ''}.` },
+        : { ok: byDesign, text: `Her studio rendered ${used} of ${calls} calls${why ? ` (others: ${why})` : ''}.` },
     );
   } else if (calls > 0) {
     lines.push({ ok: true, text: 'Her studio is off (or not in this pack): her plain sound.' });
