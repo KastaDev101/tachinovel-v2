@@ -54,14 +54,18 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// The pack's studio (`Models/nephis-studio`, NephisStudio.swift): her 44.1 kHz sound from Mimi's 24 kHz
         /// decode. nil = no studio, the stream stays 24 kHz exactly as before.
         public let studioDirectory: URL?
+        /// The pack's de-wind cleaner (`Models/nephis-dewind`, NephisDewindModel.swift), used when its chain asks for it
+        /// ("dewind"). nil = the pack ships none.
+        public let dewindDirectory: URL?
         public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil,
-                    chain: NephisFlow.Chain = .init(), studioDirectory: URL? = nil) {
+                    chain: NephisFlow.Chain = .init(), studioDirectory: URL? = nil, dewindDirectory: URL? = nil) {
             self.calm = calm
             self.moods = moods
             self.projection = projection
             self.modelsDirectory = modelsDirectory
             self.chain = chain
             self.studioDirectory = studioDirectory
+            self.dewindDirectory = dewindDirectory
         }
     }
 
@@ -131,6 +135,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var breathAir = false
         public var room = false
         public var finishMs = 0.0
+        /// The de-wind cleaner on this call (chain "dewind"): its passes (0: it didn't run), its time (ms, its own stage:
+        /// not inside `postMs`), its model and compute units, and why it didn't run when the chain asks for it ("no model
+        /// in the pack", "failed: …").
+        public var dewindPasses = 0
+        public var dewindMs = 0.0
+        public var dewindModel: String?
+        public var dewindUnits: String?
+        public var dewindNote: String?
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -151,6 +163,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// A Listen call (ExpressiveLine.studio set): its studio keeps to real time (StudioPace). Drive prep and the
         /// Voice Lab (nil) aren't played as they render: their studio always finishes.
         var paced = false
+        /// The first call of the next chapter in the same read: the de-wind cleaner starts afresh there (as at a new read).
+        var chapterStart = false
     }
 
     private let assets: Assets
@@ -212,6 +226,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var closeness: NephisCloseness?
     private var breathAir: NephisBreathAir?
     private var room: NephisRoom?
+    /// The pack's de-wind cleaner (chain "dewind"), loading or loaded: the network, or nil and why the calls go without
+    /// it. Started with her load; the first call that needs it waits for it (compiled once per pack, then ~0.1 s).
+    private var dewind: Task<(NephisDewinder?, String?), Never>?
     private var started = false
     public private(set) var lastReport = Report()
 
@@ -247,6 +264,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             return Date().timeIntervalSince(t0) * 1000
         }
         let ticket = generation.ticket
+        // The de-wind cleaner loads alongside Pocket (it is small; its first compile overlaps her load).
+        startDewindLoad()
         let job = Task { try await self.loadNow(ticket) }
         loading = job
         defer { if generation.current(ticket) { loading = nil } }
@@ -296,6 +315,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         loading = nil
         studioLoading?.cancel()
         studioLoading = nil
+        dewind?.cancel()
+        dewind = nil
         for job in prepareJobs.values { job.cancel() }
         for job in decodeJobs.values { job.cancel() }
         prepareJobs = [:]
@@ -319,11 +340,13 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func unloadAndWait() async {
         let load = loading
         let studioLoad = studioLoading
+        let dewindLoad = dewind
         let prepares = Array(prepareJobs.values)
         let calls = Array(decodeJobs.values)
         unload()
         _ = try? await load?.value
         await studioLoad?.value
+        _ = await dewindLoad?.value
         for job in prepares { _ = try? await job.value }
         for job in calls { _ = try? await job.value }
     }
@@ -409,7 +432,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         lastMood = mood
         report.mood = mood
         return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
-                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil)
+                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil,
+                        chapterStart: line.chapterStart == true)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -649,6 +673,60 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var postMs = 0.0
         /// The pack's studio EQ ran on the call.
         var studioEQ = false
+        /// The de-wind cleaner on the call (Report's dewind fields).
+        var dewind = Dewound()
+    }
+
+    /// What the de-wind cleaner did with one call.
+    struct Dewound: Sendable {
+        var passes = 0
+        var ms = 0.0
+        var model: String?
+        var units: String?
+        var note: String?
+    }
+
+    /// The de-wind cleaner on one call's sound at `rate` (chain "dewind"; nil = off: the samples untouched), waiting for
+    /// its load the first time. A read's calls come here in order, so the cleaner's state follows the read; `restart` (a
+    /// new read, a seek, the next chapter) starts it afresh. A failed load or call leaves the sound as it was, with why.
+    static func dewound(_ samples: inout [Float], rate: Int, settings: NephisDewind.Settings?, load: Task<(NephisDewinder?, String?), Never>?,
+                        restart: Bool, log: @Sendable (String) -> Void) async -> Dewound {
+        guard let settings, settings.on else { return Dewound() }
+        guard let load else { return Dewound(note: "no model in the pack") }
+        let (cleaner, why) = await load.value
+        guard let cleaner else { return Dewound(note: why ?? "not loaded") }
+        let r = await cleaner.process(samples, settings: settings, sampleRate: rate, restart: restart)
+        var out = Dewound(ms: r.ms, model: "\(cleaner.name) N\(cleaner.framesPerCall)", units: cleaner.computeUnits)
+        if let error = r.error {
+            out.note = "failed: \(error)"
+            log("dewind: a call failed: \(error); that call without it, the next one starts afresh")
+        } else {
+            samples = r.samples
+            out.passes = settings.passes
+        }
+        return out
+    }
+
+    /// Starts loading the pack's de-wind cleaner when its chain asks for one (once per engine): the calls wait for it; a
+    /// pack without the model, or a failed load, plays without it (said once in the log, and in every call's report).
+    private func startDewindLoad() {
+        guard dewind == nil, let settings = assets.chain.dewind, settings.on else { return }
+        let log = self.log
+        guard let dir = assets.dewindDirectory else {
+            log("dewind: the pack's chain asks for \(settings.passes) passes but the pack has no model (\(NephisDewindModel.folder)); off")
+            dewind = Task { () -> (NephisDewinder?, String?) in (nil, "no model in the pack") }
+            return
+        }
+        dewind = Task.detached(priority: .userInitiated) { () -> (NephisDewinder?, String?) in
+            do {
+                let (cleaner, line) = try await NephisDewinder.load(from: dir) { name, folder in try await CompiledModels.shared.url(name, in: folder) }
+                log(line + ", \(settings.passes) passes")
+                return (cleaner, nil)
+            } catch {
+                log("dewind: couldn't load the cleaner: \(error); off, her sound without it")
+                return (nil, "failed: \(error)")
+            }
+        }
     }
 
     /// `decode`, with this call's report (studio used or why not, rate, mood: the player's log; `lastReport` may
@@ -675,6 +753,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         let studioCheck = Self.studioCheck(paced: p.paced, freeMemoryMB: freeMemoryMB)
         let note = log
+        // The de-wind cleaner (chain "dewind"; nil = off): the first step after her voice is made, at the call's rate.
+        let dewindSettings = assets.chain.dewind
+        let dewindLoad = dewind
+        let dewindRestart = p.reset || p.chapterStart
         let job = Task { () async throws -> Decoded in
             await previous?.value
             let d0 = Date()
@@ -685,6 +767,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             try Task.checkCancellation()
             var out = Decoded(samples: mimi)
             out.mimiMs = mimiMs
+            // A read without her studio: the cleaner on Mimi's 24 kHz sound, before anything else.
+            if config == nil {
+                out.dewind = await Self.dewound(&out.samples, rate: NephisFlow.sampleRate, settings: dewindSettings, load: dewindLoad,
+                                                restart: dewindRestart, log: note)
+            }
             if let config {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
                 let ready = await studioFor(p.hurry)
                 try Task.checkCancellation()
@@ -700,6 +787,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                                                                  check: studioCheck)
                         out.samples = r.pcm
                         out.studioUsed = !r.report.bypassed
+                        // Her studio's sound: the cleaner first, before the breath polish and the EQs.
+                        if out.studioUsed {
+                            out.dewind = await Self.dewound(&out.samples, rate: config.sample_rate, settings: dewindSettings, load: dewindLoad,
+                                                            restart: dewindRestart, log: note)
+                        }
                         let post0 = Date()
                         if out.studioUsed, let breathPolish {
                             out.polish = BreathPolish.apply(&out.samples, sampleRate: config.sample_rate, settings: breathPolish)
@@ -732,6 +824,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                     plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
                     out.samples = NephisStudio.plainAudio(pcm24: toned, rate: config.sample_rate)
                     out.postMs += Date().timeIntervalSince(plain0) * 1000
+                    // Her plain sound in her studio's read: cleaned as it joins the read's 44.1 kHz stream, so one cleaner
+                    // runs over the whole read at one rate (her Mimi EQ stays at 24 kHz, where it was tuned, before it).
+                    out.dewind = await Self.dewound(&out.samples, rate: config.sample_rate, settings: dewindSettings, load: dewindLoad,
+                                                    restart: dewindRestart, log: note)
                 }
             }
             // A call without her studio's sound (no studio, skipped, failed): polished only when the pack says "plainToo".
@@ -791,6 +887,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         report.breathAir = aired
         report.room = roomed
         report.finishMs = finishMs
+        report.dewindPasses = decoded.dewind.passes
+        report.dewindMs = decoded.dewind.ms
+        report.dewindModel = decoded.dewind.model
+        report.dewindUnits = decoded.dewind.units
+        report.dewindNote = decoded.dewind.note
         report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)

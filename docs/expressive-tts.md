@@ -96,19 +96,40 @@ call, device, iOS, heat, Low Power Mode, free memory, the pack (name, `weightsSh
 every call. The report (`speedtest-<date>-<time>.json`) and the audio (`.wav`, 32-bit float at the read's rate) go to
 the Diagnostics folder; "Play result" plays the audio, "Copy report" copies the JSON.
 
-**Pack tone chain (pack.json `chain`)**, after her voice is made, in this order: `breathPolish` and `eqAfterStudio`
+**Pack tone chain (pack.json `chain`)**, after her voice is made, in this order: first `dewind` `{"passes": 2}` (1-2;
+the de-wind cleaner, below), then `breathPolish` and `eqAfterStudio`
 (studio calls), `studioEQ` (studio calls: `gainDB` and up to 8 RBJ sections, `highShelf`, `lowShelf`, `peaking`, and
 the browser EQ tuner's `highPass` low cut / `lowPass` top cut, 12 dB/octave with the section's Q, `db` ignored), then on
 every call of hers (studio or plain) the tuner's finishing: `closeness` `{"amount"}` (0-1; a port of Chromium's
 DynamicsCompressorNode with the tuner's threshold -32c - 18·min(1, 4c) dB, +6.02 dB for the phone's level, ratio 1 + 3c,
 12 dB knee, 8 ms attack, 180 ms release, Chromium's makeup gain and the tuner's; 6 ms look-ahead), `breathAir`
 `{"amount"}` (0-1; a parallel exciter x + 0.24a · HPF7k(shaper(5 · HPF5k(x))), shaper tanh(4v)/tanh(4) 4x oversampled
-with Chromium's WaveShaper resamplers), `room` `{"amount", "seconds" 0.35, "decay" 0.07, "seed" 1}` (amount 0-0.35; a
+with Chromium's WaveShaper resamplers; both high-passes RBJ with Q 1.1220, the tuner's WebAudio default Q of 1 dB),
+`room` `{"amount", "seconds" 0.35, "decay" 0.07, "seed" 1}` (amount 0-0.35; a
 seeded noise impulse, normalized like WebAudio's ConvolverNode, wet amount · 2.2, level 1/(1 + 0.6 · amount), FFT
 convolution on vDSP), then `master`. Each runs at the call's rate as one chain over the read (filters, look-ahead and the
 room's tail carry from call to call; a new read starts fresh). Absent, unreadable or 0: off, the audio bit-identical to
 before. Files: `ExpressiveCore/NephisStudioEQ.swift`, `NephisCloseness.swift`, `NephisBreathAir.swift`,
 `NephisRoom.swift`; the Voice speed test lists them in its chain and their time in "EQ and finishing" (`finishMs`).
+
+**De-wind cleaner (chain `dewind`)**: a DeepFilterNet3 (MIT/Apache-2.0) fine-tuned in tachinovel-tts-lab to remove the
+faint wind her source audio taught her voice; Kasta's locked sound runs it twice. The model ships in the pack:
+`Models/nephis-dewind/DewindNet.mlpackage` (or `.mlmodelc`), `dewind.json` (`model`, `frames_per_call` 8, `sample_rate`
+48000, `sha256` over the package's files, optional `compute_units`: `cpu` by default, the lab measured fp16 and the
+Neural Engine to change the sound) and optional `dewind_check.json` (the lab's model_io.json: checked at every load,
+off when the phone's numbers are more than 0.05 from the PC's). It runs on every call of hers as the first step after
+her voice is made: her studio's 44.1 kHz sound, her Mimi sound at 24 kHz in a read without her studio, and in a studio
+read the calls her studio skipped as they join the 44.1 kHz stream (after their 24 kHz Mimi EQ, which stays where it was
+tuned). Each call is resampled to 48 kHz (resample_poly's Kaiser filter, streamed), cleaned `passes` times (libdf's
+960/480 STFT, ERB and deep-filter features, Core ML in blocks of 8 frames with its state per pass) and resampled back.
+One chain runs over a read; a call comes back complete and as long as it went in: the chain's ~70-200 ms of held-back
+audio at a call's end comes from a copy of the chain that assumes silence follows (the PC's end-of-stream flush), the
+next call drops what was already played and crossfades 5 ms into the true output. A new read, a seek or a new chapter
+starts afresh; a read's last call is simply complete. Absent, unreadable or 0: off, bit-identical. A pack whose chain
+asks for it without the model, or a failed load or call, plays without it and says why (native.log, the call log, the
+Voice speed test: its passes, model and units in the chain, "De-wind cleaner" as its own stage, `dewindMs` per call).
+Files: `ExpressiveCore/NephisDewind.swift`, `NephisDewindModel.swift`; port notes in tachinovel-tts-lab
+`coreml-swap/dewind/PORTING.md`.
 
 Never crashing was the design rule: unsupported OS (< iOS 18), missing or corrupt files (checksums),
 a failed load, a failed sentence, memory warnings and backgrounding all end in Kokoro reading, never in

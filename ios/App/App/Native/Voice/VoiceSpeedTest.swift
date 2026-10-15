@@ -375,6 +375,7 @@ final class VoiceSpeedTest {
             "installed": true, "id": root.lastPathComponent, "name": info["name"] ?? NSNull(), "made": info["made"] ?? NSNull(),
             "base": info["base"] ?? NSNull(), "weightsSha256": info["weightsSha256"] ?? NSNull(), "hasStudio": hasStudio,
             "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio"), "studioUsed": NephisModelPack.studioDirectory != nil,
+            "hasDewind": NephisModelPack.dewindDirectory != nil,
         ]
     }
 
@@ -388,8 +389,15 @@ final class VoiceSpeedTest {
         let closeness: Any = c.closeness.map { ["amount": $0.amount, "on": $0.on, "thresholdDB": $0.thresholdDB, "ratio": $0.ratio] as [String: Any] } ?? NSNull()
         let breathAir: Any = c.breathAir.map { ["amount": $0.amount, "preGain": $0.preGain, "mix": $0.mix] as [String: Any] } ?? NSNull()
         let room: Any = c.room.map { ["amount": $0.amount, "seconds": $0.seconds, "decay": $0.decay, "seed": $0.seed] as [String: Any] } ?? NSNull()
+        // The de-wind cleaner (chain "dewind"): its passes, and the pack's model as dewind.json names it (null when off).
+        let dewindDir = NephisModelPack.dewindDirectory
+        let dewindConfig = dewindDir.flatMap { try? NephisDewindModel.readConfig(in: $0) }
+        let dewind: Any = c.dewind.map { d -> [String: Any] in
+            ["passes": d.passes, "model": dewindConfig?.model ?? NephisDewindModel.defaultName, "framesPerCall": dewindConfig?.frames_per_call ?? NSNull(),
+             "computeUnits": dewindConfig?.compute_units ?? "cpu", "inPack": dewindDir != nil]
+        } ?? NSNull()
         return [
-            "closeness": closeness, "breathAir": breathAir, "room": room,
+            "closeness": closeness, "breathAir": breathAir, "room": room, "dewind": dewind,
             "clipFrames": c.clipFrames, "carryFrames": c.carryFrames, "studioEQ": eq, "studioEQPresent": c.studioEQ != nil,
             "eqAfterStudio": c.eqAfterStudio, "breathPolish": c.breathPolish != nil, "master": c.master?.preset.rawValue ?? NSNull(),
             "text": c.text.rawValue, "highShelfDB": c.highShelfDB ?? NSNull(), "softSibilance": c.softSibilance ?? NSNull(),
@@ -441,6 +449,9 @@ final class VoiceSpeedTest {
         row["breathAir"] = rep.breathAir
         row["room"] = rep.room
         row["finishMs"] = r1(rep.finishMs)
+        row["dewind"] = rep.dewindPasses
+        row["dewindMs"] = r1(rep.dewindMs)
+        row["dewindNote"] = rep.dewindNote.map { String($0.prefix(160)) } ?? NSNull()
         row["pieces"] = rep.pieces
         row["mood"] = rep.mood
         return row
@@ -462,6 +473,8 @@ final class VoiceSpeedTest {
             "studioRestMs": total(\.studioRestMs).rounded(), "eqPostMs": total(\.postMs).rounded(),
             // Inside eqPostMs: the tuner's finishing (closeness, breath air, room).
             "finishMs": total(\.finishMs).rounded(),
+            // Its own stage (not inside eqPostMs): the de-wind cleaner.
+            "dewindMs": total(\.dewindMs).rounded(),
             "decodeMs": total(\.decodeMs).rounded(), "callsMs": total(\.totalMs).rounded(),
         ]
         var bypass: [String: Int] = [:]
@@ -488,6 +501,11 @@ final class VoiceSpeedTest {
         studio["closenessCalls"] = reports.filter(\.closeness).count
         studio["breathAirCalls"] = reports.filter(\.breathAir).count
         studio["roomCalls"] = reports.filter(\.room).count
+        // The de-wind cleaner: calls it cleaned, its model and compute units as loaded, and why it didn't run (the last reason).
+        studio["dewindCalls"] = reports.filter { $0.dewindPasses > 0 }.count
+        studio["dewindModel"] = reports.compactMap(\.dewindModel).last ?? NSNull()
+        studio["dewindUnits"] = reports.compactMap(\.dewindUnits).last ?? NSNull()
+        studio["dewindNote"] = reports.compactMap(\.dewindNote).last.map { String($0.prefix(160)) } ?? NSNull()
         studio["units"] = reports.compactMap(\.studioUnits).last ?? NSNull()
         studio["off"] = reports.compactMap(\.studioOff).last ?? NSNull()
         var device: [String: Any] = ["model": deviceModel(), "ios": iosVersion(), "os": ProcessInfo.processInfo.operatingSystemVersionString]

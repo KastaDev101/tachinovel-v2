@@ -98,6 +98,20 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(aboutLines(report({ chain }))[2]).toBe('Chain: clip 113, carry 12 frames, studio EQ yes, closeness 15%, room 7%');
   });
 
+  it('names the de-wind cleaner in the chain line, times it as its own stage and says whether it ran on every call', () => {
+    const chain = { clipFrames: 113, carryFrames: 12, studioEQPresent: true, dewind: { passes: 2, model: 'DewindNet', computeUnits: 'cpu' }, room: { amount: 0.07 } };
+    const r = report({ chain, stages: { ...(report().stages as Record<string, unknown>), dewindMs: 924 }, studio: { read: true, calls: 5, used: 5, studioEQCalls: 5, dewindCalls: 5 } });
+    expect(aboutLines(r)[2]).toBe('Chain: clip 113, carry 12 frames, studio EQ yes, de-wind 2 passes, room 7%');
+    expect(stageRows(r).map((row) => row.label)).toEqual([
+      'Pocket generation', 'Mimi decode', 'Studio blueprint', 'Studio vocoder', 'De-wind cleaner', 'EQ and finishing', 'Checks and studio rest',
+    ]);
+    expect(stageRows(r)[4]?.perSecond).toBeCloseTo(0.924 / 46.2, 5);
+    expect(speedLines(r)).toContainEqual({ ok: true, text: 'The de-wind cleaner (2 passes) ran on all 5 calls.' });
+    const missing = report({ chain, studio: { read: true, calls: 5, used: 5, studioEQCalls: 5, dewindCalls: 0, dewindNote: 'no model in the pack' } });
+    expect(speedLines(missing)).toContainEqual({ ok: false, text: 'The de-wind cleaner (2 passes) ran on 0 of 5 calls (no model in the pack).' });
+    expect(speedLines(report()).some((l) => l.text.includes('de-wind'))).toBe(false);
+  });
+
   it('is one tap from Settings › Voices and from the Listen player’s Voice panel, and listed on the Voice test and Diagnostics', () => {
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain('data-testid="voices-speed"');

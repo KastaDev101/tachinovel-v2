@@ -149,7 +149,8 @@ final class ExpressiveService {
         }
         return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
                                       modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain,
-                                      studioDirectory: pack == nil ? nil : NephisModelPack.studioDirectory)
+                                      studioDirectory: pack == nil ? nil : NephisModelPack.studioDirectory,
+                                      dewindDirectory: pack == nil ? nil : NephisModelPack.dewindDirectory)
     }
 
     /// Her EQ's top lift for the installed pack's decoder (nil: the shipped one).
@@ -1036,6 +1037,8 @@ final class ExpressiveService {
             "studioEQ": r.studioEQ,
             // The tuner's finishing on the call (chain "closeness", "breathAir", "room"; every call of hers when on).
             "closeness": r.closeness, "breathAir": r.breathAir, "room": r.room, "finishMs": r1(r.finishMs),
+            // The de-wind cleaner on the call (chain "dewind"): its passes (0: it didn't run), time, and why not when asked.
+            "dewind": r.dewindPasses, "dewindMs": r1(r.dewindMs), "dewindNote": r.dewindNote.map { String($0.prefix(160)) } ?? NSNull(),
         ]
     }
 

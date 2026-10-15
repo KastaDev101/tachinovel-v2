@@ -28,6 +28,11 @@
   little air on top, its exciter) and "room" (a small, close room, e.g. {"amount": 0.07}). Each sounds as in the tuner
   and carries from sentence to sentence (the room's echo rolls on into the next sentence instead of being cut). Packs
   without them sound exactly as before. The Voice speed test lists them and counts their time under EQ and finishing.
+- A Nephis pack can carry her de-wind cleaner ("dewind": {"passes": 2}, the model in the pack): it takes the faint wind
+  out of her voice on every sentence, first thing after her voice is made, and carries from sentence to sentence; each
+  sentence still comes out whole and as long as before. Packs without it sound exactly as before; a pack that asks for
+  it without the model plays without it and says so. The Voice speed test shows it and its time.
+- The breath air's two high-pass filters now have the browser EQ tuner's Q (1 dB in WebAudio, 1.122), as tuned.
 - Voice speed test (Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics):
   one tap renders a 45-second passage with the Nephis pack in use exactly like Listen, without playing it, then says
   whether she keeps up, how soon the first audio is ready, the speed against real time, where the time goes (her voice

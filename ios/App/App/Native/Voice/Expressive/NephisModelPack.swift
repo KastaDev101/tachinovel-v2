@@ -41,6 +41,13 @@ enum NephisModelPack {
         let dir = root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) ? dir : nil
     }
+    /// The active pack's de-wind cleaner (Models/nephis-dewind: DewindNet.mlpackage, dewind.json), or nil. Used whenever
+    /// the pack's chain asks for it ("dewind"), studio switch or not (ExpressiveCore NephisDewindModel.swift).
+    static var dewindDirectory: URL? {
+        guard let root = active else { return nil }
+        let dir = root.appendingPathComponent(NephisDewindModel.folder, isDirectory: true)
+        return FileManager.default.fileExists(atPath: dir.path) ? dir : nil
+    }
     /// Her voice files for the active model (a BuiltInVoices-shaped folder), or nil.
     static var voicesDirectory: URL? { active?.appendingPathComponent("BuiltInVoices", isDirectory: true) }
     /// What the active pack says about itself (pack.json: name, made, checkpoint), for the Voice Lab.

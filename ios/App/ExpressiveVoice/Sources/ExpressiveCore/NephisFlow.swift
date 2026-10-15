@@ -213,6 +213,11 @@ public enum NephisFlow {
         public var closeness: NephisCloseness.Settings?
         public var breathAir: NephisBreathAir.Settings?
         public var room: NephisRoom.Settings?
+        /// The de-wind cleaner (NephisDewind.swift, pack.json "dewind": {"passes": 2}; the model ships in the pack's
+        /// Models/nephis-dewind): the faint wind her source audio taught her voice taken out, `passes` times (1-2), on every
+        /// call of hers as the first step after her voice is made (her studio's sound, or Mimi's), before the breath polish,
+        /// the EQs, the finishing and her mastering. Absent, unreadable or 0: nil, every call exactly as before.
+        public var dewind: NephisDewind.Settings?
 
         /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
         /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
@@ -341,6 +346,7 @@ public enum NephisFlow {
             closeness = try? c.decodeIfPresent(NephisCloseness.Settings.self, forKey: .closeness)
             breathAir = try? c.decodeIfPresent(NephisBreathAir.Settings.self, forKey: .breathAir)
             room = try? c.decodeIfPresent(NephisRoom.Settings.self, forKey: .room)
+            dewind = (try? c.decodeIfPresent(NephisDewind.Settings.self, forKey: .dewind)).flatMap { $0.on ? $0 : nil }
         }
     }
 

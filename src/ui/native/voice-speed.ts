@@ -75,6 +75,8 @@ export function speedLines(r: Obj): Line[] {
     const eqCalls = num(studio.studioEQCalls);
     lines.push({ ok: eqCalls > 0 || studio.read !== true, text: `The pack’s studio EQ ran on ${Number.isFinite(eqCalls) ? eqCalls : 0} call${eqCalls === 1 ? '' : 's'}.` });
   }
+  const dewind = dewindLine(chain, studio);
+  if (dewind) lines.push(dewind);
   const slow = obj(r.slowestCall);
   if (Number.isFinite(num(slow.x))) {
     lines.push({ ok: num(slow.x) >= 1, text: `Slowest call: #${num(slow.n)} at ${num(slow.x).toFixed(1)}× real time (${num(slow.audioS).toFixed(1)} s of audio).` });
@@ -86,6 +88,21 @@ export function speedLines(r: Obj): Line[] {
   return lines;
 }
 
+/** The de-wind cleaner (pack chain "dewind"): on how many calls it ran, and why not when it didn't; null when the pack's
+ *  chain doesn't ask for it. */
+function dewindLine(chain: Obj, studio: Obj): Line | null {
+  const passes = num(obj(chain.dewind).passes);
+  if (!(passes > 0)) return null;
+  const calls = num(studio.calls);
+  const ran = num(studio.dewindCalls);
+  const n = Number.isFinite(ran) ? ran : 0;
+  const why = typeof studio.dewindNote === 'string' ? ` (${studio.dewindNote})` : '';
+  const what = `The de-wind cleaner (${passes} pass${passes === 1 ? '' : 'es'})`;
+  return Number.isFinite(calls) && n >= calls
+    ? { ok: true, text: `${what} ran on all ${calls} calls.` }
+    : { ok: false, text: `${what} ran on ${n} of ${Number.isFinite(calls) ? calls : '?'} calls${why}.` };
+}
+
 /** Where the time went: each stage's total and its share of a second of audio. */
 export function stageRows(r: Obj): { label: string; ms: number; perSecond: number }[] {
   const s = obj(r.stages);
@@ -95,6 +112,7 @@ export function stageRows(r: Obj): { label: string; ms: number; perSecond: numbe
     ['Mimi decode', 'mimiDecodeMs'],
     ['Studio blueprint', 'studioBlueprintMs'],
     ['Studio vocoder', 'studioVocoderMs'],
+    ['De-wind cleaner', 'dewindMs'],
     ['EQ and finishing', 'eqPostMs'],
   ];
   const out = rows.map(([label, key]) => ({ label, ms: num(s[key]), perSecond: audio > 0 ? num(s[key]) / 1000 / audio : NaN }));
@@ -103,14 +121,17 @@ export function stageRows(r: Obj): { label: string; ms: number; perSecond: numbe
   return out.filter((row) => Number.isFinite(row.ms));
 }
 
-/** The tuner's finishing in the chain ("closeness", "breathAir", "room"), e.g. ", closeness 15%, room 7%"; empty when none. */
+/** The tuner's finishing in the chain ("closeness", "breathAir", "room"), e.g. ", closeness 15%, room 7%", after the
+ *  de-wind cleaner (", de-wind 2 passes"); empty when none. */
 function finishing(chain: Obj): string {
+  const passes = num(obj(chain.dewind).passes);
+  const dewind = passes > 0 ? `, de-wind ${passes} pass${passes === 1 ? '' : 'es'}` : '';
   const parts: [string, unknown][] = [['closeness', chain.closeness], ['breath air', chain.breathAir], ['room', chain.room]];
   return parts
     .map(([label, v]) => [label, num(obj(v).amount)] as const)
     .filter(([, amount]) => amount > 0)
     .map(([label, amount]) => `, ${label} ${Math.round(amount * 100)}%`)
-    .join('');
+    .reduce((all, part) => all + part, dewind);
 }
 
 /** The device and pack lines under the result. */
