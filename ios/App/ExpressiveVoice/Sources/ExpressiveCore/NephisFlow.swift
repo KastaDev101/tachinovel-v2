@@ -200,6 +200,11 @@ public enum NephisFlow {
         /// chain over the whole read at the call's rate. Absent or unreadable: off, every call exactly as before (Kasta,
         /// 2026-10-13: "the SOUND of better audio quality").
         public var master: NephisMaster.Settings?
+        /// Her pack's own EQ on her studio's sound (NephisStudioEQ.swift, pack.json "studioEQ": {"gainDB", "sections":
+        /// [{"type": "highShelf"|"lowShelf"|"peaking", "hz", "q", "db"}]}): on every call her studio rendered, at the
+        /// call's rate, after the breath polish and after "eqAfterStudio". Absent or unreadable: nil, every call exactly
+        /// as before (Kasta, 2026-10-15: pack 18, the EQ of the audio approved on the PC).
+        public var studioEQ: StudioEQ?
 
         /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
         /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
@@ -324,6 +329,7 @@ public enum NephisFlow {
                 dialogueGaps[name] = seconds
             }
             master = try? c.decodeIfPresent(NephisMaster.Settings.self, forKey: .master)
+            studioEQ = try? c.decodeIfPresent(StudioEQ.self, forKey: .studioEQ)
         }
     }
 
@@ -749,18 +755,40 @@ public enum NephisFlow {
         }
     }
 
-    /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with 10 ms fades
-    /// into and out of each so the level never steps.
+    /// Fades into and out of a silence pad (seconds): 40 ms raised-cosine. The 10 ms linear fades before clicked at word
+    /// joins (Kasta's ear and a PC measurement, 2026-10-15).
+    public static let padFadeSeconds = 0.04
+
+    /// The fade's gain `k` samples away from a pad's edge, over `fade` samples: 0 at the edge, rising as a half Hann
+    /// window (0.5 - 0.5 cos(pi k / fade)) to 1 at `fade` and beyond.
+    public static func padFadeGain(_ k: Int, fade: Int) -> Float {
+        guard fade > 0, k < fade else { return 1 }
+        return Float(0.5 - 0.5 * cos(Double.pi * Double(max(0, k)) / Double(fade)))
+    }
+
+    /// Splices `pads` (latent index in the decoded stream, seconds) of silence into decoded audio, with a 40 ms
+    /// raised-cosine fade into and out of each (`padFadeSeconds`, `padFadeGain`) so the level never steps. A fade is
+    /// never longer than half the audio between two pads, nor than the audio there is before the first pad or after the
+    /// last one, so two fades never overlap.
     public static func insertSilence(_ samples: [Float], pads: [(at: Int, seconds: Double)], sampleRate: Int = sampleRate,
                                      samplesPerLatent perLatent: Int = samplesPerLatent) -> [Float] {
         guard !pads.isEmpty else { return samples }
         var out = samples
-        let fade = sampleRate / 100
-        for pad in pads.sorted(by: { $0.at > $1.at }) {
-            let i = min(out.count, pad.at * perLatent)
-            for k in 0..<min(fade, i) { out[i - 1 - k] *= Float(k) / Float(fade) }
-            for k in 0..<min(fade, out.count - i) { out[i + k] *= Float(k) / Float(fade) }
-            out.insert(contentsOf: [Float](repeating: 0, count: Int(pad.seconds * Double(sampleRate))), at: i)
+        let fade = max(1, Int((padFadeSeconds * Double(sampleRate)).rounded()))
+        let sorted = pads.sorted { $0.at < $1.at }
+        let edges = sorted.map { min(out.count, max(0, $0.at * perLatent)) }
+        // The fades first, on the audio as decoded (positions before any pad goes in).
+        for (j, i) in edges.enumerated() {
+            let before = j == 0 ? i : (i - edges[j - 1]) / 2
+            let after = j == edges.count - 1 ? out.count - i : (edges[j + 1] - i) / 2
+            let fadeIn = min(fade, before)
+            for k in 0..<max(0, fadeIn) { out[i - 1 - k] *= padFadeGain(k, fade: fadeIn) }
+            let fadeOut = min(fade, after)
+            for k in 0..<max(0, fadeOut) { out[i + k] *= padFadeGain(k, fade: fadeOut) }
+        }
+        // Then the silence, from the last pad back so the earlier positions stay valid.
+        for (pad, i) in zip(sorted, edges).reversed() {
+            out.insert(contentsOf: [Float](repeating: 0, count: max(0, Int(pad.seconds * Double(sampleRate)))), at: i)
         }
         return out
     }

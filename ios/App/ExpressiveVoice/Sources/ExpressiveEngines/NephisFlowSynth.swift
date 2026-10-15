@@ -119,6 +119,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Her mastering on this call (pack chain "master"): its preset, and the loudness gain it was at (dB). nil: off.
         public var masterPreset: String?
         public var masterGainDB: Double?
+        /// Inside `decodeMs` (the Voice speed test's stages): Mimi's decode of the stream, and the work after the sound
+        /// was made (breath polish, the tone and studio EQ, the pauses, her level, mastering).
+        public var mimiMs = 0.0
+        public var postMs = 0.0
+        /// Her pack's studio EQ ran on this call (chain "studioEQ": calls her studio rendered only).
+        public var studioEQ = false
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -626,6 +632,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var off: String? = nil
         /// What the breath polish did with the call (nil: not polished).
         var polish: BreathPolish.Report? = nil
+        /// Mimi's decode, and the work on the sound after it inside the job (polish, tone, studio EQ).
+        var mimiMs = 0.0
+        var postMs = 0.0
+        /// The pack's studio EQ ran on the call.
+        var studioEQ = false
     }
 
     /// `decode`, with this call's report (studio used or why not, rate, mood: the player's log; `lastReport` may
@@ -643,6 +654,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let studioTone = NephisFlow.studioTone(studioUsed: true, moodToneDB: p.toneDB, chain: assets.chain)
         // Her breaths as air (pack "breathPolish"; nil = off): on the studio's sound before its EQ, at the call's rate.
         let breathPolish = assets.chain.breathPolish
+        // Her pack's own EQ on her studio's sound (chain "studioEQ"; nil = off): last, after the polish and "eqAfterStudio".
+        let studioEQ = assets.chain.studioEQ
         // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
         let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?, n: Int) = { hurry in await self.studioForCall(hurry: hurry) }
         let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, paced in
@@ -655,9 +668,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             let d0 = Date()
             if p.reset { try await decoder.reset() }
             let mimi = try await decoder.decode(p.stream)
+            let mimiMs = Date().timeIntervalSince(d0) * 1000
             // Released meanwhile: stop here, and the models go with this call (crash plan a3).
             try Task.checkCancellation()
             var out = Decoded(samples: mimi)
+            out.mimiMs = mimiMs
             if let config {  // her 44.1 kHz sound; any studio failure falls back to Mimi's own sound at 44.1 kHz (never a lost call)
                 let ready = await studioFor(p.hurry)
                 try Task.checkCancellation()
@@ -673,11 +688,18 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                                                                  check: studioCheck)
                         out.samples = r.pcm
                         out.studioUsed = !r.report.bypassed
+                        let post0 = Date()
                         if out.studioUsed, let breathPolish {
                             out.polish = BreathPolish.apply(&out.samples, sampleRate: config.sample_rate, settings: breathPolish)
                             if !p.hurry, let polish = out.polish { note("breath polish: call \(ready.n): \(polish.summary)") }
                         }
                         if out.studioUsed, studioTone.mimiEQ != nil { studioTone.apply(&out.samples, sampleRate: config.sample_rate) }
+                        // The pack's studio EQ: the whole call at once (the studio hands it over whole), at its rate.
+                        if out.studioUsed, let studioEQ {
+                            studioEQ.apply(&out.samples, sampleRate: config.sample_rate)
+                            out.studioEQ = true
+                        }
+                        out.postMs += Date().timeIntervalSince(post0) * 1000
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
                         out.studio = r.report
                         if !p.hurry { out.off = await studioDone(ready.n, r.report, studio.computeUnits, p.paced) }
@@ -693,14 +715,18 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                 if !out.studioUsed {
                     // Mimi's sound with the read's own EQ (the mood's shelf and her Mimi EQ), applied at Mimi's 24 kHz
                     // where it was tuned, then at the studio's rate: the call sounds like the read without the studio.
+                    let plain0 = Date()
                     var toned = mimi
                     plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
                     out.samples = NephisStudio.plainAudio(pcm24: toned, rate: config.sample_rate)
+                    out.postMs += Date().timeIntervalSince(plain0) * 1000
                 }
             }
             // A call without her studio's sound (no studio, skipped, failed): polished only when the pack says "plainToo".
             if !out.studioUsed, let breathPolish, breathPolish.plainToo {
+                let polish0 = Date()
                 out.polish = BreathPolish.apply(&out.samples, sampleRate: config?.sample_rate ?? NephisFlow.sampleRate, settings: breathPolish)
+                out.postMs += Date().timeIntervalSince(polish0) * 1000
             }
             out.ms = Date().timeIntervalSince(d0) * 1000
             return out
@@ -714,6 +740,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         // its models rendered this call or not).
         let rate = config?.sample_rate ?? NephisFlow.sampleRate
         let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
+        let after0 = Date()
         var samples = NephisFlow.insertSilence(decoded.samples, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
         // The mood's tone, for the read without the studio (the player adds her EQ). In a studio read each call's tone
         // was set above: none on her studio sound, the read's own EQ on Mimi's (one owner per path).
@@ -732,6 +759,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         if masterSettings != nil, config == nil { NephisFlow.MimiEQ(chain: assets.chain).apply(&samples, sampleRate: rate) }
         let mastered = NephisMaster.apply(&master, settings: masterSettings, to: &samples, sampleRate: rate, restart: p.reset)
         var report = p.report
+        report.mimiMs = decoded.mimiMs
+        report.postMs = decoded.postMs + Date().timeIntervalSince(after0) * 1000
+        report.studioEQ = decoded.studioEQ
         report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)

@@ -67,6 +67,62 @@ final class NephisFlowTests: XCTestCase {
         XCTAssertEqual(out[0], 0.5)
     }
 
+    func testPadsFadeInAndOutOver40msRaisedCosine() {
+        let rate = 44_100, perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
+        let fade = Int((0.04 * Double(rate)).rounded())
+        XCTAssertEqual(fade, 1_764)
+        let audio = [Float](repeating: 0.5, count: 10 * perLatent)
+        let at = 4 * perLatent, pad = Int(0.3 * Double(rate))
+        let out = NephisFlow.insertSilence(audio, pads: [(at: 4, seconds: 0.3)], sampleRate: rate, samplesPerLatent: perLatent)
+        XCTAssertEqual(out.count, audio.count + pad)
+        // Into the pad: 0.5 × (0.5 − 0.5 cos(π k / fade)), k samples before it; full level from `fade` samples away.
+        for k in [0, 1, 100, fade / 2, fade - 1] {
+            let want = 0.5 * Float(0.5 - 0.5 * cos(Double.pi * Double(k) / Double(fade)))
+            XCTAssertEqual(out[at - 1 - k], want, accuracy: 1e-6, "before, k \(k)")
+            XCTAssertEqual(out[at + pad + k], want, accuracy: 1e-6, "after, k \(k)")
+        }
+        XCTAssertEqual(out[at - 1 - fade], 0.5)
+        XCTAssertEqual(out[at + pad + fade], 0.5)
+        XCTAssertEqual(out[at - 1], 0)
+        XCTAssertTrue(out[at..<(at + pad)].allSatisfy { $0 == 0 })
+        // Smooth: no step bigger than the half-Hann's steepest (π/2 × 0.5 / fade per sample).
+        let steepest = Float(Double.pi / 2 * 0.5 / Double(fade)) * 1.01
+        for i in (at - fade)..<at { XCTAssertLessThanOrEqual(abs(out[i] - out[i - 1]), steepest) }
+        XCTAssertEqual(NephisFlow.padFadeGain(0, fade: fade), 0)
+        XCTAssertEqual(NephisFlow.padFadeGain(fade, fade: fade), 1)
+        XCTAssertEqual(NephisFlow.padFadeGain(fade / 2, fade: fade), 0.5, accuracy: 1e-3)
+    }
+
+    func testPadFadesNeverOverlapOrRunPastTheAudio() {
+        let rate = 24_000
+        // Two pads 1 latent (80 ms, 1,920 samples) apart: each fade at most half of that, 960 samples (40 ms at 24 kHz),
+        // so they meet exactly in the middle, never overlapping.
+        let audio = [Float](repeating: 1, count: 6 * NephisFlow.samplesPerLatent)
+        let out = NephisFlow.insertSilence(audio, pads: [(at: 3, seconds: 0.1), (at: 2, seconds: 0.1)], sampleRate: rate)
+        let pad = Int(0.1 * Double(rate))
+        XCTAssertEqual(out.count, audio.count + 2 * pad)
+        // Between the pads: 1,920 samples, faded out of the first and into the second, 960 each, peaking at the middle.
+        let start = 2 * NephisFlow.samplesPerLatent + pad
+        let between = Array(out[start..<(start + NephisFlow.samplesPerLatent)])
+        XCTAssertEqual(between[0], 0)
+        XCTAssertEqual(between[between.count - 1], 0)
+        XCTAssertEqual(between.max() ?? 0, 1, accuracy: 1e-3)
+        // Pads closer than 80 ms: fades shrink to half the gap.
+        let close = NephisFlow.insertSilence([Float](repeating: 1, count: 3 * NephisFlow.samplesPerLatent),
+                                             pads: [(at: 1, seconds: 0.05), (at: 2, seconds: 0.05)], sampleRate: rate,
+                                             samplesPerLatent: 400)
+        let gap = Array(close[(400 + 1_200)..<(800 + 1_200)])
+        XCTAssertEqual(gap[0], 0)
+        XCTAssertEqual(gap[199], NephisFlow.padFadeGain(199, fade: 200), accuracy: 1e-6)
+        XCTAssertEqual(gap[200], NephisFlow.padFadeGain(199, fade: 200), accuracy: 1e-6)
+        XCTAssertEqual(gap[399], 0)
+        // A pad near the start or at the very end: the fade only covers the audio there is.
+        let edge = NephisFlow.insertSilence([Float](repeating: 1, count: 100), pads: [(at: 0, seconds: 0.01), (at: 1, seconds: 0.01)],
+                                            sampleRate: rate, samplesPerLatent: 100)
+        XCTAssertEqual(edge.count, 100 + 2 * 240)
+        XCTAssertTrue(edge.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
+    }
+
     func testLongPauseDecodesOnlyHerFadeOutAndLeadIn() {
         let q = [Float](repeating: 0, count: 32), w = [Float](repeating: 1, count: 32)
         // 6 silence latents after the last word, 4 before the next word: at 1.04 s (13 latents) only 3 + 2 are
