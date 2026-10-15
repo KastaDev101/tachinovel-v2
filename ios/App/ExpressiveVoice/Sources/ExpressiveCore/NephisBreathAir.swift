@@ -7,7 +7,11 @@
 //
 //    "breathAir": {"amount": 0.2}         amount 0…1; 0 = off
 //
-//  HPF5k / HPF7k: 2nd-order RBJ high-pass, Q 0.7071, at 5,000 and 7,000 Hz (double precision, ToneBiquad). The tuner's
+//  HPF5k / HPF7k: 2nd-order RBJ high-pass, Q 1.1220, at 5,000 and 7,000 Hz (double precision, ToneBiquad): the tuner
+//  built them as WebAudio BiquadFilterNodes with the default Q of 1, which WebAudio reads in dB for its low- and high-pass
+//  (Chromium Biquad::SetHighpassParams: resonance = 10^(0.05 · Q)), so a linear Q of 10^(1/20) = 1.1220, +1 dB at the
+//  corner (until build 361 here: 0.7071, -3 dB; corrected 2026-10-15). The studio EQ's own sections keep their plain
+//  RBJ Q (the tuner exports linear Q for those). The tuner's
 //  preGain 10 and mix 0.12 · amount were at its level, 6.02 dB under the phone's (x_phone = 2 · x_page): here preGain 5
 //  and mix 0.24 · amount. The shaper is the tuner's WebAudio WaveShaperNode with oversample "4x", ported from Chromium
 //  (Blink platform/audio up_sampler.cc, down_sampler.cc, modules/webaudio/wave_shaper_handler.cc; BSD-3-Clause, notice in
@@ -118,6 +122,9 @@ public struct NephisBreathAir: Sendable {
     static let upReversed: [Float] = upKernel.reversed()
     static let downReversed: [Float] = downKernel.reversed()
 
+    /// The two high-passes' Q: WebAudio's default Q of 1 dB as a linear Q, 10^(1/20) = 1.1220.
+    public static let highPassQ = pow(10.0, 1.0 / 20)
+
     /// The oversampled path's latency (frames at the call's rate): Chromium's for 4x.
     public static let latency = 192
 
@@ -184,8 +191,8 @@ public struct NephisBreathAir: Sendable {
         let fs = Double(max(1, sampleRate))
         self.settings = settings
         self.sampleRate = max(1, sampleRate)
-        hp5 = .highPass(hz: min(5_000, 0.49 * fs), q: 0.7071, fs: fs)
-        hp7 = .highPass(hz: min(7_000, 0.49 * fs), q: 0.7071, fs: fs)
+        hp5 = .highPass(hz: min(5_000, 0.49 * fs), q: Self.highPassQ, fs: fs)
+        hp7 = .highPass(hz: min(7_000, 0.49 * fs), q: Self.highPassQ, fs: fs)
     }
 
     /// The shaper: tanh(4v) / tanh(4) on v clamped to [-1, 1].

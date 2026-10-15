@@ -29,9 +29,9 @@ final class NephisBreathAirTests: XCTestCase {
         return 2 * (re * re + im * im).squareRoot() / Double(x.count - from)
     }
 
-    /// |H| of the RBJ high-pass (Q 0.7071) at `f`.
+    /// |H| of the RBJ high-pass (Q 1.1220: WebAudio's default 1 dB) at `f`.
     private func highPassGain(_ f: Double, corner: Double, fs: Double) -> Double {
-        let w0 = 2 * Double.pi * corner / fs, c = cos(w0), al = sin(w0) / (2 * 0.7071)
+        let w0 = 2 * Double.pi * corner / fs, c = cos(w0), al = sin(w0) / (2 * 1.1220)
         let b = [(1 + c) / 2, -(1 + c), (1 + c) / 2], a = [1 + al, -2 * c, 1 - al]
         let w = 2 * Double.pi * f / fs
         let nr = b[0] + b[1] * cos(w) + b[2] * cos(2 * w), ni = -(b[1] * sin(w) + b[2] * sin(2 * w))
@@ -81,6 +81,18 @@ final class NephisBreathAirTests: XCTestCase {
     func testASmallHighSignalGetsTheExcitersLinearGain() {
         // Tiny: the shaper is linear there, tanh(4v)/tanh(4) ≈ 4v/tanh(4).
         let fs = 44_100, hz = 10_000.0, amp = 1e-4
+        let w = wet(sine(hz, amplitude: amp, seconds: 1), amount: 0.5)
+        let got = amplitude(w, hz: hz, fs: fs, from: fs / 2)
+        let want = amp * 0.24 * 0.5 * 5 * 4 / tanh(4) * highPassGain(hz, corner: 5_000, fs: 44_100) * highPassGain(hz, corner: 7_000, fs: 44_100)
+        XCTAssertEqual(20 * log10(got / want), 0, accuracy: 0.1)
+    }
+
+    func testTheHighPassesHaveTheTunersQOfOneDecibel() {
+        // WebAudio reads a BiquadFilterNode's Q in dB for low- and high-pass: the default 1 is 10^(1/20) linear.
+        XCTAssertEqual(NephisBreathAir.highPassQ, 1.1220, accuracy: 1e-4)
+        XCTAssertEqual(20 * log10(highPassGain(7_000, corner: 7_000, fs: 44_100)), 1, accuracy: 0.01, "+1 dB at the corner")
+        // At the second filter's corner the air is +1 dB there (and the first filter's gain at 7 kHz), not -3 dB.
+        let fs = 44_100, hz = 7_000.0, amp = 1e-4
         let w = wet(sine(hz, amplitude: amp, seconds: 1), amount: 0.5)
         let got = amplitude(w, hz: hz, fs: fs, from: fs / 2)
         let want = amp * 0.24 * 0.5 * 5 * 4 / tanh(4) * highPassGain(hz, corner: 5_000, fs: 44_100) * highPassGain(hz, corner: 7_000, fs: 44_100)
