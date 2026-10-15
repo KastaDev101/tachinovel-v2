@@ -32,7 +32,9 @@
   out of her voice on every sentence, first thing after her voice is made, and carries from sentence to sentence; each
   sentence still comes out whole and as long as before. Packs without it sound exactly as before; a pack that asks for
   it without the model plays without it and says so. The Voice speed test shows it and its time.
-- The breath air's two high-pass filters now have the browser EQ tuner's Q (1 dB in WebAudio, 1.122), as tuned.
+- The breath air's two high-pass filters now have the browser EQ tuner's Q (1 dB in WebAudio, 1.122), as tuned, and a
+  pack can soften it on loud peaks ("breathAir": {"amount": 0.2, "drive": 0.3}, the tuner's "peak-safe"): quiet words
+  get the same air, loud dialogue no longer sounds robotic. Without "drive" it sounds exactly as before.
 - Voice speed test (Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics):
   one tap renders a 45-second passage with the Nephis pack in use exactly like Listen, without playing it, then says
   whether she keeps up, how soon the first audio is ready, the speed against real time, where the time goes (her voice

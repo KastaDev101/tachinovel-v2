@@ -104,7 +104,8 @@ every call of hers (studio or plain) the tuner's finishing: `closeness` `{"amoun
 DynamicsCompressorNode with the tuner's threshold -32c - 18·min(1, 4c) dB, +6.02 dB for the phone's level, ratio 1 + 3c,
 12 dB knee, 8 ms attack, 180 ms release, Chromium's makeup gain and the tuner's; 6 ms look-ahead), `breathAir`
 `{"amount"}` (0-1; a parallel exciter x + 0.24a · HPF7k(shaper(5 · HPF5k(x))), shaper tanh(4v)/tanh(4) 4x oversampled
-with Chromium's WaveShaper resamplers; both high-passes RBJ with Q 1.1220, the tuner's WebAudio default Q of 1 dB),
+with Chromium's WaveShaper resamplers; both high-passes RBJ with Q 1.1220, the tuner's WebAudio default Q of 1 dB; optional `"drive"` 0.1-1, default 1:
+preGain 5 · drive, mix 0.24 · amount / drive, the tuner's "peak-safe" is 0.3),
 `room` `{"amount", "seconds" 0.35, "decay" 0.07, "seed" 1}` (amount 0-0.35; a
 seeded noise impulse, normalized like WebAudio's ConvolverNode, wet amount · 2.2, level 1/(1 + 0.6 · amount), FFT
 convolution on vDSP), then `master`. Each runs at the call's rate as one chain over the read (filters, look-ahead and the

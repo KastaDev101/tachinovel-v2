@@ -387,7 +387,7 @@ final class VoiceSpeedTest {
         } ?? NSNull()
         // The tuner's finishing (chain "closeness", "breathAir", "room"), as the app read it (clamped); null when absent.
         let closeness: Any = c.closeness.map { ["amount": $0.amount, "on": $0.on, "thresholdDB": $0.thresholdDB, "ratio": $0.ratio] as [String: Any] } ?? NSNull()
-        let breathAir: Any = c.breathAir.map { ["amount": $0.amount, "preGain": $0.preGain, "mix": $0.mix] as [String: Any] } ?? NSNull()
+        let breathAir: Any = c.breathAir.map { ["amount": $0.amount, "drive": $0.drive, "preGain": $0.preGain, "mix": $0.mix] as [String: Any] } ?? NSNull()
         let room: Any = c.room.map { ["amount": $0.amount, "seconds": $0.seconds, "decay": $0.decay, "seed": $0.seed] as [String: Any] } ?? NSNull()
         // The de-wind cleaner (chain "dewind"): its passes, and the pack's model as dewind.json names it (null when off).
         let dewindDir = NephisModelPack.dewindDirectory

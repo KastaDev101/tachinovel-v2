@@ -13,7 +13,7 @@
 //  `DewindNetwork` (NephisDewindModel.swift: Core ML, shipped in the voice pack under Models/nephis-dewind).
 //
 //  Resampling   scipy.signal.resample_poly's defaults, streamed: Kaiser (beta 5) windowed sinc, 2·10·max(up, down) + 1
-//               taps, polyphase; accumulated in Double. 44.1 kHz: up 160 / down 147; 24 kHz: up 2 / down 1.
+//               taps, polyphase; accumulated in Double, in tap order. 44.1 kHz: up 160 / down 147; 24 kHz: up 2 / down 1.
 //  One pass     (libdf, all Float32) per 480 new samples: Vorbis-windowed 960-point frame, X = rfft / 960 (vDSP's real
 //               DFT, 960 = 15 · 64); 32 ERB features 10·log10(band power + 1e-10) under an exponential mean (alpha 0.99,
 //               from -60…-90 dB), /40; 96 deep-filter features X / sqrt(exp. mean of |X|) (from 0.001…0.0001). Model step
@@ -307,9 +307,11 @@ public enum NephisDewind {
                 for j in outputs..<end {
                     let n = (j + pre) * down
                     let start = n / up - base - (taps - 1)
+                    // A plain loop in tap order (vDSP's dot product sums in an order that depends on the buffers'
+                    // alignment): the same bits however the stream is cut into calls.
                     reversed[n % up].withUnsafeBufferPointer { p in
                         var acc = 0.0
-                        vDSP_dotprD(p.baseAddress!, 1, xa.baseAddress! + start, 1, &acc, vDSP_Length(taps))
+                        for m in 0..<taps { acc += p[m] * xa[start + m] }
                         y[j - outputs] = acc
                     }
                 }

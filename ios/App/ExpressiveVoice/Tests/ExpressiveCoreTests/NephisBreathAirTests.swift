@@ -99,6 +99,39 @@ final class NephisBreathAirTests: XCTestCase {
         XCTAssertEqual(20 * log10(got / want), 0, accuracy: 0.1)
     }
 
+    func testDriveKeepsQuietAirAndTamesLoudPeaks() throws {
+        // Absent: drive 1, today's sound bit for bit; clamped 0.1…1.
+        XCTAssertEqual(try chain(#"{"breathAir": {"amount": 0.2}}"#).breathAir?.drive, 1)
+        XCTAssertEqual(try chain(#"{"breathAir": {"amount": 0.2, "drive": 0.3}}"#).breathAir?.drive, 0.3)
+        XCTAssertEqual(try chain(#"{"breathAir": {"amount": 0.2, "drive": 0}}"#).breathAir?.drive, 0.1)
+        XCTAssertEqual(try chain(#"{"breathAir": {"amount": 0.2, "drive": 3}}"#).breathAir?.drive, 1)
+        XCTAssertEqual(try chain(#"{"breathAir": {"amount": 0.2, "drive": "x"}}"#).breathAir?.drive, 1)
+        let input = noise(20_000, seed: 3, scale: 0.4)
+        var plain = NephisBreathAir(settings: NephisBreathAir.Settings(amount: 0.3), sampleRate: 44_100)
+        var driven = NephisBreathAir(settings: NephisBreathAir.Settings(amount: 0.3, drive: 1), sampleRate: 44_100)
+        var a = input, b = input
+        plain.process(&a)
+        driven.process(&b)
+        XCTAssertEqual(a, b, "drive 1 is the old output")
+        // A small high signal: the same air at drive 0.3 (the shaper is linear there).
+        let fs = 44_100, hz = 10_000.0
+        let small = sine(hz, amplitude: 1e-4, seconds: 1)
+        func air(_ x: [Float], drive: Double) -> [Double] {
+            var e = NephisBreathAir(settings: NephisBreathAir.Settings(amount: 0.5, drive: drive), sampleRate: fs)
+            var y = x
+            e.process(&y)
+            return zip(y, x).map { Double($0) - Double($1) }
+        }
+        let g1 = amplitude(air(small, drive: 1), hz: hz, fs: fs, from: fs / 2)
+        let g03 = amplitude(air(small, drive: 0.3), hz: hz, fs: fs, from: fs / 2)
+        XCTAssertEqual(20 * log10(g03 / g1), 0, accuracy: 0.1)
+        // A loud high peak: the tanh saturates less at drive 0.3, so its air keeps more of the peak's linear gain.
+        let loud = sine(hz, amplitude: 0.5, seconds: 1)
+        let l1 = amplitude(air(loud, drive: 1), hz: hz, fs: fs, from: fs / 2)
+        let l03 = amplitude(air(loud, drive: 0.3), hz: hz, fs: fs, from: fs / 2)
+        XCTAssertGreaterThan(l03 / (0.5 / 1e-4 * g03), l1 / (0.5 / 1e-4 * g1))
+    }
+
     func testTheAirLagsTheDrySoundByChromiumsLatency() {
         XCTAssertEqual(NephisBreathAir.latency, 192)
         var click = [Float](repeating: 0, count: 4_000)

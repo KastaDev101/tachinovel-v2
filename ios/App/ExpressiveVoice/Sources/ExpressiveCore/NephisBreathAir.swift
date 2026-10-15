@@ -6,6 +6,11 @@
 //    y = x + mix · HPF7k( shaper( preGain · HPF5k(x) ) ),   shaper(v) = tanh(4v) / tanh(4)
 //
 //    "breathAir": {"amount": 0.2}         amount 0…1; 0 = off
+//    "breathAir": {"amount": 0.2, "drive": 0.3}   optional drive 0.1…1 (default 1): preGain 5 · drive, mix 0.24 · amount
+//                                         / drive. Quiet sounds get the same air (the shaper is linear there), loud peaks
+//                                         drive the tanh less, so they no longer saturate (the tuner's "peak-safe" switch
+//                                         is drive 0.3; Kasta 2026-10-15: loud dialogue peaks sounded robotic). Absent:
+//                                         1, every call exactly as before.
 //
 //  HPF5k / HPF7k: 2nd-order RBJ high-pass, Q 1.1220, at 5,000 and 7,000 Hz (double precision, ToneBiquad): the tuner
 //  built them as WebAudio BiquadFilterNodes with the default Q of 1, which WebAudio reads in dB for its low- and high-pass
@@ -67,24 +72,28 @@ import Accelerate
 import Foundation
 
 public struct NephisBreathAir: Sendable {
-    /// pack.json chain "breathAir": {"amount": 0.2}. `amount` is needed (a block without it is unreadable: off), 0…1.
+    /// pack.json chain "breathAir": {"amount": 0.2, "drive": 1}. `amount` is needed (a block without it is unreadable:
+    /// off), 0…1; `drive` is optional, 0.1…1 (absent or not a number: 1).
     public struct Settings: Codable, Sendable, Equatable {
         public var amount: Double
+        public var drive: Double
 
-        public init(amount: Double) {
+        public init(amount: Double, drive: Double = 1) {
             self.amount = amount.isFinite ? min(1, max(0, amount)) : 0
+            self.drive = drive.isFinite ? min(1, max(0.1, drive)) : 1
         }
 
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let amount = try c.decode(Double.self, forKey: .amount)
-            self.init(amount: amount)
+            let drive = (try? c.decodeIfPresent(Double.self, forKey: .drive)) ?? 1
+            self.init(amount: amount, drive: drive)
         }
 
         /// The shaper's input gain and the wet mix at the phone's level (the tuner's 10 and 0.12 · amount, halved and
-        /// doubled for its signal being half the phone's).
-        public var preGain: Double { 5 }
-        public var mix: Double { 0.24 * amount }
+        /// doubled for its signal being half the phone's), the drive moving gain from before the shaper to after it.
+        public var preGain: Double { 5 * drive }
+        public var mix: Double { 0.24 * amount / drive }
     }
 
     /// Chromium's 2x up-sampler: 128-tap kernel (UpSampler MakeKernel).
