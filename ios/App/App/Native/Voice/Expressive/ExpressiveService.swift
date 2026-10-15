@@ -859,8 +859,10 @@ final class ExpressiveService {
 
     /// Nephis's flow (Listen): `prepared` (on main) as soon as the call's latents are ready, so the next call can start
     /// generating while this one decodes; then `completion` (on main) with the audio. Calls must come in reading
-    /// order and be prepared one at a time.
-    func synthesizeFlow(_ line: ExpressiveLine, prepared: @escaping () -> Void, completion: @escaping (Result<ExpressiveAudio, Error>) -> Void) {
+    /// order and be prepared one at a time. `reported` (on main, before `completion`): the call's own report (the Voice
+    /// speed test's stages).
+    func synthesizeFlow(_ line: ExpressiveLine, prepared: @escaping () -> Void, reported: ((NephisFlowSynth.Report) -> Void)? = nil,
+                        completion: @escaping (Result<ExpressiveAudio, Error>) -> Void) {
         guard loadedID == .pocketTts, loadState(.pocketTts) == .ready, let flow = synth as? NephisFlowSynth else {
             return completion(.failure(ExpressiveEngineError.notLoaded))
         }
@@ -884,7 +886,10 @@ final class ExpressiveService {
             }
             sentinel.end(success: (try? result.get()) != nil)
             DispatchQueue.main.async {
-                if let report { self?.recordFlow(report) }
+                if let report {
+                    self?.recordFlow(report)
+                    reported?(report)
+                }
                 completion(result)
             }
         }
@@ -1027,6 +1032,8 @@ final class ExpressiveService {
             "restMs": r1(r.studioRestMs), "studioPieces": r.studioPieces, "studioPiecesPlanned": r.studioPiecesPlanned,
             // Her mastering on the call (pack chain "master"): its preset and loudness gain; null when off.
             "master": r.masterPreset ?? NSNull(), "masterGainDB": r.masterGainDB.map { r1($0) } ?? NSNull(),
+            // The pack's studio EQ on the call (chain "studioEQ"; her studio's calls only).
+            "studioEQ": r.studioEQ,
         ]
     }
 
@@ -1217,11 +1224,13 @@ final class ExpressiveService {
         ]
         // Her render pacing (heat plan 2026-10-13): cushion target, seconds generated vs played, duty cycle.
         let pacing = NarrationController.shared.speechEngine.pacingReport
-        // Her pack's tone EQ after the studio (chain "eqAfterStudio"; loaded assets only, as textForm).
+        // Her pack's tone EQ after the studio (chain "eqAfterStudio"; loaded assets only, as textForm), and its own studio
+        // EQ (chain "studioEQ").
         let eqAfterStudio = nephisFlowAssetsCache.flatMap { $0 }?.chain.eqAfterStudio ?? false
+        let studioEQ = nephisFlowAssetsCache.flatMap { $0 }?.chain.studioEQ != nil
         guard f.calls > 0 else {
             return ["active": usesFlow, "calls": 0, "evidence": evidence, "sessionRate": sessionRate, "textForm": textForm, "memory": memory,
-                    "pacing": pacing, "eqAfterStudio": eqAfterStudio] as [String: Any]
+                    "pacing": pacing, "eqAfterStudio": eqAfterStudio, "studioEQ": studioEQ] as [String: Any]
         }
         let audio = max(1, f.audioMs)
         var out: [String: Any] = [
@@ -1234,7 +1243,7 @@ final class ExpressiveService {
                                "recognize": Self.r2(f.recognizeMs / audio), "decode": Self.r2(f.decodeMs / audio),
                                "call": Self.r2(f.totalMs / audio)],
             "renderX": f.renderMs > 0 ? Self.r2(f.audioMs / f.renderMs) : 0,
-            "sessionRate": sessionRate, "pacing": pacing, "eqAfterStudio": eqAfterStudio,
+            "sessionRate": sessionRate, "pacing": pacing, "eqAfterStudio": eqAfterStudio, "studioEQ": studioEQ,
         ]
         // Her studio (B7): calls it rendered, why it skipped the others, the rates and moods, and every call in order
         // (`callLog`, to line up with the recording).

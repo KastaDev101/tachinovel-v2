@@ -32,6 +32,7 @@ import { callCore } from '../capacitor-client.ts';
 import { ExpressiveVoice } from './expressive-lab.ts';
 import { Narration, type NarrationState } from './narration.ts';
 import { domSpeechScript } from './speech-dom.ts';
+import { openVoiceSpeedTest } from './voice-speed.ts';
 import { esc, panel, toast } from './voices-ui.ts';
 
 type Obj = Record<string, unknown>;
@@ -365,7 +366,7 @@ function rememberStudio(k: StudioKnown): void {
 }
 
 /** Clipboard first; else the share sheet (it has Copy), like Diagnostics. */
-async function copyText(text: string): Promise<string> {
+export async function copyText(text: string): Promise<string> {
   try {
     await navigator.clipboard.writeText(text);
     return 'Copied';
@@ -433,7 +434,8 @@ export function openVoiceTest(): void {
       <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : lines.length ? 'Run it again' : 'Run the test'}</button>
       <p class="note" data-testid="voice-test-progress">${esc(progress)}</p>
       ${result}
-      ${running ? '' : '<button type="button" class="link" style="margin-top:8px" data-act="long" data-testid="voice-test-long">Or: 15-minute test with your own chapter</button>'}`;
+      ${running ? '' : '<button type="button" class="link" style="margin-top:8px" data-act="long" data-testid="voice-test-long">Or: 15-minute test with your own chapter</button>'}
+      ${running ? '' : '<button type="button" class="link" style="display:block" data-act="speed" data-testid="voice-test-speed">Or: Voice speed test (45 s, timed, not played aloud)</button>'}`;
   };
 
   /** Only the progress line changes while a test runs (the buttons keep their place and focus). */
@@ -669,6 +671,7 @@ export function openVoiceTest(): void {
     const act = el.dataset.act;
     if (act === 'run' && !running && !checking) void run();
     if (act === 'long' && !running && !checking) void runLong();
+    if (act === 'speed' && !running && !checking) openVoiceSpeedTest();
     if (act === 'stop') stop();
     if (act === 'nephis-on' && !running) {
       void ExpressiveVoice.resetCrashes()

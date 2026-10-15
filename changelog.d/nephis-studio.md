@@ -19,8 +19,21 @@
   (short of audio, phone too hot, failed), its sample rate and mood, and where it falls in her audio. It also counts
   how many of her sentence ends were cut off while still audible and how many were let fade out. The 2-minute test
   records 32-bit float at the read's rate.
+- A Nephis pack can carry its own studio EQ (pack.json chain "studioEQ": an overall gain and up to 8 high shelf, low
+  shelf or peaking sections): it runs on every sentence her studio rendered, after the breath polish, so her studio
+  sound on the phone matches the audio approved on the PC. Packs without it sound exactly as before; a section type the
+  app doesn't know is skipped.
+- Voice speed test (Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics):
+  one tap renders a 45-second passage with the Nephis pack in use exactly like Listen, without playing it, then says
+  whether she keeps up, how soon the first audio is ready, the speed against real time, where the time goes (her voice
+  model, the decoder, the studio's two parts, EQ), the slowest part, whether her studio ran every time, the phone, iOS,
+  heat, Low Power Mode and free memory. Play result plays the passage; Copy report copies everything; the report and the
+  audio are saved to the Diagnostics folder as speedtest-<date>-<time>.json and .wav.
 
 ### Fixed
+
+- Nephis: the pauses between her sentences fade in and out over 40 ms with a smooth curve instead of 10 ms straight
+  ramps, which could click where words meet a pause.
 
 - Listen: a pause now holds when the system voice is reading. Paused just as it got going, or on its last word, it used
   to finish the sentence anyway, and at a chapter's end the next chapter then started by itself.

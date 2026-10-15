@@ -4,6 +4,7 @@
  *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
  *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
  *  - About: tap the version to copy it (for bug reports); 5 taps → the hidden Voice Lab (voice-lab.ts).
+ *  - Diagnostics: a "Voice Speed Test" row under Copy Full Diagnostics (voice-speed.ts).
  *  - Novel page: "Prepare for the drive" (drive-ui.ts) in place of v1's PC-narrator card (kept with PC audio on).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
@@ -13,6 +14,7 @@ import { addDriveCard, installDrive } from './drive-ui.ts';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceLab } from './voice-lab.ts';
+import { openVoiceSpeedTest } from './voice-speed.ts';
 import { openVoicesScreen, toast, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
 /** Settings › Voices › Advanced › "Use PC audio when available" (off by default). */
@@ -53,6 +55,23 @@ function addMoreRows(): void {
   }
 }
 
+/** Settings › Diagnostics: "Voice Speed Test" under "Copy Full Diagnostics" (a copy of that row, re-added when v1 re-renders). */
+function addDiagnosticsRow(): void {
+  const screen = document.querySelector('[data-testid="screen-diagnostics"]');
+  const anchor = screen?.querySelector<HTMLElement>('[data-testid="diagnostics-copy"]');
+  if (!screen || !anchor || screen.querySelector('[data-testid="diagnostics-voice-speed"]')) return;
+  const row = anchor.cloneNode(true) as HTMLElement;
+  row.dataset.testid = 'diagnostics-voice-speed';
+  const title = row.querySelector('.row-title');
+  if (title) title.textContent = 'Voice Speed Test';
+  row.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    openVoiceSpeedTest();
+  });
+  anchor.after(row);
+}
+
 function hookAboutVersion(): void {
   const version = document.querySelector<HTMLElement>('[data-testid="screen-about"] .about-version');
   if (!version || version.dataset.tnLab) return;
@@ -87,6 +106,7 @@ export function installV1Hooks(): void {
     try {
       addMoreRows();
       hookAboutVersion();
+      addDiagnosticsRow();
       addDriveCard(pcAudio);
     } catch (err) {
       console.warn('v1 hooks', err);

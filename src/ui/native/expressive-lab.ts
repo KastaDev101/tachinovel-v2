@@ -44,12 +44,21 @@ interface ExpressiveVoicePlugin {
   nephisPacks(): Promise<Obj>;
   selectNephisPack(o: { id: string }): Promise<Obj>;
   deleteNephisPack(o: { id: string }): Promise<Obj>;
+  /** Voice speed test (VoiceSpeedTest.swift, voice-speed.ts): renders the test passage the way Listen does, without
+   * playing it, and answers the report ({ran: false, error} when it can't run); progress as the "voiceSpeedTest" event. */
+  voiceSpeedTest(): Promise<Obj>;
+  /** Stop: no new call starts; the report then says "stopped". */
+  voiceSpeedTestStop(): Promise<{ stopping?: boolean }>;
+  /** Plays the last rendered passage ({stop: true}: stops it). */
+  voiceSpeedTestPlay(o?: { stop?: boolean }): Promise<{ playing: boolean; seconds?: number }>;
 }
 
 /** Events (kept out of the method list above, which mirrors the Swift plugin's methods). */
 interface ExpressiveVoiceEvents {
   /** A .tnvoice opened with "Open in TachiNovel" was imported (or refused). */
   addListener(event: 'voiceImport', fn: (e: Obj) => void): Promise<PluginListenerHandle>;
+  /** The Voice speed test as it goes: {step, text, done, total}. */
+  addListener(event: 'voiceSpeedTest', fn: (e: Obj) => void): Promise<PluginListenerHandle>;
 }
 
 export const ExpressiveVoice = registerPlugin<ExpressiveVoicePlugin & ExpressiveVoiceEvents>('ExpressiveVoice');

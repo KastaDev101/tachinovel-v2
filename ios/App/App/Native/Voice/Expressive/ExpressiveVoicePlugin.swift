@@ -28,6 +28,13 @@
 //  selectNephisPack               {id}: she reads with it from her next sentence (what installing one does)
 //  deleteNephisPack               {id}: deleting hers switches her to the next pack in the list, or to none
 //
+//  Voice speed test (VoiceSpeedTest.swift; src/ui/native/voice-speed.ts):
+//  voiceSpeedTest                 renders the test passage with her pack the way Listen does, without playing it, and
+//                                 answers the report (also saved to the Diagnostics folder); event "voiceSpeedTest"
+//                                 {step, text, done, total} as it goes; {ran: false, error} when it can't run
+//  voiceSpeedTestStop             {stopping}: no new call starts, the report then says "stopped"
+//  voiceSpeedTestPlay             {stop?}: plays the last rendered passage (or stops it) → {playing, seconds}
+//
 
 import Capacitor
 import Darwin
@@ -66,6 +73,9 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nephisPacks", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selectNephisPack", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteNephisPack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTestStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTestPlay", returnType: CAPPluginReturnPromise),
     ]
 
     /// A line for hearing a voice that came without a preview.
@@ -569,6 +579,41 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     /// Settings › Voices › Voice test: start counting Nephis's calls afresh (the report then covers the test only).
+    // MARK: - Voice speed test
+
+    @objc func voiceSpeedTest(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            VoiceSpeedTest.shared.start(progress: { [weak self] p in
+                self?.notifyListeners("voiceSpeedTest", data: p)
+            }, done: { report in
+                call.resolve(report)
+            })
+        }
+    }
+
+    @objc func voiceSpeedTestStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["stopping": VoiceSpeedTest.shared.stop()])
+        }
+    }
+
+    @objc func voiceSpeedTestPlay(_ call: CAPPluginCall) {
+        let stop = call.getBool("stop") ?? false
+        DispatchQueue.main.async {
+            let test = VoiceSpeedTest.shared
+            if stop {
+                test.stopPlaying()
+                return call.resolve(["playing": false])
+            }
+            do {
+                guard try test.play() else { return call.reject("Run the speed test first: there is nothing to play yet.", "NO_RESULT") }
+                call.resolve(["playing": true, "seconds": (test.lastAudioSeconds * 10).rounded() / 10])
+            } catch {
+                call.reject("Couldn’t play the result: \(error.localizedDescription)", "PLAYBACK")
+            }
+        }
+    }
+
     @objc func resetStats(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             ExpressiveService.shared.resetFlowStats()

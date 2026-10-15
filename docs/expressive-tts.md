@@ -86,6 +86,16 @@ synthesis time and × real time per line, Kokoro fallback lines and why, queue-r
 for the speed test: load, first audio, × real time (all / median / slowest 10%), memory before / loaded /
 max, thermal state before and after. "Copy report" puts everything on the clipboard.
 
+**Voice speed test** (Settings › Voices › Voice speed test; also the Listen player's Voice panel, the Voice test page
+and Settings › Diagnostics; `Native/Voice/VoiceSpeedTest.swift`, `ExpressiveCore/NephisSpeedTest.swift`,
+`src/ui/native/voice-speed.ts`): renders a fixed ~45 s passage with the Nephis pack in use exactly as Listen renders it
+(her chain, studio, the pack's `studioEQ`, pauses; calls cut and budgeted as Listen does) without playing it, simulates
+playback (keeps up: every call ready before the one before ends), and reports time to first audio, × real time, the
+time per stage (Pocket generation, Mimi decode, studio blueprint, studio vocoder, EQ/post), the slowest call, every
+call, device, iOS, heat, Low Power Mode, free memory, the pack (name, `weightsSha256`) and whether her studio ran on
+every call. The report (`speedtest-<date>-<time>.json`) and the audio (`.wav`, 32-bit float at the read's rate) go to
+the Diagnostics folder; "Play result" plays the audio, "Copy report" copies the JSON.
+
 Never crashing was the design rule: unsupported OS (< iOS 18), missing or corrupt files (checksums),
 a failed load, a failed sentence, memory warnings and backgrounding all end in Kokoro reading, never in
 silence or a crash; a Core ML crash inside these engines is contained by the sentinel on the next launch.

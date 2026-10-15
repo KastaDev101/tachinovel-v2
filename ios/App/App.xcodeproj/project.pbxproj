@@ -60,6 +60,7 @@
 		EC3DC2872CD490F0500F5EBE /* NephisModelPack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */; };
 		69874972264DB4360F799EDC /* VoiceRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D3A26F0369D03559BFBE7C /* VoiceRun.swift */; };
 		51D373B886070694C912A2B6 /* DiagnosticsFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */; };
+		D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 358453344F32444A328E6B70 /* VoiceSpeedTest.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -127,6 +128,7 @@
 		C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/Expressive/NephisModelPack.swift"; sourceTree = "<group>"; };
 		83D3A26F0369D03559BFBE7C /* VoiceRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceRun.swift"; sourceTree = "<group>"; };
 		425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFiles.swift"; sourceTree = "<group>"; };
+		358453344F32444A328E6B70 /* VoiceSpeedTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSpeedTest.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -231,6 +233,7 @@
 				C4139E7D9E0DF1569EFA905D /* NephisModelPack.swift */,
 				83D3A26F0369D03559BFBE7C /* VoiceRun.swift */,
 				425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */,
+				358453344F32444A328E6B70 /* VoiceSpeedTest.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -401,6 +404,7 @@
 				EC3DC2872CD490F0500F5EBE /* NephisModelPack.swift in Sources */,
 				69874972264DB4360F799EDC /* VoiceRun.swift in Sources */,
 				51D373B886070694C912A2B6 /* DiagnosticsFiles.swift in Sources */,
+				D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

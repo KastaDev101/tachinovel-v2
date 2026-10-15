@@ -23,6 +23,7 @@ import { engineEntry } from '../../core/narration/user-pronunciations.ts';
 import { callCore } from '../capacitor-client.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
+import { openVoiceSpeedTest } from './voice-speed.ts';
 import { openVoiceTest } from './voice-test.ts';
 import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { groupVoices } from './voice-groups.ts';
@@ -431,6 +432,10 @@ function backupCard(info: VoiceSettingsInfo, selected: string): string {
     </div>`;
 }
 
+/** The Voice speed test's row (Settings › Voices and the Listen player's Voice panel): one tap to it. */
+const SPEED_TEST_ROW =
+  '<button type="button" class="row" data-act="voice-speed" data-testid="voices-speed"><div class="main"><b>Voice speed test</b><span class="sub">Times her voice on a 45-second passage, then saves the report</span></div><span aria-hidden="true">›</span></button>';
+
 const NARRATOR_SETTINGS_ROW = `<div class="card"><button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Voice settings</b><span class="sub">Moods, AI scene reading, studio sound, system messages</span></div><span aria-hidden="true">›</span></button></div>`;
 
 /** Nephis's model packs (.tnmodel) are a personal-flavor feature (NephisModelPack.swift). */
@@ -540,7 +545,8 @@ export function openVoicesScreen(): void {
       ${nephisCard(info)}
       ${NARRATOR_SETTINGS_ROW}
       ${PACKS ? '<div class="card"><button type="button" class="row" data-act="voice-packs" data-testid="voices-packs"><div class="main"><b>Voice packs</b><span class="sub" data-packs>…</span></div><span aria-hidden="true">›</span></button></div>' : ''}
-      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">Run it, then copy the report</span></div><span aria-hidden="true">›</span></button></div>
+      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">Run it, then copy the report</span></div><span aria-hidden="true">›</span></button>
+        ${SPEED_TEST_ROW}</div>
       ${status}
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
@@ -613,6 +619,9 @@ export function openVoicesScreen(): void {
         return;
       case 'voice-test':
         openVoiceTest();
+        return;
+      case 'voice-speed':
+        openVoiceSpeedTest();
         return;
       case 'voice-packs':
         openVoicePacks(render);
@@ -809,6 +818,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
       <div class="sec">Voice</div>
       ${nephisCard(info)}
       ${NARRATOR_SETTINGS_ROW}
+      <div class="card" style="margin-top:10px">${SPEED_TEST_ROW}</div>
       <div class="sec">Pronunciations</div>
       <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
   };
@@ -830,6 +840,7 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     }
     if (act === 'novel-kokoro') kokoroPanel();
     if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
+    if (act === 'voice-speed') openVoiceSpeedTest();
     if (act === 'expressive') openExpressiveLab();
     // Her card says "Turn Nephis back on" here too (car mode › Voice): one tap, as in Settings › Voices.
     if (act === 'nephis-on') {

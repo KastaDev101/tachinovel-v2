@@ -1,0 +1,104 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { aboutLines, speedLines, stageRows } from '../src/ui/native/voice-speed.ts';
+
+const root = path.resolve(import.meta.dirname, '..');
+const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8');
+
+/** A report as VoiceSpeedTest.swift answers it (pack 18, studio on, every call through her studio). */
+const report = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  kind: 'voice-speed-test',
+  ran: true,
+  error: null,
+  keepsUp: true,
+  breaks: 0,
+  breakSeconds: 0,
+  failedCalls: 0,
+  firstAudioMs: 1840,
+  audioSeconds: 46.2,
+  renderSeconds: 21.4,
+  timesRealTime: 2.16,
+  stages: {
+    pocketGenerationMs: 9800, analysisMs: 600, recognizeMs: 0, mimiDecodeMs: 2100, studioBlueprintMs: 3300, studioVocoderMs: 5200,
+    studioRestMs: 100, eqPostMs: 240,
+  },
+  studio: { read: true, calls: 5, used: 5, skipped: 0, reasons: {}, everyCall: true, studioEQCalls: 5 },
+  chain: { clipFrames: 113, carryFrames: 12, studioEQPresent: true },
+  slowestCall: { n: 2, x: 1.4, totalMs: 9000, audioS: 12.6, studio: 'used' },
+  device: { model: 'iPhone17,3', ios: '26.6.1', lowPower: false, thermalStart: 'nominal', thermalEnd: 'fair', memoryStart: { freeMB: 2210.4 } },
+  pack: { installed: true, name: 'Nephis narrator (clear, deeper)', weightsSha256: '17304f8de9e678571194205f6fc85eb54699cd9fddb248fd444cf0de043e3b27' },
+  audioSamples: 2_037_420,
+  saved: 'in TachiNovel-Diagnostics',
+  ...over,
+});
+
+describe('Voice speed test (voice-speed.ts)', () => {
+  it('says in plain words whether she keeps up, how fast she starts and whether her studio ran on every call', () => {
+    const lines = speedLines(report());
+    expect(lines.map((l) => l.text)).toEqual([
+      'Keeps up: yes. Every part was ready before the one before it finished playing.',
+      'First audio after 1.8 s.',
+      'Speed: 2.2× real time (46.2 s of audio in 21.4 s).',
+      'Her studio rendered all 5 calls.',
+      'The pack’s studio EQ ran on 5 calls.',
+      'Slowest call: #2 at 1.4× real time (12.6 s of audio).',
+      'Phone heat: nominal → fair.',
+      'Saved in TachiNovel-Diagnostics.',
+    ]);
+    expect(lines.every((l) => l.ok)).toBe(true);
+  });
+
+  it('flags breaks, studio skips (with the reason) and a report that stayed on the iPhone', () => {
+    const lines = speedLines(
+      report({
+        keepsUp: false,
+        breaks: 2,
+        breakSeconds: 3.46,
+        studio: { read: true, calls: 6, used: 4, reasons: { hurry: 1, slow: 1 }, studioEQCalls: 4 },
+        device: { thermalStart: 'fair', thermalEnd: 'serious', lowPower: true },
+        saved: 'on the iPhone only: no Diagnostics folder is set (Settings › Diagnostics › Diagnostics Folder)',
+      }),
+    );
+    const text = lines.map((l) => l.text);
+    expect(text[0]).toBe('Keeps up: no. Playback would have waited 2 times (3.5 s in all).');
+    expect(text).toContain('Her studio rendered 4 of 6 calls (others: 1 short of audio at the start, as in Listen, 1 too slow).');
+    expect(text).toContain('Phone heat: fair → serious, Low Power Mode on.');
+    expect(lines.filter((l) => !l.ok).length).toBe(4);
+  });
+
+  it('says why it didn’t run', () => {
+    expect(speedLines({ ran: false, error: 'Choose Nephis as the voice first (Settings › Voices).' })).toEqual([
+      { ok: false, text: 'Speed test not run: Choose Nephis as the voice first (Settings › Voices).' },
+    ]);
+    expect(speedLines({ ran: false, error: 'stopped' })[0]?.text).toBe('The speed test was stopped.');
+  });
+
+  it('lists where the time went, per second of audio', () => {
+    const rows = stageRows(report());
+    expect(rows.map((r) => r.label)).toEqual(['Pocket generation', 'Mimi decode', 'Studio blueprint', 'Studio vocoder', 'EQ and finishing', 'Checks and studio rest']);
+    expect(rows[0]?.perSecond).toBeCloseTo(9.8 / 46.2, 5);
+    expect(rows[5]?.ms).toBe(700);
+    expect(stageRows({}).length).toBe(0);
+  });
+
+  it('shows the phone, the pack (with its weights hash) and the chain', () => {
+    expect(aboutLines(report())).toEqual([
+      'iPhone17,3 · iOS 26.6.1 · 2210 MB free',
+      'Pack: Nephis narrator (clear, deeper) · weights 17304f8de9e6…',
+      'Chain: clip 113, carry 12 frames, studio EQ yes',
+    ]);
+  });
+
+  it('is one tap from Settings › Voices and from the Listen player’s Voice panel, and listed on the Voice test and Diagnostics', () => {
+    const voices = read('src/ui/native/voices-ui.ts');
+    expect(voices).toContain('data-testid="voices-speed"');
+    // Settings › Voices and openVoicePicker (Listen › Voice) both show the row.
+    expect(voices.match(/\$\{SPEED_TEST_ROW\}/g)?.length).toBe(2);
+    expect(voices).toContain("if (act === 'voice-speed') openVoiceSpeedTest();");
+    expect(read('src/ui/native/voice-test.ts')).toContain('data-testid="voice-test-speed"');
+    expect(read('src/ui/native/v1-hooks.ts')).toContain("'diagnostics-voice-speed'");
+    const swift = read('ios/App/App/Native/Voice/Expressive/ExpressiveVoicePlugin.swift');
+    for (const m of ['voiceSpeedTest', 'voiceSpeedTestStop', 'voiceSpeedTestPlay']) expect(swift).toContain(`CAPPluginMethod(name: "${m}"`);
+  });
+});
