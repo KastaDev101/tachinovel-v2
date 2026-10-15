@@ -62,12 +62,14 @@ describe('Voice speed test (voice-speed.ts)', () => {
     );
     const text = lines.map((l) => l.text);
     expect(text[0]).toBe('Keeps up: no. Playback would have waited 2 times (3.5 s in all).');
-    expect(text).toContain('Her studio rendered 4 of 6 calls (others: 1 short of audio at the start, as in Listen, 1 too slow).');
+    expect(text).toContain('Her studio rendered 4 of 6 calls (others: 1 short of audio, no time for the studio, 1 too slow).');
     expect(text).toContain('Phone heat: fair → serious, Low Power Mode on.');
     expect(lines.filter((l) => !l.ok).length).toBe(4);
-    // Skipped only at the start, short of audio, as Listen does: fine.
+    // Her studio gets every call it can afford (StudioBudget): even one call short of audio is worth a look.
     const start = speedLines(report({ studio: { read: true, calls: 6, used: 5, reasons: { hurry: 1 }, studioEQCalls: 5 } }));
-    expect(start.find((l) => l.text.startsWith('Her studio rendered 5 of 6'))?.ok).toBe(true);
+    expect(start.find((l) => l.text.startsWith('Her studio rendered 5 of 6'))?.ok).toBe(false);
+    const all = speedLines(report({ studio: { read: true, calls: 6, used: 6, reasons: {}, studioEQCalls: 6 } }));
+    expect(all.find((l) => l.text === 'Her studio rendered all 6 calls.')?.ok).toBe(true);
   });
 
   it('says why it didn’t run', () => {

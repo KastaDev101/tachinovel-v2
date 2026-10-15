@@ -167,6 +167,7 @@ final class ExpressiveService {
     /// leaves the rate as it was posts nothing, as before.
     func reloadNephisModel() {
         nephisFlowAssetsCache = nil
+        studioBudgetState = nil
         if loadedID == .pocketTts, usesFlow { unload(reason: "new Nephis model") }
         if SessionRate.forRead(NarrationController.listenEngine()) != NarrationController.shared.speechEngine.sessionRate {
             NotificationCenter.default.post(name: VoiceSettings.changed, object: nil)
@@ -958,6 +959,34 @@ final class ExpressiveService {
 
     private(set) var flowStats = FlowStats()
 
+    /// Her studio's speed for the active pack (StudioBudget: which Listen calls get the studio), kept over this app's life
+    /// (a new read doesn't forget it) and remembered per pack for the next launch (`studioSpeedKey`). Main thread; a pack
+    /// change (reloadNephisModel) starts it afresh.
+    private var studioBudgetState: (pack: String?, budget: StudioBudget)?
+    static let studioSpeedKey = "nephisStudioSpeedX"
+
+    /// Her studio's budget for the active pack (main thread).
+    func studioBudget() -> StudioBudget {
+        if let s = studioBudgetState { return s.budget }
+        let pack = NephisModelPack.library.activeID
+        let remembered = pack.flatMap { UserDefaults.standard.dictionary(forKey: Self.studioSpeedKey)?[$0] as? Double }
+        let budget = StudioBudget(rememberedX: remembered)
+        studioBudgetState = (pack, budget)
+        return budget
+    }
+
+    /// A call her studio worked on, at `x` × real time: into the budget, and remembered for the pack.
+    private func recordStudioSpeed(_ x: Double) {
+        var budget = studioBudget()
+        budget.record(x)
+        let pack = studioBudgetState?.pack
+        studioBudgetState = (pack, budget)
+        guard let pack, let measured = budget.measuredX else { return }
+        var speeds = UserDefaults.standard.dictionary(forKey: Self.studioSpeedKey) ?? [:]
+        speeds[pack] = measured
+        UserDefaults.standard.set(speeds, forKey: Self.studioSpeedKey)
+    }
+
     func resetFlowStats() {
         flowStats = FlowStats()
     }
@@ -976,6 +1005,7 @@ final class ExpressiveService {
         if let x = r.studioX {
             flowStats.studioLastX = x
             flowStats.studioSlowestX = min(flowStats.studioSlowestX ?? x, x)
+            recordStudioSpeed(x)
         }
         if let units = r.studioUnits { flowStats.studioUnits = units }
         if let off = r.studioOff { flowStats.studioOff = off }
@@ -1171,7 +1201,7 @@ final class ExpressiveService {
             let info = NephisPackLibrary.info(in: root)
             return ["name": info?["name"] ?? NSNull(), "made": info?["made"] ?? NSNull(),
                     "studio": FileManager.default.fileExists(atPath: root.appendingPathComponent("Models/nephis-studio/studio.json").path),
-                    "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio")]
+                    "studioOn": NephisModelPack.studioOn]
         } ?? NSNull()
         var out: [String: Any] = [
             "available": store != nil,
@@ -1257,7 +1287,9 @@ final class ExpressiveService {
         let studio: [String: Any] = ["calls": f.studioCalls, "used": f.studioUsed, "bypassed": f.studioCalls - f.studioUsed,
                                      "reasons": f.bypassReasons, "lastX": f.studioLastX.map { Self.r2($0) } ?? NSNull(),
                                      "slowestX": f.studioSlowestX.map { Self.r2($0) } ?? NSNull(), "minimumX": StudioPace.minimum,
-                                     "units": f.studioUnits ?? NSNull(), "off": f.studioOff ?? NSNull()]
+                                     "units": f.studioUnits ?? NSNull(), "off": f.studioOff ?? NSNull(),
+                                     // The speed StudioBudget plans the next call with (which calls get the studio).
+                                     "plannedX": Self.r2(studioBudget().estimateX)]
         out["studio"] = studio
         out["rates"] = Dictionary(uniqueKeysWithValues: f.rates.map { (String($0.key), $0.value) })
         out["moods"] = f.moods

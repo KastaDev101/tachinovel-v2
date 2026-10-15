@@ -7,7 +7,9 @@
 //  - LoadGeneration: a release that a load still running sees, so the load keeps nothing;
 //  - ModelOutput.floats: a Core ML output read safely, whatever its scalar type and memory layout;
 //  - NephisFlow.studioMelFrames: the blueprint's output shape checked before it is read;
-//  - StudioPace: her studio against the clock (2026-10-13: a studio pack's Voice test played nothing for over a minute).
+//  - StudioPace: her studio against the clock (2026-10-13: a studio pack's Voice test played nothing for over a minute);
+//  - StudioBudget: her studio on every Listen call it can afford, from its measured speed (2026-10-15);
+//  - NephisStudioSwitch: the "Her studio" switch, on by default for every pack with a studio (2026-10-15).
 //
 
 import CoreML
@@ -167,6 +169,103 @@ public struct StudioPace: Equatable, Sendable {
     public mutating func record(_ timesRealTime: Double) -> String? {
         slowInARow = Self.tooSlow(timesRealTime) ? slowInARow + 1 : 0
         return slowInARow >= Self.dropAfter ? "studio too slow: \(Self.words(timesRealTime))" : nil
+    }
+}
+
+/// Her studio on every Listen call it can afford (2026-10-15: build 363's speed test on an iPhone 16 skipped it on 3 of 6
+/// calls as "hurry", fewer than `cushion` seconds buffered, while it ran at 23-47x real time; a skipped call is her plain
+/// Mimi sound, with its clicks and without the pack's studio EQ, so the read changed sound from sentence to sentence).
+///
+/// The rule: a call gets the studio when its cost (the call's audio, estimated from its text, over the studio's speed)
+/// is at most `share` of the time before the call must play (the audio buffered ahead of playback), that time never
+/// counted under `minimumSlack`. So the first call of a read (nothing buffered) still gets it when it costs at most
+/// `share` x `minimumSlack` (0.5 s): her first audio comes that much later at most. When the studio is genuinely slow
+/// (its speed under `fastFrom`, or a hot or low-power phone: `throttled`) the old rule alone: the studio only with
+/// `cushion` seconds buffered. The old rule always still holds, so no call skips it that skipped nothing before.
+///
+/// Its speed: measured on the calls it renders (`record`, x real time); before any, `seedX` (a conservative guess), or
+/// the speed last measured on this phone with this pack, discounted by `rememberedShare` (a cooler or hotter phone).
+public struct StudioBudget: Equatable, Sendable {
+    /// Seconds buffered ahead from which a call gets the studio whatever it costs (the rule before 2026-10-15).
+    public static let cushion = 6.0
+    /// Share of the time before the call must play that its studio may take (the rest is for her generation and decode).
+    public static let share = 0.5
+    /// Seconds the time before a call is never counted under (the first call of a read, a near-empty buffer).
+    public static let minimumSlack = 1.0
+    /// x real time under which the studio counts as slow: the old rule alone.
+    public static let fastFrom = 4.0
+    /// x real time assumed before any call measured it (the iPhone 16 measured 23-47x; an older phone may be far slower).
+    public static let seedX = 8.0
+    /// Share of the speed remembered from an earlier session that a new one starts from.
+    public static let rememberedShare = 0.5
+    /// Her pace for a call's audio from its text, characters per second: slower than her real ~14, so the cost estimate
+    /// errs long.
+    public static let charactersPerSecond = 12.0
+    /// A faster call than the estimate moves it this share of the way up (a slower one sets it at once).
+    public static let riseShare = 0.3
+
+    /// The studio's speed measured so far (x real time), or the remembered one (discounted); nil: nothing known.
+    public private(set) var measuredX: Double?
+
+    /// `rememberedX`: the speed last measured on this phone with this pack (an earlier session), if any.
+    public init(rememberedX: Double? = nil) {
+        if let x = rememberedX, x.isFinite, x > 0 { measuredX = x * Self.rememberedShare }
+    }
+
+    /// The speed the rule plans with.
+    public var estimateX: Double { measuredX ?? Self.seedX }
+
+    /// A call the studio worked on, at `timesRealTime` (measured, or projected when it gave up mid-call). Slower than the
+    /// estimate: the estimate at once (heat, a busy phone); faster: a share of the way up.
+    public mutating func record(_ timesRealTime: Double) {
+        guard timesRealTime.isFinite, timesRealTime > 0 else { return }
+        guard let m = measuredX else { measuredX = timesRealTime; return }
+        measuredX = timesRealTime < m ? timesRealTime : m + (timesRealTime - m) * Self.riseShare
+    }
+
+    /// A call's audio estimated from its text, seconds.
+    public static func audioSeconds(characters: Int) -> Double { Double(max(1, characters)) / charactersPerSecond }
+
+    /// The studio's estimated work on a call of `characters`, seconds.
+    public func cost(characters: Int) -> Double { Self.audioSeconds(characters: characters) / max(0.01, estimateX) }
+
+    /// The studio for a call of `characters` with `ahead` seconds buffered ahead of playback. `throttled`: the phone is
+    /// hot (serious heat or worse) or in Low Power Mode.
+    public func use(characters: Int, ahead: Double, throttled: Bool) -> Bool {
+        if ahead >= Self.cushion { return true }
+        guard !throttled, estimateX >= Self.fastFrom else { return false }
+        return cost(characters: characters) <= Self.share * max(ahead, Self.minimumSlack)
+    }
+}
+
+/// The "Her studio" switch (Settings › Voices › Voice test), per pack (2026-10-15: a studio pack played her plain sound
+/// because the switch, one setting for every pack, was off). On by default for every pack; the user's off is kept for that
+/// pack (`offKey`: the packs switched off) until it is installed again, which turns it on. The old single setting
+/// ("nephisStudio") no longer decides anything.
+public enum NephisStudioSwitch {
+    public static let offKey = "nephisStudioOffPacks"
+
+    /// The switch for `pack` (nil: no pack installed, on).
+    public static func isOn(pack: String?, defaults: UserDefaults) -> Bool {
+        guard let pack else { return true }
+        return !offPacks(defaults).contains(pack)
+    }
+
+    /// The user's choice for `pack`.
+    public static func set(_ on: Bool, pack: String?, defaults: UserDefaults) {
+        guard let pack else { return }
+        var off = offPacks(defaults)
+        if on { off.remove(pack) } else { off.insert(pack) }
+        defaults.set(off.sorted(), forKey: offKey)
+    }
+
+    /// `pack` was just installed (new, or a fresh copy of one): its studio is on.
+    public static func installed(pack: String, defaults: UserDefaults) {
+        set(true, pack: pack, defaults: defaults)
+    }
+
+    private static func offPacks(_ defaults: UserDefaults) -> Set<String> {
+        Set(defaults.stringArray(forKey: offKey) ?? [])
     }
 }
 

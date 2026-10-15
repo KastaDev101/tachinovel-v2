@@ -164,7 +164,8 @@ final class VoiceSpeedTest {
         let range = NephisSpeedTest.group(r.sentences, from: i, limit: limit)
         let text = r.sentences[range].map(\.text).joined(separator: " ")
         // As Listen's call (HybridSpeechEngine.pumpRender): calm narration, her text as written for a "raw" pack,
-        // heteronyms resolved, the app's pause before it, her studio only with a cushion, extras only when far ahead.
+        // heteronyms resolved, the app's pause before it, her studio on every call it can afford (StudioBudget), extras
+        // only when far ahead.
         let said = Heteronyms.pocketText(StyleMapper.plainText(text))
         var line = ExpressiveLine(text: said, role: "narrator")
         line.temperature = 0.7
@@ -175,7 +176,7 @@ final class VoiceSpeedTest {
         let budget = Self.budget(ahead: ahead, calls: r.calls)
         line.takes = budget.takes
         line.leadIn = budget.leadIn
-        line.studio = ahead >= HybridSpeechEngine.studioAhead
+        line.studio = HybridSpeechEngine.studioFor(characters: said.count, ahead: ahead)
         let k = r.calls.count
         r.calls.append(Call(n: k + 1, sentences: range, chars: said.count, pauseBefore: line.pauseBefore, ahead: ahead,
                             studioAsked: line.studio == true, takes: budget.takes, leadIn: budget.leadIn, issuedAt: now))
@@ -374,7 +375,7 @@ final class VoiceSpeedTest {
         return [
             "installed": true, "id": root.lastPathComponent, "name": info["name"] ?? NSNull(), "made": info["made"] ?? NSNull(),
             "base": info["base"] ?? NSNull(), "weightsSha256": info["weightsSha256"] ?? NSNull(), "hasStudio": hasStudio,
-            "studioOn": UserDefaults.standard.bool(forKey: "nephisStudio"), "studioUsed": NephisModelPack.studioDirectory != nil,
+            "studioOn": NephisModelPack.studioOn, "studioUsed": NephisModelPack.studioDirectory != nil,
             "hasDewind": NephisModelPack.dewindDirectory != nil,
         ]
     }

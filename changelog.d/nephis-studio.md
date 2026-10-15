@@ -44,6 +44,13 @@
 
 ### Fixed
 
+- Nephis with a studio pack: her studio is on by default for every pack that has one (the "Her studio" switch is now
+  per pack; switching it off is kept for that pack until it is installed again), and it renders every call it can
+  afford, the first call of a read included, from its measured speed (a call gets it when its estimated studio time is
+  at most half the audio buffered ahead, never counted under 1 s). Before, a call was her plain sound (clicks, no studio
+  EQ) whenever less than 6 s was buffered, even with the studio at 23-47x real time; that rule now only applies when the
+  studio is slow (under 4x), the phone is hot or in Low Power Mode.
+
 - Nephis: the pauses between her sentences fade in and out over 40 ms with a smooth curve instead of 10 ms straight
   ramps, which could click where words meet a pause.
 

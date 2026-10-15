@@ -502,13 +502,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 let budget = flowBudget(at: i)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
-                // Her studio (when on) only while playback has a cushion; short of audio, speed comes first. Not forced
-                // before playback starts: her first lines are her plain sound (at the studio's rate), so her voice starts
-                // at once. Forcing it there (8e86b7b) left a studio pack's Voice test silent for over a minute: every
-                // call before the first audio went through a studio slower than real time, and each call's audio waits
-                // for the one before it (2026-10-13). The studio also gives up on a call it can't finish at real time
-                // (NephisFlowSynth, StudioPace).
-                line.studio = bufferedAhead() >= Self.studioAhead
+                // Her studio (when on) on every call it can afford from its measured speed, the first call of a read
+                // included (StudioBudget, 2026-10-15: at 23-47x real time it costs ~0.1-0.3 s a call); a slow studio
+                // (cold guess, heat, Low Power Mode) only while playback has a cushion, as before. Forcing a slow one
+                // before playback starts (8e86b7b) left a studio pack's Voice test silent for over a minute: each call's
+                // audio waits for the one before it (2026-10-13). The studio also gives up on a call it can't finish at
+                // real time (NephisFlowSynth, StudioPace).
+                line.studio = Self.studioFor(characters: text.count, ahead: bufferedAhead())
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }
@@ -805,8 +805,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static let leadInAhead = 25.0
-    /// Seconds buffered ahead below which her studio is skipped for a call (NephisStudio, ExpressiveLine.studio).
-    static let studioAhead = 6.0
+    /// Her studio for a flow call of `characters` with `ahead` seconds buffered ahead of playback (ExpressiveLine.studio;
+    /// Listen and the Voice speed test): StudioBudget with her studio's speed measured so far, the old cushion rule alone
+    /// on a hot phone (serious heat or worse) or in Low Power Mode. Main thread.
+    static func studioFor(characters: Int, ahead: Double) -> Bool {
+        let info = ProcessInfo.processInfo
+        let throttled = info.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue || info.isLowPowerModeEnabled
+        return ExpressiveService.shared.studioBudget().use(characters: characters, ahead: ahead, throttled: throttled)
+    }
     /// Sentences Kokoro renders ahead when it reads alone (enqueue): while her model rests after a memory warning.
     static var kokoroAloneAhead: Int { max(VoiceSettings.shared.prefs.clampedAhead, 8) }
 

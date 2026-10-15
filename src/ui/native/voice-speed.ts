@@ -22,7 +22,7 @@ const str = (x: unknown, fallback = '?'): string => (typeof x === 'string' || ty
 
 /** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
 const STUDIO_REASON: Record<string, string> = {
-  hurry: 'short of audio at the start, as in Listen', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory',
+  hurry: 'short of audio, no time for the studio', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory',
   loading: 'still loading', slow: 'too slow', 'studio too slow': 'switched off as too slow', off: 'off', released: 'released',
 };
 
@@ -60,12 +60,12 @@ export function speedLines(r: Obj): Line[] {
   if (studio.read === true && calls > 0) {
     const reasons = Object.entries(obj(studio.reasons)).filter(([, n]) => num(n) > 0);
     const why = reasons.map(([k, n]) => `${num(n)} ${STUDIO_REASON[k] ?? k}`).join(', ');
-    // Skipped only while the first audio was short (Listen does the same: her voice starts at once): as designed.
-    const byDesign = reasons.every(([k]) => k === 'hurry');
+    // Since 2026-10-15 Listen gives her studio every call it can afford (StudioBudget): a skipped call is her plain
+    // sound in the middle of the read (a slow or hot phone, or too little time), so any skip is worth a look.
     lines.push(
       used >= calls
         ? { ok: true, text: `Her studio rendered all ${calls} calls.` }
-        : { ok: byDesign, text: `Her studio rendered ${used} of ${calls} calls${why ? ` (others: ${why})` : ''}.` },
+        : { ok: false, text: `Her studio rendered ${used} of ${calls} calls${why ? ` (others: ${why})` : ''}.` },
     );
   } else if (calls > 0) {
     lines.push({ ok: true, text: 'Her studio is off (or not in this pack): her plain sound.' });

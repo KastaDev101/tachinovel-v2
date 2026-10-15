@@ -193,6 +193,103 @@ final class NephisGuardsTests: XCTestCase {
         XCTAssertEqual(StudioPace.words(2.26), "2.3x real time")
     }
 
+    // MARK: - Her studio on every call it can afford (2026-10-15: build 363 skipped it on 3 of 6 calls at 23-47x)
+
+    func testAFastStudioIsUsedOnTheFirstCallAndWithLittleBuffered() {
+        var budget = StudioBudget()
+        budget.record(23.2)  // build 363's slowest studio call on the iPhone 16
+        XCTAssertEqual(budget.estimateX, 23.2)
+        // The first call of a read (nothing buffered): one sentence, ~3.3 s of audio, ~0.14 s of studio work.
+        XCTAssertEqual(budget.cost(characters: 40), 40.0 / 12 / 23.2, accuracy: 1e-9)
+        XCTAssertTrue(budget.use(characters: 40, ahead: 0, throttled: false))
+        // 2 s buffered, a ~12.5 s call: ~0.54 s of studio, within half of the 2 s.
+        XCTAssertTrue(budget.use(characters: 150, ahead: 2, throttled: false))
+        // The same call with almost nothing buffered would hold playback longer than allowed: her plain sound, as before.
+        XCTAssertFalse(budget.use(characters: 150, ahead: 0.3, throttled: false))
+        // A cushion: the studio whatever it costs (the rule before).
+        XCTAssertTrue(budget.use(characters: 400, ahead: StudioBudget.cushion, throttled: false))
+        // Faster calls raise the estimate a share of the way; a slower one sets it at once.
+        budget.record(46.5)
+        XCTAssertEqual(budget.estimateX, 23.2 + (46.5 - 23.2) * StudioBudget.riseShare, accuracy: 1e-9)
+        budget.record(9)
+        XCTAssertEqual(budget.estimateX, 9)
+        // Nonsense measurements are ignored.
+        budget.record(0)
+        budget.record(.nan)
+        budget.record(.infinity)
+        XCTAssertEqual(budget.estimateX, 9)
+    }
+
+    func testBeforeAnyMeasurementTheConservativeGuessStillTakesAShortFirstCall() {
+        let budget = StudioBudget()
+        XCTAssertNil(budget.measuredX)
+        XCTAssertEqual(budget.estimateX, StudioBudget.seedX)
+        // ~3.3 s of audio at the guessed 8x: ~0.42 s, within the first call's 0.5 s.
+        XCTAssertTrue(budget.use(characters: 40, ahead: 0, throttled: false))
+        // ~6.7 s at 8x is ~0.83 s: too long a wait before her first audio...
+        XCTAssertFalse(budget.use(characters: 80, ahead: 0, throttled: false))
+        // ...but fine with 5 s buffered.
+        XCTAssertTrue(budget.use(characters: 80, ahead: 5, throttled: false))
+        // The speed remembered from an earlier session starts at half (a hotter phone now, a busier one).
+        XCTAssertEqual(StudioBudget(rememberedX: 40).estimateX, 20)
+        XCTAssertEqual(StudioBudget(rememberedX: 0).estimateX, StudioBudget.seedX)
+        XCTAssertEqual(StudioBudget(rememberedX: .nan).estimateX, StudioBudget.seedX)
+    }
+
+    func testASlowOrThrottledStudioIsSkippedAsBefore() {
+        var slow = StudioBudget()
+        slow.record(2)
+        // Under `fastFrom`: only with the cushion, whatever the call costs.
+        XCTAssertFalse(slow.use(characters: 20, ahead: 0, throttled: false))
+        XCTAssertFalse(slow.use(characters: 20, ahead: 5.9, throttled: false))
+        XCTAssertTrue(slow.use(characters: 400, ahead: 6, throttled: false))
+        // A fast studio on a hot or low-power phone: the old rule too.
+        var fast = StudioBudget()
+        fast.record(40)
+        XCTAssertFalse(fast.use(characters: 20, ahead: 0, throttled: true))
+        XCTAssertFalse(fast.use(characters: 20, ahead: 5, throttled: true))
+        XCTAssertTrue(fast.use(characters: 20, ahead: 6, throttled: true))
+        // A fast studio that turns slow (heat): skipped at once on the next short-of-audio call.
+        fast.record(1.5)
+        XCTAssertFalse(fast.use(characters: 20, ahead: 3, throttled: false))
+        // The new rule never skips a call the old one gave the studio.
+        for x in [0.5, 2.0, 8.0, 40.0] {
+            var b = StudioBudget()
+            b.record(x)
+            for chars in [1, 40, 400] {
+                for ahead in [6.0, 9.0, 60.0] {
+                    for hot in [false, true] { XCTAssertTrue(b.use(characters: chars, ahead: ahead, throttled: hot)) }
+                }
+            }
+        }
+    }
+
+    // MARK: - The "Her studio" switch, on by default per pack (2026-10-15)
+
+    func testTheStudioSwitchIsOnByDefaultAndKeepsAnExplicitOffPerPack() throws {
+        let suite = "NephisStudioSwitchTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // Never set: on. The old single setting left off (build 363's phone) no longer turns it off.
+        defaults.set(false, forKey: "nephisStudio")
+        XCTAssertTrue(NephisStudioSwitch.isOn(pack: "p0123456789abcdef", defaults: defaults))
+        // The user's off is kept for that pack only.
+        NephisStudioSwitch.set(false, pack: "p0123456789abcdef", defaults: defaults)
+        XCTAssertFalse(NephisStudioSwitch.isOn(pack: "p0123456789abcdef", defaults: defaults))
+        XCTAssertTrue(NephisStudioSwitch.isOn(pack: "pfedcba9876543210", defaults: defaults))
+        // Installing the pack again turns it on.
+        NephisStudioSwitch.installed(pack: "p0123456789abcdef", defaults: defaults)
+        XCTAssertTrue(NephisStudioSwitch.isOn(pack: "p0123456789abcdef", defaults: defaults))
+        // Off and on again: on.
+        NephisStudioSwitch.set(false, pack: "pfedcba9876543210", defaults: defaults)
+        NephisStudioSwitch.set(true, pack: "pfedcba9876543210", defaults: defaults)
+        XCTAssertTrue(NephisStudioSwitch.isOn(pack: "pfedcba9876543210", defaults: defaults))
+        // No pack: on, and a choice without one changes nothing.
+        NephisStudioSwitch.set(false, pack: nil, defaults: defaults)
+        XCTAssertTrue(NephisStudioSwitch.isOn(pack: nil, defaults: defaults))
+        XCTAssertNil(defaults.stringArray(forKey: NephisStudioSwitch.offKey)?.first)
+    }
+
     // MARK: - The Voice test's studio speed test against the clock (2026-10-13: pack 7's studio never finished)
 
     func testTheStudioSpeedTestStopsWhenOutOfTimeOrTooSlow() {

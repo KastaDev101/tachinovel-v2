@@ -96,6 +96,15 @@ call, device, iOS, heat, Low Power Mode, free memory, the pack (name, `weightsSh
 every call. The report (`speedtest-<date>-<time>.json`) and the audio (`.wav`, 32-bit float at the read's rate) go to
 the Diagnostics folder; "Play result" plays the audio, "Copy report" copies the JSON.
 
+**Her studio in Listen** (`ExpressiveCore/NephisGuards.swift` StudioBudget and NephisStudioSwitch, 2026-10-15): the
+"Her studio" switch is per pack and on by default (an off is kept for that pack until it is installed again). A call
+gets the studio when its estimated work (its text at 12 characters a second, over the studio's measured × real time)
+is at most half the audio buffered ahead of playback, that never counted under 1 s, so the first call of a read gets it
+too when it costs at most 0.5 s. The speed is measured on every call it renders (a slower call sets it at once, a
+faster one moves it 30 % of the way), kept over the app's life and remembered per pack for the next launch at half; with
+nothing known it is 8x. Under 4x, in serious heat or Low Power Mode the old rule alone: the studio only with 6 s
+buffered. The Voice test report's `flow.studio.plannedX` is the speed it plans with.
+
 **Pack tone chain (pack.json `chain`)**, after her voice is made, in this order: first `dewind` `{"passes": 2}` (1-2;
 the de-wind cleaner, below), then `breathPolish` and `eqAfterStudio`
 (studio calls), `studioEQ` (studio calls: `gainDB` and up to 8 RBJ sections, `highShelf`, `lowShelf`, `peaking`, and

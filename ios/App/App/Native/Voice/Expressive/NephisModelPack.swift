@@ -34,12 +34,19 @@ enum NephisModelPack {
     static var active: URL? { library.activeDirectory }
     static var modelsDirectory: URL? { active }
     /// The active pack's studio (Models/nephis-studio: NephisBlueprint, NephisVocoder, studio.json), or nil.
-    /// Used only while the hidden `nephisStudio` default is on (Settings › Voices › Voice test's studio switch): the
-    /// studio makes her stream 44.1 kHz, and a read with it plays at that rate (SessionRate in HybridSpeechEngine.swift).
+    /// Used only while the pack's studio switch is on (Settings › Voices › Voice test's "Her studio"; on by default for
+    /// every pack, `studioOn`): the studio makes her stream 44.1 kHz, and a read with it plays at that rate (SessionRate
+    /// in HybridSpeechEngine.swift).
     static var studioDirectory: URL? {
-        guard let root = active, UserDefaults.standard.bool(forKey: "nephisStudio") else { return nil }
+        guard let root = active, studioOn else { return nil }
         let dir = root.appendingPathComponent("Models/nephis-studio", isDirectory: true)
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) ? dir : nil
+    }
+    /// The studio switch for the active pack (ExpressiveCore NephisStudioSwitch, 2026-10-15): on unless the user switched
+    /// it off for this pack since it was installed. Setting it records the user's choice for the active pack.
+    static var studioOn: Bool {
+        get { NephisStudioSwitch.isOn(pack: library.activeID, defaults: .standard) }
+        set { NephisStudioSwitch.set(newValue, pack: library.activeID, defaults: .standard) }
     }
     /// The active pack's de-wind cleaner (Models/nephis-dewind: DewindNet.mlpackage, dewind.json), or nil. Used whenever
     /// the pack's chain asks for it ("dewind"), studio switch or not (ExpressiveCore NephisDewindModel.swift).
@@ -195,7 +202,10 @@ enum NephisModelPack {
         defer { try? FileManager.default.removeItem(at: staging) }  // gone already when it was added
         try Tar.extract(url, into: staging)
         guard NephisPackLibrary.isComplete(staging) else { throw PackError.notAPack("files are missing") }
-        let name = try library.add(staged: staging, fallbackName: url.deletingPathExtension().lastPathComponent).pack.name
+        let pack = try library.add(staged: staging, fallbackName: url.deletingPathExtension().lastPathComponent).pack
+        let name = pack.name
+        // A pack just installed has its studio on (an earlier off for an older copy of it goes).
+        NephisStudioSwitch.installed(pack: pack.id, defaults: .standard)
         log.info("expressive: Nephis model pack \(name, privacy: .public) installed")
         return name
     }

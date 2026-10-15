@@ -469,7 +469,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         out["memory"] = memory
         out["thermalBefore"] = thermalBefore
         out["thermalAfter"] = ProcessInfo.processInfo.thermalState.rawValue
-        out["enabled"] = UserDefaults.standard.bool(forKey: "nephisStudio")
+        out["enabled"] = NephisModelPack.studioOn
         return out
     }
 
@@ -528,7 +528,7 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func studioEnable(_ call: CAPPluginCall) {
         let on = call.getBool("on") ?? false
         DispatchQueue.main.async {
-            UserDefaults.standard.set(on, forKey: "nephisStudio")
+            NephisModelPack.studioOn = on
             ExpressiveService.shared.reloadNephisModel()
             call.resolve(["enabled": on])
         }
