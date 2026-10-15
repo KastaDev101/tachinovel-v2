@@ -26,7 +26,7 @@ final class NephisClosenessTests: XCTestCase {
     // MARK: - Decoding and parameters
 
     func testDecodesAndClamps() throws {
-        XCTAssertEqual(try chain(#"{"closeness": {"amount": 0.15}}"#).closeness, .init(amount: 0.15))
+        XCTAssertEqual(try chain(#"{"closeness": {"amount": 0.15}}"#).closeness, NephisCloseness.Settings(amount: 0.15))
         XCTAssertEqual(try chain(#"{"closeness": {"amount": 3}}"#).closeness?.amount, 1)
         XCTAssertEqual(try chain(#"{"closeness": {"amount": -1}}"#).closeness?.amount, 0)
         XCTAssertNil(try chain("{}").closeness)
@@ -35,7 +35,7 @@ final class NephisClosenessTests: XCTestCase {
         XCTAssertNil(broken.closeness)
         XCTAssertEqual(broken.carryFrames, 9)
         let again = try JSONDecoder().decode(NephisFlow.Chain.self, from: JSONEncoder().encode(chain(#"{"closeness": {"amount": 0.15}}"#)))
-        XCTAssertEqual(again.closeness, .init(amount: 0.15))
+        XCTAssertEqual(again.closeness, NephisCloseness.Settings(amount: 0.15))
     }
 
     func testTheTunersParametersAtThePhonesLevel() {
@@ -59,12 +59,12 @@ final class NephisClosenessTests: XCTestCase {
 
     func testOffLeavesTheAudioBitIdentical() {
         let input = bursts(20_000, seed: 4)
-        var comp: NephisCloseness? = NephisCloseness(settings: .init(amount: 0.5), sampleRate: 44_100)
+        var comp: NephisCloseness? = NephisCloseness(settings: NephisCloseness.Settings(amount: 0.5), sampleRate: 44_100)
         var x = input
         XCTAssertFalse(NephisCloseness.apply(&comp, settings: nil, to: &x, sampleRate: 44_100, restart: false))
         XCTAssertEqual(x, input)
         XCTAssertNil(comp)
-        XCTAssertFalse(NephisCloseness.apply(&comp, settings: .init(amount: 0.004), to: &x, sampleRate: 44_100, restart: true))
+        XCTAssertFalse(NephisCloseness.apply(&comp, settings: NephisCloseness.Settings(amount: 0.004), to: &x, sampleRate: 44_100, restart: true))
         XCTAssertEqual(x, input)
         XCTAssertNil(comp)
     }
@@ -73,7 +73,7 @@ final class NephisClosenessTests: XCTestCase {
 
     func testAQuietSignalComesOutSixMillisecondsLateAtTheMakeupGain() {
         let input = sine(1000, amplitude: 0.05, seconds: 0.5)
-        var comp = NephisCloseness(settings: .init(amount: 0.15), sampleRate: 44_100)
+        var comp = NephisCloseness(settings: NephisCloseness.Settings(amount: 0.15), sampleRate: 44_100)
         var y = input
         comp.process(&y)
         let d = comp.preDelayFrames
@@ -89,7 +89,7 @@ final class NephisClosenessTests: XCTestCase {
         let quiet = sine(1000, amplitude: 0.01, seconds: 1)
         let loud = sine(1000, amplitude: 0.9, seconds: 1)
         func peakGainDB(_ input: [Float]) -> Double {
-            var comp = NephisCloseness(settings: .init(amount: 0.6), sampleRate: fs)
+            var comp = NephisCloseness(settings: NephisCloseness.Settings(amount: 0.6), sampleRate: fs)
             var y = input
             comp.process(&y)
             let tail = y[(fs / 2)...].map { abs($0) }.max() ?? 0
@@ -104,8 +104,8 @@ final class NephisClosenessTests: XCTestCase {
 
     func testTheSameInputGivesTheSameOutput() {
         let input = bursts(30_000, seed: 8)
-        var a = NephisCloseness(settings: .init(amount: 0.3), sampleRate: 44_100)
-        var b = NephisCloseness(settings: .init(amount: 0.3), sampleRate: 44_100)
+        var a = NephisCloseness(settings: NephisCloseness.Settings(amount: 0.3), sampleRate: 44_100)
+        var b = NephisCloseness(settings: NephisCloseness.Settings(amount: 0.3), sampleRate: 44_100)
         var ya = input, yb = input
         a.process(&ya)
         b.process(&yb)
@@ -138,9 +138,9 @@ final class NephisClosenessTests: XCTestCase {
         let input = bursts(20_000, seed: 6)
         var comp: NephisCloseness?
         var a = input
-        NephisCloseness.apply(&comp, settings: .init(amount: 0.4), to: &a, sampleRate: 44_100, restart: true)
+        NephisCloseness.apply(&comp, settings: NephisCloseness.Settings(amount: 0.4), to: &a, sampleRate: 44_100, restart: true)
         var b = input
-        NephisCloseness.apply(&comp, settings: .init(amount: 0.4), to: &b, sampleRate: 44_100, restart: true)
+        NephisCloseness.apply(&comp, settings: NephisCloseness.Settings(amount: 0.4), to: &b, sampleRate: 44_100, restart: true)
         XCTAssertEqual(a, b)
     }
 }

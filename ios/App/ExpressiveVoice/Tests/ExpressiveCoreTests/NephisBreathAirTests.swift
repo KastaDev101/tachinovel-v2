@@ -40,7 +40,7 @@ final class NephisBreathAirTests: XCTestCase {
     }
 
     private func wet(_ input: [Float], amount: Double, fs: Int = 44_100) -> [Double] {
-        var air = NephisBreathAir(settings: .init(amount: amount), sampleRate: fs)
+        var air = NephisBreathAir(settings: NephisBreathAir.Settings(amount: amount), sampleRate: fs)
         var y = input
         air.process(&y)
         return zip(y, input).map { Double($0) - Double($1) }
@@ -66,12 +66,12 @@ final class NephisBreathAirTests: XCTestCase {
 
     func testOffLeavesTheAudioBitIdentical() {
         let input = noise(10_000, seed: 1, scale: 0.4)
-        var air: NephisBreathAir? = NephisBreathAir(settings: .init(amount: 0.5), sampleRate: 44_100)
+        var air: NephisBreathAir? = NephisBreathAir(settings: NephisBreathAir.Settings(amount: 0.5), sampleRate: 44_100)
         var x = input
         XCTAssertFalse(NephisBreathAir.apply(&air, settings: nil, to: &x, sampleRate: 44_100, restart: false))
         XCTAssertEqual(x, input)
         XCTAssertNil(air)
-        XCTAssertFalse(NephisBreathAir.apply(&air, settings: .init(amount: 0), to: &x, sampleRate: 44_100, restart: true))
+        XCTAssertFalse(NephisBreathAir.apply(&air, settings: NephisBreathAir.Settings(amount: 0), to: &x, sampleRate: 44_100, restart: true))
         XCTAssertEqual(x, input)
         XCTAssertNil(air)
     }
@@ -100,9 +100,10 @@ final class NephisBreathAirTests: XCTestCase {
     }
 
     func testLowsAreUntouched() {
+        // After the first 10 ms (the sine's abrupt start is a click the high-passes let through, as in the tuner).
         let input = sine(200, amplitude: 0.3, seconds: 0.5)
         let w = wet(input, amount: 1)
-        XCTAssertLessThan(w.map { abs($0) }.max() ?? 1, 1e-4)
+        XCTAssertLessThan(w[441...].map { abs($0) }.max() ?? 1, 1e-4)
     }
 
     func testALoudHighSoundAddsHarmonicsWithoutAliases() {

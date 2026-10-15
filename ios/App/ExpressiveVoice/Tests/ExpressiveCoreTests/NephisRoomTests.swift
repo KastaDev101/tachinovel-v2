@@ -80,12 +80,12 @@ final class NephisRoomTests: XCTestCase {
 
     func testOffLeavesTheAudioBitIdentical() {
         let input = noise(10_000, seed: 7)
-        var room: NephisRoom? = NephisRoom(settings: .init(amount: 0.1), sampleRate: 44_100)
+        var room: NephisRoom? = NephisRoom(settings: NephisRoom.Settings(amount: 0.1), sampleRate: 44_100)
         var x = input
         XCTAssertFalse(NephisRoom.apply(&room, settings: nil, to: &x, sampleRate: 44_100, restart: false))
         XCTAssertEqual(x, input)
         XCTAssertNil(room)
-        XCTAssertFalse(NephisRoom.apply(&room, settings: .init(amount: 0), to: &x, sampleRate: 44_100, restart: true))
+        XCTAssertFalse(NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0), to: &x, sampleRate: 44_100, restart: true))
         XCTAssertEqual(x, input)
         XCTAssertNil(room)
     }
@@ -100,7 +100,7 @@ final class NephisRoomTests: XCTestCase {
     }
 
     func testTheImpulseForSeedOneIsDeterministic() {
-        let ir = NephisRoom.impulse(.init(amount: 0.07), sampleRate: 44_100)
+        let ir = NephisRoom.impulse(NephisRoom.Settings(amount: 0.07), sampleRate: 44_100)
         XCTAssertEqual(ir.count, 15_435)
         XCTAssertEqual(ir[0], 0)  // the 4 ms fade-in starts at 0
         // Values from a separate Python implementation of the same recipe (double precision).
@@ -110,14 +110,14 @@ final class NephisRoomTests: XCTestCase {
         ]
         for (i, v) in expected { XCTAssertEqual(ir[i], v, accuracy: 1e-12, "ir[\(i)]") }
         XCTAssertEqual(NephisRoom.normalizationScale(ir, sampleRate: 44_100), 0.0130779387735055, accuracy: 1e-12)
-        XCTAssertEqual(NephisRoom.impulse(.init(amount: 0.2), sampleRate: 44_100), ir)  // the amount doesn't change the room
-        let ir24 = NephisRoom.impulse(.init(amount: 0.07), sampleRate: 24_000)
+        XCTAssertEqual(NephisRoom.impulse(NephisRoom.Settings(amount: 0.2), sampleRate: 44_100), ir)  // the amount doesn't change the room
+        let ir24 = NephisRoom.impulse(NephisRoom.Settings(amount: 0.07), sampleRate: 24_000)
         XCTAssertEqual(ir24.count, 8_400)
         XCTAssertEqual(ir24[176], -0.5558625610922462, accuracy: 1e-12)
         XCTAssertEqual(NephisRoom.normalizationScale(ir24, sampleRate: 24_000), 0.02409673241692076, accuracy: 1e-12)
         // A silent impulse uses WebAudio's floor power.
         XCTAssertEqual(NephisRoom.normalizationScale([0, 0, 0], sampleRate: 44_100), 1 / 0.000125 * 0.00125, accuracy: 1e-9)
-        XCTAssertNotEqual(NephisRoom.impulse(.init(amount: 0.07, seed: 2), sampleRate: 44_100), ir)
+        XCTAssertNotEqual(NephisRoom.impulse(NephisRoom.Settings(amount: 0.07, seed: 2), sampleRate: 44_100), ir)
     }
 
     func testAnImpulseGivesTheDryImpulseAndTheScaledRoom() {
@@ -166,20 +166,20 @@ final class NephisRoomTests: XCTestCase {
     func testANewReadDropsTheTailAndAnotherRateRebuildsTheRoom() {
         var room: NephisRoom?
         var loud = noise(4_000, seed: 3, scale: 0.8)
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &loud, sampleRate: 24_000, restart: true)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &loud, sampleRate: 24_000, restart: true)
         // Carried: silence after sound still rings.
         var after = [Float](repeating: 0, count: 2_000)
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &after, sampleRate: 24_000, restart: false)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &after, sampleRate: 24_000, restart: false)
         XCTAssertGreaterThan(after.map { abs($0) }.max() ?? 0, 1e-4)
         // A new read: no tail.
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &loud, sampleRate: 24_000, restart: false)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &loud, sampleRate: 24_000, restart: false)
         var fresh = [Float](repeating: 0, count: 2_000)
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &fresh, sampleRate: 24_000, restart: true)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &fresh, sampleRate: 24_000, restart: true)
         XCTAssertEqual(fresh, [Float](repeating: 0, count: 2_000))
         // Another rate: rebuilt for it, no tail.
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &loud, sampleRate: 24_000, restart: false)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &loud, sampleRate: 24_000, restart: false)
         var other = [Float](repeating: 0, count: 2_000)
-        NephisRoom.apply(&room, settings: .init(amount: 0.3), to: &other, sampleRate: 44_100, restart: false)
+        NephisRoom.apply(&room, settings: NephisRoom.Settings(amount: 0.3), to: &other, sampleRate: 44_100, restart: false)
         XCTAssertEqual(other, [Float](repeating: 0, count: 2_000))
         XCTAssertEqual(room?.sampleRate, 44_100)
         XCTAssertEqual(room?.length, 15_435)
