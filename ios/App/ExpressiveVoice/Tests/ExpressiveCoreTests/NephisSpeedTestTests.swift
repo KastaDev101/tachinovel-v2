@@ -8,13 +8,13 @@ final class NephisSpeedTestTests: XCTestCase {
         let s = NephisSpeedTest.sentences(NephisSpeedTest.passage)
         XCTAssertEqual(s.count, 9)
         XCTAssertEqual(s.map(\.paragraph), [0, 0, 0, 0, 1, 2, 2, 3, 3])
-        XCTAssertTrue(s[1].text.hasPrefix("He was cradling"))
+        XCTAssertTrue(s[1].text.hasPrefix("She held a paper cup"))
         // An ellipsis followed by a lower-case word goes on in the same sentence.
         XCTAssertTrue(s[6].text.hasPrefix("Then, tentatively"))
         XCTAssertTrue(s[6].text.hasSuffix("immediately grimaced."))
         // Closing quotes stay with their sentence.
-        XCTAssertEqual(s[7].text, "\u{201C}Ah!")
-        XCTAssertEqual(s[8].text, "So bitter!\u{201D}")
+        XCTAssertEqual(s[7].text, "\u{201C}Oh!")
+        XCTAssertEqual(s[8].text, "Far too hot!\u{201D}")
         // About 45 s in her voice (her pace: 0.38 s a word, pauses on top).
         let words = NephisSpeedTest.passage.joined(separator: " ").split(separator: " ").count
         XCTAssertEqual(Double(words) * NephisFlow.secondsPerWord, 45, accuracy: 8)

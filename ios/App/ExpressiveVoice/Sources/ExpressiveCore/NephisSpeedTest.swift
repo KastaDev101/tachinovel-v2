@@ -15,17 +15,17 @@
 import Foundation
 
 public enum NephisSpeedTest {
-    /// The opening of Shadow Slave, chapter 1 (about 45 s in her voice): long sentences, a dash, an ellipsis, a line of
-    /// dialogue and "tentatively" (one of her respellings).
+    /// An original passage written for the test (about 45 s in her voice), shaped like a novel's opening: long
+    /// sentences, a dash, an ellipsis, a line of dialogue and "tentatively" (one of her respellings).
     public static let passage: [String] = [
-        "A frail-looking young man with pale skin and dark circles under his eyes was sitting on a rusty bench across from the police station. "
-            + "He was cradling a cup of coffee in his hands \u{2014} not the cheap synthetic type slum rats like him had access to, but the real deal. "
-            + "This cup of plant-based coffee, usually available only to higher rank citizens, had cost most of his savings. "
-            + "But on this particular day, Sunny decided to pamper himself.",
-        "After all, his life was coming to an end.",
-        "Enjoying the warmth of the luxurious drink, he raised the cup and savored the aroma. "
-            + "Then, tentatively, he took a small sip\u{2026} and immediately grimaced.",
-        "\u{201C}Ah! So bitter!\u{201D}",
+        "A tired young woman with ink-stained fingers sat on a cold stone step outside the old city library. "
+            + "She held a paper cup of tea in both hands \u{2014} not the thin vending-machine kind everyone in her building drank, but proper tea from the corner shop. "
+            + "It had cost more than she liked to admit, and the shopkeeper had wrapped it in a napkin as if it were precious. "
+            + "But tonight, Mara had decided she deserved it.",
+        "After all, the exams were finally over.",
+        "Breathing in the steam, she lifted the cup and let the warmth reach her face. "
+            + "Then, tentatively, she took a small sip\u{2026} and immediately grimaced.",
+        "\u{201C}Oh! Far too hot!\u{201D}",
     ]
 
     /// Listen sends one sentence per call while less than this much audio (seconds) is ready ahead of playback

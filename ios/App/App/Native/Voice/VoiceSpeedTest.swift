@@ -3,7 +3,7 @@
 //  accessible ... for the phone, so I can test it on my phone"). JS: src/ui/native/voice-speed.ts, reached from
 //  Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics.
 //
-//  One tap renders a fixed ~45 s passage (NephisSpeedTest.passage, the opening of Shadow Slave ch. 1) with the Nephis
+//  One tap renders a fixed ~45 s passage (NephisSpeedTest.passage, an original novel-style opening) with the Nephis
 //  pack in use, the way Listen renders it, without playing it: the same flow engine (NephisFlowSynth) with the pack's
 //  chain, her studio and its studio EQ, her pauses; calls cut and budgeted as Listen does (one sentence while under
 //  4 s is ready, then paragraphs up to Pocket's 400 characters; her studio from 6 s ready; a lead-in from 25 s; one
