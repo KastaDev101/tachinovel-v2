@@ -10,6 +10,12 @@
 //      {"type": "lowShelf",  "hz": 200,   "q": 0.7,   "db": 3.5},
 //      {"type": "peaking",   "hz": 500,   "q": 1.0,   "db": -1.5}]}
 //
+//  The browser EQ tuner's two filter types (Kasta, 2026-10-15) are sections too: "highPass" (low cut) and "lowPass" (top
+//  cut), RBJ cookbook 12 dB/octave with the section's Q (0.7071 = Butterworth, -3 dB at `hz`); their `db` is ignored:
+//
+//    HPF  b = [(1+c)/2, -(1+c), (1+c)/2]   LPF  b = [(1-c)/2, 1-c, (1-c)/2]   both  a = [1+al, -2c, 1-al]
+//    with w = 2π·hz/fs, c = cos w, al = sin w / 2Q.
+//
 //  NephisFlowSynth runs it on every call her studio rendered (44.1 kHz), at the call's rate, after the breath polish and
 //  after (independent of) "eqAfterStudio". A call the studio skipped or failed keeps the Mimi EQ path as before.
 //  Absent or unreadable: nil, every call exactly as before. A section type this version doesn't know is skipped (a newer
@@ -30,6 +36,9 @@ extension NephisFlow {
             case highShelf
             case lowShelf
             case peaking
+            /// Low cut and top cut (12 dB/octave, Q from the section; `db` ignored).
+            case highPass
+            case lowPass
         }
 
         /// One section: its shape, corner or centre frequency (Hz), Q and gain (dB).
@@ -88,18 +97,20 @@ extension NephisFlow {
         }
 
         /// The EQ's filters for one call at `sampleRate`, from a fresh state. A frequency at or above Nyquist is moved
-        /// just under it (49 % of the rate); a 0 dB section is left out; an invalid rate gives a filter that does nothing.
+        /// just under it (49 % of the rate); a 0 dB shelf or peak is left out (a low or top cut never is: its `db` means
+        /// nothing); an invalid rate gives a filter that does nothing.
         public func filter(sampleRate: Int) -> Filter {
             guard sampleRate > 0 else { return Filter(sections: [], gain: 1) }
             let fs = Double(sampleRate)
             let top = fs * 0.49
             let biquads: [ToneBiquad] = sections.compactMap { s in
-                guard s.db != 0 else { return nil }
                 let hz = min(s.hz, top)
                 switch s.type {
-                case .highShelf: return .highShelf(hz: hz, q: s.q, db: s.db, fs: fs)
-                case .lowShelf: return .lowShelf(hz: hz, q: s.q, db: s.db, fs: fs)
-                case .peaking: return .peaking(hz: hz, q: s.q, db: s.db, fs: fs)
+                case .highPass: return .highPass(hz: hz, q: s.q, fs: fs)
+                case .lowPass: return .lowPass(hz: hz, q: s.q, fs: fs)
+                case .highShelf: return s.db == 0 ? nil : .highShelf(hz: hz, q: s.q, db: s.db, fs: fs)
+                case .lowShelf: return s.db == 0 ? nil : .lowShelf(hz: hz, q: s.q, db: s.db, fs: fs)
+                case .peaking: return s.db == 0 ? nil : .peaking(hz: hz, q: s.q, db: s.db, fs: fs)
                 }
             }
             return Filter(sections: biquads, gain: pow(10, gainDB / 20))

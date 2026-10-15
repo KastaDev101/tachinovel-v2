@@ -31,6 +31,10 @@ final class NephisStudioEQTests: XCTestCase {
         case "lowShelf":
             return ([A * ((A + 1) - (A - 1) * c + r), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - r)],
                     [(A + 1) + (A - 1) * c + r, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - r])
+        case "highPass":
+            return ([(1 + c) / 2, -(1 + c), (1 + c) / 2], [1 + al, -2 * c, 1 - al])
+        case "lowPass":
+            return ([(1 - c) / 2, 1 - c, (1 - c) / 2], [1 + al, -2 * c, 1 - al])
         default:
             return ([1 + al * A, -2 * c, 1 - al * A], [1 + al / A, -2 * c, 1 - al / A])
         }
@@ -196,5 +200,60 @@ final class NephisStudioEQTests: XCTestCase {
         }
         XCTAssertEqual(pieces.count, whole.count)
         XCTAssertEqual(pieces, whole)
+    }
+
+    // MARK: - The tuner's low cut and top cut (2026-10-15)
+
+    func testLowAndTopCutsDecodeAndTheirGainIsIgnored() throws {
+        let eq = try XCTUnwrap(chain(#"""
+        {"studioEQ": {"sections": [{"type": "highPass", "hz": 80, "q": 0.7071}, {"type": "lowPass", "hz": 14000, "q": 0.7071, "db": 6}]}}
+        """#).studioEQ)
+        XCTAssertEqual(eq.sections.map(\.type), [.highPass, .lowPass])
+        // A cut runs with db 0 (a 0 dB shelf or peak is left out), and its db changes nothing.
+        let withDB = NephisFlow.StudioEQ(sections: [.init(type: .lowPass, hz: 3000, q: 0.7071, db: 6)])
+        let without = NephisFlow.StudioEQ(sections: [.init(type: .lowPass, hz: 3000, q: 0.7071, db: 0)])
+        XCTAssertEqual(measuredDB(withDB, hz: 6000), measuredDB(without, hz: 6000))
+        XCTAssertLessThan(measuredDB(without, hz: 6000), -10)
+    }
+
+    func testCutsAreThreeDecibelsDownAtTheCornerWithButterworthQ() {
+        for fs in [24_000, 44_100, 48_000] {
+            let hp = NephisFlow.StudioEQ(sections: [.init(type: .highPass, hz: 200, q: 0.7071, db: 0)])
+            let lp = NephisFlow.StudioEQ(sections: [.init(type: .lowPass, hz: 3000, q: 0.7071, db: 0)])
+            XCTAssertEqual(measuredDB(hp, hz: 200, fs: fs), 20 * log10(0.7071), accuracy: 0.02, "high-pass at \(fs) Hz")
+            XCTAssertEqual(measuredDB(lp, hz: 3000, fs: fs), 20 * log10(0.7071), accuracy: 0.02, "low-pass at \(fs) Hz")
+        }
+    }
+
+    func testCutsRollOffSteadilyAndMatchTheCookbook() {
+        let fs = 44_100
+        let hp = NephisFlow.StudioEQ(sections: [.init(type: .highPass, hz: 1000, q: 0.7071, db: 0)])
+        let lp = NephisFlow.StudioEQ(sections: [.init(type: .lowPass, hz: 2000, q: 0.7071, db: 0)])
+        let hpRef = [reference("highPass", hz: 1000, q: 0.7071, db: 0, fs: 44_100)]
+        let lpRef = [reference("lowPass", hz: 2000, q: 0.7071, db: 0, fs: 44_100)]
+        var last = -Double.infinity
+        for hz in [50.0, 100, 200, 400, 800, 1000, 2000, 4000, 8000] {
+            let g = measuredDB(hp, hz: hz, fs: fs)
+            XCTAssertGreaterThan(g, last, "high-pass rises to \(hz) Hz")
+            XCTAssertEqual(g, referenceDB(at: hz, fs: 44_100, sections: hpRef, gainDB: 0), accuracy: 0.1, "high-pass \(hz) Hz")
+            last = g
+        }
+        last = .infinity
+        for hz in [100.0, 500, 1000, 2000, 4000, 8000, 12000, 16000, 20000] {
+            let g = measuredDB(lp, hz: hz, fs: fs)
+            XCTAssertLessThan(g, last, "low-pass falls to \(hz) Hz")
+            XCTAssertEqual(g, referenceDB(at: hz, fs: 44_100, sections: lpRef, gainDB: 0), accuracy: 0.1, "low-pass \(hz) Hz")
+            last = g
+        }
+        // 12 dB per octave well past the corner.
+        XCTAssertEqual(measuredDB(hp, hz: 100, fs: fs) - measuredDB(hp, hz: 200, fs: fs), -12, accuracy: 0.5)
+    }
+
+    func testATopCutOverNyquistStaysStable() {
+        let eq = NephisFlow.StudioEQ(sections: [.init(type: .lowPass, hz: 20_000, q: 0.7071, db: 0)])
+        var x = (0..<24_000).map { Float(0.25 * sin(2 * Double.pi * 1000 * Double($0) / 24_000)) }
+        eq.apply(&x, sampleRate: 24_000)
+        XCTAssertTrue(NephisFlow.allFinite(x))
+        XCTAssertLessThan(x.map { abs($0) }.max() ?? 0, 1)
     }
 }
