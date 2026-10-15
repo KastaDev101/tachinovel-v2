@@ -125,6 +125,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var postMs = 0.0
         /// Her pack's studio EQ ran on this call (chain "studioEQ": calls her studio rendered only).
         public var studioEQ = false
+        /// The tuner's finishing on this call (chain "closeness", "breathAir", "room": every call of hers when on), and its
+        /// time (ms, inside `postMs`).
+        public var closeness = false
+        public var breathAir = false
+        public var room = false
+        public var finishMs = 0.0
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -200,6 +206,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// Her mastering over the read (pack chain "master"; nil while off): one chain, call after call, so levels, filters
     /// and delay lines carry across the joins (NephisMaster).
     private var master: NephisMaster?
+    /// The tuner's finishing over the read (pack chain "closeness", "breathAir", "room"; nil while off): like her
+    /// mastering, one chain call after call, so the compressor's look-ahead, the exciter's filters and the room's tail
+    /// carry across the joins. A new read starts them fresh.
+    private var closeness: NephisCloseness?
+    private var breathAir: NephisBreathAir?
+    private var room: NephisRoom?
     private var started = false
     public private(set) var lastReport = Report()
 
@@ -755,13 +767,30 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         lastGainDB = p.gainDB
         // Her mastering (pack chain "master"; off = nothing here runs). Without her studio her EQ comes first, here: the
         // player gives it after this otherwise, which would be after the limiter. A fresh read starts a fresh chain.
-        let masterSettings = assets.chain.master
-        if masterSettings != nil, config == nil { NephisFlow.MimiEQ(chain: assets.chain).apply(&samples, sampleRate: rate) }
+        // The tuner's finishing (pack chain "closeness", "breathAir", "room"; each off = nothing runs, the call bit-identical):
+        // every call of hers, studio or plain, after the studio EQ / Mimi EQ, before her mastering.
+        let chain = assets.chain
+        let finishing = (chain.closeness?.on ?? false) || (chain.breathAir.map { $0.amount > 0 } ?? false)
+            || (chain.room.map { $0.amount > 0 } ?? false)
+        let masterSettings = chain.master
+        // Without her studio her EQ comes first, here, when something follows it: the player gives it after this
+        // otherwise, which would be after the limiter or the compressor. With it on, the player adds no EQ (`toned`).
+        let eqHere = config == nil && (masterSettings != nil || finishing)
+        if eqHere { NephisFlow.MimiEQ(chain: chain).apply(&samples, sampleRate: rate) }
+        let finish0 = Date()
+        let closed = NephisCloseness.apply(&closeness, settings: chain.closeness, to: &samples, sampleRate: rate, restart: p.reset)
+        let aired = NephisBreathAir.apply(&breathAir, settings: chain.breathAir, to: &samples, sampleRate: rate, restart: p.reset)
+        let roomed = NephisRoom.apply(&room, settings: chain.room, to: &samples, sampleRate: rate, restart: p.reset)
+        let finishMs = closed || aired || roomed ? Date().timeIntervalSince(finish0) * 1000 : 0
         let mastered = NephisMaster.apply(&master, settings: masterSettings, to: &samples, sampleRate: rate, restart: p.reset)
         var report = p.report
         report.mimiMs = decoded.mimiMs
         report.postMs = decoded.postMs + Date().timeIntervalSince(after0) * 1000
         report.studioEQ = decoded.studioEQ
+        report.closeness = closed
+        report.breathAir = aired
+        report.room = roomed
+        report.finishMs = finishMs
         report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)
@@ -785,6 +814,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                     chunks: report.takes)
         audio.mastered = mastered
+        audio.toned = eqHere
         return (audio, report)
     }
 

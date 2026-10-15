@@ -103,6 +103,16 @@ export function stageRows(r: Obj): { label: string; ms: number; perSecond: numbe
   return out.filter((row) => Number.isFinite(row.ms));
 }
 
+/** The tuner's finishing in the chain ("closeness", "breathAir", "room"), e.g. ", closeness 15%, room 7%"; empty when none. */
+function finishing(chain: Obj): string {
+  const parts: [string, unknown][] = [['closeness', chain.closeness], ['breath air', chain.breathAir], ['room', chain.room]];
+  return parts
+    .map(([label, v]) => [label, num(obj(v).amount)] as const)
+    .filter(([, amount]) => amount > 0)
+    .map(([label, amount]) => `, ${label} ${Math.round(amount * 100)}%`)
+    .join('');
+}
+
 /** The device and pack lines under the result. */
 export function aboutLines(r: Obj): string[] {
   const d = obj(r.device);
@@ -114,7 +124,7 @@ export function aboutLines(r: Obj): string[] {
   return [
     `${str(d.model, '?')} · iOS ${str(d.ios, '?')}${Number.isFinite(free) ? ` · ${Math.round(free)} MB free` : ''}`,
     pack.installed === true ? `Pack: ${str(pack.name, 'unnamed')}${sha}` : 'Pack: none installed (the voice the app came with)',
-    `Chain: clip ${str(chain.clipFrames, '?')}, carry ${str(chain.carryFrames, '?')} frames, studio EQ ${chain.studioEQPresent === true ? 'yes' : 'no'}`,
+    `Chain: clip ${str(chain.clipFrames, '?')}, carry ${str(chain.carryFrames, '?')} frames, studio EQ ${chain.studioEQPresent === true ? 'yes' : 'no'}${finishing(chain)}`,
   ];
 }
 

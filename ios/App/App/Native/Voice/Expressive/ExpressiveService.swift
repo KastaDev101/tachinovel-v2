@@ -1034,6 +1034,8 @@ final class ExpressiveService {
             "master": r.masterPreset ?? NSNull(), "masterGainDB": r.masterGainDB.map { r1($0) } ?? NSNull(),
             // The pack's studio EQ on the call (chain "studioEQ"; her studio's calls only).
             "studioEQ": r.studioEQ,
+            // The tuner's finishing on the call (chain "closeness", "breathAir", "room"; every call of hers when on).
+            "closeness": r.closeness, "breathAir": r.breathAir, "room": r.room, "finishMs": r1(r.finishMs),
         ]
     }
 

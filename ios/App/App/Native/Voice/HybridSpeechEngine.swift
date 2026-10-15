@@ -543,7 +543,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         var samples = a.samples
                         // A call her mastering finished has her EQ already (NephisFlowSynth): nothing more on top.
                         let mastered = flow && a.mastered
-                        if flow, self.studioRead, a.sampleRate == NaturalFinish.mimiRate, self.natural != nil, !mastered {
+                        // A call her engine already gave her EQ (before the tuner's finishing, pack chain "closeness",
+                        // "breathAir", "room"): no EQ on top either.
+                        let toned = flow && a.toned
+                        if flow, self.studioRead, a.sampleRate == NaturalFinish.mimiRate, self.natural != nil, !mastered, !toned {
                             // Her Mimi sound without the studio, in her studio's read: natural delivery adds no EQ at
                             // 44.1 kHz, so it gets hers here, at 24 kHz where it was tuned (as a 24 kHz read gives it).
                             Self.nephisTilt.apply(&samples, sampleRate: a.sampleRate)
@@ -556,9 +559,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                                 return self.expressiveFailed(members, gen: g)
                             }
                             if members.count > 1 {
-                                self.renderedGroup(members, gen: g, voice: id.rawValue, audio: audio, mastered: mastered)
+                                self.renderedGroup(members, gen: g, voice: id.rawValue, audio: audio, mastered: mastered, toned: toned)
                             } else {
-                                self.rendered(i, gen: g, voice: id.rawValue, result: .success(audio), mastered: mastered)
+                                self.rendered(i, gen: g, voice: id.rawValue, result: .success(audio), mastered: mastered, toned: toned)
                             }
                         }
                     case .success:
@@ -848,12 +851,12 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     /// One model call for several sentences: NaturalFinish finds the sentence ends in the audio and returns one buffer
     /// per sentence (the director's per-line controls apply when the cuts are confident).
-    private func renderedGroup(_ members: [Int], gen g: Int, voice: String, audio: KokoroAudio, mastered: Bool = false) {
+    private func renderedGroup(_ members: [Int], gen g: Int, voice: String, audio: KokoroAudio, mastered: Bool = false, toned: Bool = false) {
         guard g == gen, scheduler != nil else { return }
         guard let nf = natural, audio.sampleRate == nf.sampleRate else {
             // Natural delivery went away mid-call (a settings change restarts the session anyway).
             for j in members.dropFirst() { scheduler?.releaseRender(j) }
-            return rendered(members[0], gen: g, voice: voice, result: .success(audio), mastered: mastered)
+            return rendered(members[0], gen: g, voice: voice, result: .success(audio), mastered: mastered, toned: toned)
         }
         let chars = members.reduce(0) { $0 + segments[$1].kokoroText.count }
         KokoroService.shared.stats.record(SentenceStat(index: members[0], characters: chars, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
@@ -864,6 +867,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         var unit = NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)
         unit.flow = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
         unit.mastered = unit.flow && mastered
+        unit.toned = unit.flow && toned
         let flowUnit = unit.flow
         nf.render(unit) { [weak self] pieces in
             guard let self, g == self.gen, self.scheduler != nil else { return }
@@ -923,7 +927,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         }
     }
 
-    private func rendered(_ i: Int, gen g: Int, voice: String, result: Result<KokoroAudio, Error>, mastered: Bool = false) {
+    private func rendered(_ i: Int, gen g: Int, voice: String, result: Result<KokoroAudio, Error>, mastered: Bool = false,
+                          toned: Bool = false) {
         guard g == gen, scheduler != nil else { return }
         switch result {
         case .success(let made) where made.sampleRate != sessionRate:
@@ -934,7 +939,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 guard let self else { return }
                 let next: Result<KokoroAudio, Error>
                 if let audio { next = .success(audio) } else { next = .failure(SessionRate.ConversionFailed(from: from, to: self.sessionRate)) }
-                self.rendered(i, gen: g, voice: voice, result: next, mastered: mastered)
+                self.rendered(i, gen: g, voice: voice, result: next, mastered: mastered, toned: toned)
             }
         case .success(let audio):
             KokoroService.shared.stats.record(SentenceStat(index: i, characters: segments[i].kokoroText.count, synthMs: audio.synthMs, audioMs: audio.durationMs, voice: voice))
@@ -948,6 +953,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                                               speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
                 unit.flow = expressive && ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
                 unit.mastered = unit.flow && mastered
+                unit.toned = unit.flow && toned
                 scheduler?.releaseSynth(i)
                 pumpRender()
                 nf.render(unit) { [weak self] pieces in

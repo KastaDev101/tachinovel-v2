@@ -34,6 +34,7 @@ parse it: `## <Name>`, then a `- License: <SPDX expression>` line, then the noti
 | rustfst | MIT OR Apache-2.0 | Text-normalization grammar runtime (inside FluidAudio). |
 | fastcluster | BSD-2-Clause | Linked into FluidAudio (not used by the voices). |
 | Pocket TTS | CC-BY-4.0 | The Narrator voice that reads chapters (Kyutai's model, downloaded on demand). |
+| Chromium Web Audio (Blink) | BSD-3-Clause | Nephis's "closeness" compressor and the 4x oversampling of her "breath air" are ported from Chromium's DynamicsCompressor, UpSampler and DownSampler. |
 | Apple frameworks and SF Symbols | Apple SDK terms | System APIs used by the app; no notice required |
 
 ## LNReader
@@ -496,6 +497,72 @@ Copyright Kyutai (https://kyutai.org)
 
 Licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
 To view a copy of this license, visit https://creativecommons.org/licenses/by/4.0/
+```
+
+## Chromium Web Audio (Blink)
+
+- License: BSD-3-Clause
+- Source: https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/platform/audio/ (dynamics_compressor.cc, up_sampler.cc, down_sampler.cc)
+- Used for: Nephis's "closeness" (ios/App/ExpressiveVoice/Sources/ExpressiveCore/NephisCloseness.swift, a port of DynamicsCompressor) and the 4x oversampled shaper of her "breath air" (NephisBreathAir.swift, a port of UpSampler and DownSampler as the WaveShaper uses them). Changes: ported to Swift, mono, metering left out, a fresh compressor starts settled on silence.
+
+```text
+dynamics_compressor.cc:
+
+Copyright (C) 2011 Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1.  Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+2.  Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+3.  Neither the name of Apple Computer, Inc. ("Apple") nor the names of
+    its contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+up_sampler.cc, down_sampler.cc:
+
+Copyright (C) 2013 Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+    * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 <!--

@@ -384,7 +384,12 @@ final class VoiceSpeedTest {
         let eq: Any = c.studioEQ.map { eq -> [String: Any] in
             ["gainDB": eq.gainDB, "sections": eq.sections.map { s -> [String: Any] in ["type": s.type.rawValue, "hz": s.hz, "q": s.q, "db": s.db] }]
         } ?? NSNull()
+        // The tuner's finishing (chain "closeness", "breathAir", "room"), as the app read it (clamped); null when absent.
+        let closeness: Any = c.closeness.map { ["amount": $0.amount, "on": $0.on, "thresholdDB": $0.thresholdDB, "ratio": $0.ratio] as [String: Any] } ?? NSNull()
+        let breathAir: Any = c.breathAir.map { ["amount": $0.amount, "preGain": $0.preGain, "mix": $0.mix] as [String: Any] } ?? NSNull()
+        let room: Any = c.room.map { ["amount": $0.amount, "seconds": $0.seconds, "decay": $0.decay, "seed": $0.seed] as [String: Any] } ?? NSNull()
         return [
+            "closeness": closeness, "breathAir": breathAir, "room": room,
             "clipFrames": c.clipFrames, "carryFrames": c.carryFrames, "studioEQ": eq, "studioEQPresent": c.studioEQ != nil,
             "eqAfterStudio": c.eqAfterStudio, "breathPolish": c.breathPolish != nil, "master": c.master?.preset.rawValue ?? NSNull(),
             "text": c.text.rawValue, "highShelfDB": c.highShelfDB ?? NSNull(), "softSibilance": c.softSibilance ?? NSNull(),
@@ -432,6 +437,10 @@ final class VoiceSpeedTest {
         row["reason"] = rep.bypassReason.map { String($0.prefix(160)) } ?? NSNull()
         row["studioX"] = rep.studioX.map { r2($0) } ?? NSNull()
         row["studioEQ"] = rep.studioEQ
+        row["closeness"] = rep.closeness
+        row["breathAir"] = rep.breathAir
+        row["room"] = rep.room
+        row["finishMs"] = r1(rep.finishMs)
         row["pieces"] = rep.pieces
         row["mood"] = rep.mood
         return row
@@ -451,6 +460,8 @@ final class VoiceSpeedTest {
             "recognizeMs": total(\.recognizeMs).rounded(), "mimiDecodeMs": total(\.mimiMs).rounded(),
             "studioBlueprintMs": total(\.studioBlueprintMs).rounded(), "studioVocoderMs": total(\.studioVocoderMs).rounded(),
             "studioRestMs": total(\.studioRestMs).rounded(), "eqPostMs": total(\.postMs).rounded(),
+            // Inside eqPostMs: the tuner's finishing (closeness, breath air, room).
+            "finishMs": total(\.finishMs).rounded(),
             "decodeMs": total(\.decodeMs).rounded(), "callsMs": total(\.totalMs).rounded(),
         ]
         var bypass: [String: Int] = [:]
@@ -474,6 +485,9 @@ final class VoiceSpeedTest {
         studio["reasons"] = bypass
         studio["everyCall"] = studioRead && studioUsed == reports.count && !reports.isEmpty
         studio["studioEQCalls"] = reports.filter(\.studioEQ).count
+        studio["closenessCalls"] = reports.filter(\.closeness).count
+        studio["breathAirCalls"] = reports.filter(\.breathAir).count
+        studio["roomCalls"] = reports.filter(\.room).count
         studio["units"] = reports.compactMap(\.studioUnits).last ?? NSNull()
         studio["off"] = reports.compactMap(\.studioOff).last ?? NSNull()
         var device: [String: Any] = ["model": deviceModel(), "ios": iosVersion(), "os": ProcessInfo.processInfo.operatingSystemVersionString]

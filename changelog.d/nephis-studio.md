@@ -23,6 +23,11 @@
   shelf or peaking sections): it runs on every sentence her studio rendered, after the breath polish, so her studio
   sound on the phone matches the audio approved on the PC. Packs without it sound exactly as before; a section type the
   app doesn't know is skipped.
+- A Nephis pack can carry the browser EQ tuner's settings: a low cut and a top cut in its studio EQ ("highPass",
+  "lowPass"), and on every sentence of hers, before the mastering, "closeness" (the tuner's compressor), "breathAir" (a
+  little air on top, its exciter) and "room" (a small, close room, e.g. {"amount": 0.07}). Each sounds as in the tuner
+  and carries from sentence to sentence (the room's echo rolls on into the next sentence instead of being cut). Packs
+  without them sound exactly as before. The Voice speed test lists them and counts their time under EQ and finishing.
 - Voice speed test (Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics):
   one tap renders a 45-second passage with the Nephis pack in use exactly like Listen, without playing it, then says
   whether she keeps up, how soon the first audio is ready, the speed against real time, where the time goes (her voice

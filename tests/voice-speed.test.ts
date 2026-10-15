@@ -93,6 +93,11 @@ describe('Voice speed test (voice-speed.ts)', () => {
     ]);
   });
 
+  it('names the tuner’s finishing in the chain line when the pack has it (closeness, breath air, room)', () => {
+    const chain = { clipFrames: 113, carryFrames: 12, studioEQPresent: true, closeness: { amount: 0.15 }, breathAir: null, room: { amount: 0.07, seconds: 0.35 } };
+    expect(aboutLines(report({ chain }))[2]).toBe('Chain: clip 113, carry 12 frames, studio EQ yes, closeness 15%, room 7%');
+  });
+
   it('is one tap from Settings › Voices and from the Listen player’s Voice panel, and listed on the Voice test and Diagnostics', () => {
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain('data-testid="voices-speed"');

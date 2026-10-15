@@ -96,6 +96,20 @@ call, device, iOS, heat, Low Power Mode, free memory, the pack (name, `weightsSh
 every call. The report (`speedtest-<date>-<time>.json`) and the audio (`.wav`, 32-bit float at the read's rate) go to
 the Diagnostics folder; "Play result" plays the audio, "Copy report" copies the JSON.
 
+**Pack tone chain (pack.json `chain`)**, after her voice is made, in this order: `breathPolish` and `eqAfterStudio`
+(studio calls), `studioEQ` (studio calls: `gainDB` and up to 8 RBJ sections, `highShelf`, `lowShelf`, `peaking`, and
+the browser EQ tuner's `highPass` low cut / `lowPass` top cut, 12 dB/octave with the section's Q, `db` ignored), then on
+every call of hers (studio or plain) the tuner's finishing: `closeness` `{"amount"}` (0-1; a port of Chromium's
+DynamicsCompressorNode with the tuner's threshold -32c - 18·min(1, 4c) dB, +6.02 dB for the phone's level, ratio 1 + 3c,
+12 dB knee, 8 ms attack, 180 ms release, Chromium's makeup gain and the tuner's; 6 ms look-ahead), `breathAir`
+`{"amount"}` (0-1; a parallel exciter x + 0.24a · HPF7k(shaper(5 · HPF5k(x))), shaper tanh(4v)/tanh(4) 4x oversampled
+with Chromium's WaveShaper resamplers), `room` `{"amount", "seconds" 0.35, "decay" 0.07, "seed" 1}` (amount 0-0.35; a
+seeded noise impulse, normalized like WebAudio's ConvolverNode, wet amount · 2.2, level 1/(1 + 0.6 · amount), FFT
+convolution on vDSP), then `master`. Each runs at the call's rate as one chain over the read (filters, look-ahead and the
+room's tail carry from call to call; a new read starts fresh). Absent, unreadable or 0: off, the audio bit-identical to
+before. Files: `ExpressiveCore/NephisStudioEQ.swift`, `NephisCloseness.swift`, `NephisBreathAir.swift`,
+`NephisRoom.swift`; the Voice speed test lists them in its chain and their time in "EQ and finishing" (`finishMs`).
+
 Never crashing was the design rule: unsupported OS (< iOS 18), missing or corrupt files (checksums),
 a failed load, a failed sentence, memory warnings and backgrounding all end in Kokoro reading, never in
 silence or a crash; a Core ML crash inside these engines is contained by the sentinel on the next launch.

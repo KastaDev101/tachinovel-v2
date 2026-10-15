@@ -116,6 +116,9 @@ public struct NaturalFinish: Sendable {
         /// high-pass, a true-peak limiter at the end): `renderFlow` adds no thump filter, EQ or soft limit on top, only
         /// the listener's speed and the cut into sentences.
         public var mastered = false
+        /// A flow call her engine already gave her EQ (NephisFlowSynth, before the tuner's finishing: pack chain
+        /// "closeness", "breathAir", "room"): `renderFlow` adds no EQ (`tilt`) on top; the thump filter and soft limit stay.
+        public var toned = false
 
         public init(samples: [Float], chunkEnds: [Int] = [], lines: [Line], speed: Double = 1, expressive: Bool, nonVerbals: [Int: NonVerbalPack.Item] = [:]) {
             self.samples = samples
@@ -313,7 +316,7 @@ public struct NaturalFinish: Sendable {
         // move them again.
         if !u.mastered {
             StartupSound.removeThump(&speech, sampleRate: sampleRate)
-            if sampleRate == Self.mimiRate { tilt?.apply(&speech, sampleRate: sampleRate) }
+            if sampleRate == Self.mimiRate, !u.toned { tilt?.apply(&speech, sampleRate: sampleRate) }
             let g = Float(pow(10, Self.flowGainDB / 20))
             let room = Self.peakCeiling - Self.flowKnee
             for i in speech.indices {

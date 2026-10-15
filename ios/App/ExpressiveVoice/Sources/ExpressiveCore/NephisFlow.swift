@@ -201,10 +201,18 @@ public enum NephisFlow {
         /// 2026-10-13: "the SOUND of better audio quality").
         public var master: NephisMaster.Settings?
         /// Her pack's own EQ on her studio's sound (NephisStudioEQ.swift, pack.json "studioEQ": {"gainDB", "sections":
-        /// [{"type": "highShelf"|"lowShelf"|"peaking", "hz", "q", "db"}]}): on every call her studio rendered, at the
-        /// call's rate, after the breath polish and after "eqAfterStudio". Absent or unreadable: nil, every call exactly
-        /// as before (Kasta, 2026-10-15: pack 18, the EQ of the audio approved on the PC).
+        /// [{"type": "highShelf"|"lowShelf"|"peaking"|"highPass"|"lowPass", "hz", "q", "db"}]}): on every call her studio
+        /// rendered, at the call's rate, after the breath polish and after "eqAfterStudio". Absent or unreadable: nil, every
+        /// call exactly as before (Kasta, 2026-10-15: pack 18, the EQ of the audio approved on the PC).
         public var studioEQ: StudioEQ?
+        /// The browser EQ tuner's finishing (Kasta, 2026-10-15), on every call of hers (studio and plain), at the call's
+        /// rate, one chain over the read, in this order after the studio EQ / Mimi EQ and before "master":
+        /// "closeness" {"amount"} (a compressor: NephisCloseness.swift), "breathAir" {"amount"} (a parallel exciter:
+        /// NephisBreathAir.swift), "room" {"amount", "seconds", "decay", "seed"} (a small, close room: NephisRoom.swift).
+        /// Each absent, unreadable or at 0: nil / off, every call exactly as before.
+        public var closeness: NephisCloseness.Settings?
+        public var breathAir: NephisBreathAir.Settings?
+        public var room: NephisRoom.Settings?
 
         /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
         /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
@@ -330,6 +338,9 @@ public enum NephisFlow {
             }
             master = try? c.decodeIfPresent(NephisMaster.Settings.self, forKey: .master)
             studioEQ = try? c.decodeIfPresent(StudioEQ.self, forKey: .studioEQ)
+            closeness = try? c.decodeIfPresent(NephisCloseness.Settings.self, forKey: .closeness)
+            breathAir = try? c.decodeIfPresent(NephisBreathAir.Settings.self, forKey: .breathAir)
+            room = try? c.decodeIfPresent(NephisRoom.Settings.self, forKey: .room)
         }
     }
 

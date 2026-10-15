@@ -30,6 +30,9 @@ public struct ExpressiveAudio: Sendable {
     public let chunks: Int
     /// Finished by her mastering chain (NephisMaster, pack chain "master"): the player adds no EQ or limiting of its own.
     public var mastered = false
+    /// Her EQ already given by her engine (NephisFlowSynth, before the tuner's finishing in a read without her studio):
+    /// the player adds no EQ of its own (its thump filter and soft limit stay).
+    public var toned = false
 
     public var durationMs: Double { sampleRate > 0 ? Double(samples.count) * 1000 / Double(sampleRate) : 0 }
     /// Audio seconds per synthesis second (> 1 = faster than real time).
