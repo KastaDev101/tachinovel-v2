@@ -389,8 +389,8 @@ final class ExpressiveService {
         // Her studio's speed is measured as it loads while nothing is saved for this pack (StudioBudget: a fresh pack's first
         // calls otherwise planned with a guess and skipped it, build 375).
         let pack = NephisModelPack.library.activeID
-        let measured: (@Sendable (Double) -> Void)? = flowAssets?.studioDirectory != nil && Self.savedStudioSpeed(pack: pack) == nil
-            ? { x in DispatchQueue.main.async { ExpressiveService.shared.studioMeasuredAtLoad(x, pack: pack) } } : nil
+        var measured: (@Sendable (Double) -> Void)?
+        if flowAssets?.studioDirectory != nil, Self.savedStudioSpeed(pack: pack) == nil { measured = Self.studioMeasuredHandler(pack: pack) }
         let flow: (any ExpressiveSynthesizer)? = flowAssets.map {
             NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber(), freeMemoryMB: { ExpressiveService.freeMemoryMB() },
                             log: { studioLog.notice("\($0, privacy: .public)") }, studioMeasured: measured)
@@ -831,6 +831,13 @@ final class ExpressiveService {
         studioBudgetState = (pack, budget)
         studioLoadX = (pack, x)
         saveStudioSpeed(budget, pack: pack)
+    }
+
+    /// What her engine calls with the speed measured as `pack`'s studio loaded (from its own actor): on to main.
+    private static func studioMeasuredHandler(pack: String?) -> @Sendable (Double) -> Void {
+        { x in
+            DispatchQueue.main.async { ExpressiveService.shared.studioMeasuredAtLoad(x, pack: pack) }
+        }
     }
 
     private func saveStudioSpeed(_ budget: StudioBudget, pack: String?) {
