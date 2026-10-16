@@ -111,7 +111,8 @@ the de-wind cleaner, below), then `breathPolish` and `eqAfterStudio`
 the browser EQ tuner's `highPass` low cut / `lowPass` top cut, 12 dB/octave with the section's Q, `db` ignored), then on
 every call of hers (studio or plain) the tuner's finishing: `closeness` `{"amount"}` (0-1; a port of Chromium's
 DynamicsCompressorNode with the tuner's threshold -32c - 18·min(1, 4c) dB, +6.02 dB for the phone's level, ratio 1 + 3c,
-12 dB knee, 8 ms attack, 180 ms release, Chromium's makeup gain and the tuner's; 6 ms look-ahead), `breathAir`
+12 dB knee, 8 ms attack, 180 ms release, Chromium's makeup gain and the tuner's; 6 ms look-ahead), `floorGuard`
+`{"amount"}` (a downward expander, below), `breathAir`
 `{"amount"}` (0-1; a parallel exciter x + 0.24a · HPF7k(shaper(5 · HPF5k(x))), shaper tanh(4v)/tanh(4) 4x oversampled
 with Chromium's WaveShaper resamplers; both high-passes RBJ with Q 1.1220, the tuner's WebAudio default Q of 1 dB; optional `"drive"` 0.1-1, default 1:
 preGain 5 · drive, mix 0.24 · amount / drive, the tuner's "peak-safe" is 0.3),
@@ -140,6 +141,176 @@ asks for it without the model, or a failed load or call, plays without it and sa
 Voice speed test: its passes, model and units in the chain, "De-wind cleaner" as its own stage, `dewindMs` per call).
 Files: `ExpressiveCore/NephisDewind.swift`, `NephisDewindModel.swift`; port notes in tachinovel-tts-lab
 `coreml-swap/dewind/PORTING.md`.
+
+**Floor guard (chain `floorGuard`, 2026-10-15)**: the browser EQ tuner's downward expander, right after `closeness` (so
+the order is closeness → floor guard → breath air → room → master), on every call of hers, any pack. `{"amount": g}`
+(0-1; under 0.005 off, absent or unreadable off: bit-identical). The tuner's definition, at its page level: envelope
+e = 30 · LPF20(|x|) (a 2nd-order low-pass at 20 Hz, WebAudio Q -3 dB = linear 10^(-3/20)); gain c(e) = 1 when
+g < 0.005 or e ≥ 0.075, else max(10^(-12g/20), (e / 0.075)^(2g)); output x · c(e). The phone's signal is 6.02 dB hotter
+than the page's, so the app's envelope is 15 · LPF20(|x|) (the same gain for the same sound). No look-ahead; one guard
+runs over the read like the rest of the finishing. File: `ExpressiveCore/NephisFloorGuard.swift`.
+
+## Dialogue packs (2026-10-15)
+
+One model can't do Nephis's calm narration and her expressive dialogue well, so a second model of the same base is
+fine-tuned on Her's expressive dialogue takes. With a **dialogue pack** installed, Listen (and Prepare for the drive, and
+the Voice speed test) reads narration with the narrator pack and quoted dialogue with the dialogue pack, in one
+continuous read, so both sound like the same woman. **Without a dialogue pack nothing changes: every call reads with
+the narrator pack exactly as before (bit-identical).** Files: `ExpressiveCore/NephisDialogue.swift` (routing, clips, the
+mix, the level match), `NephisTempo.swift`, `NephisFloorGuard.swift`, `ExpressiveEngines/NephisFlowSynth.swift`
+(`prepareRouted`, the mixed decode), `NephisPackLibrary.swift` (roles).
+
+### The pack
+
+A dialogue pack is a `.tnmodel` exactly like a narrator pack (the same required files: the full
+`Models/pocket-tts/v2.1/english/…` model set, `BuiltInVoices/pocket/nephis.pocketvoice` + `.json` and
+`speaker-projection.bin` + `.json`), plus:
+
+- `pack.json` `"role": "dialogue"`. Developer › Voice Packs overrides it per pack (Edit › "For Dialogue" / "For
+  Narration"; kept in `NephisPacks/roles.json`). Installing a dialogue pack makes it her dialogue voice
+  (`NephisPacks/dialogue.json`) and leaves the narrator pack as it was; "Narrator Reads Dialogue Too" turns it off.
+- Style clips: `BuiltInVoices/pocket/nephis-dlg-<name>.pocketvoice` + `nephis-dlg-<name>.json` (FluidAudio's voice
+  prompt format, as every Nephis clip: float32 `[frames, 1024]`, at most 125 frames, the manifest's `schemaVersion` 1,
+  `engine` "pocket-tts", `frames`, `embeddingDim`, `bytes`, `sha256`; each checked at load, a bad one is skipped). Up to
+  ~20 (at most 40 are read). Mood clips named like a narrator pack's (`nephis-<mood>`) work too.
+- `"decoder": "shipped"`: the stream is decoded by the narrator pack's Mimi decoder (Mimi, her studio and the de-wind
+  cleaner are voice-independent and shared; a dialogue pack's own studio, de-wind model and `breathPolish` are never
+  used).
+
+Which clip a dialogue span reads with (`DialogueClips.pick`): a span with written laughter (Ha!, Haha, Heh, Hehe, Pfft,
+Ahaha, Bwahaha, Tee-hee) uses the laugh clip (`moods.laugh.clip`, else a file named `nephis-dlg-laugh`) when the pack
+has one; otherwise the director's mood (the 12: calm, awe, wry, cold, triumph, intense, tense, dread, tender, hushed, sad,
+playful; "calm" when the call has none) picks `moods[<mood>].clip`, else `nephis-dlg-<mood>`, else `nephis-<mood>`, else
+the pack's `nephis.pocketvoice`.
+
+### The chain (pack.json `chain` of the dialogue pack)
+
+Every narrator field works in a dialogue pack and applies to its dialogue spans only: `moods` (pauses, `gainDB`,
+`toneDB`, `dialogue`), `pieceGap`, `ellipsisGap`, `clauseGap`, `paragraphGapScale`, `dialogueGaps`, `clipFrames`,
+`carryFrames`, `respell`, `text`, `highShelfDB` / `softSibilance` (its Mimi EQ in a read without her studio),
+`eqAfterStudio`, `studioEQ`, `closeness`, `floorGuard`, `breathAir` (with `drive`: 0.3 is the tuner's "peak-safe"),
+`room`, `master`. New (all optional; absent = today's behaviour):
+
+| Field | What it does |
+|---|---|
+| `moods[<mood>].clip` | The style clip for that mood (a file name without extension, e.g. `"nephis-dlg-smug"`). |
+| `moods[<mood>].clause` | The pause between the pieces of a sentence in that mood (seconds, 0.05-1.5): a piece that ends mid-sentence, a "Come here," before its tag, and each dialogue comma beat. Absent: `clauseGap` (0.25). Narrator packs may use it too. |
+| `moods[<mood>].tempo` | The tempo of that mood's dialogue spans, 0.85-1.15 (> 1 faster), time-stretched without a pitch change (WSOLA on vDSP, 40 ms frames, normalized correlation over ±8 ms). Absent or 1: untouched. |
+| `moods[<mood>].eqGroup` | The `eqGroups` entry its dialogue spans use instead of the pack's `studioEQ`. |
+| `moods.laugh.clip` | The laugh clip (only `clip` is read from `laugh`). |
+| `dialogueCommaBeat` | `true`: each dialogue span is cut after its commas, semicolons and dashes ("1,000" and "well-known" stay whole) and the mood's `clause` pause goes between the pieces (Kasta: the dialogue voice ran through commas). |
+| `eqGroups` | `{"hushed": {studioEQ}, "average": {studioEQ}, "loud": {studioEQ}}`: named studio EQs (the `studioEQ` format). |
+| `thoughts` | `true`: thoughts in single quotes ('Curse it...' in a chapter that quotes speech with double quotes) are read by the dialogue pack too. Off: narration. Italic thoughts without quote marks are always narration. |
+| `loudnessMatch` | `false` turns the level match off (on by default). |
+
+A mood entry may list only some fields; the rest keep the mood's defaults (her narrator values, calm's for a mood she
+has none for). Example (values from Her's measured pauses, below):
+
+```json
+{
+  "name": "Nephis dialogue (expressive)", "made": "2026-10-16 01:00", "role": "dialogue", "decoder": "shipped",
+  "weightsSha256": "…",
+  "chain": {
+    "text": "raw", "clipFrames": 100, "carryFrames": 12,
+    "dialogueCommaBeat": true,
+    "moods": {
+      "calm":    {"clip": "nephis-dlg-calm",    "sentence": 0.50, "paragraph": 0.80, "clause": 0.30},
+      "playful": {"clip": "nephis-dlg-playful", "sentence": 0.56, "clause": 0.21, "tempo": 0.90, "eqGroup": "average"},
+      "intense": {"clip": "nephis-dlg-command", "sentence": 0.48, "clause": 0.27, "tempo": 0.94, "eqGroup": "loud"},
+      "tense":   {"clip": "nephis-dlg-tense",   "sentence": 0.56, "clause": 0.21, "tempo": 1.10},
+      "hushed":  {"clip": "nephis-dlg-secret",  "sentence": 0.60, "clause": 0.33, "eqGroup": "hushed"},
+      "laugh":   {"clip": "nephis-dlg-laugh"}
+    },
+    "eqGroups": {
+      "hushed":  {"gainDB": -1.0, "sections": [{"type": "highShelf", "hz": 8000, "q": 0.71, "db": 4}]},
+      "average": {"gainDB": -2.5, "sections": [{"type": "highShelf", "hz": 8000, "q": 0.71, "db": 6}]},
+      "loud":    {"gainDB": -4.0, "sections": [{"type": "peaking", "hz": 3000, "q": 1.0, "db": -2}]}
+    },
+    "studioEQ": {"gainDB": -2.5, "sections": [{"type": "highShelf", "hz": 8000, "q": 0.71, "db": 6}]},
+    "closeness": {"amount": 0.2}, "floorGuard": {"amount": 0.3}, "breathAir": {"amount": 0.2, "drive": 0.3},
+    "room": {"amount": 0.07}
+  }
+}
+```
+
+**Her measured pauses per mood** (`D:\TachiNovel-packs\her_dialogue\pace.json`, her dialogue takes, word-aligned), mapped
+to the director's moods, as starting values for `sentence` / `clause` / `tempo` (tempo = her speaking rate over ours
+before the dialogue model, clamped; measure again on the dialogue model's own renders):
+
+| Mood | Her takes | sentence | clause | tempo |
+|---|---|---|---|---|
+| calm | calm | 0.50 | 0.30 | 1.0 |
+| awe | awe | 0.66 | 0.49 | 1.0 |
+| wry | smug (banter 0.58 / 0.26) | 0.56 | 0.20 | 1.0 (banter 0.91) |
+| cold | cold | 0.65 | 0.32 | 0.95 |
+| triumph | victory | 0.40 | 0.39 | 1.06 |
+| intense | command (excited 0.42 / 0.17) | 0.48 | 0.27 | 0.94 (excited 0.89) |
+| tense | tense | 0.56 | 0.21 | 1.15 (1.26 measured) |
+| dread | scared | 0.58 | 0.25 | 1.0 |
+| tender | tender | 0.58 | 0.36 | 0.97 |
+| hushed | secret | 0.60 | 0.33 | 1.0 |
+| sad | sad | 0.81 | 0.48 | 1.06 |
+| playful | playful | 0.56 | 0.21 | 0.86 |
+| (laugh clip) | laugh, laugh2 | 0.61-0.66 | 0.17-0.24 | 0.87 |
+
+### How a call is read (`QuoteRouter`, `NephisFlowSynth.prepareRouted`)
+
+- **Spans.** The call's text is cut by its quotation marks into narration (read by the narrator pack, as written) and
+  dialogue (read by the dialogue pack, without its marks): straight and curly double quotes (and « », 「 」); curly
+  single quotes only in a chapter that quotes speech with them (Listen works it out per chapter: any double quote → single
+  quotes are thoughts), never an apostrophe ("don't", "the boys' room"). `"Come here," she whispered, "now."` is
+  dialogue / narration / dialogue; punctuation right after a closing quote goes with the words before it.
+- **Across calls and paragraphs.** A quotation left open at a call's end is speech when it closes later in the same
+  paragraph or the next paragraph reopens it (the novel convention for a speech over several paragraphs; Listen sends
+  both hints with each call); otherwise the mark is a stray and that stretch is narration, as before.
+- **Short interjections.** A lone dialogue span of at most 2 words / 14 letters inside at least 3 words of narration
+  (`He looked up. "Oh." Then he left.`, scare quotes) stays with the narrator: a voice change for one word costs more
+  than it gives. Written laughter keeps the dialogue voice when the pack has a laugh clip.
+- **Pieces and pauses.** Each span is planned in Pocket's chunks for its own voice (and with `dialogueCommaBeat` cut at
+  its commas and dashes); every piece is read with its voice's prompt (its clip + its own carry-over of what that voice
+  said last) and joined into the one latent stream as always. The pause after a piece is its voice's: inside a span its
+  pause after a sentence, or the mood's `clause` at a comma beat; where the voice changes, a comma's beat when the
+  sentence goes on ("Come here," | she whispered), else her hand-over pause (`dialogueGaps` "narration", capped by her
+  sentence pause; a mood's own `dialogue` value wins). A call's opening pause is the previous voice's. A lead-in only
+  follows the same voice.
+- **Each voice keeps its own state:** carry-over latents, last clip (the half-and-half blend at a mood change), finishing
+  chain. Shared: the read's stream, Mimi decoder, her studio, the de-wind cleaner, the take analysis decoder.
+
+### The sound of a mixed call (`decodeReporting`)
+
+Mimi decodes the one stream; her studio and the de-wind cleaner run over the whole call as always. Where the voice
+changes is known in latents (the middle of the join's pause, or the middle of the true silence spliced in there). Then:
+
+1. Tone before the pauses go in: the narrator's (its `eqAfterStudio` and `studioEQ`, or in a call the studio skipped its
+   mood shelf and Mimi EQ at 24 kHz) over the call, the dialogue pack's (its own, with the mood's `eqGroup`) over its
+   regions, mixed.
+2. The pauses go in; the dialogue regions get the mood's `tempo`.
+3. **Level match**: each voice's active level in the call (10 ms frames over -45 dBFS, their mean power), smoothed over
+   the read (a call with 3 s of speech moves it 30 % of the way; each voice needs 0.5 s before it counts); the dialogue
+   regions get the difference (±6 dB at most) on top of their mood's `gainDB`.
+4. Each voice's own steps: the narrator's chain over the whole call (it carries on as always), the dialogue pack's from
+   the call's start to its last region (it carries on when it ran to the end of the call before, else starts fresh in
+   the call's opening pause): mood shelf (no studio), level, Mimi EQ (no studio: both, so the player adds none),
+   closeness, floor guard, breath air, room, master.
+5. The two are mixed with an **equal-power crossfade of 5 ms** at each change; changes fall in pauses, so it only
+   smooths the tails (no change ever lands inside a word).
+
+### Memory and speed (estimates until the phone's report)
+
+- Both flow models stay loaded (no switching cost): a second Pocket model is ~300 MB of weights (cond_prefill 132 MB,
+  flowlm_step 151 MB, flow_decoder 19 MB) plus its own Mimi (42 MB, unused but loaded by FluidAudio): **about +350-450 MB
+  resident** on top of Nephis + studio + de-wind. It loads in the background behind her studio, only with ~900 MB free
+  (`NephisMemory.dialogueLoad`), and is the first thing dropped under ~550 MB free (`dialogueKeep`, before her studio's
+  500 MB); meanwhile the narrator reads the dialogue (the call log says why: "loading", "memory: …").
+- Cost per voice change: one more prompt prefill (tens of ms on the Neural Engine), one more join, and short pieces are
+  decoded whole for analysis (Mimi's analysis decode rises from ~1.5× to ~2× the stream on dialogue calls). Listen's
+  extras budget counts each change as 0.5 s less audio ahead (`HybridSpeechEngine.switchCost`), and the "under 1.5×
+  real time → lightest calls" rule covers a slow mixed call. The dialogue finishing chain runs only on calls with
+  dialogue, up to its last region (~10-30 ms per second of audio).
+- The Voice speed test appends a short exchange to its passage when a dialogue pack is in use (the narrator-only passage
+  is unchanged) and reports `dialogue`: the pack, its model load time and free memory before/after, calls, spans, voice
+  changes per minute, and per voice the pieces, Pocket time, audio seconds and × real time. The listening report has the
+  same per session; each call in the call log has a `dialogue` entry.
 
 Never crashing was the design rule: unsupported OS (< iOS 18), missing or corrupt files (checksums),
 a failed load, a failed sentence, memory warnings and backgrounding all end in Kokoro reading, never in

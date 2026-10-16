@@ -1,5 +1,15 @@
 ### Added
 
+- Nephis's dialogue voice: a second Nephis pack with the role "dialogue" (pack.json, or Developer › Voice Packs › Edit ›
+  "For Dialogue") reads quoted dialogue while her narrator pack reads the narration, in one continuous read. Quote
+  routing handles tags inside a quote pair, quotations over several calls and paragraphs, stray marks, single-quoted
+  thoughts (narration unless the pack opts in), apostrophes and short interjections. Per-mood style clips (a laugh clip
+  for written laughter), pauses (new `clause`), the dialogue comma beat, tempo without a pitch change, EQ groups, the
+  tuner's floor guard, a level match to the narrator and a 5 ms equal-power crossfade where the voice changes. Both
+  models stay loaded (the dialogue one behind her studio, dropped first when memory runs low); without a dialogue pack
+  every call reads exactly as before. The Voice speed test and the listening report show both voices, per-voice time
+  and voice changes per minute (docs/expressive-tts.md "Dialogue packs").
+- Pack chain `floorGuard` {"amount"}: the browser EQ tuner's downward expander after closeness, for any pack.
 - A listening report at the end of each Listen session (Stop, 2 minutes idle, or paused and the app left):
   listen-<date>-<time>.json in the Diagnostics folder with the time heard, the voice and pack, her calls (studio used
   or skipped and why, the de-wind cleaner and its time, takes, lead-ins, speech checks, Mimi's work), breaks, time to

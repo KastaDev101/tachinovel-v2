@@ -23,6 +23,10 @@ public enum NephisMemory {
         case nephis
         case studioLoad
         case studioKeep
+        /// Her dialogue pack's Pocket model (a second flow model; Mimi, her studio and the de-wind cleaner are shared):
+        /// loaded behind her studio, and dropped first when memory runs low (before her studio).
+        case dialogueLoad
+        case dialogueKeep
     }
 
     /// Free memory below which `need` is refused, MB. A studio takes ~300-550 MB, and its int8 vocoder is unpacked to
@@ -33,6 +37,8 @@ public enum NephisMemory {
         case .nephis: return 700
         case .studioLoad: return 1_000
         case .studioKeep: return 500
+        case .dialogueLoad: return 900
+        case .dialogueKeep: return 550
         }
     }
 
@@ -53,8 +59,10 @@ public enum NephisMemory {
             return "Not enough memory to load Nephis: \(free), she needs \(needs). Another voice reads meanwhile."
         case .studioLoad:
             return "memory: \(free), her studio needs \(needs)"
-        case .studioKeep:
+        case .studioKeep, .dialogueKeep:
             return "memory: \(free)"
+        case .dialogueLoad:
+            return "memory: \(free), her dialogue voice needs \(needs)"
         }
     }
 

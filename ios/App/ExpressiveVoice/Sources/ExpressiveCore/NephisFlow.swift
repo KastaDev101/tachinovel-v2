@@ -218,6 +218,39 @@ public enum NephisFlow {
         /// call of hers as the first step after her voice is made (her studio's sound, or Mimi's), before the breath polish,
         /// the EQs, the finishing and her mastering. Absent, unreadable or 0: nil, every call exactly as before.
         public var dewind: NephisDewind.Settings?
+        /// The tuner's floor guard (NephisFloorGuard.swift, pack.json "floorGuard": {"amount"}): a downward expander right
+        /// after closeness, on every call of hers. Absent, unreadable or under 0.005: nil / off, every call as before.
+        public var floorGuard: NephisFloorGuard.Settings?
+
+        // Dialogue packs (NephisDialogue.swift, docs/expressive-tts.md "Dialogue packs"); a narrator pack ignores these.
+        /// Cut each dialogue span at its commas, semicolons and dashes and put the mood's `clause` pause between the pieces
+        /// (pack.json "dialogueCommaBeat": true; Kasta: the dialogue voice ran through commas). Off by default.
+        public var dialogueCommaBeat = false
+        /// Studio EQs by group name (pack.json "eqGroups": {"hushed": {studioEQ}, "average": {…}, "loud": {…}}); a mood's
+        /// `eqGroup` picks one for its dialogue spans instead of the pack's `studioEQ`. Absent or unreadable: none.
+        public var eqGroups: [String: StudioEQ]?
+        /// Thoughts in single quotes ('Curse it...' in a chapter that quotes speech with double quotes) read by the
+        /// dialogue pack too (pack.json "thoughts": true). Off: thoughts stay narration.
+        public var thoughtsAsDialogue = false
+        /// The dialogue spans' level matched to the narrator's (NephisLoudnessMatch; pack.json "loudnessMatch": false
+        /// turns it off). On by default.
+        public var loudnessMatch = true
+
+        /// The studio EQ for `mood`'s spans: its `eqGroup`'s EQ when the pack has that group, else the pack's `studioEQ`.
+        public func studioEQ(for mood: String?) -> StudioEQ? {
+            if let group = mood.flatMap({ moods[$0]?.eqGroup }), let eq = eqGroups?[group] { return eq }
+            return studioEQ
+        }
+
+        /// The pause between two pieces of a sentence in `mood`: the mood's `clause` when the pack sets one, else `clauseGap`.
+        public func clausePause(mood: String?) -> Double {
+            mood.flatMap { moods[$0]?.clause } ?? clauseGap
+        }
+
+        /// The tempo of `mood`'s dialogue spans (1 = untouched).
+        public func tempo(mood: String?) -> Double {
+            NephisTempo.clamped(mood.flatMap { moods[$0]?.tempo })
+        }
 
         /// What Pocket gets for one call: the app's text (`line.text`), or with "text": "raw" the call as written
         /// (`line.raw`, else `line.text`) in the raw form; her respellings either way.
@@ -254,10 +287,64 @@ public enum NephisFlow {
             /// Her pause where dialogue hands over in this mood, by `Handover` name (seconds; nil = the chain's
             /// `dialogueGaps`). Used as given, even when longer than her sentence pause (a pack measured it).
             public var dialogue: [String: Double]?
+            /// Dialogue packs (all optional; absent = as before): the style clip read in this mood (a file of the pack's
+            /// BuiltInVoices/pocket, e.g. "nephis-dlg-smug"), the pause between the pieces of a sentence (`clause`, seconds:
+            /// a mid-sentence piece, and the dialogue comma beat), the tempo of its dialogue spans (0.85-1.15, pitch kept) and
+            /// the studio EQ group its dialogue spans use (chain `eqGroups`).
+            public var clip: String?
+            public var clause: Double?
+            public var tempo: Double?
+            public var eqGroup: String?
             public init(sentence: Double, trail: Double, paragraph: Double, gainDB: Double, toneDB: Double? = nil,
-                        dialogue: [String: Double]? = nil) {
+                        dialogue: [String: Double]? = nil, clip: String? = nil, clause: Double? = nil, tempo: Double? = nil,
+                        eqGroup: String? = nil) {
                 self.sentence = sentence; self.trail = trail; self.paragraph = paragraph; self.gainDB = gainDB; self.toneDB = toneDB
                 self.dialogue = dialogue
+                self.clip = clip; self.clause = clause; self.tempo = tempo; self.eqGroup = eqGroup
+            }
+        }
+
+        /// A pack's mood entry: any field it leaves out keeps the mood's default (her measured narrator values, calm's for a
+        /// mood she has none for), so a dialogue pack can list only a clip and a tempo.
+        struct MoodPatch: Decodable {
+            var sentence: Double?
+            var trail: Double?
+            var paragraph: Double?
+            var gainDB: Double?
+            var toneDB: Double?
+            var dialogue: [String: Double]?
+            var clip: String?
+            var clause: Double?
+            var tempo: Double?
+            var eqGroup: String?
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                sentence = try c.decodeIfPresent(Double.self, forKey: .sentence)
+                trail = try c.decodeIfPresent(Double.self, forKey: .trail)
+                paragraph = try c.decodeIfPresent(Double.self, forKey: .paragraph)
+                gainDB = try c.decodeIfPresent(Double.self, forKey: .gainDB)
+                toneDB = try c.decodeIfPresent(Double.self, forKey: .toneDB)
+                dialogue = try c.decodeIfPresent([String: Double].self, forKey: .dialogue)
+                // The new fields never fail a pack: one this version can't read is left out.
+                clip = (try? c.decodeIfPresent(String.self, forKey: .clip)).flatMap { $0.isEmpty ? nil : $0 }
+                clause = try? c.decodeIfPresent(Double.self, forKey: .clause)
+                tempo = try? c.decodeIfPresent(Double.self, forKey: .tempo)
+                eqGroup = try? c.decodeIfPresent(String.self, forKey: .eqGroup)
+            }
+
+            enum CodingKeys: String, CodingKey {
+                case sentence, trail, paragraph, gainDB, toneDB, dialogue, clip, clause, tempo, eqGroup
+            }
+
+            /// The entry over `base`, clamped to sane values (as every pack's moods always were).
+            func merged(over base: Mood) -> Mood {
+                Mood(sentence: min(2, max(0.1, sentence ?? base.sentence)), trail: min(2.5, max(0.1, trail ?? base.trail)),
+                     paragraph: min(3, max(0.2, paragraph ?? base.paragraph)), gainDB: min(6, max(-6, gainDB ?? base.gainDB)),
+                     toneDB: (toneDB ?? base.toneDB).map { min(4, max(-4, $0)) },
+                     dialogue: (dialogue ?? base.dialogue).map(Chain.clampedDialogue),
+                     clip: clip ?? base.clip, clause: (clause ?? base.clause).map { min(1.5, max(0.05, $0)) },
+                     tempo: (tempo ?? base.tempo).map { NephisTempo.clamped($0) }, eqGroup: eqGroup ?? base.eqGroup)
             }
         }
 
@@ -304,7 +391,7 @@ public enum NephisFlow {
         /// `clauseGap` whatever the mood.
         public func gap(after piece: String, mood: String?) -> Double {
             let t = piece.trimmingCharacters(in: .whitespaces)
-            if NephisFlow.endsMidSentence(t) { return clauseGap }
+            if NephisFlow.endsMidSentence(t) { return clausePause(mood: mood) }
             let core = t.replacingOccurrences(of: #"["'”’»)\]]+$"#, with: "", options: .regularExpression)
             let trailing = core.hasSuffix("…") || core.hasSuffix("...") || t.hasSuffix(":")
             if let m = mood.flatMap({ moods[$0] }) { return trailing ? m.trail : m.sentence }
@@ -330,11 +417,11 @@ public enum NephisFlow {
             for (word, said) in try c.decodeIfPresent([String: String].self, forKey: .respell) ?? [:] {
                 respell[word.lowercased()] = said
             }
-            // A pack's moods replace these one by one, clamped to sane values.
-            for (name, m) in try c.decodeIfPresent([String: Mood].self, forKey: .moods) ?? [:] {
-                moods[name] = Mood(sentence: min(2, max(0.1, m.sentence)), trail: min(2.5, max(0.1, m.trail)),
-                                   paragraph: min(3, max(0.2, m.paragraph)), gainDB: min(6, max(-6, m.gainDB)),
-                                   toneDB: m.toneDB.map { min(4, max(-4, $0)) }, dialogue: m.dialogue.map(Self.clampedDialogue))
+            // A pack's moods replace these one by one, clamped to sane values; a field an entry leaves out keeps the
+            // mood's default (calm's for a mood she has none for: a dialogue pack's "laugh").
+            let calm = moods["calm"] ?? NephisFlow.herMoods["calm"] ?? Mood(sentence: 0.84, trail: 0.9, paragraph: 1.04, gainDB: 0)
+            for (name, m) in try c.decodeIfPresent([String: MoodPatch].self, forKey: .moods) ?? [:] {
+                moods[name] = m.merged(over: moods[name] ?? calm)
             }
             // A pack's dialogue gaps replace these one by one, clamped.
             let packGaps = try c.decodeIfPresent([String: Double].self, forKey: .dialogueGaps) ?? [:]
@@ -347,6 +434,18 @@ public enum NephisFlow {
             breathAir = try? c.decodeIfPresent(NephisBreathAir.Settings.self, forKey: .breathAir)
             room = try? c.decodeIfPresent(NephisRoom.Settings.self, forKey: .room)
             dewind = (try? c.decodeIfPresent(NephisDewind.Settings.self, forKey: .dewind)).flatMap { $0.on ? $0 : nil }
+            floorGuard = try? c.decodeIfPresent(NephisFloorGuard.Settings.self, forKey: .floorGuard)
+            dialogueCommaBeat = (try? c.decodeIfPresent(Bool.self, forKey: .dialogueCommaBeat)) ?? false
+            eqGroups = try? c.decodeIfPresent([String: StudioEQ].self, forKey: .eqGroups)
+            thoughtsAsDialogue = (try? c.decodeIfPresent(Bool.self, forKey: .thoughtsAsDialogue)) ?? false
+            loudnessMatch = (try? c.decodeIfPresent(Bool.self, forKey: .loudnessMatch)) ?? true
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case pieceGap, ellipsisGap, clauseGap, paragraphGapScale, clipFrames, carryFrames, moods, dialogueGaps, highShelfDB
+            case softSibilance, eqAfterStudio, breathPolish, respell, text, master, studioEQ, closeness, breathAir, room, dewind
+            case floorGuard, dialogueCommaBeat, eqGroups, loudnessMatch
+            case thoughtsAsDialogue = "thoughts"
         }
     }
 

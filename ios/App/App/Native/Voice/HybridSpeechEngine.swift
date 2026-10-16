@@ -50,6 +50,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Where each chapter appended to this read starts (`append`): no call groups sentences across one, and Nephis's
     /// first call there gets the chapter break as its pause.
     private var chapterStarts: Set<Int> = []
+    /// Each chapter's curly single quotes (QuoteRouter.SingleQuotes: thoughts in a chapter quoting speech with double
+    /// quotes, speech in one without), by the chapter's first sentence; for her dialogue pack's quote routing.
+    private var quoteStyles: [Int: QuoteRouter.SingleQuotes] = [:]
     /// Another chapter follows this read's last sentence (NarrationController: auto-continue with a next chapter), so her
     /// last call keeps its trailing silence for the join into it instead of ending the read there.
     var continuesIntoNext = false
@@ -197,6 +200,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let rate = sessionRate
         lookahead = []
         chapterStarts = []
+        quoteStyles = [:]
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -508,7 +512,18 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }
                 // The read's last call (its trailing silence played too), unless another chapter is to follow on.
                 line.flowLast = members.last == segments.count - 1 && !continuesIntoNext
-                let budget = flowBudget(at: i)
+                // Her dialogue pack (when she has one): what the quote routing needs around the call, and the voice
+                // changes it will make, which the call's budget counts (each costs a prompt and a join).
+                var switches = 0
+                if ExpressiveService.shared.nephisDialogue, let last = members.last {
+                    let hints = dialogueHints(after: last)
+                    line.singleQuotes = quoteStyle(at: i).rawValue
+                    line.restOfParagraph = hints.rest
+                    line.nextOpensQuote = hints.nextOpens
+                    switches = Self.voiceChanges(text, context: QuoteRouter.Context(singleQuotes: quoteStyle(at: i), restOfParagraph: hints.rest,
+                                                                                     nextOpensQuote: hints.nextOpens))
+                }
+                let budget = flowBudget(at: i, switches: switches)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
                 // Her studio (when on) on every call it can afford from its measured speed, the first call of a read
@@ -783,7 +798,47 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// What a flow call may cost, from the audio buffered ahead of playback: one plain take when it is short (as
     /// fast as the Narrator), a lead-in (the sentence before read again, then cut: the tone carries over) from
     /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
-    private func flowBudget(at i: Int) -> (takes: Int, leadIn: Bool) {
+    /// Around a flow call ending at sentence `last`, for the quote routing: the rest of its paragraph (nil: the call
+    /// ends it) and whether the next paragraph opens with a quotation mark (a quotation running on across the break).
+    private func dialogueHints(after last: Int) -> (rest: String?, nextOpens: Bool?) {
+        var rest: [String] = []
+        var j = last + 1
+        while j < segments.count, !chapterStarts.contains(j), (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause {
+            rest.append(Self.readText(segments[j], expressive: true))
+            j += 1
+        }
+        let next = j < segments.count && !chapterStarts.contains(j) ? QuoteRouter.opensQuote(Self.readText(segments[j], expressive: true)) : false
+        return (rest.isEmpty ? nil : rest.joined(separator: " "), next)
+    }
+
+    /// The single-quote style of the chapter sentence `i` belongs to (worked out once per chapter).
+    private func quoteStyle(at i: Int) -> QuoteRouter.SingleQuotes {
+        let start = chapterStarts.filter { $0 <= i }.max() ?? 0
+        if let known = quoteStyles[start] { return known }
+        let end = chapterStarts.filter { $0 > start }.min() ?? segments.count
+        let style = QuoteRouter.SingleQuotes.of(segments[start..<max(start, end)].map(\.kokoroText))
+        quoteStyles[start] = style
+        return style
+    }
+
+    /// Voice changes inside a call's text with her dialogue pack (QuoteRouter's spans, the narrator reading at its start).
+    static func voiceChanges(_ text: String, context: QuoteRouter.Context) -> Int {
+        var state = QuoteRouter.State()
+        let spans = QuoteRouter.split(text, state: &state, context: context)
+        var changes = 0
+        var dialogue = false
+        for s in spans where s.dialogue != dialogue {
+            changes += 1
+            dialogue = s.dialogue
+        }
+        return changes
+    }
+
+    /// Seconds of buffered audio a voice change is counted as costing when a call's extras are budgeted: a second prompt
+    /// (prefill), its own takes' analysis decode and a join (measured cost on the phone: a few hundred ms at most).
+    static let switchCost = 0.5
+
+    private func flowBudget(at i: Int, switches: Int = 0) -> (takes: Int, leadIn: Bool) {
         // A warm phone: the lightest calls, so she keeps up without heating it further.
         // From "fair" on (not only when throttled): extras cost heat, and her 3x target leaves no need for them then
         // (Voice test 2026-10-09: fair to serious in 90 s with redos and lead-ins; Kasta wants it a tad cooler).
@@ -792,7 +847,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // again, so the margin that keeps the read gapless is never spent on extras. A call rendered at background
         // priority (slower on purpose, with plenty banked) doesn't count: the last one at user-initiated priority does.
         if let last = ExpressiveService.shared.flowStats.lastUrgent, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
-        return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
+        return Self.flowBudget(ahead: bufferedAhead() - Self.switchCost * Double(switches), readChange: i > 0 && read(for: i) != read(for: i - 1))
     }
 
     /// Her EQ, with the top lift her installed pack asks for.

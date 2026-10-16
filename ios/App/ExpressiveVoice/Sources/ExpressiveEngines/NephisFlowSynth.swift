@@ -57,8 +57,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// The pack's de-wind cleaner (`Models/nephis-dewind`, NephisDewindModel.swift), used when its chain asks for it
         /// ("dewind"). nil = the pack ships none.
         public let dewindDirectory: URL?
+        /// Her dialogue pack (pack role "dialogue"): quoted dialogue reads with it, narration with the pack above. nil =
+        /// none: every call reads exactly as before.
+        public let dialogue: Dialogue?
         public init(calm: PocketVoice, moods: [String: PocketVoice], projection: NephisFlow.Projection, modelsDirectory: URL? = nil,
-                    chain: NephisFlow.Chain = .init(), studioDirectory: URL? = nil, dewindDirectory: URL? = nil) {
+                    chain: NephisFlow.Chain = .init(), studioDirectory: URL? = nil, dewindDirectory: URL? = nil, dialogue: Dialogue? = nil) {
             self.calm = calm
             self.moods = moods
             self.projection = projection
@@ -66,6 +69,39 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             self.chain = chain
             self.studioDirectory = studioDirectory
             self.dewindDirectory = dewindDirectory
+            self.dialogue = dialogue
+        }
+    }
+
+    /// Her dialogue pack: its Pocket model (the flow model only is used: Mimi, her studio and the de-wind cleaner are the
+    /// narrator pack's, voice-independent and shared), its clips, its speaker projection and its chain (pauses, comma
+    /// beat, tempo, EQ groups, finishing). docs/expressive-tts.md "Dialogue packs".
+    public struct Dialogue: Sendable {
+        public let name: String
+        public let modelsDirectory: URL
+        public let calm: PocketVoice
+        /// Every clip of the pack by file name ("nephis-dlg-smug", "nephis-tense", …).
+        public let clips: [String: PocketVoice]
+        public let projection: NephisFlow.Projection
+        public let chain: NephisFlow.Chain
+        public init(name: String, modelsDirectory: URL, calm: PocketVoice, clips: [String: PocketVoice], projection: NephisFlow.Projection,
+                    chain: NephisFlow.Chain) {
+            self.name = name
+            self.modelsDirectory = modelsDirectory
+            self.calm = calm
+            self.clips = clips
+            self.projection = projection
+            self.chain = chain
+        }
+
+        /// The pack has a laugh clip (DialogueClips.laughClip).
+        public var laughs: Bool { DialogueClips.laughClip(chain: chain, available: Set(clips.keys)) != nil }
+
+        /// The clip a dialogue span in `mood` reads with, and its name ("calm" for the pack's base clip).
+        public func clip(mood: String, laughing: Bool) -> (name: String, voice: PocketVoice) {
+            guard let name = DialogueClips.pick(mood: mood, laughing: laughing, chain: chain, available: Set(clips.keys)),
+                  let v = clips[name] else { return ("calm", calm) }
+            return (name, v)
         }
     }
 
@@ -156,6 +192,26 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Rendered at background priority (ExpressiveLine.relaxed: playback had plenty of audio banked); its speed then
         /// says nothing about the phone's (StudioPace, StudioBudget and the extras rule leave it out).
         public var relaxed = false
+        /// Her dialogue pack on the call (NephisDialogue.swift; all 0/nil without one): its spans and pieces, the voice
+        /// changes (one at the call's start counts when the call before ended in the other voice), its generation time,
+        /// latents and characters, the mood and clip it read with, the level match and tempo its spans got, their seconds
+        /// of audio and their finishing time, and why the call's dialogue read with the narrator pack instead ("loading",
+        /// "memory: 480 MB free", "hurry").
+        public var dialogueSpans = 0
+        public var dialoguePieces = 0
+        public var switches = 0
+        public var dialogueRenderMs = 0.0
+        public var dialogueLatents = 0
+        public var dialogueChars = 0
+        public var dialogueMood: String?
+        public var dialogueClip: String?
+        public var dialogueMatchDB: Double?
+        public var dialogueTempo: Double?
+        public var dialogueSeconds = 0.0
+        public var dialogueFinishMs = 0.0
+        public var dialogueNote: String?
+        /// The tuner's floor guard on the call (chain "floorGuard").
+        public var floorGuard = false
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -181,6 +237,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         /// Rendered at background priority (ExpressiveLine.relaxed): its studio's pace doesn't count toward switching the
         /// studio off for the session.
         var relaxed = false
+        /// Her dialogue pack in the call: who speaks the call's start (the voice of the read's last piece before it, 0 the
+        /// narrator, 1 the dialogue pack), where the voice changes in `stream`, and the mood its dialogue spans read in. No
+        /// change and `firstVoice` 0: the call is the narrator's alone and decodes exactly as before.
+        var firstVoice = 0
+        var switches: [NephisVoiceMix.LatentSwitch] = []
+        var dialogueMood = "calm"
+        /// The call has a dialogue region (its decode mixes two finishing chains).
+        var mixed: Bool { firstVoice == 1 || switches.contains { $0.voice == 1 } }
     }
 
     private let assets: Assets
@@ -233,6 +297,31 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// The mood of the paragraph just read (its paragraph pause follows it), and the level it played at.
     private var lastMood: String?
     private var lastGainDB = 0.0
+    /// Who said the read's last piece (0 the narrator pack, 1 the dialogue pack): a lead-in only follows the same voice,
+    /// and a call that starts in the other voice changes in its opening pause.
+    private var lastVoice = 0
+
+    // Her dialogue pack (Assets.dialogue): its Pocket model, loaded behind her studio (no call waits for it: the narrator
+    // reads the dialogue meanwhile) and dropped first when memory runs low; its own carry-over and clip; the quotation left
+    // open at the last call's end; its own finishing chain over the read; the level match.
+    private var dialogueManager: PocketTtsManager?
+    private var dialogueLoading: Task<Void, Never>?
+    private var dialogueOff: String?
+    private var dialogueHold = MemoryHold(base: 120, cap: 1_200)
+    private var dialogueCarry: [[Float]] = []
+    private var dialogueLastClip: [Float]?
+    private var quoteState = QuoteRouter.State()
+    private var dialogueCloseness: NephisCloseness?
+    private var dialogueFloor: NephisFloorGuard?
+    private var dialogueAir: NephisBreathAir?
+    private var dialogueRoom: NephisRoom?
+    private var dialogueMaster: NephisMaster?
+    private var dialogueGainDB = 0.0
+    /// The dialogue chain ran to the end of the call before (it carries on: no restart).
+    private var dialogueChainRan = false
+    private var loudness = NephisLoudnessMatch()
+    /// The narrator's floor guard (chain "floorGuard") over the read.
+    private var floorGuard: NephisFloorGuard?
     /// Her mastering over the read (pack chain "master"; nil while off): one chain, call after call, so levels, filters
     /// and delay lines carry across the joins (NephisMaster).
     private var master: NephisMaster?
@@ -289,6 +378,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         try keep(ticket)
         // Her studio's models load behind Pocket's, in the background: no call waits for them (crash plan b1).
         startStudioLoad()
+        // Her dialogue pack's model behind her studio's, in the background too (the narrator reads meanwhile).
+        startDialogueLoad()
         return ms
     }
 
@@ -331,6 +422,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         loading = nil
         studioLoading?.cancel()
         studioLoading = nil
+        dialogueLoading?.cancel()
+        dialogueLoading = nil
+        dialogueManager = nil
+        dialogueOff = nil
         dewind?.cancel()
         dewind = nil
         for job in prepareJobs.values { job.cancel() }
@@ -356,12 +451,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     public func unloadAndWait() async {
         let load = loading
         let studioLoad = studioLoading
+        let dialogueLoad = dialogueLoading
         let dewindLoad = dewind
         let prepares = Array(prepareJobs.values)
         let calls = Array(decodeJobs.values)
         unload()
         _ = try? await load?.value
         await studioLoad?.value
+        await dialogueLoad?.value
         _ = await dewindLoad?.value
         for job in prepares { _ = try? await job.value }
         for job in calls { _ = try? await job.value }
@@ -377,6 +474,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         lastClip = nil
         lastMood = nil
         started = false
+        lastVoice = 0
+        dialogueCarry = []
+        dialogueLastClip = nil
+        quoteState = QuoteRouter.State()
     }
 
     /// Both stages, one after the other (the Voice Lab; Listen calls them separately to overlap them).
@@ -418,8 +519,23 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let t0 = Date()
         let reset = line.flowReset == true
         if reset { forget() }
+        // Her dialogue pack reads the call's quoted dialogue once its model is up (NephisDialogue.swift). Until then, for a
+        // call that asks for none (`line.dialogue` false) and for a call without dialogue, the narrator pack reads it all,
+        // exactly as before.
+        var dialogueNote: String?
+        if let dialogue = assets.dialogue {
+            let ready: (manager: PocketTtsManager?, note: String?) = line.dialogue == false ? (nil, "off for this call") : dialogueForCall()
+            if let dm = ready.manager {
+                if let routed = try await prepareRouted(line, seed: seed, started: t0, reset: reset, manager: manager, dialogueManager: dm,
+                                                        dialogue: dialogue, scratch: scratch) { return routed }
+            } else {
+                dialogueNote = ready.note
+                quoteState = QuoteRouter.State()
+            }
+        }
         var report = Report()
         report.relaxed = line.relaxed == true
+        report.dialogueNote = dialogueNote
         // The end guard's decoder is used by this call's takes only (prepares run one at a time).
         let tailBefore = await tailDecoder?.latentsDecoded ?? 0
         // The app's text, or the text as written for a pack that asks for it (chain "text": "raw").
@@ -439,21 +555,166 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                                         handover: line.handover, chapterStart: line.chapterStart == true)
         var stream: [[Float]] = []
         var pads: [(at: Int, seconds: Double)] = []
+        // After a call that ended in her dialogue pack's voice (only with one), the narrator takes over in this call's
+        // opening pause (the dialogue chain's tail rings out there).
+        let voiceBefore = started ? lastVoice : 0
+        var switches: [NephisVoiceMix.LatentSwitch] = []
         for (k, piece) in pieces.enumerated() {
             try Task.checkCancellation()
             // Between pieces her pause after a sentence, or a comma's beat inside a long sentence (Chain.gap).
             let pause = k == 0 ? callPause : chain.gap(after: pieces[k - 1].text, mood: mood)
             let r = try await read(piece.text, open: piece.open, clip: clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
                                    seed: seed.map { $0 &+ UInt64(16 * k) }, manager: manager, scratch: scratch, report: &report)
+            if k == 0, voiceBefore == 1 {
+                switches.append(NephisVoiceMix.LatentSwitch(latent: r.switchAt, voice: 0, inPad: r.padAt != nil && r.padAt == r.switchAt))
+                report.switches = 1
+            }
             if let at = r.padAt { pads.append((at: stream.count + at, seconds: r.padSeconds)) }
             stream += r.latents
         }
         lastMood = mood
         report.mood = mood
         report.tailLatents = max(0, (await tailDecoder?.latentsDecoded ?? 0) - tailBefore)
-        return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
-                        toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil,
-                        chapterStart: line.chapterStart == true, relaxed: line.relaxed == true)
+        var p = Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
+                         toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil,
+                         chapterStart: line.chapterStart == true, relaxed: line.relaxed == true)
+        p.firstVoice = voiceBefore
+        p.switches = switches
+        p.dialogueMood = DialogueClips.mood(role: line.role)
+        return p
+    }
+
+    /// A call with her dialogue pack up: cut into narration and dialogue spans by its quotation marks (QuoteRouter), each
+    /// span read by its own voice (the narrator pack, or the dialogue pack with its clip for the mood, its pauses and, with
+    /// "dialogueCommaBeat", its clause pause at each comma and dash), every piece joined into the one stream as always, and
+    /// where the voice changes noted for the decode (its two finishing chains). nil when the call has no dialogue: the
+    /// narrator path reads it, exactly as before.
+    private func prepareRouted(_ line: ExpressiveLine, seed: UInt64?, started t0: Date, reset: Bool, manager: PocketTtsManager,
+                               dialogueManager dm: PocketTtsManager, dialogue d: Dialogue, scratch: PocketTtsLatentDecoder) async throws -> Prepared? {
+        let chain = assets.chain
+        let dchain = d.chain
+        // The narrator pack's text form decides the spans (the quotation marks are the same in both forms).
+        func written(_ form: PocketTextForm) -> String {
+            StyleMapper.pocketText(StyleMapper.plainText(form == .raw ? (line.raw ?? line.text) : line.text), form: form)
+        }
+        let context = QuoteRouter.Context(singleQuotes: line.singleQuotes.flatMap(QuoteRouter.SingleQuotes.init(rawValue:)),
+                                          restOfParagraph: line.restOfParagraph, nextOpensQuote: line.nextOpensQuote,
+                                          thoughtsAsDialogue: dchain.thoughtsAsDialogue, keepLaughter: d.laughs)
+        let before = quoteState
+        var state = before
+        var spans = QuoteRouter.split(written(chain.text), state: &state, context: context)
+        quoteState = state
+        guard spans.contains(where: \.dialogue) else { return nil }
+        // A dialogue pack that reads the other text form gets its spans in that form (they line up span for span).
+        if dchain.text != chain.text {
+            var other = before
+            let theirs = QuoteRouter.split(written(dchain.text), state: &other, context: context)
+            if theirs.map(\.dialogue) == spans.map(\.dialogue) {
+                for k in spans.indices where spans[k].dialogue { spans[k].text = theirs[k].text }
+            }
+        }
+        var report = Report()
+        report.relaxed = line.relaxed == true
+        report.dialogueSpans = spans.filter(\.dialogue).count
+        let tailBefore = await tailDecoder?.latentsDecoded ?? 0
+        // The narrator's mood read, as on the narrator path; the dialogue pack's mood: the director's (calm without one).
+        let mood = assets.moods[line.role] != nil ? line.role : "calm"
+        let dmood = DialogueClips.mood(role: line.role)
+        let narratorClip = (assets.moods[line.role] ?? assets.calm).audioPrompt
+        // Every piece of the call in order: its text, its voice and clip, its span, and whether a comma beat comes before it.
+        struct Planned {
+            var text: String
+            var midSentence: Bool
+            var speaker: Int
+            var clip: [Float]
+            var span: Int
+            var beat: Bool
+        }
+        var planned: [Planned] = []
+        for (k, span) in spans.enumerated() {
+            let speaker = span.dialogue ? 1 : 0
+            var clip = narratorClip
+            if span.dialogue {
+                let c = d.clip(mood: dmood, laughing: QuoteRouter.laughs(span.text))
+                clip = c.voice.audioPrompt
+                report.dialogueClip = report.dialogueClip.map { $0.contains(c.name) ? $0 : $0 + ", " + c.name } ?? c.name
+            }
+            let voiceChain = span.dialogue ? dchain : chain
+            let text = voiceChain.respelled(span.text)
+            let parts = span.dialogue && dchain.dialogueCommaBeat ? QuoteRouter.commaBeats(text) : [text]
+            for (b, part) in parts.enumerated() {
+                let chunks = try await plannedChunks(span.dialogue ? dm : manager, text: part, clip: clip, speaker: speaker, raw: voiceChain.text == .raw)
+                for (c, chunk) in chunks.enumerated() {
+                    // A piece goes on from the one before when that one ended mid-sentence ("Come here," | she whispered)
+                    // or it starts in lower case (| "now."); inside a part, as Pocket chunked it.
+                    let goesOn = c > 0 ? chunk.isMidSentence
+                        : (planned.last.map { NephisFlow.endsMidSentence($0.text) } ?? false) || chunk.text.first?.isLowercase == true
+                    planned.append(Planned(text: chunk.text, midSentence: goesOn, speaker: speaker, clip: clip, span: k, beat: c == 0 && b > 0))
+                }
+            }
+        }
+        guard !planned.isEmpty else { return nil }
+        let pieces = NephisFlow.plannedPieces(planned.map { (text: $0.text, isMidSentence: $0.midSentence) })
+        // Before the call: the pause of the voice that spoke last (its chain, its mood), a hand-over where the voice changes.
+        let lastChain = lastVoice == 1 ? dchain : chain
+        let inferred: NephisFlow.Handover? = started && lastVoice != planned[0].speaker ? .narration : nil
+        let callPause = lastChain.callPause(pauseBefore: line.pauseBefore, after: lastText, mood: lastMood, next: pieces[0].text,
+                                            handover: line.handover ?? inferred, chapterStart: line.chapterStart == true)
+        let firstVoice = started ? lastVoice : planned[0].speaker
+        var current = firstVoice
+        var stream: [[Float]] = []
+        var pads: [(at: Int, seconds: Double)] = []
+        var switches: [NephisVoiceMix.LatentSwitch] = []
+        for (k, piece) in pieces.enumerated() {
+            try Task.checkCancellation()
+            let who = planned[k]
+            let pause: Double
+            if k == 0 {
+                pause = callPause
+            } else {
+                // After a piece: its voice's pause in its mood. Inside a span her pause after a sentence or a comma's beat (the
+                // mood's `clause` at a comma beat); where the voice changes, a comma's beat when the sentence goes on
+                // ("Come here," she whispered), else her hand-over pause.
+                let prev = planned[k - 1]
+                let pc = prev.speaker == 1 ? dchain : chain
+                let pm = prev.speaker == 1 ? dmood : mood
+                if who.span == prev.span {
+                    pause = who.beat ? pc.clausePause(mood: pm) : pc.gap(after: prev.text, mood: pm)
+                } else if NephisFlow.endsMidSentence(prev.text) {
+                    pause = pc.clausePause(mood: pm)
+                } else {
+                    pause = pc.handoverPause(after: prev.text, mood: pm, kind: prev.speaker == who.speaker ? .sameSpeaker : .narration)
+                }
+            }
+            let render0 = report.renderMs
+            let r = try await read(piece.text, open: piece.open, clip: who.clip, line: line, first: k == 0, last: k == pieces.count - 1, pause: pause,
+                                   seed: seed.map { $0 &+ UInt64(16 * k) }, manager: who.speaker == 1 ? dm : manager, scratch: scratch,
+                                   report: &report, speaker: who.speaker, raw: (who.speaker == 1 ? dchain : chain).text == .raw)
+            if who.speaker == 1 {
+                report.dialogueRenderMs += report.renderMs - render0
+                report.dialoguePieces += 1
+                report.dialogueLatents += r.generated
+                report.dialogueChars += piece.text.count
+            }
+            if who.speaker != current {
+                switches.append(NephisVoiceMix.LatentSwitch(latent: stream.count + r.switchAt, voice: who.speaker, inPad: r.padAt != nil && r.padAt == r.switchAt))
+                current = who.speaker
+            }
+            if let at = r.padAt { pads.append((at: stream.count + at, seconds: r.padSeconds)) }
+            stream += r.latents
+        }
+        lastMood = mood
+        report.mood = mood
+        report.dialogueMood = dmood
+        report.switches = switches.count
+        report.tailLatents = max(0, (await tailDecoder?.latentsDecoded ?? 0) - tailBefore)
+        var p = Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
+                         toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil,
+                         chapterStart: line.chapterStart == true, relaxed: line.relaxed == true)
+        p.firstVoice = firstVoice
+        p.switches = switches
+        p.dialogueMood = dmood
+        return p
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -475,6 +736,19 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         return out.isEmpty ? [NephisFlow.PlannedPiece(text: text, open: false)] : out
     }
 
+    /// Pocket's chunks of `text` for `speaker`'s prompt (its clip and carry-over: the prompt's length sets the chunk size),
+    /// as `plan` makes them for the narrator.
+    private func plannedChunks(_ manager: PocketTtsManager, text: String, clip: [Float], speaker: Int, raw: Bool) async throws
+        -> [(text: String, isMidSentence: Bool)] {
+        let dialogue = speaker == 1 ? assets.dialogue : nil
+        let carried = (dialogue?.projection ?? assets.projection).condition(dialogue != nil ? dialogueCarry : carry)
+        let prompt = NephisFlow.prompt(clip: clip, previousClip: nil, carry: carried, clipFrames: (dialogue?.chain ?? assets.chain).clipFrames)
+        let chunks = try await manager.plannedChunks(text, voiceData: PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count),
+                                                     keepsPunctuationRuns: raw)
+        let out = chunks.map { (text: $0.text, isMidSentence: $0.isMidSentence) }
+        return out.isEmpty ? [(text: text, isMidSentence: false)] : out
+    }
+
     /// Takes rendered again when one runs on past its text (NephisFlow.ranOn) before the last one is cut instead.
     static let runawayRetakes = 2
 
@@ -488,15 +762,25 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// came before. Returns the latents to decode; the piece's trailing silence waits for the next join. `open`: part
     /// of a longer sentence (NephisFlow.PlannedPiece). Each piece's edits and join go to the app's log (car ride
     /// 2026-10-13: seams heard mid-sentence and on "s" sounds; the log shows where each one is).
+    /// `speaker`: who reads the piece (0 her narrator pack, 1 her dialogue pack: its own prompt, carry-over and model, the
+    /// shared stream). A lead-in only when the piece before was the same voice's. `raw`: the piece is in the raw text form.
+    /// Also returns the latents the take had (`generated`) and where in the returned latents a voice change before the
+    /// piece goes (`switchAt`: the middle of its pause, or the true silence spliced in there).
     private func read(_ text: String, open: Bool, clip: [Float], line: ExpressiveLine, first: Bool, last: Bool, pause: Double, seed: UInt64?,
-                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report) async throws
-        -> (latents: [[Float]], padAt: Int?, padSeconds: Double) {
-        let prompt = NephisFlow.prompt(clip: clip, previousClip: lastClip.flatMap { $0 == clip ? nil : $0 },
-                                       carry: assets.projection.condition(carry), clipFrames: assets.chain.clipFrames)
+                      manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, report: inout Report, speaker: Int = 0, raw: Bool? = nil) async throws
+        -> (latents: [[Float]], padAt: Int?, padSeconds: Double, generated: Int, switchAt: Int) {
+        let dialogue = speaker == 1 ? assets.dialogue : nil
+        let projection = dialogue?.projection ?? assets.projection
+        let voiceChain = dialogue?.chain ?? assets.chain
+        let voiceCarry = dialogue != nil ? dialogueCarry : carry
+        let voiceLastClip = dialogue != nil ? dialogueLastClip : lastClip
+        let prompt = NephisFlow.prompt(clip: clip, previousClip: voiceLastClip.flatMap { $0 == clip ? nil : $0 },
+                                       carry: projection.condition(voiceCarry), clipFrames: voiceChain.clipFrames)
         let voice = PocketTtsVoiceData(audioPrompt: prompt.frames, promptLength: prompt.count)
+        let rawForm = raw ?? (assets.chain.text == .raw)
         let temperature = min(0.85, max(0.55, line.temperature ?? 0.7))
         let n = max(1, min(8, line.takes ?? 1))
-        let lead = first && started && transcriber != nil && line.leadIn != false ? lastText.map(NephisFlow.lastSentence) : nil
+        let lead = first && started && lastVoice == speaker && transcriber != nil && line.leadIn != false ? lastText.map(NephisFlow.lastSentence) : nil
         // Recognition only where it can change something (a lead-in cut, a choice between takes); the take score
         // only between takes. Otherwise the analysis decode only needs the take's ends.
         let listen = transcriber != nil && (lead != nil || n > 1)
@@ -555,7 +839,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         while t < n + min(runaways, Self.runawayRetakes) {
             let said = lead.map { $0 + " " + text } ?? text
             let r = try await render(manager, scratch: scratch, voice: voice, text: said, open: open, temperature: temperature,
-                                     seed: seed.map { $0 &+ UInt64(t) }, whole: listen || scoring || runaways > 0, report: &report)
+                                     seed: seed.map { $0 &+ UInt64(t) }, whole: listen || scoring || runaways > 0, raw: rawForm, report: &report)
             t += 1
             report.takes += 1
             let ran = ranOn(r, &runaways)
@@ -583,11 +867,11 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             // No take with a clean lead-in cut: read the piece on its own.
             var alone = 0
             var r = try await render(manager, scratch: scratch, voice: voice, text: text, open: open, temperature: temperature, seed: seed,
-                                     whole: false, report: &report)
+                                     whole: false, raw: rawForm, report: &report)
             report.takes += 1
             while ranOn(r, &alone), alone <= Self.runawayRetakes {
                 r = try await render(manager, scratch: scratch, voice: voice, text: text, open: open, temperature: temperature,
-                                     seed: seed.map { $0 &+ UInt64(100 + alone) }, whole: true, report: &report)
+                                     seed: seed.map { $0 &+ UInt64(100 + alone) }, whole: true, raw: rawForm, report: &report)
                 report.takes += 1
             }
             var take = Take(latents: r.latents, levels: r.levels, hiss: r.hiss, audio: r.audio, endOfText: r.endOfText, match: 1, score: 0,
@@ -654,18 +938,24 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let joinWords = tailBefore == 0 ? "no join"
             : "join \(String(format: "%.2f", pause)) s: tail \(tailBefore) (\(decodedBefore) decoded before) + head \(silence.head) → "
             + "\(bridge) latents, pad \(String(format: "%.2f", joined.padSeconds)) s"
-        log("flow: piece \(Self.snippet(text))\(open ? " (part of a long sentence)" : ""): \(best.latents.count) latents"
+        log("flow: piece \(Self.snippet(text))\(dialogue != nil ? " (dialogue pack)" : "")\(open ? " (part of a long sentence)" : ""): \(best.latents.count) latents"
             + (best.cutRunaway ? " (ran on: cut)" : "") + ", dropped \(drop) before the first word, silence \(silence.head)+\(silence.tail); "
             + "\(joinWords); \(keep) held for the next join (\(pendingDecoded) decoded now)")
 
-        carry = Array((carry + latents).suffix(assets.chain.carryFrames))
+        if dialogue != nil {
+            dialogueCarry = Array((dialogueCarry + latents).suffix(voiceChain.carryFrames))
+            dialogueLastClip = clip
+        } else {
+            carry = Array((carry + latents).suffix(assets.chain.carryFrames))
+            lastClip = clip
+        }
         context = Array(best.audio.suffix(3 * NephisFlow.sampleRate))
         lastText = text
-        lastClip = clip
+        lastVoice = speaker
         started = true
         // The pad sits in the pause; the latents kept back for the next join come from the end, after it.
         let padAt = joined.padAt.flatMap { $0 <= stream.count ? $0 : nil }
-        return (stream, padAt, padAt == nil ? 0 : joined.padSeconds)
+        return (stream, padAt, padAt == nil ? 0 : joined.padSeconds, best.latents.count, padAt ?? min(stream.count, bridge / 2))
     }
 
     // MARK: - Stage 2: the sound
@@ -781,6 +1071,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let dewindSettings = assets.chain.dewind
         let dewindLoad = dewind
         let dewindRestart = p.reset || p.chapterStart
+        // A call with her dialogue pack's spans (nil: the narrator's alone, decoded exactly as before): the dialogue pack's
+        // chain and mood, and where the voice changes (the tone stages in the job run on the sound before the pauses).
+        let mixChain: NephisFlow.Chain? = p.mixed ? assets.dialogue?.chain : nil
+        let dialogueMood = p.dialogueMood
+        let firstVoice = p.firstVoice
+        let latentSwitches = p.switches
         let job = Task { () async throws -> Decoded in
             await previous?.value
             let d0 = Date()
@@ -821,11 +1117,19 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                             out.polish = BreathPolish.apply(&out.samples, sampleRate: config.sample_rate, settings: breathPolish)
                             if !p.hurry, let polish = out.polish { note("breath polish: call \(ready.n): \(polish.summary)") }
                         }
+                        // A mixed call: the dialogue spans' tone starts from the sound before the narrator's.
+                        let untoned = mixChain != nil && out.studioUsed ? out.samples : []
                         if out.studioUsed, studioTone.mimiEQ != nil { studioTone.apply(&out.samples, sampleRate: config.sample_rate) }
                         // The pack's studio EQ: the whole call at once (the studio hands it over whole), at its rate.
                         if out.studioUsed, let studioEQ {
                             studioEQ.apply(&out.samples, sampleRate: config.sample_rate)
                             out.studioEQ = true
+                        }
+                        // The dialogue spans: the dialogue pack's own tone and studio EQ (its mood's EQ group), mixed in.
+                        if out.studioUsed, let mixChain {
+                            out.samples = Self.dialogueTone(narrator: out.samples, from: untoned, chain: mixChain, mood: dialogueMood, studio: true,
+                                                            toneDB: 0, first: firstVoice, switches: latentSwitches, rate: config.sample_rate)
+                            out.studioEQ = out.studioEQ || mixChain.studioEQ(for: dialogueMood) != nil
                         }
                         out.postMs += Date().timeIntervalSince(post0) * 1000
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
@@ -846,6 +1150,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                     let plain0 = Date()
                     var toned = mimi
                     plainTone.apply(&toned, sampleRate: NephisFlow.sampleRate)
+                    // A mixed call: the dialogue spans with the dialogue pack's mood shelf and Mimi EQ, at 24 kHz too.
+                    if let mixChain {
+                        toned = Self.dialogueTone(narrator: toned, from: mimi, chain: mixChain, mood: dialogueMood, studio: false,
+                                                  toneDB: mixChain.moods[dialogueMood]?.toneDB ?? 0, first: firstVoice, switches: latentSwitches,
+                                                  rate: NephisFlow.sampleRate)
+                    }
                     out.samples = NephisStudio.plainAudio(pcm24: toned, rate: config.sample_rate)
                     out.postMs += Date().timeIntervalSince(plain0) * 1000
                     // Her plain sound in her studio's read: cleaned as it joins the read's 44.1 kHz stream, so one cleaner
@@ -874,36 +1184,65 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
         let after0 = Date()
         var samples = NephisFlow.insertSilence(decoded.samples, pads: p.pads, sampleRate: rate, samplesPerLatent: perLatent)
-        // The mood's tone, for the read without the studio (the player adds her EQ). In a studio read each call's tone
-        // was set above: none on her studio sound, the read's own EQ on Mimi's (one owner per path).
-        if config == nil { NephisFlow.highShelf(&samples, db: p.toneDB, sampleRate: rate) }
-        // Her level for the mood, moved to over the first 200 ms: the call starts in the pause before it, so the
-        // change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
-        let from = Float(pow(10, lastGainDB / 20)), to = Float(pow(10, p.gainDB / 20))
-        if from != 1 || to != 1 {
-            let ramp = min(samples.count, rate / 5)
-            for i in samples.indices { samples[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
-        }
-        lastGainDB = p.gainDB
         // Her mastering (pack chain "master"; off = nothing here runs). Without her studio her EQ comes first, here: the
         // player gives it after this otherwise, which would be after the limiter. A fresh read starts a fresh chain.
-        // The tuner's finishing (pack chain "closeness", "breathAir", "room"; each off = nothing runs, the call bit-identical):
-        // every call of hers, studio or plain, after the studio EQ / Mimi EQ, before her mastering.
+        // The tuner's finishing (pack chain "closeness", "floorGuard", "breathAir", "room"; each off = nothing runs, the call
+        // bit-identical): every call of hers, studio or plain, after the studio EQ / Mimi EQ, before her mastering.
         let chain = assets.chain
-        let finishing = (chain.closeness?.on ?? false) || (chain.breathAir.map { $0.amount > 0 } ?? false)
-            || (chain.room.map { $0.amount > 0 } ?? false)
         let masterSettings = chain.master
-        // Without her studio her EQ comes first, here, when something follows it: the player gives it after this
-        // otherwise, which would be after the limiter or the compressor. With it on, the player adds no EQ (`toned`).
-        let eqHere = config == nil && (masterSettings != nil || finishing)
-        if eqHere { NephisFlow.MimiEQ(chain: chain).apply(&samples, sampleRate: rate) }
-        let finish0 = Date()
-        let closed = NephisCloseness.apply(&closeness, settings: chain.closeness, to: &samples, sampleRate: rate, restart: p.reset)
-        let aired = NephisBreathAir.apply(&breathAir, settings: chain.breathAir, to: &samples, sampleRate: rate, restart: p.reset)
-        let roomed = NephisRoom.apply(&room, settings: chain.room, to: &samples, sampleRate: rate, restart: p.reset)
-        let finishMs = closed || aired || roomed ? Date().timeIntervalSince(finish0) * 1000 : 0
-        let mastered = NephisMaster.apply(&master, settings: masterSettings, to: &samples, sampleRate: rate, restart: p.reset)
         var report = p.report
+        let eqHere: Bool
+        let n: Finished
+        var dialogueMastered = true
+        if let d = p.mixed ? assets.dialogue : nil {
+            // A call with her dialogue pack's spans: its dialogue regions at their mood's tempo (pitch kept), the level of
+            // each voice measured (the match), then each voice's own steps (the narrator's over the whole call as always,
+            // the dialogue pack's up to its last region), mixed with an equal-power crossfade of 5 ms at each change (they
+            // fall in pauses).
+            let dchain = d.chain
+            var at = NephisVoiceMix.samples(p.switches, perLatent: perLatent, pads: p.pads, sampleRate: rate)
+            let tempo = dchain.tempo(mood: p.dialogueMood)
+            if NephisTempo.changes(tempo) {
+                let stretched = NephisVoiceMix.stretch(samples, first: p.firstVoice, switches: at, voice: 1, tempo: tempo, sampleRate: rate)
+                samples = stretched.samples
+                at = stretched.switches
+                report.dialogueTempo = tempo
+            }
+            let regions = NephisVoiceMix.regions(count: samples.count, first: p.firstVoice, switches: at)
+            for v in 0...1 {
+                loudness.observe(voice: v, level: NephisLoudnessMatch.activeLevel(samples, ranges: regions.filter { $0.voice == v }.map { $0.range }, sampleRate: rate))
+            }
+            let match = dchain.loudnessMatch ? loudness.dialogueGainDB : 0
+            report.dialogueMatchDB = match
+            report.dialogueSeconds = Double(regions.filter { $0.voice == 1 }.reduce(0) { $0 + $1.range.count }) / Double(rate)
+            let fade = max(1, Int(NephisVoiceMix.fadeSeconds * Double(rate)))
+            let end = NephisVoiceMix.lastSample(of: 1, count: samples.count, first: p.firstVoice, switches: at, fade: fade) ?? 0
+            var dialogue = Array(samples.prefix(end))
+            // Without her studio each voice gets its own pack's Mimi EQ here, so the player adds none on top.
+            eqHere = config == nil
+            n = narratorFinish(&samples, toneDB: p.toneDB, gainDB: p.gainDB, studio: config != nil, eqHere: eqHere, rate: rate, restart: p.reset)
+            let dMood = dchain.moods[p.dialogueMood]
+            let dRestart = p.reset || !dialogueChainRan
+            let dn = dialogueFinish(&dialogue, chain: dchain, toneDB: dMood?.toneDB ?? 0, gainDB: (dMood?.gainDB ?? 0) + match,
+                                    studio: config != nil, eqHere: eqHere, rate: rate, restart: dRestart)
+            dialogueChainRan = end >= samples.count
+            samples = NephisVoiceMix.mix(samples, dialogue, weights: NephisVoiceMix.weights(count: samples.count, first: p.firstVoice, switches: at, fade: fade))
+            report.dialogueFinishMs = dn.ms
+            dialogueMastered = dn.mastered
+        } else {
+            // Without her studio her EQ comes first, here, when something follows it: the player gives it after this
+            // otherwise, which would be after the limiter or the compressor. With it on, the player adds no EQ (`toned`).
+            eqHere = config == nil && (masterSettings != nil || Self.finishes(chain))
+            // With a dialogue pack, the narrator's level in her calls without dialogue counts toward the match too.
+            if assets.dialogue?.chain.loudnessMatch == true {
+                loudness.observe(voice: 0, level: NephisLoudnessMatch.activeLevel(samples[...], sampleRate: rate))
+            }
+            n = narratorFinish(&samples, toneDB: p.toneDB, gainDB: p.gainDB, studio: config != nil, eqHere: eqHere, rate: rate, restart: p.reset)
+            dialogueChainRan = false
+        }
+        let closed = n.closed, aired = n.aired, roomed = n.roomed, finishMs = n.ms
+        let mastered = n.mastered && dialogueMastered
+        report.floorGuard = n.guarded
         report.mimiMs = decoded.mimiMs
         report.postMs = decoded.postMs + Date().timeIntervalSince(after0) * 1000
         report.studioEQ = decoded.studioEQ
@@ -937,14 +1276,98 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         report.studioUnits = decoded.units
         report.studioOff = decoded.off ?? (config == nil ? nil : studioTooSlow)
-        report.masterPreset = mastered ? masterSettings?.preset.rawValue : nil
-        report.masterGainDB = mastered ? master?.gainDB : nil
+        report.masterPreset = n.mastered ? masterSettings?.preset.rawValue : nil
+        report.masterGainDB = n.mastered ? master?.gainDB : nil
         lastReport = report
         var audio = ExpressiveAudio(samples: samples, sampleRate: rate, synthMs: report.totalMs, firstAudioMs: report.totalMs,
                                     chunks: report.takes)
         audio.mastered = mastered
         audio.toned = eqHere
         return (audio, report)
+    }
+
+    /// What one voice's steps after the pauses did (Report's finishing fields).
+    struct Finished {
+        var closed = false
+        var guarded = false
+        var aired = false
+        var roomed = false
+        var mastered = false
+        var ms = 0.0
+    }
+
+    /// Something of the tuner's finishing is on in `chain` (her Mimi EQ then comes first, in the engine).
+    static func finishes(_ chain: NephisFlow.Chain) -> Bool {
+        (chain.closeness?.on ?? false) || (chain.floorGuard?.on ?? false) || (chain.breathAir.map { $0.amount > 0 } ?? false)
+            || (chain.room.map { $0.amount > 0 } ?? false)
+    }
+
+    /// Her level for the mood moved from `fromDB` to `toDB` over the first 200 ms: the call starts in the pause before it,
+    /// so the change happens in silence (one fixed gain for the stream otherwise: NaturalFinish.renderFlow).
+    static func levelRamp(_ x: inout [Float], fromDB: Double, toDB: Double, rate: Int) {
+        let from = Float(pow(10, fromDB / 20)), to = Float(pow(10, toDB / 20))
+        guard from != 1 || to != 1 else { return }
+        let ramp = min(x.count, rate / 5)
+        for i in x.indices { x[i] *= i < ramp ? from + (to - from) * Float(i) / Float(ramp) : to }
+    }
+
+    /// The narrator pack's steps after the pauses go in, on a whole call, its chains carried over the read: the mood's tone
+    /// (a read without her studio: the player adds her EQ), her level for the mood, her Mimi EQ when something follows it
+    /// here (`eqHere`), the tuner's finishing (closeness, floor guard, breath air, room) and her mastering.
+    private func narratorFinish(_ x: inout [Float], toneDB: Double, gainDB: Double, studio: Bool, eqHere: Bool, rate: Int, restart: Bool) -> Finished {
+        let chain = assets.chain
+        // In a studio read each call's tone was set in the decode: none on her studio sound, the read's own EQ on Mimi's.
+        if !studio { NephisFlow.highShelf(&x, db: toneDB, sampleRate: rate) }
+        Self.levelRamp(&x, fromDB: lastGainDB, toDB: gainDB, rate: rate)
+        lastGainDB = gainDB
+        if eqHere { NephisFlow.MimiEQ(chain: chain).apply(&x, sampleRate: rate) }
+        var f = Finished()
+        let finish0 = Date()
+        f.closed = NephisCloseness.apply(&closeness, settings: chain.closeness, to: &x, sampleRate: rate, restart: restart)
+        f.guarded = NephisFloorGuard.apply(&floorGuard, settings: chain.floorGuard, to: &x, sampleRate: rate, restart: restart)
+        f.aired = NephisBreathAir.apply(&breathAir, settings: chain.breathAir, to: &x, sampleRate: rate, restart: restart)
+        f.roomed = NephisRoom.apply(&room, settings: chain.room, to: &x, sampleRate: rate, restart: restart)
+        f.ms = f.closed || f.guarded || f.aired || f.roomed ? Date().timeIntervalSince(finish0) * 1000 : 0
+        f.mastered = NephisMaster.apply(&master, settings: chain.master, to: &x, sampleRate: rate, restart: restart)
+        return f
+    }
+
+    /// The dialogue pack's steps on a mixed call's start up to its last dialogue region (the same as the narrator's, with
+    /// its own chain and its own finishing carried over the read; `restart` when it didn't run to the end of the call
+    /// before). Its level: its mood's, plus the match to the narrator.
+    private func dialogueFinish(_ x: inout [Float], chain: NephisFlow.Chain, toneDB: Double, gainDB: Double, studio: Bool, eqHere: Bool, rate: Int,
+                                restart: Bool) -> Finished {
+        if !studio { NephisFlow.highShelf(&x, db: toneDB, sampleRate: rate) }
+        Self.levelRamp(&x, fromDB: restart ? gainDB : dialogueGainDB, toDB: gainDB, rate: rate)
+        dialogueGainDB = gainDB
+        if eqHere { NephisFlow.MimiEQ(chain: chain).apply(&x, sampleRate: rate) }
+        var f = Finished()
+        let finish0 = Date()
+        f.closed = NephisCloseness.apply(&dialogueCloseness, settings: chain.closeness, to: &x, sampleRate: rate, restart: restart)
+        f.guarded = NephisFloorGuard.apply(&dialogueFloor, settings: chain.floorGuard, to: &x, sampleRate: rate, restart: restart)
+        f.aired = NephisBreathAir.apply(&dialogueAir, settings: chain.breathAir, to: &x, sampleRate: rate, restart: restart)
+        f.roomed = NephisRoom.apply(&dialogueRoom, settings: chain.room, to: &x, sampleRate: rate, restart: restart)
+        f.ms = f.closed || f.guarded || f.aired || f.roomed ? Date().timeIntervalSince(finish0) * 1000 : 0
+        // Its mastering, or none: then the player's soft limit finishes the call (`mastered` false).
+        f.mastered = chain.master == nil || NephisMaster.apply(&dialogueMaster, settings: chain.master, to: &x, sampleRate: rate, restart: restart)
+        return f
+    }
+
+    /// A mixed call's dialogue regions with the dialogue pack's tone before the pauses go in: `from` (the sound before any
+    /// tone) up to its last dialogue region, toned as the narrator's is (`studio`: her studio sound, its "eqAfterStudio" and
+    /// its mood's EQ group or studio EQ; else Mimi's: the mood's shelf and its Mimi EQ), mixed into `narrator` at the voice
+    /// changes (their pre-pause positions at `rate`).
+    static func dialogueTone(narrator: [Float], from: [Float], chain: NephisFlow.Chain, mood: String, studio: Bool, toneDB: Double,
+                             first: Int, switches: [NephisVoiceMix.LatentSwitch], rate: Int) -> [Float] {
+        let perLatent = NephisFlow.samplesPerLatent * rate / NephisFlow.sampleRate
+        let at = NephisVoiceMix.samples(switches, perLatent: perLatent, sampleRate: rate)
+        let fade = max(1, Int(NephisVoiceMix.fadeSeconds * Double(rate)))
+        guard let end = NephisVoiceMix.lastSample(of: 1, count: narrator.count, first: first, switches: at, fade: fade), end > 0 else { return narrator }
+        var dialogue = Array(from.prefix(end))
+        let tone = NephisFlow.studioTone(studioUsed: studio, moodToneDB: toneDB, chain: chain)
+        if !studio || tone.mimiEQ != nil { tone.apply(&dialogue, sampleRate: rate) }
+        if studio, let eq = chain.studioEQ(for: mood) { eq.apply(&dialogue, sampleRate: rate) }
+        return NephisVoiceMix.mix(narrator, dialogue, weights: NephisVoiceMix.weights(count: narrator.count, first: first, switches: at, fade: fade))
     }
 
     // MARK: - Her studio's models (crash plan b1)
@@ -1056,6 +1479,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// next big load (the listening test after the studio test, Kokoro's warm-up) never overlaps them.
     public func studioSettled() async {
         await studioLoading?.value
+        await dialogueLoading?.value
     }
 
     /// Her studio's models go (low memory, a failed load) for a while; the calls meanwhile play her plain sound at the
@@ -1067,6 +1491,102 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         log("studio: off for now: \(reason)")
     }
 
+    // MARK: - Her dialogue pack's model
+
+    /// Her dialogue pack's Pocket model for the next call, or nil with the reason the narrator reads its dialogue instead
+    /// ("loading", "memory: 520 MB free", "failed: …"). Never waits: it loads in the background behind her studio's
+    /// models (startDialogueLoad, again from here after a drop), and goes first when free memory falls under ~550 MB.
+    private func dialogueForCall() -> (manager: PocketTtsManager?, note: String?) {
+        guard assets.dialogue != nil else { return (nil, nil) }
+        guard manager != nil, !Task.isCancelled else { return (nil, "released") }
+        if let m = dialogueManager {
+            if let free = freeMemoryMB(), NephisMemory.short(.dialogueKeep, freeMB: free) {
+                dropDialogue(NephisMemory.refusal(.dialogueKeep, freeMB: free))
+                return (nil, dialogueOff)
+            }
+            dialogueHold.worked(at: Date())
+            return (m, nil)
+        }
+        return (nil, startDialogueLoad() ?? "loading")
+    }
+
+    /// What the dialogue pack's model did at its last load: time, free memory before and after (MB), or why it is off.
+    public struct DialogueStatus: Sendable {
+        public var pack: String?
+        public var loaded = false
+        public var loadMs: Double?
+        public var freeBeforeMB: Double?
+        public var freeAfterMB: Double?
+        public var off: String?
+    }
+
+    private var dialogueStatusNow = DialogueStatus()
+
+    public func dialogueStatus() -> DialogueStatus {
+        var s = dialogueStatusNow
+        s.pack = assets.dialogue?.name
+        s.loaded = dialogueManager != nil
+        s.off = dialogueManager == nil ? (dialogueOff ?? (dialogueLoading != nil ? "loading" : nil)) : nil
+        return s
+    }
+
+    /// Starts loading the dialogue pack's model off the calls' path when it may load: Pocket up, her studio's load settled,
+    /// no wait after a drop going on, ~900 MB free then. The reason the narrator reads the dialogue meanwhile.
+    @discardableResult
+    private func startDialogueLoad() -> String? {
+        guard let d = assets.dialogue, manager != nil, dialogueManager == nil else { return nil }
+        if dialogueLoading != nil { return "loading" }
+        if let off = dialogueOff, dialogueHold.holds(at: Date()) { return off }
+        let ticket = generation.ticket
+        let behind = studioLoading
+        let free = freeMemoryMB
+        let dir = d.modelsDirectory
+        dialogueLoading = Task.detached(priority: .utility) { [weak self] in
+            // Behind her studio's models: never two big loads at once.
+            await behind?.value
+            let before = free()
+            if let mb = before, NephisMemory.short(.dialogueLoad, freeMB: mb) {
+                await self?.dialogueLoaded(nil, why: NephisMemory.refusal(.dialogueLoad, freeMB: mb), ticket: ticket, ms: 0, freeBefore: before)
+                return
+            }
+            let t0 = Date()
+            do {
+                let m = PocketTtsManager(directory: dir, placement: .ane, computeUnits: PocketTtsSynth.backgroundSafeUnits)
+                try await m.initialize()
+                await self?.dialogueLoaded(m, why: nil, ticket: ticket, ms: Date().timeIntervalSince(t0) * 1000, freeBefore: before)
+            } catch {
+                await self?.dialogueLoaded(nil, why: "failed: \(error)", ticket: ticket, ms: 0, freeBefore: before)
+            }
+        }
+        return "loading"
+    }
+
+    /// The dialogue pack's model is up, or couldn't load (`why`). Released meanwhile: kept nothing (it goes with the task).
+    private func dialogueLoaded(_ loaded: PocketTtsManager?, why: String?, ticket: Int, ms: Double, freeBefore: Double?) {
+        guard generation.current(ticket) else { return }
+        dialogueLoading = nil
+        let after = freeMemoryMB()
+        dialogueStatusNow.freeBeforeMB = freeBefore
+        dialogueStatusNow.freeAfterMB = after
+        guard let loaded else { return dropDialogue(why ?? "missing") }
+        dialogueManager = loaded
+        dialogueOff = nil
+        dialogueStatusNow.loadMs = ms
+        let mb = { (x: Double?) in x.map { "\(Int($0)) MB" } ?? "unknown" }
+        log("dialogue: \"\(assets.dialogue?.name ?? "?")\" loaded in \(Int(ms)) ms (its flow model; Mimi, studio and de-wind shared), "
+            + "free memory \(mb(freeBefore)) before, \(mb(after)) after")
+    }
+
+    /// The dialogue pack's model goes (low memory, a failed load) for a while: the narrator reads the dialogue meanwhile.
+    private func dropDialogue(_ reason: String) {
+        dialogueManager = nil
+        dialogueOff = reason
+        dialogueHold.release(at: Date())
+        dialogueCarry = []
+        dialogueLastClip = nil
+        log("dialogue: off for now: \(reason); the narrator pack reads the dialogue meanwhile")
+    }
+
     // MARK: - One take
 
     /// One take: its latents (the session doesn't decode them) and the levels of its audio, decoded on the scratch
@@ -1074,14 +1594,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     /// the first `headEdge` latents and the last `tailEdge` (the middle's levels read as speech, its hiss as none).
     /// `ends`: how each of its text chunks ended. `open`: the text is part of a longer sentence (no full stop added).
     private func render(_ manager: PocketTtsManager, scratch: PocketTtsLatentDecoder, voice: PocketTtsVoiceData, text: String, open: Bool = false,
-                        temperature: Float, seed: UInt64?, whole: Bool, report: inout Report)
+                        temperature: Float, seed: UInt64?, whole: Bool, raw: Bool, report: inout Report)
         async throws -> (latents: [[Float]], levels: [Double], hiss: [Double], audio: [Float], endOfText: Int?, ends: [PocketTtsSynthesizer.ChunkEnd]) {
         let r0 = Date()
         let session = try await manager.makeSession(voiceData: voice, temperature: temperature, seed: seed)
         await session.setDecodesAudio(false)
         if open { await session.setKeepsSentenceOpen(true) }
         // The raw form's "..." stays whole when the session chunks a lead-in and its piece (as Kyutai's pocket_tts does).
-        if assets.chain.text == .raw { await session.setKeepsPunctuationRuns(true) }
+        if raw { await session.setKeepsPunctuationRuns(true) }
         // Her studio's reads (studio audit 2026-10-12, A6): a piece still above -40 dBFS where Pocket stops runs on until
         // it has died away (two latents under -50 dBFS, at most 6 more), and an end-of-speech signal in its first 6
         // steps is ignored (Kyutai's own loop). The tail decoder measures the level it decides on. Without the studio

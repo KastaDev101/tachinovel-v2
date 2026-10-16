@@ -609,7 +609,11 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         let info = NephisModelPack.info
         let sha = (info?["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? "shipped"
         let studio = SessionRate.forRead(.pocketTts) == SessionRate.studio ? "|studio" : ""
-        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")\(studio)"
+        // Her dialogue pack reads the quoted dialogue: another sound (without one the key is as before).
+        let dialogue = NephisModelPack.dialogueInfo.map { d in
+            "|dlg:" + ((d["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? ((d["made"] as? String) ?? "pack"))
+        } ?? ""
+        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")\(studio)\(dialogue)"
     }
 
     private func playPrepared(_ p: PreparedChapter, pluginId: String, novelPath: String, novelName: String, startParagraph: Int) {

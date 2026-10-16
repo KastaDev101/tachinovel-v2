@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deletePrompt, madeLabel, normalizePacks, packLine, packsSummary } from '../src/ui/native/voice-packs.ts';
+import { deletePrompt, inUse, madeLabel, normalizePacks, packLine, packsSummary } from '../src/ui/native/voice-packs.ts';
 
 const raw = {
   packs: [
@@ -16,7 +16,7 @@ describe('Settings › Voices › Voice packs (src/ui/native/voice-packs.ts)', (
     expect(list?.packs.map((p) => p.name)).toEqual(['nephis-r10', 'nephis-r9']);
     expect(list?.totalBytes).toBe(835_000_000);
     expect(normalizePacks({ packs: [{ name: 'no id' }, { id: 'p1', name: ' ', bytes: Number.NaN }] })).toEqual({
-      packs: [{ id: 'p1', name: 'Unnamed pack', made: null, studio: false, bytes: 0, active: false }],
+      packs: [{ id: 'p1', name: 'Unnamed pack', made: null, studio: false, bytes: 0, active: false, role: 'narrator', dialogue: false }],
       totalBytes: 0,
     });
     // An older build (the method isn't there, or answers something else).
@@ -43,5 +43,38 @@ describe('Settings › Voices › Voice packs (src/ui/native/voice-packs.ts)', (
     const last = { packs: list.packs.slice(0, 1), totalBytes: 455_000_000 };
     expect(deletePrompt(last, 'p0123456789abcdef')).toBe('Nephis reads with this pack. Delete it (frees 455 MB)? She’ll read with the voice the app came with.');
     expect(deletePrompt(list, 'gone')).toBe('');
+  });
+
+  it('tells narrator packs from her dialogue pack (an older build: all narrator packs)', () => {
+    const list = normalizePacks({
+      packs: [
+        { id: 'pd', name: 'nephis-dialogue-1', made: '2026-10-15', studio: true, bytes: 400_000_000, active: false, role: 'dialogue', dialogue: true },
+        { id: 'pd2', name: 'nephis-dialogue-0', made: '2026-10-14', studio: false, bytes: 390_000_000, role: 'dialogue', dialogue: false },
+        { id: 'pn', name: 'nephis-narrator', made: '2026-10-15', studio: true, bytes: 450_000_000, active: true, role: 'narrator', dialogue: true },
+        { id: 'px', name: 'odd', bytes: 1, role: 'singer', active: true },
+      ],
+      totalBytes: 1_240_000_001,
+    });
+    if (!list) throw new Error('no list');
+    expect(list.packs.map((p) => [p.role, p.active, p.dialogue])).toEqual([
+      ['dialogue', false, true],
+      ['dialogue', false, false],
+      ['narrator', true, false],
+      ['narrator', true, false],
+    ]);
+    const [dlg, old, narrator] = list.packs;
+    if (!dlg || !old || !narrator) throw new Error('no packs');
+    expect(inUse(dlg)).toBe(true);
+    expect(inUse(old)).toBe(false);
+    expect(inUse(narrator)).toBe(true);
+    // A dialogue pack's studio is never used (the narrator pack's is shared): its row doesn't mention one.
+    expect(packLine(dlg)).toBe('Made Oct 15, 2026 · 400 MB');
+    expect(packLine(narrator)).toBe('Made Oct 15, 2026 · Studio · 450 MB');
+    expect(packsSummary(list)).toBe('nephis-narrator · Dialogue: nephis-dialogue-1 · 4 packs · 1.2 GB');
+    expect(deletePrompt(list, 'pd')).toBe('Nephis reads dialogue with this pack. Delete it (frees 400 MB) and switch her dialogue to “nephis-dialogue-0”?');
+    const onlyOne = { packs: [dlg, narrator], totalBytes: 850_000_000 };
+    expect(deletePrompt(onlyOne, 'pd')).toBe('Nephis reads dialogue with this pack. Delete it (frees 400 MB)? Her narrator pack will read dialogue too.');
+    expect(deletePrompt(onlyOne, 'pn')).toBe('Nephis reads with this pack. Delete it (frees 450 MB)? She’ll read with the voice the app came with.');
+    expect(deletePrompt(list, 'pd2')).toBe('Delete “nephis-dialogue-0”? Frees 390 MB.');
   });
 });

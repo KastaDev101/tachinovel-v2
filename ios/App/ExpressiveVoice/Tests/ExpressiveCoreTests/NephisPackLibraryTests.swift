@@ -24,7 +24,7 @@ final class NephisPackLibraryTests: XCTestCase {
     }
 
     /// An unpacked pack: every required file (`bytes` in the decoder weights), pack.json, optionally her studio.
-    private func unpacked(name: String?, made: String?, studio: Bool = false, bytes: Int = 1, into folder: URL? = nil) throws -> URL {
+    private func unpacked(name: String?, made: String?, studio: Bool = false, bytes: Int = 1, into folder: URL? = nil, role: String? = nil) throws -> URL {
         let root = try folder ?? library.stagingDirectory()
         for rel in NephisPackLibrary.required {
             let url = root.appendingPathComponent(rel)
@@ -39,6 +39,7 @@ final class NephisPackLibraryTests: XCTestCase {
         var info: [String: Any] = ["checkpoint": "test"]
         if let name { info["name"] = name }
         if let made { info["made"] = made }
+        if let role { info["role"] = role }
         try JSONSerialization.data(withJSONObject: info).write(to: root.appendingPathComponent("pack.json"))
         return root
     }
@@ -169,6 +170,58 @@ final class NephisPackLibraryTests: XCTestCase {
         XCTAssertFalse(library.migrate(legacy: broken))
         XCTAssertTrue(FileManager.default.fileExists(atPath: broken.path), "left alone")
         XCTAssertEqual(library.list().count, 2)
+    }
+
+    // MARK: - Roles: her narrator pack and her dialogue pack (NephisDialogue.swift)
+
+    func testADialoguePackIsHerDialogueVoiceAndNeverTakesTheNarratorsPlace() throws {
+        let narrator = try library.add(staged: unpacked(name: "narrator", made: "1"), fallbackName: "f", now: at(0)).pack
+        XCTAssertEqual(narrator.role, .narrator)
+        XCTAssertNil(library.dialogueID)
+        let dialogue = try library.add(staged: unpacked(name: "dialogue", made: "2", role: "dialogue"), fallbackName: "f", now: at(5)).pack
+        XCTAssertEqual(dialogue.role, .dialogue)
+        XCTAssertEqual(library.activeID, narrator.id, "installing a dialogue pack leaves the narrator as it was")
+        XCTAssertEqual(library.dialogueID, dialogue.id)
+        XCTAssertEqual(library.dialogueDirectory?.lastPathComponent, dialogue.id)
+        XCTAssertEqual(library.list().map(\.role), [.dialogue, .narrator])
+        // Selecting a dialogue pack makes it her dialogue voice, never her narrator.
+        try library.activate(dialogue.id)
+        XCTAssertEqual(library.activeID, narrator.id)
+        XCTAssertEqual(library.dialogueID, dialogue.id)
+        // No dialogue pack in use: the narrator reads everything.
+        try library.activateDialogue(nil)
+        XCTAssertNil(library.dialogueID)
+        XCTAssertThrowsError(try library.activateDialogue(narrator.id), "a narrator pack can't read the dialogue")
+        try library.activateDialogue(dialogue.id)
+        XCTAssertTrue(library.protectedFolders().contains(try library.directory(dialogue.id).standardizedFileURL.path))
+        // Deleting her dialogue pack: the narrator reads dialogue again; hers stays.
+        XCTAssertEqual(try library.delete(dialogue.id), narrator.id)
+        XCTAssertNil(library.dialogueID)
+        XCTAssertEqual(library.activeID, narrator.id)
+    }
+
+    func testTheUsersRoleOverridesThePacksOwn() throws {
+        let a = try library.add(staged: unpacked(name: "a", made: "1"), fallbackName: "f", now: at(0)).pack
+        let b = try library.add(staged: unpacked(name: "b", made: "2"), fallbackName: "f", now: at(5)).pack
+        XCTAssertEqual(library.activeID, b.id)
+        // The active narrator becomes a dialogue pack: the next narrator reads, and it is her dialogue voice.
+        try library.setRole(b.id, .dialogue)
+        XCTAssertEqual(library.role(of: b.id), .dialogue)
+        XCTAssertEqual(library.activeID, a.id)
+        XCTAssertEqual(library.dialogueID, b.id)
+        // The last narrator becomes a dialogue pack too: the shipped voice narrates, b stays her dialogue voice.
+        try library.setRole(a.id, .dialogue)
+        XCTAssertNil(library.activeID)
+        XCTAssertEqual(library.dialogueID, b.id)
+        // Back to narration: it stops being the dialogue voice (the next dialogue pack is) and narrates (none did).
+        try library.setRole(b.id, .narrator)
+        XCTAssertEqual(library.dialogueID, a.id)
+        XCTAssertEqual(library.activeID, b.id)
+        // A pack.json "role" is overridden by the user's.
+        let c = try library.add(staged: unpacked(name: "c", made: "3", role: "dialogue"), fallbackName: "f", now: at(9)).pack
+        try library.setRole(c.id, .narrator)
+        XCTAssertEqual(library.role(of: c.id), .narrator)
+        XCTAssertThrowsError(try library.setRole("p0000000000000000", .dialogue))
     }
 
     func testIDs() {

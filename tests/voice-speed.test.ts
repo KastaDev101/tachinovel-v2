@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { aboutLines, speedLines, stageRows } from '../src/ui/native/voice-speed.ts';
+import { aboutLines, dialogueLine, speedLines, stageRows } from '../src/ui/native/voice-speed.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8');
@@ -143,5 +143,20 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(read('ios/App/App/Native/Shell/DeveloperOptions.swift')).toContain('localizedTitle: "Voice Speed Test"');
     const swift = read('ios/App/App/Native/Voice/Expressive/ExpressiveVoicePlugin.swift');
     for (const m of ['voiceSpeedTest', 'voiceSpeedTestStop', 'voiceSpeedTestPlay']) expect(swift).toContain(`CAPPluginMethod(name: "${m}"`);
+  });
+
+  it('says how her dialogue pack did (none without one)', () => {
+    expect(dialogueLine({})).toBeNull();
+    const d = {
+      pack: { name: 'nephis-dialogue' }, calls: 2, switches: 4, switchesPerMinute: 4.4,
+      narrator: { pocketMs: 21_000, seconds: 46.2 }, dialogue: { pocketMs: 5_400, seconds: 8.1 }, narratorRead: {},
+    };
+    expect(dialogueLine(d)).toEqual({
+      ok: true,
+      text: 'Dialogue pack “nephis-dialogue”: 4 voice changes (4.4 a minute); Pocket narrator 21.0 s for 46.2 s, dialogue 5.4 s for 8.1 s.',
+    });
+    expect(dialogueLine({ ...d, narratorRead: { loading: 1 } })?.ok).toBe(false);
+    expect(dialogueLine({ pack: { name: 'x' }, calls: 0, narratorRead: { memory: 2 } })).toEqual({ ok: false, text: 'Dialogue pack “x” read no dialogue (memory).' });
+    expect(speedLines(report({ dialogue: d })).some((l) => l.text.startsWith('Dialogue pack'))).toBe(true);
   });
 });

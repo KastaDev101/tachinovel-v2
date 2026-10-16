@@ -44,6 +44,10 @@ interface ExpressiveVoicePlugin {
   nephisPacks(): Promise<Obj>;
   selectNephisPack(o: { id: string }): Promise<Obj>;
   deleteNephisPack(o: { id: string }): Promise<Obj>;
+  /** A pack reads narration or quoted dialogue (over its pack.json "role"); answers the packs. */
+  setNephisPackRole(o: { id: string; role: 'narrator' | 'dialogue' }): Promise<Obj>;
+  /** The dialogue pack she reads quoted dialogue with; null: the narrator pack reads it too. Answers the packs. */
+  selectNephisDialogue(o: { id: string | null }): Promise<Obj>;
   /** Voice speed test (VoiceSpeedTest.swift, voice-speed.ts): renders the test passage the way Listen does, without
    * playing it, and answers the report ({ran: false, error} when it can't run); progress as the "voiceSpeedTest" event.
    * `banked` (seconds): the steady-state run, as if that much audio were already waiting (Developer: 60). */

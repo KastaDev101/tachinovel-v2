@@ -60,6 +60,12 @@ enum NephisModelPack {
     /// What the active pack says about itself (pack.json: name, made, checkpoint), for the Voice Lab.
     static var info: [String: Any]? { active.flatMap(NephisPackLibrary.info(in:)) }
 
+    /// Her dialogue pack (pack role "dialogue": pack.json's, or the user's in Developer › Voice Packs), or nil: the
+    /// narrator pack reads quoted dialogue too, exactly as before. Its models, voice files and chain are read from here
+    /// (ExpressiveService.loadNephisDialogue); its studio and de-wind cleaner are never used (the narrator pack's are shared).
+    static var dialogueRoot: URL? { library.dialogueDirectory }
+    static var dialogueInfo: [String: Any]? { dialogueRoot.flatMap(NephisPackLibrary.info(in:)) }
+
     static func handles(_ url: URL) -> Bool { url.isFileURL && url.pathExtension.lowercased() == fileExtension }
 
     /// "Open in TachiNovel" or a pack found in Documents: unpack off the main thread, then add it to the library as the
@@ -72,7 +78,7 @@ enum NephisModelPack {
                 switch result {
                 case .success(let name):
                     ExpressiveService.shared.reloadNephisModel()
-                    post(ok: true, message: "Nephis’s trained voice “\(name)” is installed. She uses it from her next sentence.")
+                    post(ok: true, message: installedWords(name))
                 case .failure(let error):
                     log.error("expressive: Nephis model pack: \(error.localizedDescription, privacy: .public)")
                     post(ok: false, message: "That Nephis voice file couldn’t be installed: \(error.localizedDescription)")
@@ -159,7 +165,7 @@ enum NephisModelPack {
                 DispatchQueue.main.async {
                     documentsInstall.value.running = false
                     ExpressiveService.shared.reloadNephisModel()
-                    post(ok: true, message: "Nephis’s trained voice “\(name)” is installed.")
+                    post(ok: true, message: installedWords(name))
                 }
             } catch {
                 log.error("expressive: Nephis model pack in Documents: \(error.localizedDescription, privacy: .public)")
@@ -189,10 +195,17 @@ enum NephisModelPack {
         }
     }
 
-    /// Unpack `url` (a tar) into a fresh folder, check it, then add it to the library as the active pack (a pack with
-    /// the same name and date replaces its old copy). Returns the pack's name.
+    /// Unpack `url` (a tar) into a fresh folder, check it, then add it to the library as the active pack, or as her
+    /// dialogue pack when it is one (a pack with the same name and date replaces its old copy). Returns the pack's name.
     static func install(from url: URL) throws -> String {
         try counted { try unpackAndAdd(url) }
+    }
+
+    /// The banner after an install: a dialogue pack says what it reads.
+    static func installedWords(_ name: String) -> String {
+        let dialogue = library.list().first { $0.name == name }?.role == .dialogue
+        return dialogue ? "Nephis’s dialogue voice “\(name)” is installed. She reads quoted dialogue with it from her next sentence."
+            : "Nephis’s trained voice “\(name)” is installed. She uses it from her next sentence."
     }
 
     private static func unpackAndAdd(_ url: URL) throws -> String {
@@ -210,18 +223,34 @@ enum NephisModelPack {
         return name
     }
 
-    /// Settings › Voices › Voice packs: she reads with `id` from her next load (what installing one does).
+    /// Settings › Voices › Voice packs: she reads with `id` from her next load (what installing one does); a dialogue pack
+    /// becomes the one she reads quoted dialogue with.
     static func select(_ id: String) throws {
-        let before = library.activeID
+        let before = (library.activeID, library.dialogueID)
         try library.activate(id)
-        if before != id { ExpressiveService.shared.reloadNephisModel() }
+        if before != (library.activeID, library.dialogueID) { ExpressiveService.shared.reloadNephisModel() }
+    }
+
+    /// Developer › Voice Packs: the pack reads narration or quoted dialogue (over its pack.json's "role").
+    static func setRole(_ id: String, _ role: NephisVoiceRole) throws {
+        let before = (library.activeID, library.dialogueID)
+        try library.setRole(id, role)
+        if before != (library.activeID, library.dialogueID) { ExpressiveService.shared.reloadNephisModel() }
+    }
+
+    /// Developer › Voice Packs: she reads quoted dialogue with the narrator pack again (no dialogue pack), or with `id`.
+    static func selectDialogue(_ id: String?) throws {
+        let before = library.dialogueID
+        try library.activateDialogue(id)
+        if before != library.dialogueID { ExpressiveService.shared.reloadNephisModel() }
     }
 
     /// Settings › Voices › Voice packs: delete a pack; deleting hers switches her to the next one (or to Kyutai's
-    /// released model when it was the last).
+    /// released model when it was the last); deleting her dialogue pack switches to the next one (or none).
     static func delete(_ id: String) throws {
-        let before = library.activeID
-        if try library.delete(id) != before { ExpressiveService.shared.reloadNephisModel() }
+        let before = (library.activeID, library.dialogueID)
+        _ = try library.delete(id)
+        if before != (library.activeID, library.dialogueID) { ExpressiveService.shared.reloadNephisModel() }
     }
 }
 

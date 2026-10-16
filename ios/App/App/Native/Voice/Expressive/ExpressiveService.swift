@@ -150,8 +150,45 @@ final class ExpressiveService {
         return NephisFlowSynth.Assets(calm: calm, moods: moods, projection: projection,
                                       modelsDirectory: pack == nil ? nil : NephisModelPack.modelsDirectory, chain: chain,
                                       studioDirectory: pack == nil ? nil : NephisModelPack.studioDirectory,
-                                      dewindDirectory: pack == nil ? nil : NephisModelPack.dewindDirectory)
+                                      dewindDirectory: pack == nil ? nil : NephisModelPack.dewindDirectory,
+                                      dialogue: loadNephisDialogue())
     }
+
+    /// Her dialogue pack (pack role "dialogue", Developer › Voice Packs): its Pocket model folder, every style clip it
+    /// carries (BuiltInVoices/pocket/*.pocketvoice, each checked like hers), its speaker projection and its chain. nil
+    /// without one, or when its files don't pass: the narrator pack then reads everything, exactly as before.
+    private func loadNephisDialogue() -> NephisFlowSynth.Dialogue? {
+        guard let root = NephisModelPack.dialogueRoot else { return nil }
+        let voices = root.appendingPathComponent("BuiltInVoices", isDirectory: true)
+        guard let calm = try? PocketVoice.load(builtInVoices: voices, name: PocketVoice.nephisName),
+              let data = try? Data(contentsOf: voices.appendingPathComponent("\(PocketVoice.folder)/speaker-projection.bin")),
+              let projection = NephisFlow.Projection(data: data) else {
+            log.error("expressive: Nephis dialogue pack files missing or invalid; the narrator pack reads the dialogue")
+            return nil
+        }
+        var clips: [String: PocketVoice] = [:]
+        let folder = voices.appendingPathComponent(PocketVoice.folder, isDirectory: true)
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .filter { $0.hasSuffix(".\(PocketVoice.fileExtension)") }.map { String($0.dropLast(PocketVoice.fileExtension.count + 1)) }
+        // At most 40 clips (a pack carries ~20): each is checked against its manifest's sha256.
+        for name in names.sorted().prefix(40) where name != PocketVoice.nephisName {
+            do { clips[name] = try PocketVoice.load(builtInVoices: voices, name: name) } catch {
+                log.error("expressive: dialogue clip \(name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        let info = NephisPackLibrary.info(in: root)
+        var chain = NephisFlow.Chain()
+        if let c = info?["chain"], let d = try? JSONSerialization.data(withJSONObject: c),
+           let decoded = try? JSONDecoder().decode(NephisFlow.Chain.self, from: d) {
+            chain = decoded
+        }
+        let name = (info?["name"] as? String) ?? "Dialogue pack"
+        log.info("expressive: Nephis reads quoted dialogue with her dialogue pack \(name, privacy: .public) (\(clips.count) clips)")
+        return NephisFlowSynth.Dialogue(name: name, modelsDirectory: root, calm: calm, clips: clips, projection: projection, chain: chain)
+    }
+
+    /// She has a dialogue pack (its assets loaded with hers): Listen sends the quote routing's hints with each call.
+    var nephisDialogue: Bool { nephisFlowAssets?.dialogue != nil }
 
     /// Her EQ's top lift for the installed pack's decoder (nil: the shipped one).
     var nephisHighShelfDB: Double? { nephisFlowAssets?.chain.highShelfDB }
@@ -961,6 +998,20 @@ final class ExpressiveService {
         var relaxedCalls = 0
         /// The last call rendered at user-initiated priority (the extras rule: a relaxed call's pace says nothing).
         var lastUrgent: NephisFlowSynth.Report?
+        /// Her dialogue pack (NephisDialogue.swift): calls with dialogue it read, its spans and pieces, the voice changes,
+        /// its generation time, latents, characters and seconds of audio, its finishing time, the last level match, and why
+        /// calls' dialogue read with the narrator pack instead ("loading", "memory").
+        var dialogueCalls = 0
+        var dialogueSpans = 0
+        var dialoguePieces = 0
+        var switches = 0
+        var dialogueRenderMs = 0.0
+        var dialogueLatents = 0
+        var dialogueChars = 0
+        var dialogueSeconds = 0.0
+        var dialogueFinishMs = 0.0
+        var dialogueMatchDB: Double?
+        var dialogueNotes: [String: Int] = [:]
 
         static let logLimit = 400
 
@@ -1062,6 +1113,17 @@ final class ExpressiveService {
         flowStats.dewindIOMs += r.dewindIOMs
         flowStats.dewindDSPMs += r.dewindDSPMs
         flowStats.relaxedCalls += r.relaxed ? 1 : 0
+        flowStats.dialogueCalls += r.dialogueSpans > 0 ? 1 : 0
+        flowStats.dialogueSpans += r.dialogueSpans
+        flowStats.dialoguePieces += r.dialoguePieces
+        flowStats.switches += r.switches
+        flowStats.dialogueRenderMs += r.dialogueRenderMs
+        flowStats.dialogueLatents += r.dialogueLatents
+        flowStats.dialogueChars += r.dialogueChars
+        flowStats.dialogueSeconds += r.dialogueSeconds
+        flowStats.dialogueFinishMs += r.dialogueFinishMs
+        if let m = r.dialogueMatchDB { flowStats.dialogueMatchDB = m }
+        if let note = r.dialogueNote { flowStats.dialogueNotes[Self.reasonKey(note), default: 0] += 1 }
         flowStats.last = r
         if !r.relaxed { flowStats.lastUrgent = r }
     }
@@ -1107,8 +1169,60 @@ final class ExpressiveService {
         out["latents"] = ["stream": r.streamLatents, "scratch": r.scratchLatents, "tail": r.tailLatents]
         out["dewindSplitMs"] = ["predict": r1(r.dewindPredictMs), "io": r1(r.dewindIOMs), "dsp": r1(r.dewindDSPMs)]
         out["relaxed"] = r.relaxed
+        out["floorGuard"] = r.floorGuard
+        // Her dialogue pack on the call: its spans, pieces and voice changes, its time and audio, its mood, clip, level
+        // match and tempo; or why the narrator read the call's dialogue.
+        if r.dialogueSpans > 0 || r.switches > 0 || r.dialogueNote != nil {
+            out["dialogue"] = Self.dialogueJSON(r)
+        }
         return out
     }
+
+    /// One call's dialogue numbers for the report (callLog, the Voice speed test's calls).
+    static func dialogueJSON(_ r: NephisFlowSynth.Report) -> [String: Any] {
+        ["spans": r.dialogueSpans, "pieces": r.dialoguePieces, "switches": r.switches, "renderMs": r1(r.dialogueRenderMs),
+         "latents": r.dialogueLatents, "chars": r.dialogueChars, "seconds": r2(r.dialogueSeconds), "finishMs": r1(r.dialogueFinishMs),
+         "mood": r.dialogueMood ?? NSNull(), "clip": r.dialogueClip ?? NSNull(), "matchDB": r.dialogueMatchDB.map { r1($0) } ?? NSNull(),
+         "tempo": r.dialogueTempo.map { r2($0) } ?? NSNull(), "note": r.dialogueNote.map { String($0.prefix(160)) } ?? NSNull()]
+    }
+
+    /// Her dialogue pack over the session: per voice, the pieces, generation time and audio; voice changes a minute of her
+    /// audio; the last level match; why calls' dialogue read with the narrator instead.
+    static func dialogueSummary(_ f: FlowStats) -> [String: Any] {
+        let minutes = max(1e-9, f.audioMs / 60_000)
+        let narratorPieces = max(0, f.pieces - f.dialoguePieces)
+        return [
+            "calls": f.dialogueCalls, "spans": f.dialogueSpans, "switches": f.switches,
+            "switchesPerMinute": f.audioMs > 0 ? r2(Double(f.switches) / minutes) : 0,
+            "narrator": ["pieces": narratorPieces, "renderMs": r1(max(0, f.renderMs - f.dialogueRenderMs)),
+                         "seconds": r1(max(0, f.audioMs / 1000 - f.dialogueSeconds))] as [String: Any],
+            "dialogue": ["pieces": f.dialoguePieces, "renderMs": r1(f.dialogueRenderMs), "seconds": r1(f.dialogueSeconds),
+                         "latents": f.dialogueLatents, "chars": f.dialogueChars, "finishMs": r1(f.dialogueFinishMs),
+                         // Seconds of her dialogue audio per second of its generation (× real time).
+                         "renderX": f.dialogueRenderMs > 0 ? r2(f.dialogueSeconds * 1000 / f.dialogueRenderMs) as Any : NSNull() as Any] as [String: Any],
+            "matchDB": f.dialogueMatchDB.map { r1($0) } ?? NSNull(), "narratorRead": f.dialogueNotes,
+        ]
+    }
+
+    /// Her dialogue pack for the report: its name and role, whether its model is up (load time, free memory before and
+    /// after it loaded) or why not. nil without one.
+    func dialoguePackSnapshot(_ status: NephisFlowSynth.DialogueStatus?) -> Any {
+        guard let root = NephisModelPack.dialogueRoot else { return NSNull() }
+        let info = NephisPackLibrary.info(in: root)
+        var out: [String: Any] = ["name": info?["name"] ?? NSNull(), "made": info?["made"] ?? NSNull(), "role": "dialogue",
+                                  "weightsSha256": info?["weightsSha256"] ?? NSNull()]
+        if let s = status {
+            out["loaded"] = s.loaded
+            out["loadMs"] = s.loadMs.map { Self.r1($0) } ?? NSNull()
+            out["freeBeforeMB"] = s.freeBeforeMB.map { Self.r1($0) } ?? NSNull()
+            out["freeAfterMB"] = s.freeAfterMB.map { Self.r1($0) } ?? NSNull()
+            out["off"] = s.off ?? NSNull()
+        }
+        return out
+    }
+
+    /// Nephis's flow engine when it is the one loaded (main thread; its dialogue status is asked of it).
+    var flowEngine: NephisFlowSynth? { synth as? NephisFlowSynth }
 
     /// "Turn Nephis back on": her model may be used again at once; a read going on picks her up from the sentence
     /// playing (NarrationController's voice key carries the switch), and her model loads now otherwise.
@@ -1244,6 +1358,7 @@ final class ExpressiveService {
         var out: [String: Any] = [
             "available": store != nil,
             "nephisPack": pack,
+            "dialoguePack": dialoguePackSnapshot(nil),
             "engines": engines,
             "freeMB": free.map { Int($0 / 1_048_576) } ?? NSNull(),
             "memoryWarnings": memoryWarnings,
@@ -1339,6 +1454,7 @@ final class ExpressiveService {
         out["endings"] = endings
         out["callLog"] = f.log.map(Self.callJSON)
         out["work"] = Self.workJSON(f)
+        if NephisModelPack.dialogueRoot != nil { out["dialogue"] = Self.dialogueSummary(f) }
         // Breaks a listener heard in the last Listen session: waits for her, and sentences another voice read.
         if let s = NarrationController.shared.speechEngine.snapshot {
             out["listen"] = ["breaks": s.underruns, "breakSeconds": Self.r1(s.waitedSeconds), "otherVoiceSentences": s.appleSentences,

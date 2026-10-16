@@ -7,6 +7,10 @@
 //    <root>/<id>/…                    one unpacked pack: FluidAudio's models folder layout, her voice files, pack.json
 //    <root>/<id>/library-entry.json   {name, addedAt}: what the list shows when pack.json has no name, and its order
 //    <root>/active.json               {"id": "<id>"}: the pack she reads with (absent: none, the shipped model)
+//    <root>/dialogue.json             {"id": "<id>"}: the pack she reads quoted dialogue with (absent: none; the narrator
+//                                     pack reads everything, as before 2026-10-15)
+//    <root>/roles.json                {"<id>": "narrator"|"dialogue"}: the user's role for a pack (Developer › Voice
+//                                     Packs), over pack.json's "role"
 //    <root>/.incoming-<uuid>          a pack being unpacked; leftovers of a killed app are removed by `migrate`
 //  An id is "p" + the first 16 hex digits of the SHA-256 of the pack's name and pack.json's "made", so a pack with
 //  the same name and date opened again replaces its old copy. Ids from the UI are checked against that pattern
@@ -29,6 +33,9 @@ public struct NephisPack: Equatable, Sendable {
     public var bytes: Int64
     /// When it was added on this iPhone (ISO 8601).
     public var addedAt: String
+    /// What it reads: narration (the active pack) or quoted dialogue (the dialogue pack); pack.json's "role" unless the
+    /// user assigned another.
+    public var role: NephisVoiceRole = .narrator
 }
 
 public enum NephisPackError: Error, LocalizedError, Equatable {
@@ -54,6 +61,8 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
 
     private static let language = "Models/pocket-tts/v2.1/english"  // FluidAudio's folder for Repo.pocketTts
     static let activeName = "active.json"
+    static let dialogueName = "dialogue.json"
+    static let rolesName = "roles.json"
     static let entryName = "library-entry.json"
     static let stagingPrefix = ".incoming-"
 
@@ -106,6 +115,23 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
     /// The active pack's folder (FluidAudio's models directory for her engine), or nil.
     public var activeDirectory: URL? { activeID.flatMap { try? directory($0) } }
 
+    /// The pack she reads quoted dialogue with, when it is there, complete and a dialogue pack (nil: the narrator pack
+    /// reads everything, exactly as before).
+    public var dialogueID: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return dialogueUnlocked()
+    }
+
+    public var dialogueDirectory: URL? { dialogueID.flatMap { try? directory($0) } }
+
+    /// A pack's role: the user's assignment, else pack.json's "role", else narrator.
+    public func role(of id: String) -> NephisVoiceRole {
+        lock.lock()
+        defer { lock.unlock() }
+        return roleUnlocked(id)
+    }
+
     /// Every complete pack, the most recently added first.
     public func list() -> [NephisPack] {
         lock.lock()
@@ -116,8 +142,31 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
     public var totalBytes: Int64 { list().reduce(0) { $0 + $1.bytes } }
 
     private func activeUnlocked() -> String? {
-        guard let id = activeNameUnlocked(), let dir = try? directory(id), Self.isComplete(dir) else { return nil }
+        guard let id = activeNameUnlocked(), let dir = try? directory(id), Self.isComplete(dir), roleUnlocked(id) == .narrator else { return nil }
         return id
+    }
+
+    private func dialogueUnlocked() -> String? {
+        guard let id = idUnlocked(Self.dialogueName), let dir = try? directory(id), Self.isComplete(dir), roleUnlocked(id) == .dialogue else { return nil }
+        return id
+    }
+
+    private func roleUnlocked(_ id: String) -> NephisVoiceRole {
+        if let assigned = rolesUnlocked()[id].flatMap(NephisVoiceRole.init(rawValue:)) { return assigned }
+        guard let dir = try? directory(id) else { return .narrator }
+        return NephisVoiceRole(packInfo: Self.info(in: dir))
+    }
+
+    /// The user's role assignments (roles.json), by pack id.
+    private func rolesUnlocked() -> [String: String] {
+        guard let d = try? Data(contentsOf: root.appendingPathComponent(Self.rolesName)),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: String] else { return [:] }
+        return o
+    }
+
+    private func writeRoles(_ roles: [String: String]) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: roles, options: [.sortedKeys]).write(to: root.appendingPathComponent(Self.rolesName), options: .atomic)
     }
 
     private func listUnlocked() -> [NephisPack] {
@@ -133,7 +182,7 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
         let name = Self.nonEmpty(info?["name"]) ?? Self.nonEmpty(entry?["name"]) ?? "Unnamed pack"
         let studio = FileManager.default.fileExists(atPath: dir.appendingPathComponent("Models/nephis-studio/studio.json").path)
         return NephisPack(id: id, name: name, made: Self.nonEmpty(info?["made"]), studio: studio, bytes: Self.size(of: dir),
-                          addedAt: Self.nonEmpty(entry?["addedAt"]) ?? "")
+                          addedAt: Self.nonEmpty(entry?["addedAt"]) ?? "", role: roleUnlocked(id))
     }
 
     // MARK: - Adding, switching, deleting
@@ -145,8 +194,10 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
         return dir
     }
 
-    /// Keep the unpacked pack in `staged` (moved, not copied) and make it the active pack. A pack with the same name
-    /// and date replaces the old copy (`replaced`). `fallbackName` (the file's name) names a pack whose pack.json doesn't.
+    /// Keep the unpacked pack in `staged` (moved, not copied) and make it the active pack, or for a dialogue pack (its
+    /// role: pack.json's "role", or the user's for an older copy) the dialogue pack; the narrator pack stays as it was. A
+    /// pack with the same name and date replaces the old copy (`replaced`). `fallbackName` (the file's name) names a pack
+    /// whose pack.json doesn't.
     @discardableResult
     public func add(staged: URL, fallbackName: String, now: Date = Date()) throws -> (pack: NephisPack, replaced: Bool) {
         lock.lock()
@@ -172,29 +223,75 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
             try fm.moveItem(at: staged, to: dest)
         }
         Self.excludeFromBackup(dest)
-        try writeActive(id)
+        if roleUnlocked(id) == .dialogue {
+            try writeID(id, to: Self.dialogueName)
+            // It replaced the narrator pack's own copy (the same name and date, now a dialogue pack): the next narrator.
+            if activeNameUnlocked() == id { try writeActive(nextUnlocked(.narrator, besides: id)) }
+        } else {
+            try writeActive(id)
+            if idUnlocked(Self.dialogueName) == id { try writeID(nextUnlocked(.dialogue, besides: id), to: Self.dialogueName) }
+        }
         guard let pack = packUnlocked(id) else { throw NephisPackError.incomplete }
         return (pack, replaced)
     }
 
-    /// Make `id` the pack she reads with; nil: none (the shipped model).
+    /// Make `id` the pack she reads with; nil: none (the shipped model). A dialogue pack becomes the dialogue pack instead.
     public func activate(_ id: String?) throws {
         lock.lock()
         defer { lock.unlock() }
-        if let id { guard packUnlocked(id) != nil else { throw NephisPackError.unknownPack(id) } }
+        if let id {
+            guard packUnlocked(id) != nil else { throw NephisPackError.unknownPack(id) }
+            if roleUnlocked(id) == .dialogue { return try writeID(id, to: Self.dialogueName) }
+        }
         try writeActive(id)
     }
 
-    /// Delete a pack. Deleting the active one makes the next one in the list active (none when it was the last).
-    /// Returns the active pack's id afterwards.
+    /// Make `id` the pack she reads quoted dialogue with; nil: none (the narrator pack reads everything).
+    public func activateDialogue(_ id: String?) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if let id { guard packUnlocked(id) != nil, roleUnlocked(id) == .dialogue else { throw NephisPackError.unknownPack(id) } }
+        try writeID(id, to: Self.dialogueName)
+    }
+
+    /// The user's role for a pack (over pack.json's). A pack that becomes a dialogue pack stops being the narrator (the
+    /// next narrator pack reads, or the shipped model) and becomes the dialogue pack when there is none; one that becomes a
+    /// narrator pack stops being the dialogue pack (the next dialogue pack, or none) and becomes the narrator when none is.
+    public func setRole(_ id: String, _ role: NephisVoiceRole) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard packUnlocked(id) != nil else { throw NephisPackError.unknownPack(id) }
+        var roles = rolesUnlocked()
+        roles[id] = role.rawValue
+        try writeRoles(roles)
+        switch role {
+        case .dialogue:
+            if activeNameUnlocked() == id { try writeActive(nextUnlocked(.narrator, besides: id)) }
+            if dialogueUnlocked() == nil { try writeID(id, to: Self.dialogueName) }
+        case .narrator:
+            if idUnlocked(Self.dialogueName) == id { try writeID(nextUnlocked(.dialogue, besides: id), to: Self.dialogueName) }
+            if activeUnlocked() == nil { try writeActive(id) }
+        }
+    }
+
+    /// Delete a pack. Deleting the active one makes the next narrator pack in the list active (none when it was the
+    /// last); deleting the dialogue pack makes the next dialogue pack it (or none). Returns the active pack's id afterwards.
     @discardableResult
     public func delete(_ id: String) throws -> String? {
         lock.lock()
         defer { lock.unlock() }
         let dir = try directory(id)
-        if activeUnlocked() == id { try writeActive(listUnlocked().first { $0.id != id }?.id) }
+        if activeUnlocked() == id { try writeActive(nextUnlocked(.narrator, besides: id)) }
+        if dialogueUnlocked() == id { try writeID(nextUnlocked(.dialogue, besides: id), to: Self.dialogueName) }
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
+        var roles = rolesUnlocked()
+        if roles.removeValue(forKey: id) != nil { try? writeRoles(roles) }
         return activeUnlocked()
+    }
+
+    /// The first pack in the list with `role`, other than `id`.
+    private func nextUnlocked(_ role: NephisVoiceRole, besides id: String) -> String? {
+        listUnlocked().first { $0.id != id && $0.role == role }?.id
     }
 
     /// At launch, before anything else uses the library: remove unpacks a killed app left behind, and move the single
@@ -222,7 +319,7 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
                 try writeJSON(["name": name, "addedAt": Self.iso(now)], to: dest.appendingPathComponent(Self.entryName))
                 Self.excludeFromBackup(dest)
             }
-            if activeUnlocked() == nil { try writeActive(id) }
+            if activeUnlocked() == nil, roleUnlocked(id) == .narrator { try writeActive(id) }
             return true
         } catch {
             return false
@@ -235,10 +332,11 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
         lock.lock()
         defer { lock.unlock() }
         let active = activeNameUnlocked()
+        let dialogue = idUnlocked(Self.dialogueName)
         return ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).compactMap { name in
             let url = root.appendingPathComponent(name, isDirectory: true)
             if name.hasPrefix(Self.stagingPrefix) { return url }
-            guard Self.isValidID(name), name != active, !Self.isComplete(url) else { return nil }
+            guard Self.isValidID(name), name != active, name != dialogue, !Self.isComplete(url) else { return nil }
             return url
         }
     }
@@ -248,13 +346,18 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
         lock.lock()
         defer { lock.unlock() }
         var out = Set(listUnlocked().map { root.appendingPathComponent($0.id, isDirectory: true).standardizedFileURL.path })
-        if let active = activeNameUnlocked() { out.insert(root.appendingPathComponent(active, isDirectory: true).standardizedFileURL.path) }
+        for id in [activeNameUnlocked(), idUnlocked(Self.dialogueName)].compactMap({ $0 }) {
+            out.insert(root.appendingPathComponent(id, isDirectory: true).standardizedFileURL.path)
+        }
         return out
     }
 
     /// The id active.json names, complete or not.
-    private func activeNameUnlocked() -> String? {
-        guard let d = try? Data(contentsOf: root.appendingPathComponent(Self.activeName)),
+    private func activeNameUnlocked() -> String? { idUnlocked(Self.activeName) }
+
+    /// The id a {"id"} file names (active.json, dialogue.json), complete or not.
+    private func idUnlocked(_ file: String) -> String? {
+        guard let d = try? Data(contentsOf: root.appendingPathComponent(file)),
               let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
         return o["id"] as? String
     }
@@ -262,7 +365,12 @@ public final class NephisPackLibrary: @unchecked Sendable {  // @unchecked: its 
     // MARK: - Helpers
 
     private func writeActive(_ id: String?) throws {
-        let url = root.appendingPathComponent(Self.activeName)
+        try writeID(id, to: Self.activeName)
+    }
+
+    /// {"id": id} into `file` (nil: the file goes).
+    private func writeID(_ id: String?, to file: String) throws {
+        let url = root.appendingPathComponent(file)
         guard let id else {
             if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             return

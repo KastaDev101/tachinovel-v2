@@ -238,6 +238,29 @@ final class ListenReport {
                          "dspMs": r1(max(0, f.dewindDSPMs - b.dewindDSPMs))]
         out["mimiLatents"] = ["stream": stream, "scratch": f.scratchLatents - b.scratchLatents, "tail": f.tailLatents - b.tailLatents,
                               "perPlayed": stream > 0 ? r2(Double(decoded) / Double(stream)) as Any : NSNull()] as [String: Any]
+        // Her dialogue pack (absent without one): its pack, the voice changes a minute of her audio, and per voice the
+        // pieces, generation time and audio in this session; why calls' dialogue read with the narrator instead.
+        if let dlg = NephisModelPack.dialogueInfo {
+            let switches = f.switches - b.switches
+            let dSeconds = max(0, f.dialogueSeconds - b.dialogueSeconds)
+            let dRender = max(0, f.dialogueRenderMs - b.dialogueRenderMs)
+            let dPieces = f.dialoguePieces - b.dialoguePieces
+            var notes: [String: Int] = [:]
+            for (k, n) in f.dialogueNotes {
+                let d = n - (b.dialogueNotes[k] ?? 0)
+                if d > 0 { notes[k] = d }
+            }
+            out["dialogue"] = [
+                "pack": ["name": dlg["name"] ?? NSNull(), "weightsSha256": dlg["weightsSha256"] ?? NSNull()] as [String: Any],
+                "calls": f.dialogueCalls - b.dialogueCalls, "spans": f.dialogueSpans - b.dialogueSpans, "switches": switches,
+                "switchesPerMinute": audioMs > 0 ? r2(Double(switches) / (audioMs / 60_000)) as Any : NSNull(),
+                "narrator": ["pieces": max(0, (f.pieces - b.pieces) - dPieces), "pocketMs": r1(max(0, (f.renderMs - b.renderMs) - dRender)),
+                             "seconds": r1(max(0, audioMs / 1000 - dSeconds))] as [String: Any],
+                "dialogue": ["pieces": dPieces, "pocketMs": r1(dRender), "seconds": r1(dSeconds),
+                             "finishMs": r1(max(0, f.dialogueFinishMs - b.dialogueFinishMs))] as [String: Any],
+                "matchDB": f.dialogueMatchDB.map { r1($0) } ?? NSNull(), "narratorRead": notes,
+            ] as [String: Any]
+        }
         out["breaks"] = s.breaks
         out["breakSeconds"] = r1(s.breakSeconds)
         out["firstAudioMs"] = s.firstAudioMs.map { $0.rounded() } ?? NSNull()

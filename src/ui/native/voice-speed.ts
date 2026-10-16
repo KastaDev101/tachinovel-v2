@@ -84,6 +84,8 @@ export function speedLines(r: Obj): Line[] {
   }
   const dewind = dewindLine(chain, studio);
   if (dewind) lines.push(dewind);
+  const dialogue = dialogueLine(obj(r.dialogue));
+  if (dialogue) lines.push(dialogue);
   const slow = obj(r.slowestCall);
   if (Number.isFinite(num(slow.x))) {
     lines.push({ ok: num(slow.x) >= 1, text: `Slowest call: #${num(slow.n)} at ${num(slow.x).toFixed(1)}× real time (${num(slow.audioS).toFixed(1)} s of audio).` });
@@ -111,6 +113,22 @@ function dewindLine(chain: Obj, studio: Obj): Line | null {
   return Number.isFinite(calls) && n >= calls
     ? { ok: true, text: `${what} ran on all ${calls} calls.` }
     : { ok: false, text: `${what} ran on ${n} of ${Number.isFinite(calls) ? calls : '?'} calls${why}.` };
+}
+
+/** Her dialogue pack (absent: none): voice changes, and each voice's Pocket time against its audio; ⚠ when the
+ *  narrator read the dialogue instead (its model loading, low memory). */
+export function dialogueLine(d: Obj): Line | null {
+  const pack = obj(d.pack);
+  if (typeof pack.name !== 'string') return null;
+  const n = obj(d.narrator);
+  const v = obj(d.dialogue);
+  const why = Object.keys(obj(d.narratorRead)).join(', ');
+  if (!(num(d.calls) > 0)) return { ok: false, text: `Dialogue pack “${pack.name}” read no dialogue${why ? ` (${why})` : ''}.` };
+  const t = (o: Obj): string => `${(num(o.pocketMs) / 1000).toFixed(1)} s for ${num(o.seconds).toFixed(1)} s`;
+  return {
+    ok: !why,
+    text: `Dialogue pack “${pack.name}”: ${num(d.switches)} voice changes (${num(d.switchesPerMinute).toFixed(1)} a minute); Pocket narrator ${t(n)}, dialogue ${t(v)}${why ? `; narrator read some (${why})` : ''}.`,
+  };
 }
 
 /** The work behind the sound (heat batch 1): lead-ins, takes, how much Mimi decoded against what plays, and calls at

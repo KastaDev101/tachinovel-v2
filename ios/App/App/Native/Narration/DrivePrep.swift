@@ -180,6 +180,8 @@ final class ChapterRenderer: @unchecked Sendable {
     /// Nephis: whole paragraphs through her flow engine (as live playback reads them), not sentence by sentence.
     private let nephis: Bool
     private var groups: [[Int]] = []
+    /// The chapter's curly single quotes (QuoteRouter.SingleQuotes), worked out at her first call with a dialogue pack.
+    private var quoteStyle: QuoteRouter.SingleQuotes?
 
     init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, narrator: NarratorSettings = NarratorSettings(),
          folder: URL, nephis: Bool = false) {
@@ -321,6 +323,16 @@ final class ChapterRenderer: @unchecked Sendable {
         }
         line.flowReset = next == 0
         line.flowLast = next == groups.count - 1
+        // Her dialogue pack (when she has one): the quote routing's hints, as live (HybridSpeechEngine.dialogueHints).
+        if ExpressiveService.shared.nephisDialogue, let last = members.last {
+            let style = quoteStyle ?? QuoteRouter.SingleQuotes.of(items.map(\.text))
+            quoteStyle = style
+            line.singleQuotes = style.rawValue
+            let paragraph = items[last].paragraph
+            let rest = items[(last + 1)...].prefix { $0.paragraph == paragraph }.map(\.text)
+            line.restOfParagraph = rest.isEmpty ? nil : rest.joined(separator: " ")
+            line.nextOpensQuote = items[(last + 1)...].first { $0.paragraph != paragraph }.map { QuoteRouter.opensQuote($0.text) } ?? false
+        }
         line.takes = 2
         line.leadIn = false
         ExpressiveService.shared.synthesizeFlow(line, prepared: {}) { [weak self] result in

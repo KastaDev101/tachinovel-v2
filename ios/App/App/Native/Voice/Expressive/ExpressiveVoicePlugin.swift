@@ -23,10 +23,13 @@
 //  event "voiceImport"            {ok, message, id?}: a .tnvoice opened with "Open in TachiNovel" (SceneDelegate)
 //
 //  Nephis model packs (personal flavor, NephisModelPack.swift; Settings › Voices › Voice packs). Each answers
-//  {packs: [{id, name, made, studio, bytes, active}], active, totalBytes}:
+//  {packs: [{id, name, made, studio, bytes, active, role, dialogue}], active, dialogue, totalBytes} (role "narrator" or
+//  "dialogue"; `dialogue`: the pack she reads quoted dialogue with, NephisDialogue.swift):
 //  nephisPacks                    the packs on this iPhone, the most recently added first
 //  selectNephisPack               {id}: she reads with it from her next sentence (what installing one does)
 //  deleteNephisPack               {id}: deleting hers switches her to the next pack in the list, or to none
+//  setNephisPackRole              {id, role}: "narrator" or "dialogue" (over the pack's own pack.json "role")
+//  selectNephisDialogue           {id | null}: the dialogue pack she reads quoted dialogue with; null: the narrator reads it
 //
 //  Voice speed test (VoiceSpeedTest.swift; src/ui/native/voice-speed.ts):
 //  voiceSpeedTest                 renders the test passage with her pack the way Listen does, without playing it, and
@@ -73,6 +76,8 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "nephisPacks", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selectNephisPack", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteNephisPack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setNephisPackRole", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selectNephisDialogue", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceSpeedTest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceSpeedTestStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceSpeedTestPlay", returnType: CAPPluginReturnPromise),
@@ -539,13 +544,15 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     private static func packs() -> [String: Any] {
         let library = NephisModelPack.library
         let active = library.activeID
+        let dialogue = library.dialogueID
         let packs = library.list()
         return [
             "packs": packs.map { p -> [String: Any] in
                 ["id": p.id, "name": p.name, "made": p.made.map { $0 as Any } ?? NSNull(), "studio": p.studio,
-                 "bytes": Int(p.bytes), "active": p.id == active]
+                 "bytes": Int(p.bytes), "active": p.id == active, "role": p.role.rawValue, "dialogue": p.id == dialogue]
             },
             "active": active.map { $0 as Any } ?? NSNull(),
+            "dialogue": dialogue.map { $0 as Any } ?? NSNull(),
             "totalBytes": Int(packs.reduce(Int64(0)) { $0 + $1.bytes }),
         ]
     }
@@ -559,6 +566,32 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             do {
                 try NephisModelPack.select(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func setNephisPackRole(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let role = call.getString("role").flatMap(NephisVoiceRole.init(rawValue:)) else {
+            return call.reject("No pack or role", "INVALID_ARGS")
+        }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.setRole(id, role)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func selectNephisDialogue(_ call: CAPPluginCall) {
+        let id = call.getString("id")
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.selectDialogue(id)
                 call.resolve(Self.packs())
             } catch {
                 call.reject(error.localizedDescription, "IO_ERROR")

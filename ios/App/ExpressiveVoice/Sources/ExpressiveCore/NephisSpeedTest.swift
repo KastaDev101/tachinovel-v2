@@ -28,6 +28,19 @@ public enum NephisSpeedTest {
         "\u{201C}Oh! Far too hot!\u{201D}",
     ]
 
+    /// With her dialogue pack the passage goes on (about 12 s): a quote split by its dialogue tag, commas for the comma
+    /// beat, written laughter, a reply and a line of narration between, so the test times both voices and their switches.
+    /// The narrator-only passage stays exactly as it was (the lab compares its audio with the locked reference).
+    public static let dialoguePassage: [String] = [
+        "\u{201C}Careful,\u{201D} the shopkeeper called from his doorway, \u{201C}that one bites back.\u{201D}",
+        "Mara laughed into her scarf. \u{201C}Ha! You could have warned me, you know, before I paid for it.\u{201D}",
+    ]
+
+    /// The passage the test reads: with the dialogue lines when her dialogue pack is in use.
+    public static func passageFor(dialogue: Bool) -> [String] {
+        dialogue ? passage + dialoguePassage : passage
+    }
+
     /// Listen sends one sentence per call while less than this much audio (seconds) is ready ahead of playback
     /// (HybridSpeechEngine.pumpRender: her voice starts sooner), then whole paragraphs.
     public static let fastStartBelow = 4.0

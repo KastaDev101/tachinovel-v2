@@ -98,6 +98,16 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     /// Nephis flow: render at background priority (heat batch 1: playback has plenty banked, RenderPacer.relaxed), so the
     /// phone runs it on its efficient cores and clocks; nil = user-initiated, as always. The sound is the same.
     public var relaxed: Bool?
+    /// Nephis flow with a dialogue pack (NephisDialogue.swift): false = the narrator pack reads the whole call (nil: its
+    /// quoted dialogue goes to the dialogue pack). Without a dialogue pack these are never read.
+    public var dialogue: Bool?
+    /// The chapter's curly single quotes: "thought" (it quotes speech with double quotes) or "dialogue" (British style);
+    /// nil = guessed from the call (QuoteRouter.Context).
+    public var singleQuotes: String?
+    /// The rest of the call's paragraph after it (nil: the call ends its paragraph), and whether the next paragraph opens
+    /// with a quotation mark: a quotation left open at the call's end is speech only when one of them carries it on.
+    public var restOfParagraph: String?
+    public var nextOpensQuote: Bool?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text

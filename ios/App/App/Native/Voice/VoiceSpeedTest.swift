@@ -72,6 +72,8 @@ final class VoiceSpeedTest {
         var thermalMax = 0
         var memoryStart: [String: Any] = [:]
         var stoppedListen = false
+        /// Her dialogue pack's model as the calls start (its load time and the free memory around it), nil without one.
+        var dialogue: NephisFlowSynth.DialogueStatus?
         /// Seconds already banked at the start (the steady-state run: Developer › "Start with 60 s buffered"), and whether
         /// the last call ran at background priority (Listen's RenderPacer.relaxed, with its hysteresis).
         var banked = 0.0
@@ -115,7 +117,9 @@ final class VoiceSpeedTest {
         r.thermalStart = ProcessInfo.processInfo.thermalState.rawValue
         r.thermalMax = r.thermalStart
         r.memoryStart = Self.memory()
-        r.sentences = NephisSpeedTest.sentences(NephisSpeedTest.passage)
+        // With her dialogue pack the passage goes on with a short exchange (dialogue tags, a split quote, laughter), so the
+        // test shows both voices; the narrator-only passage is unchanged (the lab compares its audio with the locked one).
+        r.sentences = NephisSpeedTest.sentences(NephisSpeedTest.passageFor(dialogue: svc.nephisDialogue))
         run = r
         say("load", "Loading her voice…")
         let t0 = Date()
@@ -132,8 +136,15 @@ final class VoiceSpeedTest {
                 guard let self, self.run != nil else { return }
                 self.run?.studioWaitMs = Date().timeIntervalSince(s0) * 1000
                 if self.stopAsked { return self.finish(error: "stopped") }
-                self.run?.callsStarted = Date()
-                self.issueNext()
+                // Her dialogue pack's model (loaded behind her studio's): how its load went, for the report.
+                let flow = svc.flowEngine
+                Task { @MainActor [weak self] in
+                    let status = await flow?.dialogueStatus()
+                    guard let self, self.run != nil else { return }
+                    self.run?.dialogue = status
+                    self.run?.callsStarted = Date()
+                    self.issueNext()
+                }
             }
         }
     }
@@ -179,6 +190,14 @@ final class VoiceSpeedTest {
         line.pauseBefore = NephisSpeedTest.pauseBefore(r.sentences, at: i)
         line.flowReset = r.reset
         line.flowLast = range.upperBound >= r.sentences.count
+        // Her dialogue pack: the quote routing's hints, as Listen sends them (the passage quotes speech with double quotes).
+        if ExpressiveService.shared.nephisDialogue {
+            let paragraph = r.sentences[range.upperBound - 1].paragraph
+            let rest = r.sentences[range.upperBound...].prefix { $0.paragraph == paragraph }.map(\.text)
+            line.singleQuotes = QuoteRouter.SingleQuotes.thought.rawValue
+            line.restOfParagraph = rest.isEmpty ? nil : rest.joined(separator: " ")
+            line.nextOpensQuote = r.sentences[range.upperBound...].first { $0.paragraph != paragraph }.map { QuoteRouter.opensQuote($0.text) } ?? false
+        }
         let budget = Self.budget(ahead: ahead, calls: r.calls)
         line.takes = budget.takes
         line.leadIn = budget.leadIn
@@ -485,6 +504,8 @@ final class VoiceSpeedTest {
         row["latents"] = ["stream": rep.streamLatents, "scratch": rep.scratchLatents, "tail": rep.tailLatents]
         row["relaxed"] = rep.relaxed
         row["listened"] = rep.listened
+        row["floorGuard"] = rep.floorGuard
+        if rep.dialogueSpans > 0 || rep.switches > 0 || rep.dialogueNote != nil { row["dialogue"] = ExpressiveService.dialogueJSON(rep) }
         return row
     }
 
@@ -567,7 +588,7 @@ final class VoiceSpeedTest {
         out["pack"] = pack()
         out["chain"] = chain()
         out["studio"] = studio
-        let words = NephisSpeedTest.passage.joined(separator: " ").split(separator: " ").count
+        let words = r.sentences.map(\.text).joined(separator: " ").split(separator: " ").count
         out["passage"] = ["sentences": r.sentences.count, "rendered": r.next, "words": words]
         out["setup"] = ["loadMs": r.loadMs.rounded(), "studioWaitMs": r.studioWaitMs.rounded(), "totalMs": ms(setup)]
         out["firstAudioMs"] = firstAudio.map { ms($0) } ?? NSNull()
@@ -594,6 +615,28 @@ final class VoiceSpeedTest {
             out["slowestCall"] = NSNull()
         }
         out["calls"] = rows
+        // Her dialogue pack (null without one): its pack and model load (time, free memory before and after), the calls and
+        // voice changes (a minute of audio), and per voice the pieces, Pocket time and audio.
+        if NephisModelPack.dialogueRoot != nil {
+            let switches = count(\.switches)
+            let dRender = total(\.dialogueRenderMs)
+            let dSeconds = total(\.dialogueSeconds)
+            var notes: [String: Int] = [:]
+            for rep in reports { if let n = rep.dialogueNote { notes[reasonKey(n), default: 0] += 1 } }
+            out["dialogue"] = [
+                "pack": ExpressiveService.shared.dialoguePackSnapshot(r.dialogue),
+                "calls": reports.filter { $0.dialogueSpans > 0 }.count, "spans": count(\.dialogueSpans), "switches": switches,
+                "switchesPerMinute": audioSeconds > 0 ? r2(Double(switches) / (audioSeconds / 60)) : 0,
+                "narrator": ["pieces": count(\.pieces) - count(\.dialoguePieces), "pocketMs": (total(\.renderMs) - dRender).rounded(),
+                             "seconds": r2(max(0, audioSeconds - dSeconds))] as [String: Any],
+                "dialogue": ["pieces": count(\.dialoguePieces), "pocketMs": dRender.rounded(), "seconds": r2(dSeconds),
+                             "latents": count(\.dialogueLatents), "chars": count(\.dialogueChars), "finishMs": total(\.dialogueFinishMs).rounded(),
+                             "renderX": dRender > 0 ? r2(dSeconds * 1000 / dRender) as Any : NSNull() as Any] as [String: Any],
+                "narratorRead": notes,
+            ] as [String: Any]
+        } else {
+            out["dialogue"] = NSNull()
+        }
         out["sampleRate"] = rate
         out["audioSamples"] = audioSamples
         out["listenStopped"] = r.stoppedListen
