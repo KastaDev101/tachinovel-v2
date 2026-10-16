@@ -1045,14 +1045,9 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         activateSession()
     }
 
-    /// The expressive engine that reads chapters: the chosen one, or Chatterbox Nano when Pocket TTS (the default)
-    /// isn't downloaded but Nano is; nil = Kokoro.
+    /// The expressive engine that reads chapters (Pocket TTS: Nephis); nil = Kokoro.
     static func listenEngine() -> ExpressiveEngineID? {
-        guard let id = VoiceSettings.shared.prefs.delivery.listenEngine.flatMap(ExpressiveEngineID.init(rawValue:)) else { return nil }
-        let svc = ExpressiveService.shared
-        func ready(_ e: ExpressiveEngineID) -> Bool { ExpressiveService.supported(e) && svc.isInstalled(e) }
-        if id == .pocketTts, !ready(.pocketTts), ready(.chatterboxNano) { return .chatterboxNano }
-        return id
+        VoiceSettings.shared.prefs.delivery.listenEngine.flatMap(ExpressiveEngineID.init(rawValue:))
     }
 
     /// What the speech engine was started with; a settings change that alters it restarts the sentence.

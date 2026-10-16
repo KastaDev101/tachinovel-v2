@@ -1,7 +1,7 @@
 //
 //  StorageMapTests.swift — the storage map (StorageMap.swift): every byte in the container lands in one category, the
-//  leftovers are the copies iOS made and unfinished unpacks, and cleaning them never touches a complete pack (the
-//  active one above all), a downloaded model, the reading app's store or the recording. Small fake files only.
+//  leftovers are the copies iOS made, unfinished unpacks and the removed voices' files, and cleaning them never touches a
+//  complete pack (the active one above all), a model in use, the reading app's store or the recording. Small fake files only.
 //
 
 import ExpressiveCore
@@ -50,7 +50,8 @@ final class StorageMapTests: XCTestCase {
         let seven = try library.add(staged: pack(name: "nephis-seven"), fallbackName: "b").pack
         XCTAssertEqual(library.activeID, seven.id)
         try file(loc.models.appendingPathComponent("pocket-tts/v2.1/english/x.bin"), bytes: 40_000)
-        try file(loc.models.appendingPathComponent("chatterbox-nano/y.bin"), bytes: 20_000)
+        try file(loc.models.appendingPathComponent("kokoro/g2p.bin"), bytes: 20_000)
+        try file(loc.models.appendingPathComponent("chatterbox-nano/y.bin"), bytes: 25_000)
         try file(loc.applicationSupport.appendingPathComponent("DriveAudio/a.m4a"))
         try file(loc.appStore.appendingPathComponent("covers/c.webp"))
         try file(loc.appStore.appendingPathComponent("voices/v.json"))
@@ -68,6 +69,11 @@ final class StorageMapTests: XCTestCase {
         XCTAssertEqual(entry(r, "packsOther")?.note, six.name)
         XCTAssertGreaterThanOrEqual(entry(r, "modelPocket")?.bytes ?? 0, 40_000)
         XCTAssertGreaterThanOrEqual(entry(r, "modelsOther")?.bytes ?? 0, 20_000)
+        XCTAssertLessThan(entry(r, "modelsOther")?.bytes ?? 0, 25_000, "a removed voice's model is a leftover, not a model in use")
+        XCTAssertEqual(entry(r, "leftoverRemovedModels")?.count, 1)
+        XCTAssertEqual(entry(r, "leftoverRemovedModels")?.note, "Chatterbox Nano (no longer used)")
+        XCTAssertGreaterThanOrEqual(entry(r, "leftoverRemovedModels")?.bytes ?? 0, 25_000)
+        XCTAssertGreaterThan(entry(r, "leftoverImportedVoices")?.bytes ?? 0, 0)
         XCTAssertGreaterThanOrEqual(entry(r, "recordings")?.bytes ?? 0, 30_000)
         XCTAssertEqual(entry(r, "leftoverInbox")?.count, 2)
         XCTAssertGreaterThanOrEqual(entry(r, "leftoverInbox")?.bytes ?? 0, 130_000)
@@ -86,6 +92,9 @@ final class StorageMapTests: XCTestCase {
         let six = try library.add(staged: pack(name: "nephis-6"), fallbackName: "a").pack
         let ten = try library.add(staged: pack(name: "nephis-10"), fallbackName: "b").pack
         try file(loc.models.appendingPathComponent("pocket-tts/x.bin"))
+        try file(loc.models.appendingPathComponent("kokoro/g2p.bin"))
+        try file(loc.models.appendingPathComponent("neutts-2e/m.bin"))
+        try file(loc.appStore.appendingPathComponent("voices/v.json"))
         try file(loc.appStore.appendingPathComponent("library.json"))
         try file(loc.documents.appendingPathComponent("voice-test.wav"))
         try file(loc.documents.appendingPathComponent("backups/b.json"))
@@ -104,18 +113,20 @@ final class StorageMapTests: XCTestCase {
         let before = StorageMap.scan(loc, library: library, installing: false)
         XCTAssertGreaterThan(before.leftoverBytes, 0)
         let cleaned = StorageMap.clean(loc, library: library, installing: false)
-        XCTAssertEqual(cleaned.removed, 7)
+        XCTAssertEqual(cleaned.removed, 9)
         XCTAssertEqual(cleaned.bytes, before.leftoverBytes)
 
         let fm = FileManager.default
         for id in [six.id, ten.id] { XCTAssertTrue(NephisPackLibrary.isComplete(try library.directory(id))) }
         XCTAssertEqual(library.activeID, ten.id)
-        for path in ["Library/Application Support/fluidaudio/Models/pocket-tts/x.bin", "Library/Application Support/TachiNovel/library.json",
+        for path in ["Library/Application Support/fluidaudio/Models/pocket-tts/x.bin", "Library/Application Support/fluidaudio/Models/kokoro/g2p.bin",
+                     "Library/Application Support/TachiNovel/library.json",
                      "Documents/voice-test.wav", "Documents/backups/b.json", "Documents/Inbox/notes.txt"] {
             XCTAssertTrue(fm.fileExists(atPath: container.appendingPathComponent(path).path), path)
         }
         for gone in [staging, incomplete, loc.legacyPack, loc.documents.appendingPathComponent("broken.tnmodel"),
-                     loc.documents.appendingPathComponent("Inbox/nephis-10.tnmodel"), loc.tmp.appendingPathComponent("voice-import")] {
+                     loc.documents.appendingPathComponent("Inbox/nephis-10.tnmodel"), loc.tmp.appendingPathComponent("voice-import"),
+                     loc.models.appendingPathComponent("neutts-2e"), loc.appStore.appendingPathComponent("voices")] {
             XCTAssertFalse(fm.fileExists(atPath: gone.path), gone.lastPathComponent)
         }
         XCTAssertEqual(StorageMap.scan(loc, library: library, installing: false).leftoverBytes, 0)

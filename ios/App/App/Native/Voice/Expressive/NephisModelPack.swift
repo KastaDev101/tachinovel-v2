@@ -16,6 +16,8 @@ import os
 enum NephisModelPack {
     static let fileExtension = "tnmodel"
     static let didInstall = Notification.Name("TachiNovelNephisModelInstalled")
+    /// An install's result for the UI ({ok, message}; ExpressiveVoicePlugin's "voiceImport" event).
+    static let didImport = Notification.Name("TachiNovelNephisModelImportFinished")
     private static let log = Logger(subsystem: "app.tachinovel", category: "voice-expressive")
 
     /// Every pack on this iPhone and the one she reads with (ExpressiveCore NephisPackLibrary: Application
@@ -69,7 +71,7 @@ enum NephisModelPack {
     static func handles(_ url: URL) -> Bool { url.isFileURL && url.pathExtension.lowercased() == fileExtension }
 
     /// "Open in TachiNovel" or a pack found in Documents: unpack off the main thread, then add it to the library as the
-    /// active pack. The UI hears about it through the voice-import event (same message banner).
+    /// active pack. The UI hears about it through the plugin's "voiceImport" event (a message banner in Voice Models).
     static func open(_ url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try install(from: url) }
@@ -184,7 +186,7 @@ enum NephisModelPack {
     }
 
     private static func post(ok: Bool, message: String) {
-        NotificationCenter.default.post(name: VoiceImportInbox.didImport, object: nil, userInfo: ["ok": ok, "message": message, "id": NSNull()])
+        NotificationCenter.default.post(name: didImport, object: nil, userInfo: ["ok": ok, "message": message])
         NotificationCenter.default.post(name: didInstall, object: nil)
     }
 

@@ -73,9 +73,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
     /// When the read began waiting for its next sentence after it had started (the log's underruns); nil = not waiting.
     private var waitBegan: Date?
-    /// Listen › the expressive engine that reads chapters (DeliverySettings.listenEngine; Chatterbox Nano = the
-    /// "Narrator" voice), nil = Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, the
-    /// app in the background (Nano runs on the GPU, which iOS forbids there), thermal throttling, a failed render.
+    /// Listen › the expressive engine that reads chapters (DeliverySettings.listenEngine: Pocket TTS, Nephis), nil =
+    /// Kokoro. Kokoro renders any sentence it can't: not downloaded or loaded yet, thermal throttling, a failed render.
     var listenEngine: ExpressiveEngineID?
     /// The AI director (SceneReader): moods the on-device model gave for sentences ahead, the next sentence to send,
     /// and whether a window is being read.
@@ -249,8 +248,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         } else {
             natural = nil
         }
-        // The expressive voice renders about a minute ahead. Chatterbox Nano can't run in the background (GPU), so
-        // locking the phone keeps it for that long before Kokoro takes over; Pocket TTS (CPU + Neural Engine) goes on.
+        // The expressive voice renders about a minute ahead; Pocket TTS (CPU + Neural Engine) goes on with the phone locked.
         // Kokoro alone renders 8 ahead (about 40 s): 2–3 ran dry with the screen locked on a drive (Kasta, 2026-10-07).
         // Nephis renders about three minutes ahead, at a steady pace once a minute is banked (pumpRender's pacing):
         // the same work as a burst, lower peaks on the chip, and a cushion that carries her through a hot stretch.
@@ -274,7 +272,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         scheduler = s
         if let warm { useWarmStart(warm) }
         if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
-        if let id = listenEngine, ExpressiveService.supported(id), ExpressiveService.shared.isInstalled(id), !ExpressiveService.shared.crashDisabled {
+        if let id = listenEngine, ExpressiveService.shared.isInstalled(id), !ExpressiveService.shared.crashDisabled {
             ExpressiveService.shared.ensureLoaded(id) { [weak self] _ in self?.kokoroStatusChanged() }
         }
         pumpRender()
@@ -494,7 +492,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             if flow, flowBusy { return }
             // The sentences of one breath-group chunk (a paragraph, or a same-speaker run of quote paragraphs; the
             // script plans them) go to the model together, up to its per-call limit (Pocket TTS 400 characters, a
-            // whole paragraph; Nano 120). One call paces them as one thought: no "Relax, little one." [stop]
+            // whole paragraph). One call paces them as one thought: no "Relax, little one." [stop]
             // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
             // Flow: with almost nothing buffered (the start, after a seek) the first sentence goes alone, so her voice
             // starts sooner; then whole paragraphs.
@@ -1704,8 +1702,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func expressiveUsable() -> Bool {
         guard let id = listenEngine else { return false }
         let svc = ExpressiveService.shared
-        guard !svc.crashDisabled, ExpressiveService.supported(id), svc.isInstalled(id), svc.loadState(id) == .ready, svc.loadedID == id else { return false }
-        if id.usesGPU, UIApplication.shared.applicationState != .active { return false }
+        guard !svc.crashDisabled, svc.isInstalled(id), svc.loadState(id) == .ready, svc.loadedID == id else { return false }
         // Nephis alone keeps reading when the phone is warm (lighter calls: one take, no lead-in); only at critical.
         let thermal = ProcessInfo.processInfo.thermalState
         if nephisOnly { return thermal != .critical }
@@ -1727,7 +1724,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     static func nephisCanReadAlone(_ engine: ExpressiveEngineID?) -> Bool {
         guard engine == .pocketTts, VoiceSettings.shared.prefs.delivery.isNephis else { return false }
         let svc = ExpressiveService.shared
-        guard !svc.crashDisabled, ExpressiveService.supported(.pocketTts), svc.isInstalled(.pocketTts) else { return false }
+        guard !svc.crashDisabled, svc.isInstalled(.pocketTts) else { return false }
         if case .failed = svc.loadState(.pocketTts) { return false }
         return true
     }

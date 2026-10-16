@@ -61,7 +61,7 @@ final class DeliveryTests: XCTestCase {
         XCTAssertTrue(d.performed, "dialogue and thoughts performed by default")
         XCTAssertTrue(d.systemChime && d.systemTone, "system messages: chime and interface tone by default")
         let decoded = try JSONDecoder().decode(DeliverySettings.self, from: Data(#"{"version":4,"listenEngine":"chatterbox-nano","director":"rules+ai","natural":false,"unit":"sentences","x":1}"#.utf8))
-        XCTAssertEqual(decoded.listenEngine, DeliverySettings.chatterboxNano, "Nano stays an option")
+        XCTAssertEqual(decoded.listenEngine, DeliverySettings.pocketTts, "Chatterbox Nano was removed: it reads with Pocket TTS")
         let v1 = try JSONDecoder().decode(DeliverySettings.self, from: Data(#"{"version":1,"listenEngine":"chatterbox-nano"}"#.utf8))
         XCTAssertEqual(v1.listenEngine, DeliverySettings.pocketTts, "version 1 saved Nano as the default: it moves to Pocket")
         let kokoro = try JSONDecoder().decode(DeliverySettings.self, from: JSONEncoder().encode(DeliverySettings(listenEngine: nil)))

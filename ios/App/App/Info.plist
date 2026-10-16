@@ -33,22 +33,10 @@
 			</array>
 		</dict>
 	</array>
-	<!-- Imported voices (docs/voice-import.md): ".tnvoice" files made on the PC open in TachiNovel from Files and
-	     the share sheet (SceneDelegate → VoiceImport.swift); the Files picker of "Import voice…" filters on it. -->
+	<!-- Nephis model packs (NephisModelPack.swift): ".tnmodel" files made on the PC open in TachiNovel from Files and
+	     the share sheet (SceneDelegate). -->
 	<key>CFBundleDocumentTypes</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>TachiNovel voice</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>app.tachinovel.voice</string>
-			</array>
-		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Nephis voice model</string>
@@ -78,23 +66,6 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>tnmodel</string>
-				</array>
-			</dict>
-		</dict>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>app.tachinovel.voice</string>
-			<key>UTTypeDescription</key>
-			<string>TachiNovel voice</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>tnvoice</string>
 				</array>
 			</dict>
 		</dict>

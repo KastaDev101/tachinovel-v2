@@ -7,11 +7,11 @@
  *   - PrivacyInfo.xcprivacy (Resources phase), App.entitlements (CODE_SIGN_ENTITLEMENTS)
  *   - KokoroModels/ as a folder reference in the Resources phase: the bundled Kokoro voice model, fetched
  *     (pinned + checksummed) by tools/fetch-voices.ts at build time, never committed
- *   - BuiltInVoices/ as a folder reference in the Resources phase: Chatterbox Nano voices that ship in the app
- *     (.tnvoice files + voices.json, committed; tools/built-in-voices.ts, docs/voice-import.md)
+ *   - BuiltInVoices/ as a folder reference in the Resources phase: the voice files that ship in the app (Pocket TTS
+ *     voices, breaths; committed; tools/built-in-voices.ts)
  *   - the local Swift package ios/App/HDVoice (products HDVoiceCore, HDVoiceKokoro; it pins FluidAudio)
- *   - the local Swift package ios/App/ExpressiveVoice (product ExpressiveVoice: the EXPERIMENTAL expressive
- *     engines of the Voice Lab, models downloaded on demand; same FluidAudio pin)
+ *   - the local Swift package ios/App/ExpressiveVoice (product ExpressiveVoice: Nephis's voice, Pocket TTS, her flow
+ *     engine and studio; models downloaded on demand or from her packs; same FluidAudio pin)
  *   - IPHONEOS_DEPLOYMENT_TARGET 17.0 (Personal Voice, StoreKit 2 APIs used, safari17 JS target)
  *
  * Usage: node tools/ios-project.ts [--check]   (--check: exit 1 if the project is out of date)
@@ -132,7 +132,7 @@ function addVoicePackage(text: string, appGroup: string, resources: string): str
   t = insertIntoSection(t, 'PBXBuildFile', [`\t\t${modelsBuild} /* KokoroModels in Resources */ = {isa = PBXBuildFile; fileRef = ${modelsRef} /* KokoroModels */; };\n`]);
   t = addToList(t, appGroup, 'children', [`\t\t\t\t${modelsRef} /* KokoroModels */,\n`]);
   t = addToList(t, resources, 'files', [`\t\t\t\t${modelsBuild} /* KokoroModels in Resources */,\n`]);
-  // Voices that ship in the app (committed .tnvoice files + voices.json; tools/built-in-voices.ts).
+  // Voice files that ship in the app (Pocket TTS voices, breaths; tools/built-in-voices.ts).
   const voicesRef = oid('file:BuiltInVoices');
   const voicesBuild = oid('build:BuiltInVoices');
   t = insertIntoSection(t, 'PBXFileReference', [`\t\t${voicesRef} /* BuiltInVoices */ = {isa = PBXFileReference; lastKnownFileType = folder; path = BuiltInVoices; sourceTree = "<group>"; };\n`]);

@@ -1,17 +1,15 @@
 /**
- * More › Developer › Voice Models, also Voice Lab › Experimental engines.
- * EXPERIMENTAL expressive voices on the iPhone (docs/expressive-tts.md): download a model on demand (Wi-Fi,
- * size shown, confirmed with the native alert), play the same sample with it and with Kokoro (A/B), run a speed test
- * (load, time to first audio, × real time, memory, thermal), copy the report. Narration itself is unchanged. Its
- * numbers refresh once a second only while something runs (a download, a model loading, a sample, a speed test).
- * Personal flavor: "Narrator voice" — voices designed on the PC (.tnvoice), imported and chosen for
- * Chatterbox Nano (voice-import.ts, docs/voice-import.md).
+ * More › Developer › Voice Models: her model, Pocket TTS, on the iPhone (docs/expressive-tts.md): download it on demand
+ * (Wi-Fi, size shown, confirmed with the native alert), play a sample with it and with Kokoro (A/B), run a speed test
+ * (load, time to first audio, × real time, memory, thermal), free the model, copy the report. Its numbers refresh once
+ * a second only while something runs (a download, a model loading, a sample, a speed test).
+ * Personal flavor: a Nephis model pack (.tnmodel) opened with "Open in TachiNovel" opens this screen with the result
+ * (installVoiceImports).
  * Native side: ExpressiveVoicePlugin.swift (ExpressiveService + ExpressiveSpeechEngine, Kokoro fallback).
  */
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { annotate, SAMPLES, type ExpressiveLine } from './expressive-samples.ts';
 import { confirmStep, icon, panel } from './panel.ts';
-import { createVoiceSection, importEventMessage } from './voice-import.ts';
 
 type Obj = Record<string, unknown>;
 
@@ -32,11 +30,6 @@ interface ExpressiveVoicePlugin {
   /** sampleRate: the rate of the read the WAV holds (24 kHz, or 44.1 kHz with her studio); absent in older builds. */
   recordStop(): Promise<{ saved: boolean; bytes: number; sampleRate?: number; float32?: boolean }>;
   shareRecording(): Promise<void>;
-  importVoice(): Promise<Obj>;
-  selectVoice(o: { id: string | null }): Promise<Obj>;
-  renameVoice(o: { id: string; name: string }): Promise<Obj>;
-  deleteVoice(o: { id: string }): Promise<Obj>;
-  playVoiceSample(o: { id: string | null }): Promise<Obj>;
   /** placement: only where Core ML runs her studio's models (MLComputePlan), on its own. */
   studioTest(o?: { placement?: boolean }): Promise<Obj>;
   /** Stop during the studio speed test: native cancels it (it then answers `stopped`). */
@@ -62,7 +55,7 @@ interface ExpressiveVoicePlugin {
 
 /** Events (kept out of the method list above, which mirrors the Swift plugin's methods). */
 interface ExpressiveVoiceEvents {
-  /** A .tnvoice opened with "Open in TachiNovel" was imported (or refused). */
+  /** A Nephis model pack (.tnmodel) opened with "Open in TachiNovel" or dropped into Documents was installed (or refused). */
   addListener(event: 'voiceImport', fn: (e: Obj) => void): Promise<PluginListenerHandle>;
   /** The Voice speed test as it goes: {step, text, done, total}. */
   addListener(event: 'voiceSpeedTest', fn: (e: Obj) => void): Promise<PluginListenerHandle>;
@@ -83,11 +76,12 @@ const obj = (x: unknown): Obj => (x && typeof x === 'object' ? (x as Obj) : {});
 const arr = (x: unknown): Obj[] => (Array.isArray(x) ? (x as Obj[]) : []);
 const mb = (bytes: unknown): string => (typeof bytes === 'number' ? `${Math.round(bytes / 1e6)} MB` : '–');
 
-/** One line of commercial-use guidance per license (docs/expressive-tts.md has the details). */
-function licenseNote(license: string): string {
-  if (/^MIT$/i.test(license)) return 'MIT: commercial use OK.';
-  if (/NeuTTS/i.test(license)) return 'NeuTTS Open License: commercial use free below $5M annual revenue, paid license above.';
-  return license;
+/** The banner for a pack install's result ({ok, message} from native). */
+export function importEventMessage(e: unknown): { message: string; error: boolean } {
+  const r = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
+  const ok = r.ok === true;
+  const message = typeof r.message === 'string' && r.message.trim() ? r.message.trim().slice(0, 400) : ok ? 'Voice pack installed.' : 'Couldn’t install the voice pack.';
+  return { message, error: !ok };
 }
 
 type SampleId = (typeof SAMPLES)[number]['id'] | 'custom';
@@ -96,7 +90,7 @@ let open = false;
 /** Shows a message in the open lab (set while it is open). */
 let showMessage: ((text: string, error: boolean) => void) | null = null;
 
-/** "Open in TachiNovel" results for .tnvoice files: open the lab with what happened (personal flavor, main.ts). */
+/** "Open in TachiNovel" results for .tnmodel packs: open Voice Models with what happened (personal flavor, main.ts). */
 export function installVoiceImports(): void {
   void ExpressiveVoice.addListener('voiceImport', (e) => {
     const { message, error } = importEventMessage(e);
@@ -142,11 +136,9 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     const dl = obj(e.download);
     const load = obj(e.load);
     const installed = e.installed === true;
-    const supported = e.supported !== false;
     let state: string;
-    let acts = '';
-    if (!supported) state = '<span class="err">Needs iOS 18 or later.</span>';
-    else if (dl.state === 'downloading') {
+    let acts: string;
+    if (dl.state === 'downloading') {
       const pct = typeof dl.fraction === 'number' ? dl.fraction * 100 : 0;
       state = `Downloading ${fmt(pct)}% · ${fmt(dl.filesDone)}/${fmt(dl.filesTotal)} files · keep the app open<div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div>`;
       acts = `<button type="button" data-act="cancel" data-id="${esc(id)}">Cancel Download</button>`;
@@ -165,9 +157,9 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
       ].join('');
     }
     return `<div class="lab-card" data-engine="${esc(id)}">
-      <h3>${esc(str(e.title))}${e.gpu ? '<span class="xtag">GPU: foreground only</span>' : ''}</h3>
+      <h3>${esc(str(e.title))}</h3>
       <div class="muted">${esc(str(e.blurb, ''))}</div>
-      <div class="muted">${esc(licenseNote(str(e.license, '')))} · ${esc(str(e.upstream, ''))}</div>
+      <div class="muted">${esc(str(e.license, ''))} · ${esc(str(e.upstream, ''))}</div>
       <div style="margin-top:6px">${state}</div>
       <div class="acts">${acts}</div>
     </div>`;
@@ -185,7 +177,6 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>Queue ran dry</span><span>${fmt(s.underruns)}</span>
         <span>Fallbacks</span><span>${fallbacks}</span>
         <span>Throttled</span><span>${esc(str(s.throttle, 'no'))}</span>
-        ${obj(s.voice).name ? `<span>Voice</span><span>${esc(str(obj(s.voice).name))}${obj(s.voice).note ? `<div class="err">${esc(str(obj(s.voice).note))}</div>` : ''}</span>` : ''}
       </div>
       <div class="acts"><button type="button" data-act="stop">${icon('stop.fill', 14)} Stop</button></div>
       <h2>Lines</h2>
@@ -231,10 +222,9 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     const engines = arr(st.engines);
     const current = lines();
     body.innerHTML = `
-      <p class="note" style="padding-bottom:8px">Pocket TTS is Nephis’s voice: download it once (Wi-Fi). The other engines are experiments.</p>
-      ${unavailable ? '<div class="lab-card err">Experimental engines aren’t available in this build.</div>' : ''}
+      <p class="note" style="padding-bottom:8px">Pocket TTS is Nephis’s voice: download it once (Wi-Fi). A voice pack carries its own copy.</p>
+      ${unavailable ? '<div class="lab-card err">Her model isn’t available in this build.</div>' : ''}
       ${message ? `<div class="lab-card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}" role="status">${esc(message)}</div>` : ''}
-      ${voices?.view() ?? ''}
       ${
         crashes.disabled
           ? `<div class="lab-card"><b>${esc(str(crashes.offLine, 'Turned off after crashing twice.'))}</b> (${esc(str(crashes.lastContext, ''))})<div class="acts"><button type="button" data-act="reset-crashes">Turn Nephis Back On</button></div></div>`
@@ -254,7 +244,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         .map((l) => `${esc(l.text.slice(0, 60))}${l.text.length > 60 ? '…' : ''}<span class="xtag">${esc(l.role)}</span><span class="xtag">${esc(l.style ?? l.emotion)}</span>`)
         .join('<br>')}${current.length > 4 ? '<br>…' : ''}</div>
       <div class="acts"><button type="button" data-act="play-kokoro">${icon('play.fill', 14)} Same Sample With Kokoro</button></div>
-      <h2>Engines</h2>
+      <h2>Model</h2>
       ${engines.map(engineCard).join('') || '<div class="muted">–</div>'}
       <h2>Now playing</h2>
       ${sessionView(obj(st.session))}
@@ -267,7 +257,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>Free storage</span><span>${fmt(st.freeMB)} MB</span>
         <span>Kokoro</span><span>${esc(str(st.kokoro))}</span>
         <span>Memory warnings</span><span>${fmt(st.memoryWarnings)}</span>
-        <span>Crashes (experimental)</span><span>${fmt(crashes.total)} total, ${fmt(crashes.consecutive)} in a row, ${fmt(crashes.notCounted)} ends not counted</span>
+        <span>Crashes (Nephis)</span><span>${fmt(crashes.total)} total, ${fmt(crashes.consecutive)} in a row, ${fmt(crashes.notCounted)} ends not counted</span>
         <span>iOS</span><span>${esc(str(dev.os))}</span>
       </div>
       <div class="acts">
@@ -295,47 +285,6 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
       });
   };
 
-  /** A call whose answer isn't the status itself (Import voice…, ▶ on a voice): `done` makes the message. */
-  const call = (p: Promise<Obj>, done: (r: Obj) => string): void => {
-    message = '';
-    messageIsError = false;
-    render();
-    void p
-      .then((r) => {
-        const s = obj(r.status && typeof r.status === 'object' ? r.status : r);
-        if (Array.isArray(s.engines)) st = s;
-        message = done(r);
-      })
-      .catch((err: unknown) => {
-        message = err instanceof Error ? err.message : String(err);
-        messageIsError = true;
-      })
-      .finally(() => {
-        render();
-        schedule(true);
-      });
-  };
-
-  // Personal flavor: the narrator voice for Chatterbox Nano (built-in or imported; voice-import.ts). The store
-  // flavor's bundle compiles it out; an app without voice import sends no `voices` and the section stays hidden.
-  const voices =
-    __FLAVOR__ === 'personal'
-      ? createVoiceSection({
-          plugin: ExpressiveVoice,
-          status: () => st,
-          apply,
-          call,
-          message: (text, error) => {
-            message = text;
-            messageIsError = error;
-            render();
-          },
-          render,
-          confirm: (title, text, action) => confirmStep(title, text, action),
-          root,
-        })
-      : null;
-
   /** Something is going on whose numbers change: a download, a model loading, a sample playing, a speed test. */
   const running = (s: Obj): boolean =>
     arr(s.engines).some((e) => obj(e.download).state === 'downloading' || obj(e.load).state === 'loading') ||
@@ -361,8 +310,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         // Don't re-render under the user's fingers while they type (a re-render on blur would also eat the
         // tap that caused the blur, e.g. Play right after pasting).
         const typing = document.activeElement?.tagName;
-        // While a voice is being renamed the list stays put too (its Save button must not move).
-        if (typing !== 'TEXTAREA' && typing !== 'INPUT' && !voices?.editing()) render();
+        if (typing !== 'TEXTAREA' && typing !== 'INPUT') render();
         schedule();
       });
   };
@@ -379,16 +327,13 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
   root.addEventListener('input', (ev) => {
     const el = ev.target as HTMLElement;
     if (el.dataset.actInput === 'custom') customText = (el as HTMLTextAreaElement).value;
-    voices?.input(el);
   });
-  root.addEventListener('keydown', (ev) => voices?.key(ev));
 
   root.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
     const id = el.dataset.id ?? '';
     const act = el.dataset.act ?? '';
-    if (voices?.click(act, id)) return;
     switch (act) {
       case 'sample':
         sampleId = id as SampleId;

@@ -7,19 +7,22 @@
 //    Library/Application Support/NephisPacks/.incoming-*  an unpack in progress, or a killed one's leftover
 //    Library/Application Support/NephisModel(.incoming) the single pack builds before 2026-10-13 kept (moved in by
 //                                                      NephisPackLibrary.migrate; an incomplete one stayed for ever)
-//    Library/Application Support/fluidaudio/Models/…   downloaded voice models (Pocket TTS released model, Chatterbox,
-//                                                      NeuTTS); a pack is read in place, never copied here
+//    Library/Application Support/fluidaudio/Models/…   downloaded voice models (Pocket TTS released model; Kokoro's
+//                                                      G2P in kokoro/); a pack is read in place, never copied here.
+//                                                      chatterbox-nano/ and neutts-2e/: models of the voices removed
+//                                                      on 2026-10-16, never read again (a leftover)
 //    Library/Application Support/NarrationAudio        chapter audio: downloads and drive prep (NarrationAudioStore;
 //                                                      DriveAudio of older builds moves in at first launch)
 //    Library/Application Support/TachiNovel            the reading app's store (covers, cache, downloads, logs),
-//                                                      imported voices (voices/) and web updates (ota/)
+//                                                      web updates (ota/), and voices/: .tnvoice voices imported for
+//                                                      Chatterbox Nano by older builds, never read again (a leftover)
 //    Documents/voice-test.wav, voice-selftest.json     the last Voice test's recording and report
 //    Documents/*.tnmodel                               a pack dropped in with file sharing (removed once installed)
 //    Documents/Inbox, tmp/<bundle id>-Inbox            copies iOS makes of a file shared from another app
 //                                                      (AirDrop, Mail, the share sheet): 350-500 MB per pack, which
 //                                                      nothing removed before 2026-10-13
-//  Leftovers are only ever copies or unfinished unpacks: never a complete pack (the active one least of all), a
-//  downloaded model, the reading app's store or the recording.
+//  Leftovers are only ever copies, unfinished unpacks and what only the removed voices read: never a complete pack (the
+//  active one least of all), a model in use, the reading app's store or the recording.
 //
 
 import Foundation
@@ -90,11 +93,13 @@ public struct StorageReport: Equatable, Sendable {
 }
 
 public enum StorageMap {
+    /// Pack files iOS may have copied in (a .tnvoice from an older build's voice import too).
     static let packExtensions: Set<String> = ["tnmodel", "tnvoice"]
     static let modelLabels: [String: String] = [
         "pocket-tts": "Pocket TTS (Kyutai’s released model, used when no pack is)",
-        "chatterbox-nano": "Chatterbox Nano", "neutts-2e": "NeuTTS-2E",
     ]
+    /// Model folders of the voices removed on 2026-10-16 (Chatterbox Nano, NeuTTS-2E): nothing reads them any more.
+    static let removedModels: [String: String] = ["chatterbox-nano": "Chatterbox Nano", "neutts-2e": "NeuTTS-2E"]
 
     /// A copy iOS made for "Open in TachiNovel" from another app: Documents/Inbox/… or tmp/<anything>-Inbox/….
     public static func isSystemInboxCopy(_ url: URL, documents: URL, tmp: URL) -> Bool {
@@ -131,6 +136,14 @@ public enum StorageMap {
         [loc.legacyPack, loc.legacyStaging].filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// What only the removed voices read: their downloaded models, and the .tnvoice voices imported for Chatterbox Nano.
+    static func removedVoiceLeftovers(_ loc: StorageLocations) -> [URL] {
+        let models = removedModels.keys.sorted().map { loc.models.appendingPathComponent($0, isDirectory: true) }
+        return (models + [importedVoices(loc)]).filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    static func importedVoices(_ loc: StorageLocations) -> URL { loc.appStore.appendingPathComponent("voices", isDirectory: true) }
+
     static func tempLeftovers(_ loc: StorageLocations) -> [URL] {
         [loc.tmp.appendingPathComponent("voice-import", isDirectory: true)].filter { FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -138,7 +151,7 @@ public enum StorageMap {
     /// Everything "Clean up" removes. `installing`: a pack is being unpacked right now (its staging folder and the file
     /// it comes from are not leftovers yet).
     public static func leftovers(_ loc: StorageLocations, library: NephisPackLibrary, installing: Bool) -> [URL] {
-        var out = legacyLeftovers(loc)
+        var out = legacyLeftovers(loc) + removedVoiceLeftovers(loc)
         if !installing {
             out += library.leftoverFolders() + inboxCopies(loc) + documentPacks(loc) + tempLeftovers(loc)
         }
@@ -175,20 +188,20 @@ public enum StorageMap {
         let others = packs.filter { $0.id != active }
         add("packsOther", "Other voice packs", others.isEmpty ? "None" : others.map(\.name).joined(separator: ", "), others.map { packURL($0.id) })
 
-        // Downloaded models (FluidAudio's folder), one entry for the Pocket model, one for the rest.
+        // Downloaded models (FluidAudio's folder), one entry for the Pocket model, one for the rest (the removed voices'
+        // models are leftovers, below).
         let modelDirs = ((try? FileManager.default.contentsOfDirectory(at: loc.models, includingPropertiesForKeys: nil)) ?? [])
         let pocket = modelDirs.filter { $0.lastPathComponent == "pocket-tts" }
         add("modelPocket", "Pocket TTS model", modelLabels["pocket-tts"] ?? "", pocket)
-        let rest = modelDirs.filter { $0.lastPathComponent != "pocket-tts" }
+        let rest = modelDirs.filter { $0.lastPathComponent != "pocket-tts" && removedModels[$0.lastPathComponent] == nil }
         add("modelsOther", "Other voice models", rest.isEmpty ? "None downloaded"
             : rest.map { modelLabels[$0.lastPathComponent] ?? $0.lastPathComponent }.joined(separator: ", "), rest)
 
         add("drive", "Chapter audio", "Audio downloads and chapters ready for the car, in her voice",
             ["NarrationAudio", "DriveAudio"].map { loc.applicationSupport.appendingPathComponent($0, isDirectory: true) }
                 .filter { FileManager.default.fileExists(atPath: $0.path) })
-        let voices = loc.appStore.appendingPathComponent("voices", isDirectory: true)
+        let voices = importedVoices(loc)
         let ota = loc.appStore.appendingPathComponent("ota", isDirectory: true)
-        add("voices", "Imported voices", ".tnvoice files you added", [voices])
         add("webUpdates", "App updates over the air", "The newest web update and the one before", [ota])
         let store = max(0, sizeOf(loc.appStore) - sizeOf(voices) - sizeOf(ota))
         entries.append(StorageEntry(key: "reading", label: "Reading data", note: "Library, covers, chapter cache, downloads, logs", bytes: store))
@@ -205,6 +218,12 @@ public enum StorageMap {
         add("leftoverUnpacks", "Unfinished unpacks", "A pack install that was stopped part way",
             (installing ? [] : library.leftoverFolders()) + legacyLeftovers(loc), leftover: true)
         add("leftoverTemp", "Temporary import files", "", installing ? [] : tempLeftovers(loc), leftover: true)
+        let removedModelDirs = modelDirs.filter { removedModels[$0.lastPathComponent] != nil }
+        add("leftoverRemovedModels", "Models of removed voices",
+            removedModelDirs.compactMap { removedModels[$0.lastPathComponent] }.sorted().joined(separator: ", ") + " (no longer used)",
+            removedModelDirs, leftover: true)
+        add("leftoverImportedVoices", "Imported voices", "Voices for Chatterbox Nano (.tnvoice), no longer used",
+            [voices].filter { FileManager.default.fileExists(atPath: $0.path) }, leftover: true)
 
         // Documents beyond the above: the synced store when there is no iCloud (backups, library), anything put there.
         // (Pack files there while an install runs are counted under Other.)

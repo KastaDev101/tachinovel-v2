@@ -36,8 +36,8 @@ void installRecovery();
 installQaFolder();
 installNativeStorage();
 runSmokeTour();
-// Web updates and imported voices ("Open in TachiNovel" for .tnvoice files): personal flavor only (compiled out
-// of the store flavor).
+// Web updates and Nephis model packs ("Open in TachiNovel" for .tnmodel files: the result opens Voice Models): personal
+// flavor only (compiled out of the store flavor).
 if (__FLAVOR__ === 'personal') {
   installOtaUi();
   installVoiceImports();

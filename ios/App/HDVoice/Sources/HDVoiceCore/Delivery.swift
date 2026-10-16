@@ -1,14 +1,14 @@
 //
-//  Delivery.swift — natural delivery for the expressive narrator (Chatterbox Nano): the settings, what the
+//  Delivery.swift — natural delivery for the expressive narrator (Pocket TTS: Nephis): the settings, what the
 //  script says about each sentence, and how the on-device model's refined mood moves the parameters.
 //
 //  The text side (director rules, line classes, emphasis, non-verbal choice, pauses, breath points, breath-group
 //  chunks) lives in the TS core (src/core/narration/delivery.ts), so tuning ships as a signed web update. Each
 //  sentence of the script carries `delivery` {t, g, s, c, pre, nv, say, syl, ell, pun} (temperature, gain dB,
-//  tempo, varispeed cents, silence before, a non-verbal, the text Nano reads, syllables, where a dramatic "…" and
+//  tempo, varispeed cents, silence before, a non-verbal, the text the model reads, syllables, where a dramatic "…" and
 //  punctuation sit), `mood`, `line`, `naturalMs`, `breath` and `chunk`; the script carries the mood table and the
 //  audio tunables once (`delivery` header). Native only applies the numbers, clamped to a safety envelope, in the
-//  audio path (NaturalFinish.swift). Nano's own tags are never used: they sounded robotic and roughened the speech.
+//  audio path (NaturalFinish.swift).
 //
 
 import Foundation
@@ -39,9 +39,9 @@ public enum BreathPoint: String, Sendable, Equatable {
     case sentence
 }
 
-/// Settings › Voices › Expressive voices. Defaults: Kokoro reads chapters (the expressive narrator is opt-in); when
-/// Chatterbox Nano reads, natural delivery, the rules director, breaths, studio sound ("clean-warm"), non-verbals
-/// (when the voice has a pack) and breath-group synthesis are on.
+/// Listen's voice settings. Defaults: Pocket TTS reads chapters (Nephis once the app has switched her on); natural
+/// delivery, the AI director, breaths, studio sound ("clean-warm"), non-verbals (when the voice has a pack) and
+/// breath-group synthesis are on.
 public struct DeliverySettings: Sendable, Equatable, Codable {
     /// The read of the narrator voice for a sentence the script gave `voice` (nil = the calm Narrator), as these
     /// settings allow. Dialogue and thoughts (`speaks`): calm without acting, "performed" without moods, else the
@@ -54,15 +54,17 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         return moods && voice != "performed" ? voice : nil
     }
 
-    /// 2: Pocket TTS became the default Listen engine (version 1 only knew Chatterbox Nano, and saved it as the default).
+    /// 2: Pocket TTS became the default Listen engine (version 1 only knew Chatterbox Nano, and saved it as the default;
+    /// Nano was removed on 2026-10-16, and whoever still has it saved reads with Pocket TTS).
     /// 3: the AI director ("rules+ai", on-device, where available) became the default (older versions saved "rules").
     /// 4: natural delivery, studio sound and the AI director are automatic (cleanup 1, 2026-10-15): their old switches in
     /// Settings › Voices are gone, so an "off" saved before version 4 goes back on. Only More › Developer changes them now.
     public static let currentVersion = 4
     public static let pocketTts = "pocket-tts"
-    public static let chatterboxNano = "chatterbox-nano"
+    /// Chatterbox Nano, an engine of older builds (removed 2026-10-16): saved, it reads as Pocket TTS.
+    static let removedNano = "chatterbox-nano"
     /// The expressive engines Listen can read chapters with.
-    public static let listenEngines: Set<String> = [pocketTts, chatterboxNano]
+    public static let listenEngines: Set<String> = [pocketTts]
     public static let rules = "rules"
     public static let rulesAI = "rules+ai"
     public static let chunks = "chunks"
@@ -75,9 +77,9 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
 
     public var version: Int
     /// Listen reads chapters with this expressive engine when it is downloaded: Pocket TTS with the built-in
-    /// "Narrator" voice by default (CPU + Neural Engine, so it keeps reading with the screen locked and in CarPlay),
-    /// or Chatterbox Nano; nil = Kokoro. When Pocket isn't downloaded, Nano reads if it is, then Kokoro; Kokoro
-    /// still reads any sentence the expressive engine can't.
+    /// "Narrator" voice by default (CPU + Neural Engine, so it keeps reading with the screen locked and in CarPlay);
+    /// nil = Kokoro. When Pocket isn't downloaded, Kokoro reads; Kokoro still reads any sentence the expressive engine
+    /// can't.
     public var listenEngine: String?
     /// Natural delivery: the director, context pauses, the clean chain, breaths.
     public var natural: Bool
@@ -137,8 +139,8 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
             listenEngine = nil // Kokoro was chosen
         } else {
             let engine = try? c.decode(String.self, forKey: .listenEngine)
-            // Version 1 saved Chatterbox Nano as the default (nobody could pick it): those move to Pocket TTS.
-            if saved < 2, engine == Self.chatterboxNano {
+            // Chatterbox Nano (version 1's default; removed 2026-10-16) moves to Pocket TTS.
+            if engine == Self.removedNano {
                 listenEngine = Self.pocketTts
             } else {
                 listenEngine = engine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
@@ -187,7 +189,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
 
 /// One sentence's synthesis parameters (the script's `delivery`).
 public struct DeliveryParams: Sendable, Equatable {
-    /// Nano sampling temperature.
+    /// Sampling temperature.
     public var temperature: Float
     /// Gain after loudness matching, dB.
     public var gainDB: Double
@@ -197,11 +199,11 @@ public struct DeliveryParams: Sendable, Equatable {
     public var cents: Double
     /// Silence before the sentence, seconds at 1.0×.
     public var preSeconds: Double
-    /// The text Nano reads when it differs from the sentence's text.
+    /// The text the model reads when it differs from the sentence's text.
     public var say: String?
     /// A non-verbal to splice in front (from the voice's pack).
     public var nonVerbal: NonVerbalType?
-    /// Syllables Nano says (rate leveling); 0 = unknown.
+    /// Syllables the model says (rate leveling); 0 = unknown.
     public var syllables: Int
     /// Where a dramatic "…" sits inside the sentence, and where punctuation sits (shares of the letters).
     public var ellipses: [Double]
@@ -327,7 +329,7 @@ public struct NaturalSentence: Sendable, Equatable {
     }
 }
 
-/// Mood → Nano's controls (delivery.ts MOOD_TABLE, shipped with every script).
+/// Mood → the model's controls (delivery.ts MOOD_TABLE, shipped with every script).
 public struct MoodTable: Sendable, Equatable {
     public struct Entry: Sendable, Equatable {
         public var temperature: Double

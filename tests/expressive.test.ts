@@ -1,4 +1,4 @@
-/** Experimental expressive voices (docs/expressive-tts.md): model pinning, samples, the emotion heuristic, wiring. */
+/** The expressive voice, Pocket TTS (docs/expressive-tts.md): model pinning, samples, the emotion heuristic, wiring. */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -31,12 +31,6 @@ describe('pinned expressive models', () => {
   it('matches the FluidAudio loaders: the models each manager requires are in the lock', () => {
     const paths = (id: string): string[] => lock.engines.find((e) => e.id === id)?.files.map((f) => f.path) ?? [];
     const has = (id: string, prefix: string): boolean => paths(id).some((p) => p.startsWith(prefix));
-    for (const m of ['T3Nano-Prefill-T512-M1536-fp16.mlmodelc/', 'T3Nano-Decode-M1536-fp16-stateful.mlmodelc/', 'FlowMean-N500-fp16.mlmodelc/', 'HiFT-T1000-fp16.mlmodelc/', 'tables/voice-default.safetensors', 'tokenizer/added_tokens.json']) {
-      expect(has('chatterbox-nano', m), m).toBe(true);
-    }
-    for (const m of ['LM-Prefill-T768-M2048-fp16.mlmodelc/', 'LM-Decode-M2048-fp16-stateful.mlmodelc/', 'NeuCodec-Decoder-fp16.mlmodelc/', 'tokenizer.json', 'samples/emily.json', 'LICENSE']) {
-      expect(has('neutts-2e', m), m).toBe(true);
-    }
     for (const m of ['v2.1/english/flowlm_step_ane.mlmodelc/', 'v2.1/english/mimi_decoder.mlmodelc/', 'v2.1/english/constants_bin/alba.safetensors']) {
       expect(has('pocket-tts', m), m).toBe(true);
     }
@@ -60,8 +54,9 @@ describe('pinned expressive models', () => {
     const swift = read('ios/App/ExpressiveVoice/Sources/ExpressiveCore/ExpressiveCatalog.swift');
     const ids = [...swift.matchAll(/case \w+ = "([a-z0-9-]+)"/g)].map((m) => m[1]);
     expect(ids.sort()).toEqual(lock.engines.map((e) => e.id).sort());
-    // The app offers all three; Pocket TTS (the Narrator voice, CPU/Neural Engine) is the default Listen engine.
-    expect(lock.engines.filter((e) => e.inApp).map((e) => e.id).sort()).toEqual(['chatterbox-nano', 'neutts-2e', 'pocket-tts']);
+    // Pocket TTS (Nephis, CPU/Neural Engine) is the one engine; Chatterbox Nano and NeuTTS-2E were removed (2026-10-16).
+    expect(lock.engines.filter((e) => e.inApp).map((e) => e.id)).toEqual(['pocket-tts']);
+    expect(swift).not.toMatch(/chatterbox|neutts/i);
   });
 });
 

@@ -2,7 +2,7 @@
  * Voice Models (src/ui/native/expressive-lab.ts) in the PC shell, against a canned ExpressiveVoice plugin: reachable
  * through More › Developer › Voice Models (Developer options), a model download asks first (the native alert, with its
  * size and Wi-Fi), Play / Kokoro A/B / Speed test send the sample's lines with their acting (emotion, style, speaker),
- * pasted text is annotated, and deleting a model asks first too (cleanup 2: one confirmation style).
+ * pasted text is annotated, and deleting a model asks first too (cleanup 2: one confirmation style). One engine: hers.
  * Screenshots: .cache/shell-shots/expressive-lab-engines.png, expressive-lab.png
  */
 import { mkdirSync } from 'node:fs';
@@ -18,7 +18,9 @@ let shell: PcShell;
 const alerts: { title: string; message: string }[] = [];
 const alertAnswers: number[] = [];
 
-const status = {
+/** Her model: not downloaded until the download is asked for, then installed and loaded (what a finished download looks like). */
+let installed = false;
+const status = () => ({
   available: true,
   freeMB: 52_000,
   memoryWarnings: 0,
@@ -27,17 +29,13 @@ const status = {
   device: { thermal: 'nominal', memoryMB: 240, availableMB: 3100, lowPower: false, os: 'Version 26.6.1' },
   engines: [
     {
-      id: 'chatterbox-nano', title: 'Chatterbox Nano', blurb: 'Acts on tags.', license: 'MIT', upstream: 'ResembleAI/chatterbox-nano',
-      bytes: 745_800_000, gpu: true, supported: true, installed: false, bytesOnDisk: 0, download: { state: 'idle' }, load: { state: 'unloaded' },
-    },
-    {
-      id: 'neutts-2e', title: 'NeuTTS-2E', blurb: 'Seven emotions.', license: 'NeuTTS Open License v1.0', upstream: 'neuphonic/neutts-2e',
-      bytes: 1_370_200_000, gpu: true, supported: true, installed: true, bytesOnDisk: 1_370_200_000, download: { state: 'idle' }, load: { state: 'ready' },
-      lastLoadMs: 4200, lastLoadCold: true,
+      id: 'pocket-tts', title: 'Pocket TTS', blurb: 'Kyutai, 100M.', license: 'CC-BY-4.0', upstream: 'kyutai/pocket-tts',
+      bytes: 367_500_000, installed, bytesOnDisk: installed ? 367_500_000 : 0, download: { state: 'idle' },
+      load: { state: installed ? 'ready' : 'unloaded' }, ...(installed ? { lastLoadMs: 4200, lastLoadCold: true } : {}),
     },
   ],
   session: { state: 'idle' },
-};
+});
 
 type Call = { methodName: string; options: Record<string, unknown> };
 const calls = (method: string): Call[] => shell.pluginCalls.filter((c) => c.pluginId === 'ExpressiveVoice' && c.methodName === method);
@@ -61,7 +59,15 @@ describe('More › Developer › Voice Models (PC shell)', () => {
         },
       },
     });
-    for (const m of ['status', 'download', 'cancelDownload', 'play', 'stop', 'speedTest', 'unload']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, () => status);
+    for (const m of ['status', 'cancelDownload', 'play', 'stop', 'speedTest', 'unload']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, status);
+    shell.pluginReplies.set('ExpressiveVoice.download', () => {
+      installed = true;
+      return status();
+    });
+    shell.pluginReplies.set('ExpressiveVoice.remove', () => {
+      installed = false;
+      return status();
+    });
   });
 
   afterAll(async () => {
@@ -78,26 +84,28 @@ describe('More › Developer › Voice Models (PC shell)', () => {
     await page.getByTestId('screen-developer').getByTestId('dev-models').click();
     const lab = page.getByTestId('expressive-lab');
     await lab.waitFor({ timeout: 5000 });
-    await expect.poll(() => lab.locator('[data-engine]').count(), { timeout: 5000 }).toBe(2);
-    await lab.locator('[data-engine="chatterbox-nano"]').scrollIntoViewIfNeeded();
+    // One engine: hers (Chatterbox Nano and NeuTTS-2E were removed on 2026-10-16).
+    await expect.poll(() => lab.locator('[data-engine]').count(), { timeout: 5000 }).toBe(1);
+    const pocket = lab.locator('[data-engine="pocket-tts"]');
+    await pocket.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(shots, 'expressive-lab-engines.png') });
+    expect(await lab.textContent()).not.toMatch(/Chatterbox|NeuTTS|Narrator voice|Import Voice/i);
 
     // A download asks first, naming the size and Wi-Fi; Cancel downloads nothing.
-    const cb = lab.locator('[data-engine="chatterbox-nano"]');
     alertAnswers.push(1);
-    await cb.getByRole('button', { name: 'Download 746 MB' }).click();
+    await pocket.getByRole('button', { name: 'Download 368 MB' }).click();
     await expect.poll(() => alerts.length).toBe(1);
-    expect(alerts[0]?.title).toBe('Download Chatterbox Nano?');
-    expect(alerts[0]?.message).toMatch(/746 MB.*Wi-Fi/);
+    expect(alerts[0]?.title).toBe('Download Pocket TTS?');
+    expect(alerts[0]?.message).toMatch(/368 MB.*Wi-Fi/);
     expect(calls('download')).toEqual([]);
-    await cb.getByRole('button', { name: 'Download 746 MB' }).click();
-    await expect.poll(() => calls('download').map((c) => c.options.engine)).toEqual(['chatterbox-nano']);
+    await pocket.getByRole('button', { name: 'Download 368 MB' }).click();
+    await expect.poll(() => calls('download').map((c) => c.options.engine)).toEqual(['pocket-tts']);
 
-    // Play the emotional dialogue with NeuTTS-2E: every line carries its acting.
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Play Sample' }).click();
+    // Play the emotional dialogue with her: every line carries its acting.
+    await pocket.getByRole('button', { name: 'Play Sample' }).click();
     await expect.poll(() => calls('play').length).toBe(1);
     const play = calls('play')[0]?.options as { engine: string; sample: string; lines: { text: string; emotion: string; role: string; style?: string }[] };
-    expect(play.engine).toBe('neutts-2e');
+    expect(play.engine).toBe('pocket-tts');
     expect(play.sample).toBe('dialogue');
     expect(play.lines.length).toBe(11);
     expect(new Set(play.lines.map((l) => l.emotion)).size).toBeGreaterThanOrEqual(5);
@@ -105,14 +113,14 @@ describe('More › Developer › Voice Models (PC shell)', () => {
 
     // The same sample with Kokoro (A/B), then a speed test.
     await lab.getByRole('button', { name: /Same Sample With Kokoro/ }).click();
-    await expect.poll(() => calls('play').map((c) => c.options.engine)).toEqual(['neutts-2e', 'kokoro']);
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Speed Test' }).click();
-    await expect.poll(() => calls('speedTest').map((c) => c.options.engine)).toEqual(['neutts-2e']);
+    await expect.poll(() => calls('play').map((c) => c.options.engine)).toEqual(['pocket-tts', 'kokoro']);
+    await pocket.getByRole('button', { name: 'Speed Test' }).click();
+    await expect.poll(() => calls('speedTest').map((c) => c.options.engine)).toEqual(['pocket-tts']);
 
     // Pasted text is annotated with guessed emotions and speakers.
     await lab.getByRole('button', { name: 'Your text' }).click();
     await lab.locator('textarea').fill('“Get out!” she shouted.\n“I’m sorry,” he whispered.');
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Play Sample' }).click();
+    await pocket.getByRole('button', { name: 'Play Sample' }).click();
     await expect.poll(() => calls('play').length).toBe(3);
     const custom = calls('play')[2]?.options as { sample: string; lines: { emotion: string; role: string; style?: string }[] };
     expect(custom.sample).toBe('custom');
@@ -122,10 +130,9 @@ describe('More › Developer › Voice Models (PC shell)', () => {
     ]);
 
     // Deleting asks first too (the size it frees), and says what happened.
-    const neutts = lab.locator('[data-engine="neutts-2e"]');
-    await neutts.getByRole('button', { name: 'Delete Model' }).click();
-    await expect.poll(() => calls('remove').map((c) => c.options.engine)).toEqual(['neutts-2e']);
-    expect(alerts.at(-1)).toMatchObject({ title: 'Delete NeuTTS-2E?', message: 'Frees 1370 MB. You can download it again.' });
+    await pocket.getByRole('button', { name: 'Delete Model' }).click();
+    await expect.poll(() => calls('remove').map((c) => c.options.engine)).toEqual(['pocket-tts']);
+    expect(alerts.at(-1)).toMatchObject({ title: 'Delete Pocket TTS?', message: 'Frees 368 MB. You can download it again.' });
     await expect.poll(() => lab.getByTestId('xlab-message').textContent(), { timeout: 5000 }).toBe('Model deleted.');
 
     await page.screenshot({ path: path.join(shots, 'expressive-lab.png') });

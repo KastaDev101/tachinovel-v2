@@ -1,7 +1,7 @@
 //
 //  NonVerbal.swift — recorded non-verbals (chuckle, light laugh, "hm", "mm") and breath snippets from a voice's own
 //  pack, spliced around the speech instead of Nano's tags (which sounded robotic and roughened the next second of
-//  speech). A pack is a folder: manifest.json + WAV files, shipped with the built-in voice and inside a .tnvoice:
+//  speech). A pack is a folder: manifest.json + WAV files, shipped with a voice:
 //
 //    { "format": "tachinovel-nonverbals", "version": 1,
 //      "items": [ { "file": "chuckle-1.wav", "type": "chuckle", "duration": 0.62, "levelDb": -23.5 }, … ] }

@@ -87,7 +87,7 @@ final class NarrationAudioStore: @unchecked Sendable {
     static var nephisReads: Bool {
         guard VoiceSettings.shared.prefs.delivery.isNephis, NarrationController.listenEngine() == .pocketTts else { return false }
         // Her model on this iPhone at all (not downloaded: Kokoro reads, and renders).
-        return ExpressiveService.supported(.pocketTts) && ExpressiveService.shared.isInstalled(.pocketTts)
+        return ExpressiveService.shared.isInstalled(.pocketTts)
     }
 
     /// Her part of the key: her packs, her studio, their chains and the delivery settings that change her sound.

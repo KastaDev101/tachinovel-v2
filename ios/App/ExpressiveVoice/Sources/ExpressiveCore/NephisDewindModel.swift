@@ -26,6 +26,7 @@
 //
 
 import CoreML
+import CryptoKit
 import Foundation
 
 public final class NephisDewindModel: DewindNetwork, @unchecked Sendable {
@@ -115,7 +116,7 @@ public final class NephisDewindModel: DewindNetwork, @unchecked Sendable {
         }.sorted()
         var lines = ""
         for rel in paths { lines += "\(rel)\u{0}\(try ModelStore.sha256(of: package.appendingPathComponent(rel)))\n" }
-        return VoicePack.sha256Hex(Data(lines.utf8))
+        return SHA256.hash(data: Data(lines.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The network in `dir` (a pack's Models/nephis-dewind). `compiled(name, dir)`: `<name>.mlmodelc` in `dir`, compiling

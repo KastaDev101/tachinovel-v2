@@ -1,9 +1,10 @@
 /**
  * Settings › Storage › "Voices & models" (native app): everything TachiNovel keeps on this iPhone beyond the reading
  * data v1's Storage page counts, by category (native: ExpressiveCore StorageMap.swift through DiagFolder.storage):
- * Nephis's packs (the one in use, the others), downloaded voice models, imported voices, chapters made ready for the
- * car, the Voice test recording, web updates, caches, and the leftovers: copies iOS made of a shared .tnmodel
- * (350-500 MB each, kept for ever before 2026-10-13), pack files that didn't install and unfinished unpacks.
+ * Nephis's packs (the one in use, the others), downloaded voice models, chapters made ready for the car, the Voice test
+ * recording, web updates, caches, and the leftovers: copies iOS made of a shared .tnmodel (350-500 MB each, kept for ever
+ * before 2026-10-13), pack files that didn't install, unfinished unpacks, and the models and imported .tnvoice voices of
+ * the voices removed on 2026-10-16 (Chatterbox Nano, NeuTTS-2E).
  * "Clean Up" removes the leftovers only: never a pack, a model, the reading data or the recording.
  *
  * The row comes from a build-time patch of v1's Storage page (tools/v1-qa.ts) that reads `globalThis.__TN_STORAGE__`
@@ -63,7 +64,7 @@ export function cleanedMessage(removed: number, bytes: number): string {
 }
 
 const GROUPS: { title: string; keys: string[] }[] = [
-  { title: 'Voices & models', keys: ['packActive', 'packsOther', 'modelPocket', 'modelsOther', 'voices', 'drive', 'recordings'] },
+  { title: 'Voices & models', keys: ['packActive', 'packsOther', 'modelPocket', 'modelsOther', 'drive', 'recordings'] },
   { title: 'Reading & the app', keys: ['reading', 'documents', 'webUpdates', 'caches', 'other'] },
 ];
 

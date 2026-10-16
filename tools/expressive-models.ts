@@ -1,8 +1,9 @@
 /**
- * Pinned model files for the EXPERIMENTAL expressive voices (docs/expressive-tts.md).
+ * Pinned model files for the expressive voice, Pocket TTS (docs/expressive-tts.md): Nephis reads with it.
  *
- * These models are big (0.4–1.4 GB each), so the app never bundles them: the hidden Voice Lab downloads
- * one on demand (Wi-Fi, size warning, delete button) and the CI benchmark downloads them per run. Both use
+ * The model is big (~370 MB), so the app never bundles it: More › Voices › Download Her Voice (or Developer › Voice
+ * Models) downloads it on demand (Wi-Fi, size warning, delete button) and the CI benchmark downloads it per run.
+ * A Nephis model pack (.tnmodel) carries its own copy, so a phone with a pack never needs this download. Both use
  * the same Swift downloader (ios/App/ExpressiveVoice, ExpressiveCore/ModelDownloader.swift), which fetches
  * exactly the files listed here from Hugging Face at the PINNED revision and checks every file's SHA-256.
  *
@@ -30,7 +31,7 @@ export const SWIFT_PATH = path.join(root, 'ios', 'App', 'ExpressiveVoice', 'Sour
 /** FluidAudio version whose loaders these file sets match (ios/App/ExpressiveVoice/Package.swift pins it). */
 export const FLUIDAUDIO_VERSION = '0.17.5';
 
-export type EngineId = 'chatterbox-nano' | 'neutts-2e' | 'pocket-tts';
+export type EngineId = 'pocket-tts';
 
 export interface EngineSpec {
   id: EngineId;
@@ -51,39 +52,9 @@ export interface EngineSpec {
 
 const under = (dirs: string[]) => (p: string) => dirs.some((d) => p.startsWith(`${d}/`));
 
-/** Which repo files each engine needs (FluidAudio 0.17.5: ModelNames.ChatterboxNano / NeuTts / PocketTTS). */
+/** Which repo files each engine needs (FluidAudio 0.17.5: ModelNames.PocketTTS). Chatterbox Nano and NeuTTS-2E were
+ * removed on 2026-10-16. */
 export const ENGINES: EngineSpec[] = [
-  {
-    id: 'chatterbox-nano',
-    title: 'Chatterbox Nano',
-    repo: 'FluidInference/chatterbox-nano-coreml',
-    revision: 'f28421eff8e34bb6d70663ba1e3b1295562c620b',
-    folder: 'chatterbox-nano',
-    license: 'MIT',
-    licenseUrl: 'https://huggingface.co/ResembleAI/chatterbox-nano',
-    upstream: 'ResembleAI/chatterbox-nano',
-    inApp: true,
-    // Standard output capacity (≈9.9 s per call): the T3 pair + FlowMean-N500 + HiFT-T1000, tables, tokenizer.
-    include: (p) =>
-      under(['T3Nano-Prefill-T512-M1536-fp16.mlmodelc', 'T3Nano-Decode-M1536-fp16-stateful.mlmodelc', 'FlowMean-N500-fp16.mlmodelc', 'HiFT-T1000-fp16.mlmodelc'])(p) ||
-      ['tables/tables.safetensors', 'tables/voice-default.safetensors', 'tokenizer/vocab.json', 'tokenizer/merges.txt', 'tokenizer/added_tokens.json'].includes(p),
-  },
-  {
-    id: 'neutts-2e',
-    title: 'NeuTTS-2E',
-    repo: 'FluidInference/neutts-2e-coreml',
-    revision: '1f2fed10b5ec3d2979747b08556daa5861d88bf8',
-    folder: 'neutts-2e',
-    license: 'NeuTTS Open License v1.0',
-    licenseUrl: 'https://huggingface.co/FluidInference/neutts-2e-coreml/blob/1f2fed10b5ec3d2979747b08556daa5861d88bf8/LICENSE',
-    upstream: 'neuphonic/neutts-2e',
-    inApp: true,
-    // The M=2048 LM pair FluidAudio loads, the NeuCodec decoder, tokenizer, the 4 speaker references, LICENSE
-    // (the license requires passing a copy on with the weights).
-    include: (p) =>
-      under(['LM-Prefill-T768-M2048-fp16.mlmodelc', 'LM-Decode-M2048-fp16-stateful.mlmodelc', 'NeuCodec-Decoder-fp16.mlmodelc'])(p) ||
-      ['tokenizer.json', 'LICENSE', 'samples/emily.json', 'samples/paul.json', 'samples/sophie.json', 'samples/steven.json'].includes(p),
-  },
   {
     id: 'pocket-tts',
     title: 'Pocket TTS',

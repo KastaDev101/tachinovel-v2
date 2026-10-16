@@ -25,6 +25,7 @@
 //  Main thread only, like ExpressiveService (its callbacks come on main); file work on DiagnosticsFiles.queue.
 //
 
+import AVFoundation
 import ExpressiveCore
 import ExpressiveEngines
 import Foundation
@@ -390,7 +391,7 @@ final class VoiceSpeedTest {
         guard let url = lastAudio, FileManager.default.fileExists(atPath: url.path) else { return false }
         ExpressiveLabPlayer.shared.stop()
         NarrationController.shared.activateForSample()
-        try VoicePreviewPlayer.shared.play(.file(url))
+        try VoicePreviewPlayer.shared.play(url)
         return true
     }
 
@@ -656,5 +657,39 @@ final class VoiceSpeedTest {
         out["audioSamples"] = audioSamples
         out["listenStopped"] = r.stoppedListen
         return out
+    }
+}
+
+/// Plays the speed test's rendered passage ("Play result") from its file. Main thread.
+final class VoicePreviewPlayer: NSObject, AVAudioPlayerDelegate {
+    enum PlayError: LocalizedError {
+        case notPlayable(String)
+
+        var errorDescription: String? {
+            switch self { case .notPlayable(let why): return why }
+        }
+    }
+
+    static let shared = VoicePreviewPlayer()
+    private var player: AVAudioPlayer?
+
+    func play(_ url: URL) throws {
+        stop()
+        let p = try AVAudioPlayer(contentsOf: url)
+        p.delegate = self
+        guard p.duration > 0, p.duration < 120 else { throw PlayError.notPlayable("the audio isn’t playable") }
+        p.prepareToPlay()
+        guard p.play() else { throw PlayError.notPlayable("the audio couldn’t be played") }
+        player = p
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+    }
+
+    // AVAudioPlayer calls its delegate on the main thread.
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        if self.player === player { self.player = nil }
     }
 }
