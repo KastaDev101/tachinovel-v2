@@ -7,15 +7,15 @@
  *    (NephisDialogue.swift). Without dialogue packs the page is one list, as before; with one, a Narrator section and a
  *    Dialogue section, the dialogue one with "Narrator Reads Dialogue Too" (no dialogue pack in use). A pack's role is its
  *    pack.json "role"; Edit puts "Use for Dialogue" / "Use for Narration" on every row (setNephisPackRole).
- *  - Edit (top right) puts Delete on every row; Delete asks on the row itself (never a browser dialog). Deleting hers
- *    says what she reads with next: the next pack in the list, or the voice the app came with when it was the last.
+ *  - Edit (top right) puts Delete on every row; Delete asks with the native alert (the app's one confirmation). Deleting
+ *    hers says what she reads with next: the next pack in the list, or the voice the app came with when it was the last.
  *  - Storage: the total the packs use (350-500 MB each).
  * Opening a .tnmodel (Files, the share sheet, or the app's Documents folder) adds it and makes it hers (a dialogue pack:
  * her dialogue voice).
  */
 import { formatBytes } from './drive-status.ts';
 import { ExpressiveVoice } from './expressive-lab.ts';
-import { esc, panel, toast } from './voices-ui.ts';
+import { check, confirmStep, esc, panel, skeleton, toast, unavailable } from './panel.ts';
 
 export type PackRole = 'narrator' | 'dialogue';
 
@@ -122,7 +122,6 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
   let list: VoicePacks | null = null;
   let failed = false;
   let editing = false;
-  let asking: string | null = null;
   let busy = false;
 
   const edit = document.createElement('button');
@@ -130,57 +129,51 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
   edit.className = 'edit';
   edit.dataset.act = 'edit';
   edit.dataset.testid = 'voice-packs-edit';
-  p.root.querySelector('.hd')?.append(edit);
+  p.right.append(edit);
 
   const row = (x: VoicePack): string => {
-    // ✓ stays in Edit, so deleting hers is never a guess.
+    // The checkmark stays in Edit, so deleting hers is never a guess.
     const other = x.role === 'dialogue' ? 'Narration' : 'Dialogue';
-    const tail = `<span class="check" aria-hidden="true">${inUse(x) ? '✓' : ''}</span>${
+    const tail = `${check(inUse(x))}${
       editing
         ? `<button type="button" class="link" data-act="role" data-id="${esc(x.id)}" aria-label="Use ${esc(x.name)} for ${other}">For ${other}</button>` +
-          `<button type="button" class="link" data-act="ask" data-id="${esc(x.id)}" style="color:#ff8a8a" aria-label="Delete ${esc(x.name)}">Delete</button>`
+          `<button type="button" class="link danger" data-act="delete" data-id="${esc(x.id)}" aria-label="Delete ${esc(x.name)}">Delete</button>`
         : ''
     }`;
-    const ask =
-      asking === x.id && list
-        ? `<div class="row" data-testid="voice-packs-confirm"><div class="main"><span class="sub" style="margin:0">${esc(deletePrompt(list, x.id))}</span>
-            <div class="chips" style="margin-top:10px"><button type="button" class="chip" data-act="cancel">Cancel</button><button type="button" class="chip" data-act="delete" data-id="${esc(x.id)}" style="color:#ff8a8a">Delete</button></div></div></div>`
-        : '';
     return `<div class="row" data-pack="${esc(x.id)}">
-        <button type="button" class="main" data-act="pick" data-id="${esc(x.id)}" style="text-align:left;padding:0"${inUse(x) ? ' aria-current="true"' : ''}><b>${esc(x.name)}</b><span class="sub">${esc(packLine(x))}</span></button>
+        <button type="button" class="main" data-act="pick" data-id="${esc(x.id)}"${inUse(x) ? ' aria-current="true"' : ''}><b>${esc(x.name)}</b><span class="sub">${esc(packLine(x))}</span></button>
         ${tail}
-      </div>${ask}`;
+      </div>`;
   };
 
   const render = (): void => {
     edit.textContent = editing ? 'Done' : 'Edit';
     edit.hidden = !list || list.packs.length === 0;
     if (!list) {
-      p.body.innerHTML = failed
-        ? '<p class="note">Voice packs aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
-        : '<p class="note">Loading…</p>';
+      p.body.innerHTML = failed ? unavailable('Voice packs aren’t available right now.') : skeleton(3);
       return;
     }
     const howToAdd = 'To add one, open a .tnmodel file made on the PC: in Files or the share sheet, choose TachiNovel.';
     const narrators = list.packs.filter((x) => x.role === 'narrator');
     const dialogues = list.packs.filter((x) => x.role === 'dialogue');
     const storage = `<div class="sec">Storage</div>
-      <div class="card"><div class="row" data-testid="voice-packs-total"><div class="main"><b>Total Used</b><span class="sub">Each pack is 350–500 MB. Packs aren’t in iCloud backups.</span></div><span>${esc(formatBytes(list.totalBytes))}</span></div></div>`;
+      <div class="card"><div class="row" data-testid="voice-packs-total"><span class="main"><b>Total Used</b></span><span class="val">${esc(formatBytes(list.totalBytes))}</span></div></div>
+      <p class="note">Each pack is 350–500 MB. Packs aren’t in iCloud backups.</p>`;
     if (list.packs.length === 0) {
-      p.body.innerHTML = `<p class="note" data-testid="voice-packs-empty">No voice packs yet: Nephis reads with the voice the app came with. ${esc(howToAdd)}</p>`;
+      p.body.innerHTML = `<div class="sec">On This iPhone</div><div class="card"><div class="row"><span class="main sub" data-testid="voice-packs-empty">No voice packs yet: Nephis reads with the voice the app came with.</span></div></div>
+      <p class="note">${esc(howToAdd)}</p>`;
     } else if (dialogues.length === 0) {
-      p.body.innerHTML = `<div class="sec">On this iPhone</div><div class="card" data-testid="voice-packs-list">${narrators.map(row).join('')}</div>
-      <p class="note">Nephis reads with the pack with the ✓, from her next sentence. ${esc(howToAdd)}</p>${storage}`;
+      p.body.innerHTML = `<div class="sec">On This iPhone</div><div class="card" data-testid="voice-packs-list">${narrators.map(row).join('')}</div>
+      <p class="note">Nephis reads with the checked pack from her next sentence. ${esc(howToAdd)}</p>${storage}`;
     } else {
       const none = !dialogues.some((x) => x.dialogue);
       const narratorList = narrators.length
         ? narrators.map(row).join('')
-        : '<div class="row"><div class="main"><span class="sub" style="margin:0">None: she narrates with the voice the app came with.</span></div></div>';
+        : '<div class="row"><span class="main sub">None: she narrates with the voice the app came with.</span></div>';
       p.body.innerHTML = `<div class="sec">Narrator</div><div class="card" data-testid="voice-packs-list">${narratorList}</div>
       <div class="sec">Dialogue</div><div class="card" data-testid="voice-packs-dialogue">${dialogues.map(row).join('')}
-        <div class="row" data-testid="voice-packs-no-dialogue"><button type="button" class="main" data-act="no-dialogue" style="text-align:left;padding:0"${none ? ' aria-current="true"' : ''}><b>Narrator Reads Dialogue Too</b><span class="sub">No dialogue pack: one voice for everything</span></button>
-          <span class="check" aria-hidden="true">${none ? '✓' : ''}</span></div></div>
-      <p class="note">Nephis narrates with the Narrator pack with the ✓ and speaks quoted dialogue with the Dialogue pack with the ✓, in the same voice, from her next sentence. ${esc(howToAdd)}</p>${storage}`;
+        <div class="row" data-testid="voice-packs-no-dialogue"><button type="button" class="main" data-act="no-dialogue"${none ? ' aria-current="true"' : ''}><b>Narrator Reads Dialogue Too</b><span class="sub">No dialogue pack: one voice for everything</span></button>${check(none)}</div></div>
+      <p class="note">Nephis narrates with the checked Narrator pack and speaks quoted dialogue with the checked Dialogue pack, in the same voice, from her next sentence. ${esc(howToAdd)}</p>${storage}`;
     }
   };
 
@@ -196,7 +189,7 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
         done?.(next);
         onDone();
       })
-      .catch((err: unknown) => toast(`Couldn’t change the voice pack: ${err instanceof Error ? err.message : String(err)}`))
+      .catch((err: unknown) => toast(`Couldn’t change the voice pack: ${err instanceof Error ? err.message : String(err)}`, true))
       .finally(() => {
         busy = false;
         render();
@@ -227,7 +220,6 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
         return;
       case 'edit':
         editing = !editing;
-        asking = null;
         render();
         return;
       case 'pick': {
@@ -252,33 +244,30 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
         );
         return;
       }
-      case 'ask':
-        asking = asking === id ? null : id;
-        render();
-        return;
-      case 'cancel':
-        asking = null;
-        render();
-        return;
       case 'delete': {
         const x = list?.packs.find((q) => q.id === id);
-        if (!x || busy) return;
-        asking = null;
-        apply(ExpressiveVoice.deleteNephisPack({ id }), (l) => {
-          if (l.packs.length === 0) editing = false;
-          if (x.role === 'dialogue') {
-            const now = l.packs.find((q) => q.dialogue);
-            toast(x.dialogue ? (now ? `Deleted “${x.name}”. Nephis speaks dialogue with “${now.name}”.` : `Deleted “${x.name}”. Her narrator pack reads dialogue too.`) : `Deleted “${x.name}”.`);
-            return;
-          }
-          const now = l.packs.find((q) => q.active);
-          toast(x.active ? (now ? `Deleted “${x.name}”. Nephis reads with “${now.name}”.` : `Deleted “${x.name}”. Nephis reads with the voice the app came with.`) : `Deleted “${x.name}”.`);
+        if (!x || !list || busy) return;
+        void confirmStep('Delete Voice Pack?', deletePrompt(list, id), 'Delete').then((yes) => {
+          if (yes) remove(x);
         });
         return;
       }
       default:
     }
   });
+
+  const remove = (x: VoicePack): void => {
+    apply(ExpressiveVoice.deleteNephisPack({ id: x.id }), (l) => {
+      if (l.packs.length === 0) editing = false;
+      if (x.role === 'dialogue') {
+        const now = l.packs.find((q) => q.dialogue);
+        toast(x.dialogue ? (now ? `Deleted “${x.name}”. Nephis speaks dialogue with “${now.name}”.` : `Deleted “${x.name}”. Her narrator pack reads dialogue too.`) : `Deleted “${x.name}”.`);
+        return;
+      }
+      const now = l.packs.find((q) => q.active);
+      toast(x.active ? (now ? `Deleted “${x.name}”. Nephis reads with “${now.name}”.` : `Deleted “${x.name}”. Nephis reads with the voice the app came with.`) : `Deleted “${x.name}”.`);
+    });
+  };
   render();
   load();
 }

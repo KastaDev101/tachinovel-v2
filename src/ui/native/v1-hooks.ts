@@ -12,7 +12,9 @@
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
 import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
+import { confirmAlert } from '@v1/ui/state/actions.ts';
 import { symbols } from '@v1/ui/state/store.ts';
+import { errorToast, showToast } from '@v1/ui/state/toast.ts';
 import { DEVELOPER_CHANGED, isDeveloper, noteDeveloper, setDeveloper } from './dev-flags.ts';
 import { openDeveloperScreen } from './developer-ui.ts';
 import { addCrashReportsRow } from './diagnostics-overlay.ts';
@@ -20,7 +22,8 @@ import { addDriveCard, installDrive } from './drive-ui.ts';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
-import { openVoicesScreen, toast, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
+import { toast, useV1Kit } from './panel.ts';
+import { openVoicesScreen, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
 /** More › Developer › Legacy › "Use PC Audio" (off by default). */
 let pcAudio = false;
@@ -158,6 +161,12 @@ async function copyVersion(text: string): Promise<void> {
 }
 
 export function installV1Hooks(): void {
+  // The v2 screens' icons, toast and confirmations are v1's (panel.ts).
+  useV1Kit({
+    iconUrl: (name) => symbols.value[name] ?? fallbackIconUrl(name),
+    toast: (text, error) => (error ? errorToast(text) : void showToast(text)),
+    confirm: confirmAlert,
+  });
   let queued = false;
   const apply = (): void => {
     queued = false;

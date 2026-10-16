@@ -17,7 +17,8 @@
 import { sharedClient } from '../capacitor-client.ts';
 import { formatSpeed, presetFor, snapSpeed, SPEED_MAX, SPEED_MIN, SPEED_PRESETS, SPEED_STEP, VOLUME_MAX_PERCENT, volumePercent } from './listen-controls.ts';
 import { Narration, type AudioNovelInfo, type NarrationState } from './narration.ts';
-import { closeVoicePanels, openVoicePicker, voiceLabel } from './voices-ui.ts';
+import { closeVoicePanels, icon } from './panel.ts';
+import { openVoicePicker, voiceLabel } from './voices-ui.ts';
 import { fs } from './type.ts';
 
 const CSS = `
@@ -163,7 +164,7 @@ export function installCarMode(): CarMode {
         <button type="button" data-act="fwd" aria-label="Forward 15 seconds">${ICON.fwd15}</button>
         <button type="button" data-act="next" aria-label="Next chapter">${ICON.next}</button>
       </div>
-      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(engine)} ›</span></button>` : ''}
+      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(engine)} ${icon('chevron.right', 12)}</span></button>` : ''}
     </div>`;
   }
 

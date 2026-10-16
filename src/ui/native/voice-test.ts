@@ -33,7 +33,7 @@ import { ExpressiveVoice } from './expressive-lab.ts';
 import { Narration, type NarrationState } from './narration.ts';
 import { domSpeechScript } from './speech-dom.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
-import { esc, panel, toast } from './voices-ui.ts';
+import { esc, panel, toast, verdict } from './panel.ts';
 
 type Obj = Record<string, unknown>;
 type Line = { ok: boolean; text: string };
@@ -394,12 +394,12 @@ export function openVoiceTest(opts: { long?: boolean } = {}): void {
   // Ends the wait for the studio speed test (Stop), while it runs.
   let stopStudio: (() => void) | null = null;
 
-  const row = (l: Line): string => `<div class="row"><span aria-hidden="true">${l.ok ? '✓' : '⚠'}</span><div class="main">${esc(l.text)}</div></div>`;
+  const row = (l: Line): string => `<div class="row">${verdict(l.ok)}<span class="main">${esc(l.text)}</span></div>`;
 
   const render = (): void => {
     const nephis = STUDIO
       ? `<div class="sec">Nephis</div><div class="card" data-testid="voice-test-pack">${statusLines(status.nephisPack, known)
-          .map((t) => `<div class="row"><div class="main">${esc(t)}</div></div>`)
+          .map((t) => `<div class="row"><span class="main">${esc(t)}</span></div>`)
           .join('')}</div>`
       : '';
     const safety = safetyLines(status.crashes);
@@ -415,8 +415,8 @@ export function openVoiceTest(opts: { long?: boolean } = {}): void {
     const result = lines.length
       ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${lines.map(row).join('')}</div>
          ${STUDIO && studioTest?.ran === true && !studioTest.placement ? '<button type="button" class="link" data-act="placement" data-testid="voice-test-placement">Where Her Studio Runs</button>' : ''}
-         <div class="sec">What did you hear?</div>
-         <div class="card" style="padding:4px 14px 14px"><textarea data-f="notes" aria-label="What did you hear?" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div>
+         <div class="sec">What Did You Hear?</div>
+         <div class="card"><div class="form"><textarea data-f="notes" aria-label="What did you hear?" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div></div>
          <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy Report</button>
          ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the Recording</button>' : ''}
          <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
@@ -429,12 +429,12 @@ export function openVoiceTest(opts: { long?: boolean } = {}): void {
       : `${STUDIO ? 'Times her studio when it’s on, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.`;
     p.body.innerHTML = `${nephis}${safetyCard}
       <div class="sec">Test</div>
-      <p class="note">${about}</p>
+      <div class="card"><div class="row"><span class="main sub">${about}</span></div></div>
       <button type="button" class="btn" data-act="${running ? 'stop' : long ? 'long' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the Test' : lines.length ? 'Run It Again' : long ? 'Start Recording' : 'Run the Test'}</button>
       <p class="note" data-testid="voice-test-progress">${esc(progress)}</p>
       ${result}
-      ${running || long ? '' : '<button type="button" class="link" style="margin-top:8px" data-act="long" data-testid="voice-test-long">Or: 15-Minute Test With Your Own Chapter</button>'}
-      ${running || long ? '' : '<button type="button" class="link" style="display:block" data-act="speed" data-testid="voice-test-speed">Or: Voice Speed Test (45 s, timed, not played aloud)</button>'}`;
+      ${running || long ? '' : '<button type="button" class="btn alt" data-act="long" data-testid="voice-test-long">15-Minute Test With Your Own Chapter</button>'}
+      ${running || long ? '' : '<button type="button" class="btn alt" data-act="speed" data-testid="voice-test-speed">Voice Speed Test (45 s, Not Played Aloud)</button>'}`;
   };
 
   /** Only the progress line changes while a test runs (the buttons keep their place and focus). */
@@ -679,7 +679,7 @@ export function openVoiceTest(opts: { long?: boolean } = {}): void {
           known = studioKnown(st.nephisPack, known);
           toast('Nephis is back on: she reads from the next sentence.');
         })
-        .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`))
+        .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`, true))
         .finally(render);
     }
     if (act === 'placement' && !running && !checking) {

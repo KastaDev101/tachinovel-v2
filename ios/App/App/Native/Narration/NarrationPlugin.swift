@@ -275,6 +275,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     ["id": m.id, "name": m.name, "a": m.a, "b": m.b, "percent": m.percent] as [String: Any]
                 },
                 "defaultVoice": prefs.choice(forNovel: nil),
+                // More › Voices › Backup Voice; null: her matched voice (af_nephis).
+                "backupVoice": prefs.backupVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
                 "kokoroEnabled": prefs.kokoroEnabled,
                 "usePCAudio": prefs.usePCAudio,
                 "carButtons": prefs.carButtonsChoice.rawValue,
@@ -334,6 +336,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
 
     @objc func setVoiceSettings(_ call: CAPPluginCall) {
         let defaultVoice = call.getString("defaultVoice")
+        // The backup voice: a voice or mix id; "" (or an unknown id) goes back to her matched voice.
+        let backupVoice = call.getString("backupVoice")
         let usePCAudio = call.getBool("usePCAudio")
         let kokoroEnabled = call.getBool("kokoroEnabled")
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
@@ -351,6 +355,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 if let speed { p.speed = SpeechSpeed.clamp(speed) }
                 if let volume { p.volume = VoiceVolume.clamp(volume) }
                 if let defaultVoice, p.isChoice(defaultVoice) { p.defaultVoice = defaultVoice }
+                if let backupVoice { p.backupVoice = p.isChoice(backupVoice) ? backupVoice : nil }
                 if let novel, let pid = novel["pluginId"] as? String, let path = novel["novelPath"] as? String {
                     p.setVoice(novel["voice"] as? String, forNovel: VoiceSettings.novelKey(pluginId: pid, novelPath: path))
                 }

@@ -1,22 +1,26 @@
 /**
- * The voice mixer (src/ui/native/voices-ui.ts openMixer) in the PC shell, against a Narration mock that
- * keeps mixes like native does (VoicePreferences.customVoices):
- *  - More › Voices › Mix a voice: two voices, the blend slider dragged for real (the screen updates in
+ * More › Voices › Backup Voice and the voice mixer (src/ui/native/voices-ui.ts) in the PC shell, against a Narration
+ * mock that keeps the backup voice and mixes like native does (VoicePreferences.backupVoice / customVoices):
+ *  - Backup Voice (cleanup 2, 2026-10-16): her matched Kokoro voice until another is picked; its list shows the three
+ *    best first (her matched voice, then the best graded) with ▶ samples, then All Voices; a pick is saved
+ *    (setVoiceSettings {backupVoice}) and the Voices row names it;
+ *  - All Voices: every voice by accent and gender and "Your Mixes"; Mix a Voice and Edit only with Developer options;
+ *  - the mixer (More › Developer › Mix a Voice): two voices, the blend slider dragged for real (the screen updates in
  *    place, the slider is never rebuilt under the finger), ▶ plays the blend string, Save stores it;
- *  - the mix is listed under "Your mixes", can be the default voice, and is offered for one novel (Listen
- *    player › Voice, without Edit there);
- *  - Edit keeps the mix's id; the same voice twice can't be saved; Delete needs a second tap and sends
- *    the default back to Heart;
- *  - Narrator mode: its switches and dialogue voice are saved, and ▶ Without / ▶ With play the test passage
- *    with narrator mode off / on.
+ *  - a mix can be the backup voice; Edit keeps its id; the same voice twice can't be saved; Delete asks with the native
+ *    alert and sends the backup voice back to her matched voice.
+ * Screenshots: .cache/shell-shots/backup-voice.png, all-voices.png, voice-mixer.png
  */
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
+const shots = path.join(root, '.cache', 'shell-shots');
 let shell: PcShell;
+const alerts: { title: string; message: string }[] = [];
 
 interface Mix {
   id: string;
@@ -25,60 +29,47 @@ interface Mix {
   b: string;
   percent: number;
 }
-const prefs = {
-  defaultVoice: 'af_heart',
-  novelVoices: {} as Record<string, string>,
-  customVoices: [] as Mix[],
-  narrator: {
-    enabled: false,
-    dialogueVoice: null as string | null,
-    secondDialogueVoice: null as string | null,
-    pacing: true,
-    jitter: false,
-    polish: true,
-    roomTone: false,
-    phraseBreaks: 'clauses' as 'off' | 'clauses',
-    pacingStyle: 'relaxed' as 'relaxed' | 'natural',
-  },
-};
+const prefs = { backupVoice: null as string | null, customVoices: [] as Mix[] };
 const voices = [
   { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm', grade: 'A', gradeRank: 13 },
   { id: 'af_bella', name: 'Bella', language: 'en-US', gender: 'female', blurb: 'bright', grade: 'A-', gradeRank: 12 },
+  { id: 'af_nephis', name: 'Nephis', language: 'en-US', gender: 'female', blurb: 'Nephis’s voice, read fast by Kokoro.', grade: 'B', gradeRank: 10 },
   { id: 'bf_emma', name: 'Emma', language: 'en-GB', gender: 'female', blurb: 'calm', grade: 'B-', gradeRank: 9 },
   { id: 'am_michael', name: 'Michael', language: 'en-US', gender: 'male', blurb: 'steady', grade: 'C+', gradeRank: 8 },
 ];
-const novel = { pluginId: 'demo-library', novelPath: 'novel/alpha' };
 
-// Not reachable from the menus since Nephis became the app's one voice (2026-10-09); kept for when it returns.
-describe.skip('voice mixer (PC shell)', () => {
+describe('More › Voices › Backup Voice and the voice mixer (PC shell)', () => {
   beforeAll(async () => {
+    mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-mixer');
     await buildAll({ flavor: 'store', ads: false, dev: false, outDir: www });
-    shell = await startPcShell({ wwwDir: www, core: {}, initStorage: { 'tachinovel.tips.reader': '1' } });
-    shell.pluginReplies.set('Narration.voiceSettings', (o) => {
-      const opts = o as { pluginId?: string; novelPath?: string };
-      const key = opts.pluginId && opts.novelPath ? `${opts.pluginId}:${opts.novelPath}` : null;
-      return {
-        voices,
-        customVoices: prefs.customVoices.map((m) => ({ ...m })),
-        narrator: { ...prefs.narrator },
-        defaultVoice: prefs.defaultVoice,
-        kokoroEnabled: true,
-        usePCAudio: false,
-        kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 108_900_000 },
-        apple: { name: 'Zoe (Premium)', quality: 'premium', onlyDefault: false },
-        ...(key ? { novelVoice: prefs.novelVoices[key] ?? null, effectiveVoice: prefs.novelVoices[key] ?? prefs.defaultVoice } : {}),
-      };
+    shell = await startPcShell({
+      wwwDir: www,
+      core: {
+        ui: {
+          alert: (json, cb) => {
+            alerts.push(JSON.parse(json) as { title: string; message: string });
+            setImmediate(() => cb(null, 0));
+          },
+        },
+      },
+      initStorage: { 'tachinovel.tips.reader': '1' },
     });
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({
+      voices,
+      customVoices: prefs.customVoices.map((m) => ({ ...m })),
+      defaultVoice: 'af_heart',
+      backupVoice: prefs.backupVoice,
+      kokoroEnabled: true,
+      usePCAudio: false,
+      kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 108_900_000 },
+      apple: { name: 'Zoe (Premium)', quality: 'premium', onlyDefault: false },
+      delivery: { listenEngine: 'pocket-tts', pocketVoice: 'nephis', pocketInstalled: true },
+    }));
+    // Like NarrationPlugin.setVoiceSettings: an unknown backup voice (or "") goes back to her matched voice.
     shell.pluginReplies.set('Narration.setVoiceSettings', (o) => {
-      const a = o as { defaultVoice?: string; novel?: { pluginId: string; novelPath: string; voice: string | null }; narrator?: Partial<typeof prefs.narrator> };
-      if (a.defaultVoice) prefs.defaultVoice = a.defaultVoice;
-      if (a.narrator) Object.assign(prefs.narrator, a.narrator);
-      if (a.novel) {
-        const key = `${a.novel.pluginId}:${a.novel.novelPath}`;
-        if (a.novel.voice && a.novel.voice !== prefs.defaultVoice) prefs.novelVoices[key] = a.novel.voice;
-        else delete prefs.novelVoices[key];
-      }
+      const b = (o as { backupVoice?: string }).backupVoice;
+      if (typeof b === 'string') prefs.backupVoice = voices.some((v) => v.id === b) || prefs.customVoices.some((m) => m.id === b) ? b : null;
       return {};
     });
     shell.pluginReplies.set('Narration.saveCustomVoice', (o) => {
@@ -89,44 +80,85 @@ describe.skip('voice mixer (PC shell)', () => {
       if (!old) prefs.customVoices.push(mix);
       return { mix: { ...mix } };
     });
+    // Like VoicePreferences.deleteCustomVoice: the backup voice goes back to her matched voice.
     shell.pluginReplies.set('Narration.deleteCustomVoice', (o) => {
       const id = (o as { id: string }).id;
       prefs.customVoices = prefs.customVoices.filter((m) => m.id !== id);
-      if (prefs.defaultVoice === id) prefs.defaultVoice = 'af_heart';
-      for (const [k, v] of Object.entries(prefs.novelVoices)) if (v === id) delete prefs.novelVoices[k];
+      if (prefs.backupVoice === id) prefs.backupVoice = null;
       return {};
     });
     shell.pluginReplies.set('Narration.sampleVoice', () => ({ ms: 120, source: 'kokoro' }));
-    shell.pluginReplies.set('Narration.play', () => ({}));
     await shell.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
-    await shell.page.getByTestId('onboarding-skip').click();
-    await shell.page.getByTestId('tab-more').click();
-    await shell.page.getByTestId('more-voices').click();
-    // The mixer lives with every Kokoro voice: Settings › Voices › All Kokoro voices.
-    await shell.page.getByTestId('screen-voices').locator('[data-act="kokoro-all"]').click();
-    await shell.page.getByTestId('kokoro-voices').locator('[data-act="mix-new"]').waitFor({ timeout: 5000 });
+    const skip = shell.page.getByTestId('onboarding-skip');
+    if (await skip.isVisible().catch(() => false)) await skip.click();
   });
 
   afterAll(async () => {
     await shell?.close();
   });
 
-  const screen = () => shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
-  const mixer = () => shell.page.locator('[data-testid="voice-mixer"]:not([inert])');
+  const live = (id: string) => shell.page.locator(`[data-testid="${id}"]:not([inert])`);
   const calls = (method: string) => shell.pluginCalls.filter((c) => c.methodName === method).map((c) => c.options);
-  const settled = async (el: ReturnType<typeof mixer>) => {
+  /** The ids of a list's rows, the checked one marked "✓". */
+  const ids = (el: ReturnType<typeof live>) =>
+    el.locator('.row[data-voice]').evaluateAll((rows) => rows.map((r) => `${(r as HTMLElement).dataset.voice ?? ''}${r.querySelector('.check.on') ? ' ✓' : ''}`));
+  const settled = async (el: ReturnType<typeof live>) => {
     await el.waitFor({ timeout: 5000 });
     await expect.poll(() => el.evaluate((n) => Math.round(n.getBoundingClientRect().left)), { timeout: 3000 }).toBe(0);
   };
+  const back = async (id: string) => {
+    await live(id).locator('[data-act="close"]').click();
+    await expect.poll(() => live(id).count(), { timeout: 3000 }).toBe(0);
+  };
 
-  it('mixes two voices: real slider drag updates in place, ▶ plays the blend, Save stores it under "Your mixes"', async () => {
-    await screen().locator('[data-act="mix-new"]').click();
-    const m = mixer();
+  it('Backup Voice: her matched voice until another is picked; the three best first, ▶ samples, a pick is saved', async () => {
+    await shell.page.getByTestId('tab-more').click();
+    await shell.page.getByTestId('more-voices').click();
+    const row = live('screen-voices').getByTestId('voices-backup-voice');
+    await expect.poll(() => row.textContent(), { timeout: 5000 }).toBe('NephisKokoro');
+    await row.click();
+    const backup = live('backup-voice');
+    await settled(backup);
+    await expect.poll(() => ids(backup.getByTestId('backup-best'))).toEqual(['af_nephis ✓', 'af_heart', 'af_bella']);
+    await shell.page.screenshot({ path: path.join(shots, 'backup-voice.png') });
+
+    await backup.locator('.row[data-voice="af_heart"] [data-act="sample"]').click();
+    await expect.poll(() => calls('sampleVoice').at(-1)).toMatchObject({ voice: 'af_heart' });
+    await backup.locator('.row[data-voice="af_bella"] [data-act="pick"]').click();
+    await expect.poll(() => prefs.backupVoice).toBe('af_bella');
+    await expect.poll(() => ids(backup.getByTestId('backup-best'))).toEqual(['af_nephis', 'af_heart', 'af_bella ✓']);
+    await back('backup-voice');
+    await expect.poll(() => row.textContent(), { timeout: 5000 }).toBe('BellaKokoro');
+  });
+
+  it('All Voices: every voice by accent and gender; Mix a Voice and Edit only with Developer options', async () => {
+    await live('screen-voices').getByTestId('voices-backup-voice').click();
+    await live('backup-voice').getByTestId('backup-all').click();
+    const all = live('kokoro-voices');
+    await settled(all);
+    expect(await all.locator('.sec').allTextContents()).toEqual(['American women', 'American men', 'British women']);
+    await expect.poll(() => ids(all)).toEqual(['af_heart', 'af_bella ✓', 'af_nephis', 'am_michael', 'bf_emma']);
+    expect(await all.locator('[data-act="mix-new"], [data-act="mix-edit"]').count()).toBe(0);
+    await all.locator('.row[data-voice="bf_emma"] [data-act="pick"]').click();
+    await expect.poll(() => prefs.backupVoice).toBe('bf_emma');
+    await shell.page.screenshot({ path: path.join(shots, 'all-voices.png') });
+    await back('kokoro-voices');
+    // The list behind it shows the pick too (it isn't among the three best: it is added under them).
+    await expect.poll(() => ids(live('backup-voice').getByTestId('backup-best'))).toEqual(['af_nephis', 'af_heart', 'af_bella', 'bf_emma ✓']);
+    await back('backup-voice');
+    await back('screen-voices');
+  });
+
+  it('More › Developer › Mix a Voice: real slider drag updates in place, ▶ plays the blend, Save stores it', async () => {
+    await setDeveloperOptions(shell);
+    await openDeveloper(shell);
+    await live('screen-developer').getByTestId('dev-mix').click();
+    const m = live('voice-mixer');
     await settled(m);
-    // Starts from the default voice and the best voice of another accent or gender.
-    expect(await m.locator('select[data-act="mix-a"]').inputValue()).toBe('af_heart');
-    expect(await m.locator('select[data-act="mix-b"]').inputValue()).toBe('bf_emma');
-    expect(await m.locator('[data-shares]').textContent()).toBe('Heart 50 % · Emma 50 %');
+    // Starts from the backup voice and the best voice of another accent or gender.
+    expect(await m.locator('select[data-act="mix-a"]').inputValue()).toBe('bf_emma');
+    expect(await m.locator('select[data-act="mix-b"]').inputValue()).toBe('af_heart');
+    await m.locator('select[data-act="mix-a"]').selectOption('af_heart');
     await m.locator('select[data-act="mix-b"]').selectOption('am_michael');
     expect(await m.locator('[data-shares]').textContent()).toBe('Heart 50 % · Michael 50 %');
 
@@ -148,6 +180,7 @@ describe.skip('voice mixer (PC shell)', () => {
     expect(percent).toBeLessThan(30);
     expect(await m.locator('[data-shares]').textContent()).toBe(`Heart ${String(100 - percent)} % · Michael ${String(percent)} %`);
     expect(await m.locator('input[data-act="mix-name"]').getAttribute('placeholder')).toBe(`Heart + Michael (${String(percent)} %)`);
+    await shell.page.screenshot({ path: path.join(shots, 'voice-mixer.png') });
 
     await m.locator('[data-act="mix-play"]').click();
     await expect.poll(() => calls('sampleVoice').at(-1)).toMatchObject({ voice: `af_heart+am_michael@${String(percent)}` });
@@ -155,132 +188,53 @@ describe.skip('voice mixer (PC shell)', () => {
     await m.locator('input[data-act="mix-name"]').fill('  Warm narrator ');
     await m.locator('[data-act="mix-save"]').click();
     await expect.poll(() => calls('saveCustomVoice').at(-1)).toEqual({ name: 'Warm narrator', a: 'af_heart', b: 'am_michael', percent });
-    await expect.poll(() => shell.page.getByTestId('voice-mixer').count(), { timeout: 3000 }).toBe(0);
-    const row = screen().locator('[data-testid="voice-mixes"] .row[data-voice="mix_00000001"]');
+    await expect.poll(() => live('voice-mixer').count(), { timeout: 3000 }).toBe(0);
+    await back('screen-developer');
+  });
+
+  it('a mix can be the backup voice; Edit keeps its id; the same voice twice can’t be saved; Delete asks first', async () => {
+    await shell.page.getByTestId('more-voices').click();
+    await live('screen-voices').getByTestId('voices-backup-voice').click();
+    await live('backup-voice').getByTestId('backup-all').click();
+    const all = live('kokoro-voices');
+    await settled(all);
+    // Developer options on: Edit on each mix and Mix a Voice.
+    const row = all.locator('[data-testid="voice-mixes"] .row[data-voice="mix_00000001"]');
     await row.waitFor({ timeout: 5000 });
     expect(await row.textContent()).toContain('Warm narrator');
-    expect(await row.textContent()).toContain(`Heart ${String(100 - percent)} % · Michael ${String(percent)} %`);
-  });
-
-  it('a mix can be the default voice, and is offered for one novel (without Edit)', async () => {
-    const row = screen().locator('.row[data-voice="mix_00000001"]');
+    expect(await all.locator('[data-act="mix-new"]').count()).toBe(1);
     await row.locator('[data-act="pick"]').click();
-    await expect.poll(() => prefs.defaultVoice).toBe('mix_00000001');
-    await expect.poll(() => row.locator('.check').textContent()).toBe('✓');
-    await row.locator('[data-act="sample"]').click();
-    await expect.poll(() => calls('sampleVoice').at(-1)).toMatchObject({ voice: 'mix_00000001' });
-    await screen().locator('[data-act="close"]').click();
-    await shell.page.locator('[data-testid="screen-voices"]:not([inert]) [data-act="close"]').click();
+    await expect.poll(() => prefs.backupVoice).toBe('mix_00000001');
+    await expect.poll(() => ids(all.getByTestId('voice-mixes'))).toEqual(['mix_00000001 ✓']);
 
-    // Listen player › Voice for a novel being read aloud.
-    shell.pluginReplies.set('Narration.state', () => ({
-      status: 'playing',
-      engine: 'speech',
-      ...novel,
-      chapterName: 'Chapter 1',
-      position: 10,
-      duration: 600,
-      voice: { kokoroVoice: 'af_heart+am_michael@20', kokoroName: 'Warm narrator', source: 'kokoro' },
-    }));
-    await shell.page.getByTestId('more-listen').click();
-    const player = shell.page.getByTestId('car-player');
-    await player.locator('[data-act="voice"]').click();
-    const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
-    // Only who reads is listed; Kokoro's voices are one tap further.
-    await picker.locator('[data-act="novel-kokoro"]').waitFor({ timeout: 5000 });
-    expect(await picker.locator('.row[data-voice]').count()).toBe(0);
-    await picker.locator('[data-act="novel-kokoro"]').click();
-    const kokoro = shell.page.locator('[data-testid="novel-kokoro"]:not([inert])');
-    await kokoro.locator('.row[data-voice="mix_00000001"]').waitFor({ timeout: 5000 });
-    expect(await kokoro.locator('[data-act="mix-edit"], [data-act="mix-new"]').count()).toBe(0);
-    expect(await kokoro.textContent()).toContain('Using the default (Warm narrator)');
-    await kokoro.locator('[data-act="kokoro-all"]').click();
-    const all = shell.page.locator('[data-testid="kokoro-voices"]:not([inert])');
-    await all.locator('.row[data-voice="bf_emma"] [data-act="pick"]').click();
-    await expect.poll(() => prefs.novelVoices[`${novel.pluginId}:${novel.novelPath}`]).toBe('bf_emma');
-    await all.locator('[data-act="close"]').click();
-    await all.waitFor({ state: 'hidden', timeout: 5000 });
-    await kokoro.locator('[data-act="close"]').click();
-    await kokoro.waitFor({ state: 'hidden', timeout: 5000 });
-    await picker.locator('[data-act="close"]').click();
-    await player.locator('[data-act="close"]').click();
-    shell.pluginReplies.delete('Narration.state');
-  });
-
-  it('Edit keeps the id; the same voice twice cannot be saved; Delete needs a second tap', async () => {
-    await shell.page.getByTestId('more-voices').click();
-    await shell.page.getByTestId('screen-voices').locator('[data-act="kokoro-all"]').click();
-    const row = screen().locator('.row[data-voice="mix_00000001"]');
     await row.locator('[data-act="mix-edit"]').click();
-    const m = mixer();
+    const m = live('voice-mixer');
     await settled(m);
     expect(await m.locator('input[data-act="mix-name"]').inputValue()).toBe('Warm narrator');
-    expect(await m.locator('select[data-act="mix-b"]').inputValue()).toBe('am_michael');
-
     await m.locator('select[data-act="mix-b"]').selectOption('af_heart');
     expect(await m.locator('[data-problem]').textContent()).toMatch(/different voices/);
     expect(await m.locator('[data-act="mix-save"]').isDisabled()).toBe(true);
-    expect(await m.locator('[data-act="mix-play"]').isDisabled()).toBe(true);
     await m.locator('select[data-act="mix-b"]').selectOption('bf_emma');
     expect(await m.locator('[data-problem]').isHidden()).toBe(true);
     await m.locator('input[data-act="mix-blend"]').evaluate((el) => {
       const input = el as HTMLInputElement;
       input.value = '70';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await m.locator('[data-act="mix-save"]').click();
     await expect.poll(() => calls('saveCustomVoice').at(-1)).toEqual({ id: 'mix_00000001', name: 'Warm narrator', a: 'af_heart', b: 'bf_emma', percent: 70 });
     await expect.poll(() => row.textContent(), { timeout: 5000 }).toContain('Heart 30 % · Emma 70 %');
     expect(prefs.customVoices).toHaveLength(1);
 
+    // Delete: the native alert asks; then the backup voice is her matched voice again.
     await row.locator('[data-act="mix-edit"]').click();
-    await settled(mixer());
-    const del = mixer().locator('[data-act="mix-delete"]');
-    await del.click();
-    expect(await del.textContent()).toBe('Tap again to delete');
-    expect(calls('deleteCustomVoice')).toHaveLength(0);
-    await del.click();
+    await settled(live('voice-mixer'));
+    await live('voice-mixer').locator('[data-act="mix-delete"]').click();
     await expect.poll(() => calls('deleteCustomVoice').at(-1)).toEqual({ id: 'mix_00000001' });
-    await expect.poll(() => screen().locator('.row[data-voice="mix_00000001"]').count(), { timeout: 5000 }).toBe(0);
-    expect(prefs.defaultVoice).toBe('af_heart');
-    await expect.poll(() => screen().locator('.row[data-voice="af_heart"] .check').textContent()).toBe('✓');
-  });
-
-  it('narrator mode: switches and the dialogue voice are saved; ▶ Without / ▶ With compare on the test passage', async () => {
-    const card = screen().locator('[data-testid="voices-narrator"]');
-    await card.waitFor({ timeout: 5000 });
-    expect(await card.locator('select').count(), 'pieces hidden while off').toBe(0);
-    await card.locator('input[data-k="enabled"]').click();
-    await expect.poll(() => prefs.narrator.enabled).toBe(true);
-    await card.locator('input[data-k="pacing"]').waitFor({ timeout: 5000 });
-    // One narrator voice by default: the dialogue voices sit, closed, under Advanced.
-    expect(await card.locator('[data-testid="narrator-advanced"]').evaluate((d) => (d as HTMLDetailsElement).open)).toBe(false);
-    expect(prefs.narrator.dialogueVoice).toBeNull();
-    await card.locator('[data-testid="narrator-advanced"] summary').click();
-    await card.locator('select[data-k="dialogueVoice"]').waitFor({ timeout: 5000 });
-    expect(await card.locator('select[data-k="secondDialogueVoice"]').isDisabled(), 'no second speaker without a dialogue voice').toBe(true);
-    await card.locator('select[data-k="dialogueVoice"]').selectOption('am_michael');
-    await expect.poll(() => prefs.narrator.dialogueVoice).toBe('am_michael');
-    await expect.poll(() => card.locator('select[data-k="secondDialogueVoice"]').isDisabled()).toBe(false);
-    expect(await card.locator('input[data-act="narrator-phrases"]').isChecked(), 'phrase breaks on by default').toBe(true);
-    await card.locator('input[data-act="narrator-phrases"]').click();
-    await expect.poll(() => prefs.narrator.phraseBreaks).toBe('off');
-    expect(await card.locator('input[data-k="jitter"]').isChecked(), 'no jitter by default').toBe(false);
-    expect(await card.locator('select[data-act="narrator-pacing-style"]').inputValue(), 'relaxed pacing by default').toBe('relaxed');
-    await card.locator('select[data-act="narrator-pacing-style"]').selectOption('natural');
-    await expect.poll(() => prefs.narrator.pacingStyle).toBe('natural');
-    await card.locator('input[data-k="jitter"]').click();
-    await expect.poll(() => prefs.narrator.jitter).toBe(true);
-    await card.locator('input[data-k="polish"]').click();
-    await expect.poll(() => prefs.narrator.polish).toBe(false);
-    await expect.poll(() => card.locator('input[data-k="roomTone"]').isDisabled(), { message: 'room tone needs studio sound' }).toBe(true);
-    await card.locator('[data-act="narrator-ab"][data-v="off"]').click();
-    await expect.poll(() => calls('play').at(-1)).toMatchObject({ narrator: 'off', pluginId: 'voice-lab', engine: 'speech' });
-    await card.locator('[data-act="narrator-ab"][data-v="on"]').click();
-    await expect.poll(() => calls('play').at(-1)).toMatchObject({ narrator: 'on' });
-    // Back to "Narrator's voice".
-    await card.locator('select[data-k="dialogueVoice"]').selectOption('');
-    await expect.poll(() => prefs.narrator.dialogueVoice).toBeNull();
+    expect(alerts.at(-1)?.title).toBe('Delete “Warm narrator”?');
+    await expect.poll(() => all.locator('.row[data-voice="mix_00000001"]').count(), { timeout: 5000 }).toBe(0);
+    expect(prefs.backupVoice).toBeNull();
+    await expect.poll(() => ids(all)).toContain('af_nephis ✓');
+    expect(shell.pageErrors).toEqual([]);
   });
 });

@@ -3,15 +3,15 @@
  * for tonight's phone test: whether the crash safety fallback tripped, where Core ML runs each Kokoro stage
  * (Neural Engine / CPU / GPU, from its compute plan), time to first audio, per-sentence real-time factor,
  * model load (cold/warm), memory, thermal state and fallbacks to the Apple voice. "Copy report" puts it
- * all on the clipboard as JSON.
+ * all on the clipboard as JSON. The numbers refresh once a second only while narration plays.
  */
 import { htmlToBlocks, type SourceBlock } from '@v1tts/frontend.ts';
 import { modelVoices, SCENE_TESTS, sceneKinds, sceneScore } from '../../core/narration/scene-tests.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
 import { openExpressiveLab } from './expressive-lab.ts';
 import { Narration, type NarratorInfo } from './narration.ts';
+import { panel } from './panel.ts';
 import { lastListened } from './speech-dom.ts';
-import { fs } from './type.ts';
 
 /** Synthetic chapter for "Speak test paragraph" (and the simulator self-test): no novel, no progress. */
 export const LAB_PLUGIN = 'voice-lab';
@@ -54,25 +54,6 @@ export const NARRATOR_PIECES = [
   ['polish', 'Studio sound', 'EQ, gentle compression, even loudness (−16 LUFS)'],
   ['roomTone', 'Room tone', 'A faint room sound instead of dead silence'],
 ] as const;
-
-const CSS = `
-.tn-lab{position:fixed;inset:0;z-index:92;background:#0e0e11;color:#e8e8ee;display:flex;flex-direction:column;
-  padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));font:${fs(14)} -apple-system,system-ui}
-.tn-lab button{font:inherit;color:inherit;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:9px 12px;-webkit-tap-highlight-color:transparent}
-.tn-lab button.on{background:#a8b4ff;color:#15151a}
-.tn-lab .hd{display:flex;align-items:center;gap:8px;min-height:50px}
-.tn-lab .hd h1{flex:1;font-size:${fs(19)};margin:0}
-.tn-lab .body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:20px}
-.tn-lab h2{font-size:${fs(12)};text-transform:uppercase;letter-spacing:.05em;color:#9a9aa6;margin:16px 2px 6px}
-.tn-lab .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;background:#18181d;border-radius:12px;padding:10px 12px}
-.tn-lab .kv span:nth-child(odd){color:#9a9aa6}
-.tn-lab .kv span:nth-child(even){font-variant-numeric:tabular-nums;word-break:break-word}
-.tn-lab table{width:100%;border-collapse:collapse;background:#18181d;border-radius:12px;font-variant-numeric:tabular-nums;font-size:${fs(13)}}
-.tn-lab td,.tn-lab th{padding:5px 6px;text-align:right}
-.tn-lab th{color:#9a9aa6;font-weight:500}
-.tn-lab .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.tn-lab .big{font-size:${fs(26)};font-weight:600}
-`;
 
 function fmt(x: unknown, digits = 0, unit = ''): string {
   return typeof x === 'number' && Number.isFinite(x) ? `${x.toFixed(digits)}${unit}` : '–';
@@ -136,18 +117,10 @@ export async function chapterMoodTest(): Promise<{ summary: string; report: Obj 
 export function openVoiceLab(): void {
   if (open) return;
   open = true;
-  const style = document.createElement('style');
-  style.textContent = CSS;
-  document.head.append(style);
-  const root = document.createElement('div');
-  root.className = 'tn-lab';
-  root.dataset.testid = 'voice-lab';
-  root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-modal', 'true'); // full screen: VoiceOver must not reach the screen behind
-  root.setAttribute('aria-label', 'Voice Lab');
-  root.innerHTML = '<div class="hd"><h1>Voice Lab</h1><button type="button" data-act="close">Close</button></div><div class="body"></div>';
-  document.body.append(root);
-  const body = root.querySelector('.body') as HTMLElement;
+  const pn = panel('Voice Lab', 'voice-lab');
+  const root = pn.root;
+  root.classList.add('lab');
+  const body = pn.body;
   let lab: Obj = {};
   let sceneResult = 'not run yet';
   let moodResult = 'not run yet';
@@ -192,7 +165,7 @@ export function openVoiceLab(): void {
       </div>
       <h2>Where each stage runs (Core ML plan)</h2>
       <div class="kv">${placement.length > 0 ? placement.map((p) => `<span>${esc(str(p.stage))}</span><span>${p.error ? esc(str(p.error)) : `${esc(str(p.configured))} → ANE ${fmt(p.ane)} · CPU ${fmt(p.cpu)} · GPU ${fmt(p.gpu)} ops`}</span>`).join('') : '<span>–</span><span>Tap “Check placement”</span>'}</div>
-      <div class="acts"><button type="button" data-act="placement">Check placement</button></div>
+      <div class="acts"><button type="button" data-act="placement">Check Placement</button></div>
       <h2>Now</h2>
       <div class="kv">
         <span>Time to first audio</span><span class="big">${lastFirst ? `${fmt(lastFirst.ms)} ms` : '–'}</span>
@@ -247,30 +220,30 @@ export function openVoiceLab(): void {
         .map((f) => `<span>${esc(str(f.at, '').slice(11, 19))}</span><span>${fmt(f.ms)} ms · ${esc(str(f.source, ''))}</span>`)
         .join('') || '<span>–</span><span></span>'}</div>
       <h2>Sentences (newest first)</h2>
-      <table><tr><th>#</th><th>chars</th><th>synth</th><th>audio</th><th>× RT</th><th>RTF</th></tr>
+      <table class="lab-t"><tr><th>#</th><th>chars</th><th>synth</th><th>audio</th><th>× RT</th><th>RTF</th></tr>
       ${rows.map((r) => `<tr><td>${fmt(r.index)}</td><td>${fmt(r.chars)}</td><td>${fmt(r.synthMs)} ms</td><td>${fmt(typeof r.audioMs === 'number' ? r.audioMs / 1000 : undefined, 1)} s</td><td>${fmt(r.x, 1)}</td><td>${fmt(r.rtf, 3)}</td></tr>`).join('')}</table>
       <h2>Narrator mode A/B</h2>
       <div class="kv"><span>Dialogue voice</span><span>${esc(dialogueName || 'the narrator’s (set one in Settings › Voices › Narrator mode)')}</span>
         <span>Saved</span><span>${nar?.enabled ? 'on' : 'off'}</span></div>
       <div class="acts" data-testid="lab-narrator">${NARRATOR_PIECES.map(([k, label]) => `<button type="button" data-act="nar-piece" data-k="${k}" class="${nar?.[k] ? 'on' : ''}" aria-pressed="${String(!!nar?.[k])}">${label}</button>`).join('')}</div>
       <div class="acts">
-        <button type="button" data-act="ab" data-v="off">A: narrator off</button>
-        <button type="button" data-act="ab" data-v="on">B: narrator on</button>
+        <button type="button" data-act="ab" data-v="off">A: Narrator Off</button>
+        <button type="button" data-act="ab" data-v="on">B: Narrator On</button>
       </div>
       <div class="acts">
-        <button type="button" data-act="test">Speak test paragraph</button>
+        <button type="button" data-act="test">Speak Test Paragraph</button>
         <button type="button" data-act="stop">Stop</button>
-        <button type="button" data-act="reset">Reset numbers</button>
-        <button type="button" data-act="copy">Copy report</button>
+        <button type="button" data-act="reset">Reset Numbers</button>
+        <button type="button" data-act="copy">Copy Report</button>
       </div>
       <h2>Scene reading</h2>
       <div class="kv" data-testid="lab-scene"><span>Accuracy</span><span>${esc(sceneResult)}</span></div>
-      <div class="acts"><button type="button" data-act="scene-test">Test scene reading</button></div>
+      <div class="acts"><button type="button" data-act="scene-test">Test Scene Reading</button></div>
       <div class="kv" data-testid="lab-moods"><span>Moods</span><span>${esc(moodResult)}</span></div>
-      <div class="acts"><button type="button" data-act="mood-test">Test moods on the last chapter I listened to</button>
-        ${moodReport ? '<button type="button" data-act="mood-copy">Copy mood report</button>' : ''}</div>
+      <div class="acts"><button type="button" data-act="mood-test">Test Moods on the Last Chapter</button>
+        ${moodReport ? '<button type="button" data-act="mood-copy">Copy Mood Report</button>' : ''}</div>
       <h2>Experimental</h2>
-      <div class="acts"><button type="button" data-act="expressive">Experimental engines (expressive voices) ›</button></div>`;
+      <div class="acts"><button type="button" data-act="expressive">Experimental Engines</button></div>`;
   };
 
   const refresh = async (): Promise<void> => {
@@ -282,12 +255,6 @@ export function openVoiceLab(): void {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
     switch (el.dataset.act ?? '') {
-      case 'close':
-        open = false;
-        window.clearInterval(poll);
-        root.remove();
-        style.remove();
-        return;
       case 'route':
         void Narration.setVoiceLab({ route: el.dataset.v ?? 'ane-cpu' }).then(refresh);
         return;
@@ -360,5 +327,23 @@ export function openVoiceLab(): void {
   void Narration.voicePlacement()
     .then(refresh)
     .catch(() => undefined);
-  poll = window.setInterval(() => void refresh(), 1000);
+  // Live numbers while narration plays (a test passage, Listen); one last read when it stops.
+  let live = false;
+  const follow = (status: string | undefined): void => {
+    const now = status === 'playing' || status === 'loading';
+    if (now === live) return;
+    live = now;
+    window.clearInterval(poll);
+    if (live) poll = window.setInterval(() => void refresh(), 1000);
+    else void refresh();
+  };
+  const handle = Narration.addListener('state', (st) => follow(st.status)).catch(() => null);
+  void Narration.state()
+    .then((st) => follow(st.status))
+    .catch(() => undefined);
+  pn.onClose(() => {
+    open = false;
+    window.clearInterval(poll);
+    void handle.then((h) => h?.remove());
+  });
 }

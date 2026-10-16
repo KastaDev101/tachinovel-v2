@@ -118,8 +118,8 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
     await dev.getByTestId('dev-lab').click();
     const lab = page.getByTestId('voice-lab');
     await lab.waitFor({ state: 'visible', timeout: 5000 });
-    expect((await measure('.tn-lab')).font).toBeCloseTo(14 * LARGEST, 1);
-    expect((await measure('.tn-lab .hd')).clipped).toEqual([]);
+    expect((await measure('.tn-v.lab .body')).font).toBeCloseTo(14 * LARGEST, 1);
+    expect((await measure('.tn-v.lab .hd, .tn-v.lab .kv')).clipped).toEqual([]);
     await page.screenshot({ path: path.join(shots, 'large-text-voice-lab.png') });
     expect(shell.pageErrors).toEqual([]);
   });

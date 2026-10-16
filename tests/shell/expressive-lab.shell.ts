@@ -1,8 +1,8 @@
 /**
  * Voice Models (src/ui/native/expressive-lab.ts) in the PC shell, against a canned ExpressiveVoice plugin: reachable
- * through More › Developer › Voice Models (Developer options), a model download needs two taps,
- * Play / Kokoro A/B / Speed test send the sample's lines with their acting (emotion, style, speaker), pasted
- * text is annotated, and deleting a model needs a second tap too.
+ * through More › Developer › Voice Models (Developer options), a model download asks first (the native alert, with its
+ * size and Wi-Fi), Play / Kokoro A/B / Speed test send the sample's lines with their acting (emotion, style, speaker),
+ * pasted text is annotated, and deleting a model asks first too (cleanup 2: one confirmation style).
  * Screenshots: .cache/shell-shots/expressive-lab-engines.png, expressive-lab.png
  */
 import { mkdirSync } from 'node:fs';
@@ -14,6 +14,9 @@ import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
 let shell: PcShell;
+/** Native alerts the page asked for, and the answers (0 = the action, 1 = Cancel). */
+const alerts: { title: string; message: string }[] = [];
+const alertAnswers: number[] = [];
 
 const status = {
   available: true,
@@ -44,7 +47,20 @@ describe('More › Developer › Voice Models (PC shell)', () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-expressive');
     await buildAll({ flavor: 'personal', ads: false, dev: false, outDir: www });
-    shell = await startPcShell({ wwwDir: www, core: { routes: {}, answers: [] } });
+    shell = await startPcShell({
+      wwwDir: www,
+      core: {
+        routes: {},
+        answers: [],
+        ui: {
+          alert: (json, cb) => {
+            alerts.push(JSON.parse(json) as { title: string; message: string });
+            const a = alertAnswers.shift() ?? 0;
+            setImmediate(() => cb(null, a));
+          },
+        },
+      },
+    });
     for (const m of ['status', 'download', 'cancelDownload', 'play', 'stop', 'speedTest', 'unload']) shell.pluginReplies.set(`ExpressiveVoice.${m}`, () => status);
   });
 
@@ -66,15 +82,19 @@ describe('More › Developer › Voice Models (PC shell)', () => {
     await lab.locator('[data-engine="chatterbox-nano"]').scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(shots, 'expressive-lab-engines.png') });
 
-    // A download needs a second tap that names the size and Wi-Fi.
+    // A download asks first, naming the size and Wi-Fi; Cancel downloads nothing.
     const cb = lab.locator('[data-engine="chatterbox-nano"]');
+    alertAnswers.push(1);
     await cb.getByRole('button', { name: 'Download 746 MB' }).click();
+    await expect.poll(() => alerts.length).toBe(1);
+    expect(alerts[0]?.title).toBe('Download Chatterbox Nano?');
+    expect(alerts[0]?.message).toMatch(/746 MB.*Wi-Fi/);
     expect(calls('download')).toEqual([]);
-    await cb.getByRole('button', { name: /Tap again: download 746 MB on Wi-Fi/ }).click();
+    await cb.getByRole('button', { name: 'Download 746 MB' }).click();
     await expect.poll(() => calls('download').map((c) => c.options.engine)).toEqual(['chatterbox-nano']);
 
     // Play the emotional dialogue with NeuTTS-2E: every line carries its acting.
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: '▶ Play sample' }).click();
+    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Play Sample' }).click();
     await expect.poll(() => calls('play').length).toBe(1);
     const play = calls('play')[0]?.options as { engine: string; sample: string; lines: { text: string; emotion: string; role: string; style?: string }[] };
     expect(play.engine).toBe('neutts-2e');
@@ -84,15 +104,15 @@ describe('More › Developer › Voice Models (PC shell)', () => {
     expect(play.lines.some((l) => l.style === 'whisper')).toBe(true);
 
     // The same sample with Kokoro (A/B), then a speed test.
-    await lab.getByRole('button', { name: /Same sample with Kokoro/ }).click();
+    await lab.getByRole('button', { name: /Same Sample With Kokoro/ }).click();
     await expect.poll(() => calls('play').map((c) => c.options.engine)).toEqual(['neutts-2e', 'kokoro']);
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Speed test' }).click();
+    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Speed Test' }).click();
     await expect.poll(() => calls('speedTest').map((c) => c.options.engine)).toEqual(['neutts-2e']);
 
     // Pasted text is annotated with guessed emotions and speakers.
     await lab.getByRole('button', { name: 'Your text' }).click();
     await lab.locator('textarea').fill('“Get out!” she shouted.\n“I’m sorry,” he whispered.');
-    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: '▶ Play sample' }).click();
+    await lab.locator('[data-engine="neutts-2e"]').getByRole('button', { name: 'Play Sample' }).click();
     await expect.poll(() => calls('play').length).toBe(3);
     const custom = calls('play')[2]?.options as { sample: string; lines: { emotion: string; role: string; style?: string }[] };
     expect(custom.sample).toBe('custom');
@@ -101,12 +121,11 @@ describe('More › Developer › Voice Models (PC shell)', () => {
       ['male', 'neutral', 'whisper'],
     ]);
 
-    // Deleting needs a second tap too, and says what happened.
+    // Deleting asks first too (the size it frees), and says what happened.
     const neutts = lab.locator('[data-engine="neutts-2e"]');
-    await neutts.getByRole('button', { name: 'Delete model' }).click();
-    expect(calls('remove')).toEqual([]);
-    await neutts.getByRole('button', { name: /Tap again: delete 1370 MB/ }).click();
+    await neutts.getByRole('button', { name: 'Delete Model' }).click();
     await expect.poll(() => calls('remove').map((c) => c.options.engine)).toEqual(['neutts-2e']);
+    expect(alerts.at(-1)).toMatchObject({ title: 'Delete NeuTTS-2E?', message: 'Frees 1370 MB. You can download it again.' });
     await expect.poll(() => lab.getByTestId('xlab-message').textContent(), { timeout: 5000 }).toBe('Model deleted.');
 
     await page.screenshot({ path: path.join(shots, 'expressive-lab.png') });

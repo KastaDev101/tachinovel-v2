@@ -50,7 +50,11 @@ const BUDGETS_KB: Record<string, number> = {
   // back in the app after CarPlay / a locked phone (src/ui/native/narration-follow.ts + overlay, ~8 KB); 786.7 KB.
   // 800 → 815 (2026-10-14, name-pronunciations): "Pronounce" on a selected name in the reader and its panel
   // (src/ui/native/pronounce-ui.ts, ~8 KB) and stress respellings for every engine (user-pronunciations.ts, ~5 KB).
-  'index.html': 815,
+  // 815 → 825 (2026-10-16, cleanup 2): the Backup Voice list is reachable again (its Kokoro voice list, Your Mixes and
+  // the mixer from it were tree-shaken while unlinked) and Download Her Voice is inline with its progress (~7 KB);
+  // the shared panel kit (src/ui/native/panel.ts) replaced the two labs' own dark stylesheets (-4 KB). Personal
+  // flavor 819.5 KB, store 811.7 KB.
+  'index.html': 825,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,

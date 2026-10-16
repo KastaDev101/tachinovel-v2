@@ -43,8 +43,6 @@ export interface VoicesInfo {
 
 /** UI state of the section that survives the lab's 1 s re-render. */
 export interface VoicesUiState {
-  /** "voice-delete:<id>" while a delete waits for its second tap. */
-  armed: string;
   /** Id of the voice being renamed, '' if none. */
   renaming: string;
   renameDraft: string;
@@ -147,20 +145,16 @@ function row(info: VoicesInfo, ui: VoicesUiState, id: string, name: string, sub:
     info.loaded === id ? '<span class="xtag">loaded</span>' : '',
   ].join('');
   const acts = [
-    `<button type="button" data-act="voice-play" data-id="${esc(id)}" aria-label="Play a sample of ${esc(name)}">▶ Play</button>`,
+    `<button type="button" data-act="voice-play" data-id="${esc(id)}" aria-label="Play a sample of ${esc(name)}">Play</button>`,
     inUse ? '' : `<button type="button" data-act="voice-use" data-id="${esc(id)}" aria-label="Use ${esc(name)} as the narrator voice">Use</button>`,
     editable && ui.renaming !== id ? `<button type="button" data-act="voice-rename" data-id="${esc(id)}" aria-label="Rename ${esc(name)}">Rename</button>` : '',
-    !editable
-      ? ''
-      : ui.armed === `voice-delete:${id}`
-        ? `<button type="button" class="warn" data-act="voice-delete" data-id="${esc(id)}">Tap again: delete “${esc(name)}”</button>`
-        : `<button type="button" data-act="voice-arm-delete" data-id="${esc(id)}" aria-label="Delete ${esc(name)}">Delete</button>`,
+    editable ? `<button type="button" class="danger" data-act="voice-delete" data-id="${esc(id)}" aria-label="Delete ${esc(name)}">Delete</button>` : '',
   ].join('');
   const rename =
     editable && ui.renaming === id
       ? `<div class="acts" data-testid="xvoice-rename">
           <input type="text" data-act-input="voice-name" maxlength="${MAX_NAME}" autocomplete="off" aria-label="New name for ${esc(name)}" value="${esc(ui.renameDraft)}">
-          <button type="button" class="on" data-act="voice-rename-save" data-id="${esc(id)}">Save name</button>
+          <button type="button" class="on" data-act="voice-rename-save" data-id="${esc(id)}">Save Name</button>
           <button type="button" data-act="voice-rename-cancel">Cancel</button>
         </div>`
       : '';
@@ -179,7 +173,7 @@ export function voicesSection(info: VoicesInfo, ui: VoicesUiState): string {
   const fallback = info.selectedMissing
     ? `Your narrator voice isn’t on this iPhone any more, so Chatterbox Nano uses the default voice (${voiceName(info, null)}). Pick another voice or import it again.`
     : info.note;
-  const preview = (v: ImportedVoiceInfo): string => (v.hasPreview ? 'has a preview' : 'no preview: ▶ uses the model');
+  const preview = (v: ImportedVoiceInfo): string => (v.hasPreview ? 'has a preview' : 'no preview: Play uses the model');
   const shipped = info.list.filter((v) => v.bundled);
   const imported = info.list.filter((v) => !v.bundled);
   const rows = [
@@ -191,7 +185,7 @@ export function voicesSection(info: VoicesInfo, ui: VoicesUiState): string {
     ? '<div class="acts"><button type="button" class="on" data-act="voice-import">Import voice…</button></div>'
     : '<div class="muted">Importing voices isn’t part of this build.</div>';
   return `<h2>Narrator voice (${esc(info.engineTitle)})</h2>
-    <div class="card" data-testid="xvoices">
+    <div class="lab-card" data-testid="xvoices">
       <div class="muted">The narrator voice is what ${esc(info.engineTitle)} reads with: one that comes with TachiNovel, ${esc(info.engineTitle)}’s own, or one you designed on the PC. Kokoro and the Apple voice stay as they are.</div>
       ${fallback ? `<div class="err" data-testid="xvoices-note">${esc(fallback)}</div>` : ''}
       ${rows}
@@ -246,6 +240,8 @@ export interface VoiceSectionHost {
   call(p: Promise<Obj>, done: (r: Obj) => string): void;
   message(text: string, error: boolean): void;
   render(): void;
+  /** The app's confirmation (the native alert) before a delete. */
+  confirm(title: string, message: string, action: string): Promise<boolean>;
   root: HTMLElement;
 }
 
@@ -260,7 +256,7 @@ export interface VoiceSection {
 }
 
 export function createVoiceSection(host: VoiceSectionHost): VoiceSection {
-  const ui: VoicesUiState = { armed: '', renaming: '', renameDraft: '' };
+  const ui: VoicesUiState = { renaming: '', renameDraft: '' };
   const info = (): VoicesInfo | null => normalizeVoices(host.status().voices);
   const nameOf = (id: string | null): string => {
     const i = info();
@@ -280,7 +276,6 @@ export function createVoiceSection(host: VoiceSectionHost): VoiceSection {
       return i ? voicesSection(i, ui) : '';
     },
     click(act, id) {
-      if (act !== 'voice-delete') ui.armed = '';
       switch (act) {
         case 'voice-import':
           host.call(host.plugin.importVoice(), importMessage);
@@ -306,14 +301,13 @@ export function createVoiceSection(host: VoiceSectionHost): VoiceSection {
           ui.renaming = '';
           host.render();
           return true;
-        case 'voice-arm-delete':
-          ui.armed = `voice-delete:${id}`;
-          host.render();
+        case 'voice-delete': {
+          const name = nameOf(id);
+          void host.confirm(`Delete “${name}”?`, 'The imported voice is removed from this iPhone.', 'Delete').then((yes) => {
+            if (yes) host.apply(host.plugin.deleteVoice({ id }), `Deleted “${name}”.`);
+          });
           return true;
-        case 'voice-delete':
-          ui.armed = '';
-          host.apply(host.plugin.deleteVoice({ id }), `Deleted “${nameOf(id)}”.`);
-          return true;
+        }
         default:
           return false;
       }

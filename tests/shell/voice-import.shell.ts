@@ -223,9 +223,8 @@ describe.skip('narrator voices: shipped and imported (PC shell)', () => {
     await expect.poll(() => calls('renameVoice')).toEqual([{ id: MOMMY, name: 'Warm Mommy' }]);
     await expect.poll(() => row(MOMMY).locator('b').textContent()).toBe('Warm Mommy');
 
+    // Delete asks with the native alert (the mock answers Delete).
     await row(MOMMY).getByRole('button', { name: 'Delete Warm Mommy' }).click();
-    expect(calls('deleteVoice')).toEqual([]);
-    await row(MOMMY).getByRole('button', { name: 'Tap again: delete “Warm Mommy”' }).click();
     await expect.poll(() => calls('deleteVoice')).toEqual([{ id: MOMMY }]);
     await expect.poll(() => row(MOMMY).count()).toBe(0);
 

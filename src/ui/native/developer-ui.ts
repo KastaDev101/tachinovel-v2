@@ -20,7 +20,8 @@ import { chapterMoodTest, openVoiceLab, sceneReadingTest } from './voice-lab.ts'
 import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
 import { chipSummary, copyText, openVoiceTest } from './voice-test.ts';
-import { deliverySwitch, esc, normalizeVoiceSettings, openMixer, panel, toast, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
+import { chevron, esc, panel, segmented, skeleton, switchInput, toast, unavailable } from './panel.ts';
+import { deliverySwitch, normalizeVoiceSettings, openMixer, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
 type Obj = Record<string, unknown>;
 
@@ -65,14 +66,12 @@ function withoutVoices(raw: VoiceSettingsInfo): VoiceSettingsInfo {
   };
 }
 
-const CHEVRON = '<span aria-hidden="true">›</span>';
-
 function row(act: string, title: string, sub: string, testId = `dev-${act}`): string {
-  return `<button type="button" class="row" data-act="${act}" data-testid="${testId}"><div class="main"><b>${esc(title)}</b><span class="sub" data-sub="${act}">${esc(sub)}</span></div>${CHEVRON}</button>`;
+  return `<button type="button" class="row" data-act="${act}" data-testid="${testId}"><span class="main"><b>${esc(title)}</b><span class="sub" data-sub="${act}">${esc(sub)}</span></span>${chevron()}</button>`;
 }
 
 function toggle(act: string, title: string, sub: string, on: boolean, disabled = false): string {
-  return `<label class="row" data-testid="dev-${act}"><div class="main"><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="${act}" ${on ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(title)}"></label>`;
+  return `<label class="row" data-testid="dev-${act}"><span class="main"><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></span>${switchInput(`data-act="${act}"`, on, title, disabled)}</label>`;
 }
 
 export function openDeveloperScreen(): void {
@@ -93,24 +92,25 @@ export function openDeveloperScreen(): void {
     if (!PACKS) return '';
     const studioSub =
       pack === undefined ? '…' : pack === null ? 'No voice pack installed.' : pack.studio ? `For “${pack.name}”: her 44.1 kHz sound on every call the phone can afford.` : `“${pack.name}” has no studio.`;
-    const chips = pack?.studio
-      ? `<div class="row"><div class="chips" role="group" aria-label="Studio">${(['auto', 'off'] as const)
-          .map((v) => {
-            const on = (v === 'auto') === pack?.studioOn;
-            return `<button type="button" class="chip" data-act="studio" data-v="${v}" aria-pressed="${on}"${busy.has('studio') ? ' disabled' : ''}>${v === 'auto' ? 'Automatic' : 'Off'}</button>`;
-          })
-          .join('')}</div></div>`
+    const control = pack?.studio
+      ? segmented(
+          'studio',
+          'Studio',
+          [
+            ['auto', 'Automatic'],
+            ['off', 'Off'],
+          ],
+          pack.studioOn ? 'auto' : 'off',
+        )
       : '';
     const where = pack?.studio ? row('placement', 'Where Her Studio Runs', placement || (busy.has('placement') ? 'Checking…' : 'Which chip runs each part (Core ML), checked on its own')) : '';
     return `${row('packs', 'Voice Packs', packsLine)}
-      <div class="row"><div class="main"><b>Studio</b><span class="sub">${esc(studioSub)}</span></div></div>${chips}${where}`;
+      <div class="row" data-testid="dev-studio"><span class="main"><b>Studio</b><span class="sub">${esc(studioSub)}</span></span></div>${control ? `<div class="row seg-row">${control}</div>` : ''}${where}`;
   };
 
   const render = (): void => {
     if (!info) {
-      p.body.innerHTML = failed
-        ? '<p class="note">Developer options aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
-        : '<p class="note">Loading…</p>';
+      p.body.innerHTML = failed ? unavailable('Developer options aren’t available right now.') : skeleton(4);
       return;
     }
     const d = info.delivery;
@@ -129,7 +129,7 @@ export function openDeveloperScreen(): void {
         ${deliverySwitch(info, 'natural', 'Natural Delivery', 'Paragraphs read as one thought, pauses that fit the scene')}
         ${deliverySwitch(info, 'sceneAI', 'AI Scene Reading', d?.sceneAIAvailable === true ? 'Apple Intelligence picks the mood of each scene' : 'Apple Intelligence isn’t available on this iPhone: the built-in rules pick the moods', !natural)}
         ${deliverySwitch(info, 'studioSound', 'Studio Sound', 'Level and polish after each call', !natural)}
-        <button type="button" class="row" data-act="reset" data-testid="dev-reset"><div class="main"><b style="color:#a8b4ff">Reset to Defaults</b><span class="sub">All of these on${PACKS ? ', her studio Automatic' : ''}</span></div></button>
+        <button type="button" class="row" data-act="reset" data-testid="dev-reset"><span class="main"><b class="tint">Reset to Defaults</b><span class="sub">All of these on${PACKS ? ', her studio Automatic' : ''}</span></span></button>
       </div>
       <p class="note">These are automatic: switch one off here only to compare.</p>
       <div class="sec">Diagnostics</div>

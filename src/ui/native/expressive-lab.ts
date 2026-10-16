@@ -1,14 +1,16 @@
 /**
- * Settings › Voices › Expressive voices (experimental), also Voice Lab › Experimental engines.
+ * More › Developer › Voice Models, also Voice Lab › Experimental engines.
  * EXPERIMENTAL expressive voices on the iPhone (docs/expressive-tts.md): download a model on demand (Wi-Fi,
- * size shown, two taps), play the same sample with it and with Kokoro (A/B), run a speed test (load, time
- * to first audio, × real time, memory, thermal), copy the report. Narration itself is unchanged.
+ * size shown, confirmed with the native alert), play the same sample with it and with Kokoro (A/B), run a speed test
+ * (load, time to first audio, × real time, memory, thermal), copy the report. Narration itself is unchanged. Its
+ * numbers refresh once a second only while something runs (a download, a model loading, a sample, a speed test).
  * Personal flavor: "Narrator voice" — voices designed on the PC (.tnvoice), imported and chosen for
  * Chatterbox Nano (voice-import.ts, docs/voice-import.md).
  * Native side: ExpressiveVoicePlugin.swift (ExpressiveService + ExpressiveSpeechEngine, Kokoro fallback).
  */
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { annotate, SAMPLES, type ExpressiveLine } from './expressive-samples.ts';
+import { confirmStep, icon, panel } from './panel.ts';
 import { createVoiceSection, importEventMessage } from './voice-import.ts';
 
 type Obj = Record<string, unknown>;
@@ -68,42 +70,6 @@ interface ExpressiveVoiceEvents {
 
 export const ExpressiveVoice = registerPlugin<ExpressiveVoicePlugin & ExpressiveVoiceEvents>('ExpressiveVoice');
 
-const CSS = `
-.tn-xlab{position:fixed;inset:0;z-index:93;background:#0e0e11;color:#e8e8ee;display:flex;flex-direction:column;
-  padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px,env(safe-area-inset-left));font:14px -apple-system,system-ui}
-.tn-xlab button{font:inherit;color:inherit;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:9px 12px;-webkit-tap-highlight-color:transparent}
-.tn-xlab button.on{background:#a8b4ff;color:#15151a}
-.tn-xlab button.warn{background:#5a2a2a}
-.tn-xlab .hd{display:flex;align-items:center;gap:8px;height:50px}
-.tn-xlab .hd h1{flex:1;font-size:19px;margin:0}
-.tn-xlab .body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:24px}
-.tn-xlab h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#9a9aa6;margin:16px 2px 6px}
-.tn-xlab .card{background:#18181d;border-radius:12px;padding:10px 12px;margin-bottom:10px}
-.tn-xlab .card h3{margin:0 0 4px;font-size:16px}
-.tn-xlab .muted{color:#9a9aa6;font-size:13px}
-.tn-xlab .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;background:#18181d;border-radius:12px;padding:10px 12px}
-.tn-xlab .kv span:nth-child(odd){color:#9a9aa6}
-.tn-xlab .kv span:nth-child(even){font-variant-numeric:tabular-nums;word-break:break-word}
-.tn-xlab .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.tn-xlab .bar{height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
-.tn-xlab .bar i{display:block;height:100%;background:#a8b4ff}
-.tn-xlab table{width:100%;border-collapse:collapse;background:#18181d;border-radius:12px;font-variant-numeric:tabular-nums;font-size:12px}
-.tn-xlab td,.tn-xlab th{padding:4px 5px;text-align:right;vertical-align:top}
-.tn-xlab td.t{text-align:left;max-width:52vw}
-.tn-xlab tr.now td{background:rgba(168,180,255,.15)}
-.tn-xlab th{color:#9a9aa6;font-weight:500}
-.tn-xlab .xtag{display:inline-block;font-size:11px;line-height:16px;vertical-align:middle;padding:0 6px;border-radius:8px;background:rgba(255,255,255,.1);margin-left:4px}
-.tn-xlab textarea{width:100%;box-sizing:border-box;min-height:110px;background:#18181d;color:inherit;border:1px solid #2a2a33;border-radius:10px;padding:8px;font:inherit}
-.tn-xlab .err{color:#ff9a9a}
-${
-  __FLAVOR__ === 'personal'
-    ? `.tn-xlab .xv-row{padding:8px 0;border-top:1px solid rgba(255,255,255,.07)}
-.tn-xlab .xv-row:first-of-type{border-top:0}
-.tn-xlab input[type=text]{flex:1;min-width:0;box-sizing:border-box;background:#0e0e11;color:inherit;border:1px solid #2a2a33;border-radius:10px;padding:8px;font:16px -apple-system,system-ui}`
-    : ''
-}
-`;
-
 function fmt(x: unknown, digits = 0, unit = ''): string {
   return typeof x === 'number' && Number.isFinite(x) ? `${x.toFixed(digits)}${unit}` : '–';
 }
@@ -144,26 +110,19 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     return;
   }
   open = true;
-  const style = document.createElement('style');
-  style.textContent = CSS;
-  document.head.append(style);
-  const root = document.createElement('div');
-  root.className = 'tn-xlab';
-  root.dataset.testid = 'expressive-lab';
-  root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-label', 'Voice models');
-  root.innerHTML = '<div class="hd"><h1>Voice models</h1><button type="button" data-act="close">Close</button></div><div class="body"></div>';
-  document.body.append(root);
-  const body = root.querySelector('.body') as HTMLElement;
+  const pn = panel('Voice Models', 'expressive-lab');
+  const root = pn.root;
+  root.classList.add('lab');
+  const body = pn.body;
 
   let st: Obj = {};
   let sampleId: SampleId = 'dialogue';
   let customText = '';
-  let armed = ''; // "download:<id>" / "remove:<id>": the second tap confirms
   let message = '';
   let messageIsError = false;
   let unavailable = false;
   let poll = 0;
+  let closed = false;
   if (opts.message) {
     message = opts.message;
     messageIsError = opts.error === true;
@@ -173,6 +132,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     messageIsError = error;
     render();
   };
+
+  const engineOf = (id: string): Obj => arr(st.engines).find((e) => e.id === id) ?? {};
 
   const lines = (): ExpressiveLine[] => (sampleId === 'custom' ? annotate(customText) : (SAMPLES.find((s) => s.id === sampleId)?.lines ?? []));
 
@@ -188,27 +149,22 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     else if (dl.state === 'downloading') {
       const pct = typeof dl.fraction === 'number' ? dl.fraction * 100 : 0;
       state = `Downloading ${fmt(pct)}% · ${fmt(dl.filesDone)}/${fmt(dl.filesTotal)} files · keep the app open<div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div>`;
-      acts = `<button type="button" data-act="cancel" data-id="${esc(id)}">Cancel download</button>`;
+      acts = `<button type="button" data-act="cancel" data-id="${esc(id)}">Cancel Download</button>`;
     } else if (!installed) {
       if (dl.state === 'failed') state = `<span class="err">${esc(str(dl.error, 'Download failed'))}</span>`;
       else state = `Not downloaded${typeof e.bytesOnDisk === 'number' && e.bytesOnDisk > 0 ? ` (${mb(e.bytesOnDisk)} so far)` : ''}.`;
-      acts =
-        armed === `download:${id}`
-          ? `<button type="button" class="on" data-act="download" data-id="${esc(id)}">Tap again: download ${mb(e.bytes)} on Wi-Fi</button>`
-          : `<button type="button" data-act="arm-download" data-id="${esc(id)}">Download ${mb(e.bytes)}</button>`;
+      acts = `<button type="button" data-act="download" data-id="${esc(id)}">Download ${mb(e.bytes)}</button>`;
     } else {
       const ls = str(load.state, 'unloaded');
       const loadText = ls === 'ready' ? 'loaded' : ls === 'loading' ? 'loading… (the first load compiles the model, can take a minute)' : ls === 'failed' ? `load failed: ${str(load.error)}` : 'not loaded';
       state = `Downloaded (${mb(e.bytes)}) · ${esc(loadText)}${typeof e.lastLoadMs === 'number' ? ` · last load ${fmt(e.lastLoadMs)} ms${e.lastLoadCold ? ' (cold)' : ' (warm)'}` : ''}`;
       acts = [
-        `<button type="button" data-act="play" data-id="${esc(id)}">▶ Play sample</button>`,
-        `<button type="button" data-act="speed" data-id="${esc(id)}">Speed test</button>`,
-        armed === `remove:${id}`
-          ? `<button type="button" class="warn" data-act="remove" data-id="${esc(id)}">Tap again: delete ${mb(e.bytes)}</button>`
-          : `<button type="button" data-act="arm-remove" data-id="${esc(id)}">Delete model</button>`,
+        `<button type="button" data-act="play" data-id="${esc(id)}">${icon('play.fill', 14)} Play Sample</button>`,
+        `<button type="button" data-act="speed" data-id="${esc(id)}">Speed Test</button>`,
+        `<button type="button" class="danger" data-act="remove" data-id="${esc(id)}">Delete Model</button>`,
       ].join('');
     }
-    return `<div class="card" data-engine="${esc(id)}">
+    return `<div class="lab-card" data-engine="${esc(id)}">
       <h3>${esc(str(e.title))}${e.gpu ? '<span class="xtag">GPU: foreground only</span>' : ''}</h3>
       <div class="muted">${esc(str(e.blurb, ''))}</div>
       <div class="muted">${esc(licenseNote(str(e.license, '')))} · ${esc(str(e.upstream, ''))}</div>
@@ -231,9 +187,9 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>Throttled</span><span>${esc(str(s.throttle, 'no'))}</span>
         ${obj(s.voice).name ? `<span>Voice</span><span>${esc(str(obj(s.voice).name))}${obj(s.voice).note ? `<div class="err">${esc(str(obj(s.voice).note))}</div>` : ''}</span>` : ''}
       </div>
-      <div class="acts"><button type="button" data-act="stop">■ Stop</button></div>
+      <div class="acts"><button type="button" data-act="stop">${icon('stop.fill', 14)} Stop</button></div>
       <h2>Lines</h2>
-      <table><tr><th>#</th><th class="t">text</th><th>voice</th><th>synth</th><th>audio</th><th>×RT</th></tr>
+      <table class="lab-t"><tr><th>#</th><th class="t">text</th><th>voice</th><th>synth</th><th>audio</th><th>×RT</th></tr>
       ${rows
         .map(
           (r) => `<tr class="${r.i === s.current ? 'now' : ''}"><td>${fmt(r.i)}</td><td class="t">${esc(str(r.text, ''))}${r.error ? `<div class="err">${esc(str(r.error))}</div>` : ''}</td>
@@ -258,8 +214,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>Thermal</span><span>${esc(str(th.start))} → ${esc(str(th.end))}</span>
         ${t.error ? `<span>Stopped</span><span class="err">${esc(str(t.error))}</span>` : ''}
       </div>
-      <div class="acts">${t.running ? '<button type="button" data-act="cancel-speed">Cancel speed test</button>' : ''}</div>
-      <table><tr><th>#</th><th>chars</th><th>first</th><th>synth</th><th>audio</th><th>×RT</th></tr>
+      <div class="acts">${t.running ? '<button type="button" data-act="cancel-speed">Cancel Speed Test</button>' : ''}</div>
+      <table class="lab-t"><tr><th>#</th><th>chars</th><th>first</th><th>synth</th><th>audio</th><th>×RT</th></tr>
       ${rows
         .map((r) =>
           r.error
@@ -275,14 +231,13 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     const engines = arr(st.engines);
     const current = lines();
     body.innerHTML = `
-      <div class="muted" style="margin:4px 2px 8px">Pocket TTS is the Narrator’s and Nephis’s voice: download it once (Wi-Fi).
-        The other engines are experiments.</div>
-      ${unavailable ? '<div class="card err">Experimental engines aren’t available in this build.</div>' : ''}
-      ${message ? `<div class="card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}">${esc(message)}</div>` : ''}
+      <p class="note" style="padding-bottom:8px">Pocket TTS is Nephis’s voice: download it once (Wi-Fi). The other engines are experiments.</p>
+      ${unavailable ? '<div class="lab-card err">Experimental engines aren’t available in this build.</div>' : ''}
+      ${message ? `<div class="lab-card${messageIsError ? ' err' : ''}" data-testid="xlab-message" data-error="${messageIsError ? 1 : 0}" role="status">${esc(message)}</div>` : ''}
       ${voices?.view() ?? ''}
       ${
         crashes.disabled
-          ? `<div class="card"><b>${esc(str(crashes.offLine, 'Turned off after crashing twice.'))}</b> (${esc(str(crashes.lastContext, ''))})<div class="acts"><button type="button" data-act="reset-crashes">Turn Nephis back on</button></div></div>`
+          ? `<div class="lab-card"><b>${esc(str(crashes.offLine, 'Turned off after crashing twice.'))}</b> (${esc(str(crashes.lastContext, ''))})<div class="acts"><button type="button" data-act="reset-crashes">Turn Nephis Back On</button></div></div>`
           : ''
       }
       <h2>Sample</h2>
@@ -298,7 +253,7 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         .slice(0, 4)
         .map((l) => `${esc(l.text.slice(0, 60))}${l.text.length > 60 ? '…' : ''}<span class="xtag">${esc(l.role)}</span><span class="xtag">${esc(l.style ?? l.emotion)}</span>`)
         .join('<br>')}${current.length > 4 ? '<br>…' : ''}</div>
-      <div class="acts"><button type="button" data-act="play-kokoro">▶ Same sample with Kokoro (as today)</button></div>
+      <div class="acts"><button type="button" data-act="play-kokoro">${icon('play.fill', 14)} Same Sample With Kokoro</button></div>
       <h2>Engines</h2>
       ${engines.map(engineCard).join('') || '<div class="muted">–</div>'}
       <h2>Now playing</h2>
@@ -316,8 +271,8 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         <span>iOS</span><span>${esc(str(dev.os))}</span>
       </div>
       <div class="acts">
-        <button type="button" data-act="unload">Free the model now</button>
-        <button type="button" data-act="copy">Copy report</button>
+        <button type="button" data-act="unload">Free the Model Now</button>
+        <button type="button" data-act="copy">Copy Report</button>
       </div>`;
   };
 
@@ -334,7 +289,10 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         message = err instanceof Error ? err.message : String(err);
         messageIsError = true;
       })
-      .finally(render);
+      .finally(() => {
+        render();
+        schedule(true);
+      });
   };
 
   /** A call whose answer isn't the status itself (Import voice…, ▶ on a voice): `done` makes the message. */
@@ -352,7 +310,10 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         message = err instanceof Error ? err.message : String(err);
         messageIsError = true;
       })
-      .finally(render);
+      .finally(() => {
+        render();
+        schedule(true);
+      });
   };
 
   // Personal flavor: the narrator voice for Chatterbox Nano (built-in or imported; voice-import.ts). The store
@@ -370,9 +331,22 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
             render();
           },
           render,
+          confirm: (title, text, action) => confirmStep(title, text, action),
           root,
         })
       : null;
+
+  /** Something is going on whose numbers change: a download, a model loading, a sample playing, a speed test. */
+  const running = (s: Obj): boolean =>
+    arr(s.engines).some((e) => obj(e.download).state === 'downloading' || obj(e.load).state === 'loading') ||
+    obj(s.session).state === 'playing' ||
+    obj(s.speedTest).running === true;
+
+  /** The next status read: in a second while something runs (or once after a tap, `soon`), else none. */
+  function schedule(soon = false): void {
+    window.clearTimeout(poll);
+    if (!closed && (soon || running(st))) poll = window.setTimeout(refresh, 1000);
+  }
 
   const refresh = (): void => {
     void ExpressiveVoice.status()
@@ -389,8 +363,16 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
         const typing = document.activeElement?.tagName;
         // While a voice is being renamed the list stays put too (its Save button must not move).
         if (typing !== 'TEXTAREA' && typing !== 'INPUT' && !voices?.editing()) render();
+        schedule();
       });
   };
+
+  pn.onClose(() => {
+    open = false;
+    closed = true;
+    showMessage = null;
+    window.clearTimeout(poll);
+  });
 
   const sampleName = (): string => (sampleId === 'custom' ? 'custom' : sampleId);
 
@@ -406,39 +388,29 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
     if (!el) return;
     const id = el.dataset.id ?? '';
     const act = el.dataset.act ?? '';
-    if (act !== 'download' && act !== 'remove') armed = '';
     if (voices?.click(act, id)) return;
     switch (act) {
-      case 'close':
-        open = false;
-        showMessage = null;
-        window.clearInterval(poll);
-        root.remove();
-        style.remove();
-        return;
       case 'sample':
         sampleId = id as SampleId;
         render();
         return;
-      case 'arm-download':
-        armed = `download:${id}`;
-        render();
+      case 'download': {
+        const e = engineOf(id);
+        void confirmStep(`Download ${str(e.title, 'the Model')}?`, `${mb(e.bytes)} on this iPhone. Use Wi-Fi and keep TachiNovel open until it’s done.`, 'Download', false).then((yes) => {
+          if (yes) apply(ExpressiveVoice.download({ engine: id }));
+        });
         return;
-      case 'arm-remove':
-        armed = `remove:${id}`;
-        render();
-        return;
-      case 'download':
-        armed = '';
-        apply(ExpressiveVoice.download({ engine: id }));
-        return;
+      }
       case 'cancel':
         apply(ExpressiveVoice.cancelDownload({ engine: id }));
         return;
-      case 'remove':
-        armed = '';
-        apply(ExpressiveVoice.remove({ engine: id }), 'Model deleted.');
+      case 'remove': {
+        const e = engineOf(id);
+        void confirmStep(`Delete ${str(e.title, 'the Model')}?`, `Frees ${mb(e.bytes)}. You can download it again.`, 'Delete').then((yes) => {
+          if (yes) apply(ExpressiveVoice.remove({ engine: id }), 'Model deleted.');
+        });
         return;
+      }
       case 'play':
       case 'play-kokoro': {
         const ls = lines();
@@ -485,5 +457,4 @@ export function openExpressiveLab(opts: { message?: string; error?: boolean } = 
   });
   render();
   refresh();
-  poll = window.setInterval(refresh, 1000);
 }

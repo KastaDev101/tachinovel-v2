@@ -195,6 +195,9 @@ export interface VoiceSettingsInfo {
   /** Saved mixes; `defaultVoice`, `novelVoice` and `effectiveVoice` may be one of their ids. */
   customVoices?: CustomVoiceInfo[];
   defaultVoice: string;
+  /** The Kokoro voice that reads when Nephis can't (More › Voices › Backup Voice); null: her matched voice (af_nephis).
+   * Older builds: absent. */
+  backupVoice?: string | null;
   kokoroEnabled: boolean;
   usePCAudio: boolean;
   carButtons?: CarButtons;
@@ -302,6 +305,8 @@ export interface NarrationPlugin {
   voiceSettings(opts?: { pluginId?: string; novelPath?: string }): Promise<VoiceSettingsInfo>;
   setVoiceSettings(opts: {
     defaultVoice?: string;
+    /** The backup voice (a voice or mix id); '' (or an unknown id): her matched voice again. */
+    backupVoice?: string;
     /** voice null = use the default for this novel. */
     novel?: { pluginId: string; novelPath: string; voice: string | null };
     usePCAudio?: boolean;

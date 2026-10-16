@@ -12,16 +12,12 @@
 import { callCore, observeCalls } from '../capacitor-client.ts';
 import { DRIVE_CHAPTER_CHOICES, driveLine, formatBytes, formatDuration, jobProgress, normalizeDriveStatus } from './drive-status.ts';
 import { Narration, type DriveStatus } from './narration.ts';
-import { fs } from './type.ts';
-import { esc, panel, toast } from './voices-ui.ts';
+import { confirmStep, esc, icon, panel, segmented, toast } from './panel.ts';
 
 const COUNT_KEY = 'tn.drive.chapters';
 
 const CSS = `
-.tn-drive-card .tn-drive-chev{color:var(--label-3,#8e8e93);font-size:${fs(20)};flex:none}
-.tn-v .prog{height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:8px}
-.tn-v .prog i{display:block;height:100%;background:#a8b4ff;transition:width .3s}
-.tn-v .row .meta{color:#a1a1aa;font-size:${fs(13)};flex:none;font-variant-numeric:tabular-nums}
+.tn-drive-card .tn-drive-chev{color:var(--gray-3);display:flex;flex:none}
 `;
 
 const ICON_CAR =
@@ -81,7 +77,7 @@ export function addDriveCard(pcAudio: boolean): void {
     card.dataset.testid = 'drive-card';
     card.dataset.plugin = ref.pluginId;
     card.dataset.path = ref.novelPath;
-    card.innerHTML = `<button type="button" class="nar-card-main tap tap-dim"><span class="nar-card-icon" aria-hidden="true">${ICON_CAR}</span><span class="nar-card-text"><span class="nar-card-title">Prepare for the Drive</span><span class="nar-card-line" data-drive-line></span></span></button><span class="tn-drive-chev" aria-hidden="true">›</span>`;
+    card.innerHTML = `<button type="button" class="nar-card-main tap tap-dim"><span class="nar-card-icon" aria-hidden="true">${ICON_CAR}</span><span class="nar-card-text"><span class="nar-card-title">Prepare for the Drive</span><span class="nar-card-line" data-drive-line></span></span></button><span class="tn-drive-chev" aria-hidden="true">${icon('chevron.right', 14)}</span>`;
     card.querySelector('button')?.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -138,26 +134,36 @@ export function openDriveSheet(novel: NovelRef & { name: string }): void {
     const ready = latest.prepared.filter((c) => c.novelKey === key);
     const bytes = ready.reduce((a, c) => a + c.bytes, 0);
     const busy = job && (job.state === 'running' || job.state === 'waiting' || job.state === 'queued');
+    const pct = job ? Math.round(jobProgress(job) * 100) : 0;
     const jobHtml = job
-      ? `<div class="card"><div class="row" style="display:block">
+      ? `<div class="sec">Progress</div><div class="card"><div class="row"><span class="main">
           <b>${esc(job.state === 'done' ? `${job.done} of ${job.count} chapters prepared` : job.state === 'failed' ? 'Stopped' : `Preparing ${job.count} chapter${job.count === 1 ? '' : 's'}`)}</b>
           <span class="sub" data-drive-status>${esc(driveLine(latest, key))}${job.current && job.state === 'running' ? ` · ${esc(job.current.title)}` : ''}</span>
-          ${busy ? `<div class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(jobProgress(job) * 100)}"><i style="width:${(jobProgress(job) * 100).toFixed(1)}%"></i></div>` : ''}
-        </div>${busy ? '<button type="button" class="row" data-act="cancel"><div class="main"><b>Stop Preparing</b></div></button>' : ''}</div>`
+          ${busy ? `<span class="prog" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></span>` : ''}
+        </span></div>${busy ? '<button type="button" class="row" data-act="cancel"><span class="main"><b class="danger">Stop Preparing</b></span></button>' : ''}</div>`
       : '';
     const readyRows = ready
-      .map((c) => `<div class="row"><div class="main"><b>${esc(c.title)}</b></div><span class="meta">${formatDuration(c.durationSec)} · ${formatBytes(c.bytes)}</span></div>`)
+      .map((c) => `<div class="row"><span class="main"><b>${esc(c.title)}</b></span><span class="val">${formatDuration(c.durationSec)} · ${formatBytes(c.bytes)}</span></div>`)
       .join('');
     p.body.innerHTML = `
-      <p class="note">Nephis reads the next chapters into audio on this iPhone, so listening in the car never waits for the voice or the internet. Each prepared chapter is deleted after you listen to it.</p>
       <div class="sec">Chapters</div>
-      <div class="chips" role="group" aria-label="How many chapters">${DRIVE_CHAPTER_CHOICES.map((n) => `<button type="button" class="chip${n === count ? ' is-selected' : ''}" data-act="count" data-v="${n}" aria-pressed="${n === count}">${n}</button>`).join('')}</div>
-      <p class="note" data-start>${startName ? `Starting where you’d continue: ${esc(startName)}` : 'Starting where you’d continue listening.'}</p>
+      <div class="card"><div class="row seg-row">${segmented(
+        'count',
+        'How many chapters',
+        DRIVE_CHAPTER_CHOICES.map((n) => [String(n), String(n)] as const),
+        String(count),
+      )}</div></div>
+      <p class="note" data-start>${startName ? `Starting where you’d continue: ${esc(startName)}.` : 'Starting where you’d continue listening.'}</p>
       <button type="button" class="btn" data-act="now">Prepare Now</button>
       <button type="button" class="btn alt" data-act="later">When Charging or on Wi-Fi</button>
-      ${jobHtml ? `<div class="sec">Progress</div>${jobHtml}` : ''}
-      <div class="sec">On this iPhone</div>
-      ${ready.length > 0 ? `<div class="card">${readyRows}</div><p class="note">${ready.length} chapter${ready.length === 1 ? '' : 's'} · ${formatBytes(bytes)}. All prepared audio: ${formatBytes(latest.totalBytes)}.</p><button type="button" class="btn alt" data-act="clear">Remove Prepared Audio</button>` : '<p class="note">Nothing prepared for this novel yet.</p>'}`;
+      <p class="note">Nephis reads the chapters into audio on this iPhone, so listening in the car never waits for the voice or the internet. Each one is deleted after you listen to it.</p>
+      ${jobHtml}
+      <div class="sec">On This iPhone</div>
+      ${
+        ready.length > 0
+          ? `<div class="card">${readyRows}</div><p class="note">${ready.length} chapter${ready.length === 1 ? '' : 's'} · ${formatBytes(bytes)}. All prepared audio: ${formatBytes(latest.totalBytes)}.</p><button type="button" class="btn alt danger" data-act="clear">Remove Prepared Audio</button>`
+          : '<div class="card"><div class="row"><span class="main sub">Nothing prepared for this novel yet.</span></div></div>'
+      }`;
   };
 
   const start = async (when: 'now' | 'chargingOrWifi'): Promise<void> => {
@@ -166,7 +172,7 @@ export function openDriveSheet(novel: NovelRef & { name: string }): void {
       latest = normalizeDriveStatus(await Narration.prepareDrive({ pluginId: novel.pluginId, novelPath: novel.novelPath, novelName: novel.name, chapters: count, when }));
       toast(when === 'now' ? `Preparing ${count} chapter${count === 1 ? '' : 's'}…` : 'Will prepare while charging or on Wi-Fi');
     } catch (err) {
-      toast(`Couldn't start: ${err instanceof Error ? err.message : String(err)}`);
+      toast(`Couldn’t start: ${err instanceof Error ? err.message : String(err)}`, true);
     }
     rerender();
   };
@@ -188,13 +194,16 @@ export function openDriveSheet(novel: NovelRef & { name: string }): void {
         void Narration.cancelDrive({ pluginId: novel.pluginId, novelPath: novel.novelPath }).then(refresh, () => undefined);
         return;
       case 'clear':
-        void Narration.clearDrive({ pluginId: novel.pluginId, novelPath: novel.novelPath })
-          .then((s) => {
-            latest = normalizeDriveStatus(s);
-            rerender();
-            toast('Prepared audio removed');
-          })
-          .catch(() => undefined);
+        void confirmStep('Remove Prepared Audio?', `The prepared chapters of ${novel.name || 'this novel'} are deleted. Listen reads them live instead.`, 'Remove').then((yes) => {
+          if (!yes) return;
+          void Narration.clearDrive({ pluginId: novel.pluginId, novelPath: novel.novelPath })
+            .then((s) => {
+              latest = normalizeDriveStatus(s);
+              rerender();
+              toast('Prepared audio removed');
+            })
+            .catch((err: unknown) => toast(`Couldn’t remove it: ${err instanceof Error ? err.message : String(err)}`, true));
+        });
         return;
       default:
     }

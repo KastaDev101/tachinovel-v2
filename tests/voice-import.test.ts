@@ -43,7 +43,7 @@ const raw = {
     { id: B, name: 'Knight', createdAt: '2026-10-06T23:51:00Z', importedAt: '2026-10-07T09:00:00Z', hasPreview: false, madeFor: null, sourceFile: null },
   ],
 };
-const ui = (over: Partial<VoicesUiState> = {}): VoicesUiState => ({ armed: '', renaming: '', renameDraft: '', ...over });
+const ui = (over: Partial<VoicesUiState> = {}): VoicesUiState => ({ renaming: '', renameDraft: '', ...over });
 
 /** Visible text of an HTML fragment: everything outside <...> (test helper, not a sanitizer). */
 function textOutsideTags(html: string): string {
@@ -144,7 +144,7 @@ describe('the Narrator voice section', () => {
       expect(rowIn(html, id)).toContain('data-act="voice-use"');
       expect(rowIn(html, id)).toContain('data-act="voice-play"');
       expect(rowIn(html, id)).not.toContain('voice-rename');
-      expect(rowIn(html, id)).not.toContain('voice-arm-delete');
+      expect(rowIn(html, id)).not.toContain('voice-delete');
     }
     expect(rowIn(html, A)).toContain('voice-rename');
     expect(rowIn(html, A)).toContain('has a preview');
@@ -153,7 +153,7 @@ describe('the Narrator voice section', () => {
   });
 
   it('gives every control a name (VoiceOver) and only uses buttons and a labelled field', () => {
-    const html = voicesSection(sectionInfo, ui({ renaming: A, renameDraft: 'Mommy', armed: `voice-delete:${B}` }));
+    const html = voicesSection(sectionInfo, ui({ renaming: A, renameDraft: 'Mommy' }));
     for (const m of html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)) {
       const tag = m[0];
       const label = /aria-label="([^"]+)"/.exec(tag)?.[1] ?? textOutsideTags(m[1] ?? '').trim();
@@ -161,7 +161,7 @@ describe('the Narrator voice section', () => {
       expect(tag).toContain('type="button"');
     }
     expect(html).toMatch(/<input type="text" data-act-input="voice-name" maxlength="40"[^>]*aria-label="New name for Mommy"[^>]*value="Mommy">/);
-    expect(html).toContain('Tap again: delete “Knight”');
+    expect(html).toContain('aria-label="Delete Knight"');
     expect(html).not.toMatch(/\shidden\b|display:\s*none/); // nothing the crawler can't operate
   });
 

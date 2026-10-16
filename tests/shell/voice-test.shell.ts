@@ -128,11 +128,12 @@ describe('More › Developer › Voice Test (PC shell)', () => {
     // More › Developer › Studio: Automatic (for the pack in use).
     await screen.getByRole('button', { name: 'Back', exact: true }).click();
     await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
-    const automatic = dev.getByRole('button', { name: 'Automatic', exact: true });
-    await expect.poll(() => automatic.getAttribute('aria-pressed'), { timeout: 5000 }).toBe('false');
+    // A segmented control (Automatic | Off), like v1's.
+    const automatic = dev.getByRole('tab', { name: 'Automatic', exact: true });
+    await expect.poll(() => automatic.getAttribute('aria-selected'), { timeout: 5000 }).toBe('false');
     await automatic.click();
     await expect.poll(() => calls('ExpressiveVoice', 'studioEnable')).toEqual([{ on: true }]);
-    await expect.poll(() => dev.getByRole('button', { name: 'Automatic', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    await expect.poll(() => dev.getByRole('tab', { name: 'Automatic', exact: true }).getAttribute('aria-selected')).toBe('true');
     await dev.getByTestId('dev-test').click();
     await screen.waitFor({ timeout: 5000 });
     await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Studio: on (she reads at 44.1 kHz).');

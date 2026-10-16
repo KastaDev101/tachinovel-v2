@@ -840,10 +840,14 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     }
 
     /// The Kokoro voice the speech engine uses: the novel's, except while Nephis reads, when Kokoro's sentences
-    /// (a stand-in while she catches up, a fallback) are read in her matched voice (af_nephis), not another one.
+    /// (a stand-in while she catches up, a fallback) are read in her backup voice: the one picked in More › Voices ›
+    /// Backup Voice, else her matched voice (af_nephis).
     private func kokoroVoiceForSpeech() -> String {
-        let d = VoiceSettings.shared.prefs.delivery
-        if Self.listenEngine() == .pocketTts, d.isNephis, VoiceCatalog.voice("af_nephis") != nil { return "af_nephis" }
+        let prefs = VoiceSettings.shared.prefs
+        if Self.listenEngine() == .pocketTts, prefs.delivery.isNephis {
+            if let picked = prefs.backupVoice, let voice = prefs.engineVoice(picked) { return voice }
+            if VoiceCatalog.voice("af_nephis") != nil { return "af_nephis" }
+        }
         return kokoroVoiceForCurrentNovel()
     }
 

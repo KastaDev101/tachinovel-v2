@@ -170,3 +170,16 @@
 - Nephis with Natural delivery off no longer repeats passages: each of her calls reads one sentence (only natural delivery can cut a paragraph's audio back into sentences; before, a whole paragraph's audio played as its first sentence and was read again from each sentence after it).
 - Voice test with a studio pack gets going again: the studio speed test runs only when her studio is switched on (off: "Studio off: speed test skipped", straight to the listening test); it keeps to a 60 s budget and stops as soon as the studio can't reach real time, saying why in plain words ("studio too slow: 0.3x real time", "timed out after 60 s", "not enough memory to load the studio (X MB free)") before the listening test; Stop works during it (cancels the native test).
 - A Nephis pack (.tnmodel) copied into the app's Documents (Apple Devices file sharing) now installs when you return to the app, not only at a fresh launch; one install at a time, and a file that failed isn't retried over and over in the same session.
+- The voice screens look like the rest of the app (cleanup 2): v1's grouped lists in light and dark mode (they were
+  always dark), a centred title with "‹ Back", tinted group headers, explanations as footers, SF Symbols instead of
+  text glyphs, skeleton rows while loading, Dynamic Type in the labs, v1's toast (above the mini player) and the
+  native confirmation alert for every delete (voice packs, mixes, pronunciations, models, prepared audio).
+- More › Voices: Nephis shows her Narrator pack ("· Studio") and her Dialogue pack ("Uses the narrator" without one);
+  "Download Her Voice" downloads her model right there with its progress (after a confirmation with its size), instead
+  of opening the Voice models lab; Car Buttons is a segmented control.
+- The Backup Voice is back: the Kokoro voice that reads only when Nephis can't (her matched voice by default), with the
+  three best voices first, ▶ samples and All Voices (your mixes too; Mix a Voice and Edit with Developer options).
+  Native reads her stand-in sentences with the picked voice (VoicePreferences.backupVoice).
+- Pronunciations has one title and an "All Novels | This Novel" switch when opened for a novel.
+- The Voice models lab reads its numbers only while something runs (a download, a sample, a speed test), the Kokoro
+  Voice Lab only while narration plays (both read every second before).

@@ -12,7 +12,7 @@
 import { signal, type Signal } from '@preact/signals';
 import { formatBytes } from './drive-status.ts';
 import { DiagFolder } from './diag-folder.ts';
-import { esc, panel, toast } from './voices-ui.ts';
+import { esc, panel, skeleton, toast, unavailable } from './panel.ts';
 
 export interface NativeStorageEntry {
   key: string;
@@ -74,13 +74,11 @@ export function openNativeStorage(onChange: () => void = () => undefined): void 
   let busy = false;
 
   const row = (e: NativeStorageEntry): string =>
-    `<div class="row" data-storage="${esc(e.key)}"><div class="main"><b>${esc(e.label)}</b>${e.note ? `<span class="sub">${esc(e.note)}</span>` : ''}</div><span>${esc(formatBytes(e.bytes))}</span></div>`;
+    `<div class="row" data-storage="${esc(e.key)}"><span class="main"><b>${esc(e.label)}</b>${e.note ? `<span class="sub">${esc(e.note)}</span>` : ''}</span><span class="val">${esc(formatBytes(e.bytes))}</span></div>`;
 
   const render = (): void => {
     if (!data) {
-      p.body.innerHTML = failed
-        ? '<p class="note">Storage isn’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
-        : '<p class="note">Measuring…</p>';
+      p.body.innerHTML = failed ? unavailable('Storage isn’t available right now.') : skeleton(4);
       return;
     }
     const d = data;
@@ -98,7 +96,8 @@ export function openNativeStorage(onChange: () => void = () => undefined): void 
         <button type="button" class="btn" data-act="clean" data-testid="native-storage-clean"${busy ? ' disabled' : ''}>${busy ? 'Cleaning up…' : `Clean Up (${esc(formatBytes(d.leftoverBytes))})`}</button>
         <p class="note">Removes only copies and unfinished unpacks: never a voice pack, a model, your reading data or the recording.</p>`
       : '<p class="note" data-testid="native-storage-clean-none">No leftovers: nothing is stored twice.</p>';
-    p.body.innerHTML = `<div class="card"><div class="row" data-testid="native-storage-total"><div class="main"><b>TachiNovel’s data</b><span class="sub">The app itself adds ${esc(formatBytes(d.appBytes))} (it carries the Kokoro voices).</span></div><span>${esc(formatBytes(d.totalBytes))}</span></div></div>
+    p.body.innerHTML = `<div class="sec">Total</div><div class="card"><div class="row" data-testid="native-storage-total"><span class="main"><b>TachiNovel’s Data</b></span><span class="val">${esc(formatBytes(d.totalBytes))}</span></div></div>
+      <p class="note">The app itself adds ${esc(formatBytes(d.appBytes))} (it carries the Kokoro voices).</p>
       ${groups}${clean}`;
   };
 
@@ -131,7 +130,7 @@ export function openNativeStorage(onChange: () => void = () => undefined): void 
           toast(cleanedMessage(num(r.removed), num(r.bytes)));
           onChange();
         })
-        .catch((err: unknown) => toast(`Couldn’t clean up: ${err instanceof Error ? err.message : String(err)}`))
+        .catch((err: unknown) => toast(`Couldn’t clean up: ${err instanceof Error ? err.message : String(err)}`, true))
         .finally(() => {
           busy = false;
           render();

@@ -131,11 +131,14 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     public var narrator: NarratorSettings
     /// Expressive voices (Delivery.swift): who reads chapters, natural delivery, director, breaths, studio sound.
     public var delivery: DeliverySettings
+    /// The Kokoro voice (a built-in id or a mix id) that reads while Nephis can't (More › Voices › Backup Voice).
+    /// nil: her matched voice (af_nephis). Only used while Nephis reads chapters.
+    public var backupVoice: String?
 
     public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
                 route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
                 speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = [],
-                narrator: NarratorSettings = NarratorSettings(), delivery: DeliverySettings = DeliverySettings()) {
+                narrator: NarratorSettings = NarratorSettings(), delivery: DeliverySettings = DeliverySettings(), backupVoice: String? = nil) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
@@ -148,6 +151,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         self.customVoices = customVoices
         self.narrator = narrator
         self.delivery = delivery
+        self.backupVoice = backupVoice
     }
 
     /// Tolerant decoding: missing keys take their defaults (settings written by older builds).
@@ -166,6 +170,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         customVoices = (try? c.decode([CustomVoice].self, forKey: .customVoices)) ?? d.customVoices
         narrator = (try? c.decode(NarratorSettings.self, forKey: .narrator)) ?? d.narrator
         delivery = (try? c.decode(DeliverySettings.self, forKey: .delivery)) ?? d.delivery
+        backupVoice = try? c.decodeIfPresent(String.self, forKey: .backupVoice)
     }
 
     /// The voice a novel speaks with (its own choice, else the global default, else Heart): a built-in id,

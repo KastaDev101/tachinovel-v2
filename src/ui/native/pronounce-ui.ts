@@ -14,8 +14,6 @@
  *
  * Vanilla DOM over the unchanged v1 reader (like narration-overlay.ts' Listen tool); re-added when v1 re-renders.
  */
-import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
-import { symbols } from '@v1/ui/state/store.ts';
 import { htmlToBlocks, type Lexicon } from '@v1tts/frontend.ts';
 import { speechScript } from '../../core/narration/speech-script.ts';
 import {
@@ -31,7 +29,8 @@ import {
 import { callCore, observeCalls } from '../capacitor-client.ts';
 import { ExpressiveVoice } from './expressive-lab.ts';
 import { Narration } from './narration.ts';
-import { esc, normalizeVoiceSettings, openLexiconEditor, panel, toast } from './voices-ui.ts';
+import { chevron, confirmStep, esc, icon, panel, skeleton, switchInput, toast, unavailable } from './panel.ts';
+import { normalizeVoiceSettings, openLexiconEditor } from './voices-ui.ts';
 
 export interface NovelRef {
   pluginId: string;
@@ -48,7 +47,7 @@ const EMPTY: Lexicon = { schemaVersion: 1, entries: [] };
 const STYLE = `
 .rd-quote-bar:has(.tn-pronounce) .rd-quote-btn{padding:0 9px}
 .rd-quote-bar .tn-pronounce[hidden]{display:none}
-.tn-v .tn-pr-hint{color:#a1a1aa;font-size:13px;margin:8px 2px 0;min-height:1.2em}
+.tn-v .tn-pr-hint{color:var(--label-2);font-size:var(--fs-footnote);margin:0 2px;min-height:1.3em}
 `;
 
 /** "<pluginId>:<novelPath>", the pronunciation store's novel key (core.ts novelKeyString). */
@@ -127,28 +126,27 @@ export function openPronounceSheet(opts: { word: string; novel: NovelRef; novelN
 
   const render = (): void => {
     if (!lists) {
-      p.body.innerHTML = failed
-        ? '<p class="note">Pronunciations aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
-        : '<p class="note">Loading…</p>';
+      p.body.innerHTML = failed ? unavailable('Pronunciations aren’t available right now.') : skeleton(2);
       return;
     }
     const say = found?.entry.say ?? '';
     const all = found?.scope === 'global';
     p.body.innerHTML = `
       <div class="sec">How to say “${esc(word)}”</div>
-      <div class="card" style="padding:4px 14px 12px">
+      <div class="card"><div class="form">
         <input type="text" data-f="say" value="${esc(say)}" placeholder="e.g. NEF-iss" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done" aria-label="How ${esc(word)} should sound" data-testid="pronounce-say">
         <p class="tn-pr-hint" data-hint aria-live="polite">${esc(respellingHint(say, word))}</p>
-      </div>
+      </div></div>
       <p class="note">Hyphens between syllables, the stressed one in capitals: NEF-iss, say-SHAHN, KASS-ee. Any spelling that sounds right works too.</p>
-      <button type="button" class="btn alt" data-act="hear" data-testid="pronounce-hear">▶ Hear it</button>
+      <button type="button" class="btn alt" data-act="hear" data-testid="pronounce-hear">${icon('play.fill', 16)}Hear It</button>
       <div class="sec">Where</div>
-      <div class="card"><label class="row"><div class="main"><b>All novels</b><span class="sub">Off: only in ${esc(label)}</span></div><input type="checkbox" class="sw" data-f="all" ${all ? 'checked' : ''} aria-label="Use in all novels" data-testid="pronounce-all"></label></div>
+      <div class="card"><label class="row"><span class="main"><b>All Novels</b></span>${switchInput('data-f="all" data-testid="pronounce-all"', all, 'Use in all novels')}</label></div>
+      <p class="note">Off: only in ${esc(label)}.</p>
       <button type="button" class="btn" data-act="save" data-testid="pronounce-save">Save</button>
       ${found ? `<button type="button" class="btn alt danger" data-act="remove" data-testid="pronounce-remove">Remove “${esc(found.entry.match)}”</button>` : ''}
       <p class="note">Narration says it this way from the next time you tap Listen. Chapters already prepared for the drive keep the old way until prepared again.</p>
       <div class="sec">${esc(label)}</div>
-      <div class="card"><button type="button" class="row" data-act="list" data-testid="pronounce-list"><div class="main"><b>All pronunciations for this novel</b><span class="sub">View, change or delete</span></div><span aria-hidden="true">›</span></button></div>`;
+      <div class="card"><button type="button" class="row" data-act="list" data-testid="pronounce-list"><span class="main"><b>Pronunciations for This Novel</b></span>${chevron()}</button></div>`;
   };
 
   const field = (): HTMLInputElement | null => p.body.querySelector<HTMLInputElement>('[data-f="say"]');
@@ -189,7 +187,7 @@ export function openPronounceSheet(opts: { word: string; novel: NovelRef; novelN
       el.classList.add('is-busy');
       playing = true;
       void hear(novel, word, say)
-        .catch((err: unknown) => toast(`Couldn’t play it: ${err instanceof Error ? err.message : String(err)}`))
+        .catch((err: unknown) => toast(`Couldn’t play it: ${err instanceof Error ? err.message : String(err)}`, true))
         .finally(() => el.classList.remove('is-busy'));
       return;
     }
@@ -203,23 +201,27 @@ export function openPronounceSheet(opts: { word: string; novel: NovelRef; novelN
           toast(all ? `Saved “${word}” for all novels` : `Saved “${word}” for ${label}`);
           done();
         })
-        .catch((err: unknown) => toast(`Couldn’t save: ${err instanceof Error ? err.message : String(err)}`))
+        .catch((err: unknown) => toast(`Couldn’t save: ${err instanceof Error ? err.message : String(err)}`, true))
         .finally(() => (busy = false));
       return;
     }
     if (act === 'remove' && found) {
       busy = true;
       const match = found.entry.match;
-      void writeLists(novelKey, removePronunciation(lists, match, found.scope))
-        .then(() => {
+      const scope = found.scope;
+      const now = lists;
+      void confirmStep(`Remove “${match}”?`, 'The voices go back to saying it their own way.', 'Remove')
+        .then(async (yes) => {
+          if (!yes) return;
+          await writeLists(novelKey, removePronunciation(now, match, scope));
           toast(`Removed “${match}”`);
-          return load();
+          await load();
         })
-        .catch((err: unknown) => toast(`Couldn’t remove it: ${err instanceof Error ? err.message : String(err)}`))
+        .catch((err: unknown) => toast(`Couldn’t remove it: ${err instanceof Error ? err.message : String(err)}`, true))
         .finally(() => (busy = false));
       return;
     }
-    if (act === 'list') openLexiconEditor(novelKey, label);
+    if (act === 'list') openLexiconEditor({ key: novelKey, name: label }, 'novel');
   });
 
   render();
@@ -250,8 +252,7 @@ function addButton(bar: HTMLElement): HTMLButtonElement {
   btn.type = 'button';
   btn.className = 'rd-quote-btn tap tap-dim tn-pronounce';
   btn.dataset.testid = 'reader-quote-pronounce';
-  const icon = symbols.value.waveform ?? fallbackIconUrl('waveform');
-  btn.innerHTML = `<i class="icon" style="--icon:url(&quot;${icon.replace(/"/g, '%22')}&quot;);--icon-size:16px" aria-hidden="true"></i><span>Pronounce</span>`;
+  btn.innerHTML = `${icon('waveform', 16)}<span>Pronounce</span>`;
   btn.addEventListener('click', (ev) => {
     ev.stopPropagation();
     const t = selectionTarget();

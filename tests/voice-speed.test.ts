@@ -133,8 +133,8 @@ describe('Voice speed test (voice-speed.ts)', () => {
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain('data-testid="voices-speed"');
     // Only openVoicePicker (Listen › Voice) shows the row, and only with Developer options on (cleanup 1, 2026-10-15).
-    expect(voices.match(/\$\{SPEED_TEST_ROW\}/g)?.length).toBe(1);
-    expect(voices).toContain('${isDeveloper() ? `<div class="card" style="margin-top:10px">${SPEED_TEST_ROW}</div>` : \'\'}');
+    expect(voices.match(/SPEED_TEST_ROW\(\)/g)?.length).toBe(1);
+    expect(voices).toContain("${isDeveloper() ? SPEED_TEST_ROW() : ''}");
     expect(voices).toContain("if (act === 'voice-speed') openVoiceSpeedTest();");
     expect(read('src/ui/native/voice-test.ts')).toContain('data-testid="voice-test-speed"');
     expect(read('src/ui/native/v1-hooks.ts')).toContain("'diagnostics-voice-speed'");

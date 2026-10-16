@@ -12,7 +12,7 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { ExpressiveVoice } from './expressive-lab.ts';
 import { isDeveloper } from './dev-flags.ts';
 import { copyText } from './voice-test.ts';
-import { esc, panel, toast } from './voices-ui.ts';
+import { esc, panel, toast, verdict } from './panel.ts';
 
 type Obj = Record<string, unknown>;
 export type Line = { ok: boolean; text: string };
@@ -203,8 +203,8 @@ export function openVoiceSpeedTest(): void {
   let status: Obj = {};
   let listener: PluginListenerHandle | null = null;
 
-  const row = (l: Line): string => `<div class="row"><span aria-hidden="true">${l.ok ? '✓' : '⚠'}</span><div class="main">${esc(l.text)}</div></div>`;
-  const plain = (t: string): string => `<div class="row"><div class="main">${esc(t)}</div></div>`;
+  const row = (l: Line): string => `<div class="row">${verdict(l.ok)}<span class="main">${esc(l.text)}</span></div>`;
+  const plain = (t: string): string => `<div class="row"><span class="main">${esc(t)}</span></div>`;
 
   const render = (): void => {
     const pack = status.nephisPack && typeof status.nephisPack === 'object' ? (status.nephisPack as Obj) : null;
@@ -220,11 +220,11 @@ export function openVoiceSpeedTest(): void {
         ${
           stages.length
             ? `<div class="sec">Where the time went</div><div class="card" data-testid="voice-speed-stages">${stages
-                .map((s) => `<div class="row"><div class="main"><b>${esc(s.label)}</b><span class="sub">${sec(s.ms)}${Number.isFinite(s.perSecond) ? ` · ${s.perSecond.toFixed(2)} s per second of audio` : ''}</span></div></div>`)
+                .map((s) => `<div class="row"><span class="main"><b>${esc(s.label)}</b><span class="sub">${sec(s.ms)}${Number.isFinite(s.perSecond) ? ` · ${s.perSecond.toFixed(2)} s per second of audio` : ''}</span></span></div>`)
                 .join('')}</div>`
             : ''
         }
-        ${report?.ran === true ? `<div class="sec">This phone</div><div class="card">${aboutLines(report).map(plain).join('')}</div>` : ''}
+        ${report?.ran === true ? `<div class="sec">This iPhone</div><div class="card">${aboutLines(report).map(plain).join('')}</div>` : ''}
         ${report?.ran === true && Number(report.audioSamples ?? 0) > 0 ? `<button type="button" class="btn" data-act="play" data-testid="voice-speed-play">${playing ? 'Stop Playing' : 'Play Result'}</button>` : ''}
         <button type="button" class="btn alt" data-act="copy" data-testid="voice-speed-copy">Copy Report</button>`
       : '';
@@ -321,7 +321,7 @@ export function openVoiceSpeedTest(): void {
             }, seconds * 1000 + 300);
           }
         })
-        .catch((err: unknown) => toast(err instanceof Error ? err.message : String(err)));
+        .catch((err: unknown) => toast(err instanceof Error ? err.message : String(err), true));
     }
     if (act === 'copy' && report) {
       void copyText(JSON.stringify(report, null, 2))

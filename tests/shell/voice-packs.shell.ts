@@ -2,10 +2,10 @@
  * More › Developer › Voice Packs (src/ui/native/voice-packs.ts) in the PC shell, personal flavor, against a canned
  * ExpressiveVoice plugin that keeps a pack list like NephisPackLibrary does:
  *  - the Voices row says which pack she reads with, how many and how much space;
- *  - the page lists each pack (name, made, studio, size), ✓ on hers, and the total used;
+ *  - the page lists each pack (name, made, studio, size), a checkmark on hers (✓ below), and the total used;
  *  - tapping a pack switches her to it (selectNephisPack);
- *  - Edit › Delete asks on the row (no browser dialog); deleting hers says which pack takes over, and the last one
- *    leaves the empty state;
+ *  - Edit › Delete asks with the native alert (cleanup 2: the app's one confirmation); deleting hers says which pack
+ *    takes over, and the last one leaves the empty state;
  *  - every control has a name for VoiceOver;
  *  - with a dialogue pack (2026-10-15): a Narrator and a Dialogue section, ✓ on each one in use, "Narrator Reads Dialogue
  *    Too" (selectNephisDialogue null), and Edit's "For Dialogue" / "For Narration" (setNephisPackRole).
@@ -13,6 +13,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import type { Locator } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
 import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
@@ -20,6 +21,13 @@ import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
 let shell: PcShell;
+/** Native alerts the page asked for, and the answers (0 = the action, 1 = Cancel). */
+const alerts: { title: string; message: string }[] = [];
+const alertAnswers: number[] = [];
+
+/** A row's text, with " ✓" when its checkmark shows (the pack in use). */
+const rowTexts = (rows: Locator): Promise<string[]> =>
+  rows.evaluateAll((els) => els.map((e) => `${(e.textContent ?? '').replace(/\s+/g, ' ').trim()}${e.querySelector('.check.on') ? ' ✓' : ''}`));
 
 type Pack = { id: string; name: string; made: string; studio: boolean; bytes: number; role?: 'narrator' | 'dialogue' };
 let packs: Pack[] = [];
@@ -41,7 +49,21 @@ describe('More › Developer › Voice Packs (PC shell)', () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-voice-packs');
     await buildAll({ flavor: 'personal', ads: false, dev: false, outDir: www });
-    shell = await startPcShell({ wwwDir: www, core: { routes: {}, answers: [] }, initStorage: { 'tachinovel.tips.reader': '1' } });
+    shell = await startPcShell({
+      wwwDir: www,
+      core: {
+        routes: {},
+        answers: [],
+        ui: {
+          alert: (json, cb) => {
+            alerts.push(JSON.parse(json) as { title: string; message: string });
+            const a = alertAnswers.shift() ?? 0;
+            setImmediate(() => cb(null, a));
+          },
+        },
+      },
+      initStorage: { 'tachinovel.tips.reader': '1' },
+    });
     packs = [
       { id: 'p00000000000000r10', name: 'nephis-r10', made: '2026-10-12', studio: true, bytes: 455_000_000 },
       { id: 'p000000000000000r9', name: 'nephis-r9', made: '2026-10-11', studio: false, bytes: 380_000_000 },
@@ -103,7 +125,7 @@ describe('More › Developer › Voice Packs (PC shell)', () => {
     const screen = page.getByTestId('voice-packs');
     const list = screen.getByTestId('voice-packs-list');
     await list.waitFor({ timeout: 5000 });
-    const rows = (): Promise<string[]> => list.locator('[data-pack]').allTextContents().then((t) => t.map((s) => s.replace(/\s+/g, ' ').trim()));
+    const rows = (): Promise<string[]> => rowTexts(list.locator('[data-pack]'));
     expect(await rows()).toEqual([
       'nephis-r10Made Oct 12, 2026 · Studio · 455 MB ✓',
       'nephis-r9Made Oct 11, 2026 · No studio · 380 MB',
@@ -122,22 +144,21 @@ describe('More › Developer › Voice Packs (PC shell)', () => {
       'nephis-r8Made Oct 10, 2026 · No studio · 372 MB',
     ]);
 
-    // Edit › Delete on another pack: asked on the row, Cancel leaves it.
+    // Edit › Delete on another pack: the native alert asks, Cancel leaves it.
     await screen.getByTestId('voice-packs-edit').click();
     expect(await screen.getByTestId('voice-packs-edit').textContent()).toBe('Done');
+    await page.screenshot({ path: path.join(shots, 'voice-packs-delete.png') });
+    alertAnswers.push(1);
     await list.getByRole('button', { name: 'Delete nephis-r8' }).click();
-    const confirm = screen.getByTestId('voice-packs-confirm');
-    expect(await confirm.textContent()).toContain('Delete “nephis-r8”? Frees 372 MB.');
-    await confirm.getByRole('button', { name: 'Cancel' }).click();
-    expect(await screen.getByTestId('voice-packs-confirm').count()).toBe(0);
+    await expect.poll(() => alerts.length).toBe(1);
+    expect(alerts[0]).toMatchObject({ title: 'Delete Voice Pack?', message: 'Delete “nephis-r8”? Frees 372 MB.' });
+    await page.waitForTimeout(200);
     expect(calls('deleteNephisPack')).toEqual([]);
 
-    // Hers: the row says who takes over, and Delete does it.
+    // Hers: the alert says who takes over, and Delete does it.
     await list.getByRole('button', { name: 'Delete nephis-r9' }).click();
-    expect(await confirm.textContent()).toContain('Nephis reads with this pack. Delete it (frees 380 MB) and switch her to “nephis-r10”?');
-    await page.screenshot({ path: path.join(shots, 'voice-packs-delete.png') });
-    await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect.poll(() => calls('deleteNephisPack')).toEqual([{ id: 'p000000000000000r9' }]);
+    expect(alerts[1]?.message).toBe('Nephis reads with this pack. Delete it (frees 380 MB) and switch her to “nephis-r10”?');
     await expect.poll(() => list.locator('[data-pack]').count()).toBe(2);
     expect(active).toBe('p00000000000000r10');
 
@@ -152,7 +173,6 @@ describe('More › Developer › Voice Packs (PC shell)', () => {
     // The last two: the page ends empty, and Edit goes away.
     for (const [name, id] of [['nephis-r10', 'p00000000000000r10'], ['nephis-r8', 'p000000000000000r8']] as const) {
       await list.getByRole('button', { name: `Delete ${name}` }).click();
-      await screen.getByTestId('voice-packs-confirm').getByRole('button', { name: 'Delete', exact: true }).click();
       await expect.poll(() => calls('deleteNephisPack').at(-1)).toEqual({ id });
     }
     await expect.poll(() => screen.getByTestId('voice-packs-empty').count()).toBe(1);
@@ -187,8 +207,7 @@ describe('More › Developer › Voice Packs (PC shell)', () => {
     const narrators = screen.getByTestId('voice-packs-list');
     const dialogues = screen.getByTestId('voice-packs-dialogue');
     await dialogues.waitFor({ timeout: 5000 });
-    const rows = (l: typeof narrators): Promise<string[]> =>
-      l.locator('.row').allTextContents().then((t) => t.map((s) => s.replace(/\s+/g, ' ').trim()));
+    const rows = (l: typeof narrators): Promise<string[]> => rowTexts(l.locator('.row'));
     expect(await rows(narrators)).toEqual(['nephis-narratorMade Oct 15, 2026 · Studio · 450 MB ✓']);
     expect(await rows(dialogues)).toEqual([
       'nephis-dialogueMade Oct 15, 2026 · 400 MB ✓',

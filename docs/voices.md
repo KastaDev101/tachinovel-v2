@@ -66,12 +66,21 @@ right away on a memory warning. Compute placement (`KokoroRoute`): the RNN/atten
 doesn't allow GPU work in the background and narration must keep rendering on the lock screen. The Voice
 Lab can switch to FluidAudio's GPU placement for a foreground-only speed comparison.
 
-## Where the settings are (cleanup 1, 2026-10-15)
+## Where the settings are (cleanup 1, 2026-10-15; cleanup 2, 2026-10-16)
 
-- **More › Voices** (everyone): the Nephis card (her pack and "Studio" in the personal build, Download Her Voice,
-  Turn Nephis Back On), **Voice Settings** (Scene Moods, the [System] message chime and voice, and a line saying whether
-  scene moods use Apple Intelligence or the built-in rules), **Pronunciations**, **In the Car** (Car Buttons, prepared
-  audio).
+- **More › Voices** (everyone), in v1's grouped-list look (`src/ui/native/panel.ts`: v1's tokens, light and dark,
+  SF Symbols, v1's toast, the native alert for every delete):
+  - **Nephis**: Narrator (her pack, "· Studio" with its studio on) and Dialogue (her dialogue pack, or "Uses the
+    narrator") in the personal build, Turn Nephis Back On, **Download Her Voice** (~370 MB, confirmed with the native
+    alert; the row shows the progress, ExpressiveVoice.status() is read once a second only while it downloads), **Voice
+    Settings** (Scene Moods, the [System] message chime and voice, and a footer saying whether scene moods use Apple
+    Intelligence or the built-in rules);
+  - **Backup Voice**: the Kokoro voice that reads only when Nephis can't (her matched voice `af_nephis` until another
+    is picked; `VoicePreferences.backupVoice`, used by `NarrationController.kokoroVoiceForSpeech` while she reads):
+    the three best first with ▶ samples, then All Voices (and Your Mixes; Mix a Voice and Edit with Developer options);
+  - **Pronunciations**: Names & Made-Up Words (every novel); from a novel's Voice panel the editor switches between
+    All Novels and This Novel;
+  - **In the Car**: Car Buttons (segmented), Prepared Audio (Remove All asks first).
 - Natural delivery, studio sound and her studio are automatic; the AI scene reading is on wherever Apple Intelligence
   is available. `DeliverySettings` version 4 turns an "off" saved before back on once (HDVoiceCore `Delivery.swift`);
   the studio's per-pack offs are cleared once (`DeveloperOptions.migrateOnce`).
@@ -93,10 +102,10 @@ settings and the on-phone car checklist: docs/car.md.
 
 ## Voice mixer
 
-More › Voices › **Mix a voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
-a name. Saved mixes are listed under **Your mixes**, after the voices: in Settings › Voices (with Edit and
-Delete) and in a novel's voice picker (Listen player › Voice). So a mix can be the default voice or one
-novel's voice.
+More › Developer › **Mix a Voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
+a name. Saved mixes are listed under **Your Mixes** in More › Voices › Backup Voice › All Voices (with Edit and
+Delete while Developer options are on), so a mix can be the backup voice. Deleting the one in use sends the backup
+voice back to her matched voice.
 
 - **How it blends:** each Kokoro voice is a style pack of 510 rows (one per phoneme-count bucket), each
   128 timbre + 128 prosody values. A mix interpolates the two packs value by value, (1 − t)·A + t·B,
