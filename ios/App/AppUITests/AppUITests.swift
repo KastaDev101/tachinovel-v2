@@ -587,8 +587,15 @@ extension AppUITests {
         for control in ["1.25×", "Play", "Pause", "Back 15 seconds", "Forward 15 seconds"] { // Forward last: it can end the demo chapter
             try tapOnce(carControl(control), "the car player's \(control)", timeout: 15)
         }
-        let next = carControl("Next chapter") // only while narration is still on (chapter 3 is locked)
-        if next.waitForExistence(timeout: 3) { try tapOnce(next, "the car player's Next chapter", timeout: 5) }
+        // Next chapter only while narration is still on (chapter 3 is locked). Forward 15 s can end the short demo chapter,
+        // and the player's controls go with it at any moment (2026-10-15: it showed, then was gone before the tap). So it is
+        // optional: tapped once it is the player's own (enabled) button and has settled, skipped when it went away.
+        let next = carControl("Next chapter")
+        if next.waitForExistence(timeout: 3), next.isEnabled, settledFrame(next, timeout: 3) != nil, next.exists, next.isHittable {
+            next.tap()
+        } else {
+            print("UITEST-SKIP the car player's Next chapter: narration ended before it could be tapped")
+        }
         try tap(carControl("Close"), "the car player's Close", timeout: 10, untilGone: true)
         // Stop. Next chapter / Forward leave chapter 2 playing, a few seconds long: narration can end by itself before or
         // while Stop is tapped (2026-10-12: Stop showed, then went away with the chapter's end). Either way the mini
