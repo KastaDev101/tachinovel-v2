@@ -693,7 +693,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
                                                lastUrgentX: last.flatMap { $0.totalMs > 0 ? $0.audioMs / $0.totalMs : nil })
             call.line.takes = budget.takes
             call.line.leadIn = budget.leadIn
-            call.line.studio = HybridSpeechEngine.studioFor(characters: call.line.text.count, ahead: buffered)
+            call.line.studio = HybridSpeechEngine.studioFor(characters: call.line.text.count, ahead: buffered, first: i == 0)
             NephisRenderPipeline.run(call.line, letters: members.map { plan[$0].say.count }, speed: Double(segs[i].rate), readRate: readRate,
                                      finisher: finisher) { [weak self] result in
                 guard let self, self.handoff === h, case .success(let audio) = result, audio.pieces.count == members.count,

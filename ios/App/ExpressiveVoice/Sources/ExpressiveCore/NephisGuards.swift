@@ -8,7 +8,8 @@
 //  - ModelOutput.floats: a Core ML output read safely, whatever its scalar type and memory layout;
 //  - NephisFlow.studioMelFrames: the blueprint's output shape checked before it is read;
 //  - StudioPace: her studio against the clock (2026-10-13: a studio pack's Voice test played nothing for over a minute);
-//  - StudioBudget: her studio on every Listen call it can afford, from its measured speed (2026-10-15);
+//  - StudioBudget: her studio on every Listen call it can afford, from its measured speed (2026-10-15); the first call of a
+//    read always, the speed measured when her studio loads (2026-10-16);
 //  - NephisStudioSwitch: the "Her studio" switch, on by default for every pack with a studio (2026-10-15).
 //
 
@@ -184,27 +185,42 @@ public struct StudioPace: Equatable, Sendable {
 /// calls as "hurry", fewer than `cushion` seconds buffered, while it ran at 23-47x real time; a skipped call is her plain
 /// Mimi sound, with its clicks and without the pack's studio EQ, so the read changed sound from sentence to sentence).
 ///
-/// The rule: a call gets the studio when its cost (the call's audio, estimated from its text, over the studio's speed)
-/// is at most `share` of the time before the call must play (the audio buffered ahead of playback), that time never
-/// counted under `minimumSlack`. So the first call of a read (nothing buffered) still gets it when it costs at most
-/// `share` x `minimumSlack` (0.5 s): her first audio comes that much later at most. When the studio is genuinely slow
-/// (its speed under `fastFrom`, or a hot or low-power phone: `throttled`) the old rule alone: the studio only with
-/// `cushion` seconds buffered. The old rule always still holds, so no call skips it that skipped nothing before.
+/// The rule: the first call of a read always gets the studio (its first audio comes ~0.2-0.5 s later on a fast phone);
+/// any other call gets it when its cost (the call's audio, estimated from its text, over the studio's speed) is at most
+/// `share` of the time before the call must play (the audio buffered ahead of playback), that time never counted under
+/// `minimumSlack`. When the studio is genuinely slow (its speed under `fastFrom`, or a hot or low-power phone:
+/// `throttled`) the old rule alone, the first call included: the studio only with `cushion` seconds buffered. The old
+/// rule always still holds, so no call skips it that skipped nothing before. (A studio that failed to load or went off as
+/// too slow is skipped by her engine whatever the rule says; StudioPace's slow calls also pull the speed under `fastFrom`.)
 ///
-/// Its speed: measured on the calls it renders (`record`, x real time); before any, `seedX` (a conservative guess), or
-/// the speed last measured on this phone with this pack, discounted by `rememberedShare` (a cooler or hotter phone).
+/// Its speed (2026-10-16: build 375 skipped calls 1 and 2 of a freshly installed pack because a pack change went back to
+/// an 8x guess): measured once when the pack's studio loads (`measuredAtLoad`, a tiny run on silence), then on the calls
+/// it renders (`record`); the speed saved for this pack in an earlier session as it was, or half of it when the phone is
+/// warm now; before anything is known a guess (`seedX`, or `fastVocoderSeedX` for the fast phone vocoder).
 public struct StudioBudget: Equatable, Sendable {
+    /// Where the speed the rule plans with comes from (the speed test's report says it in these words).
+    public enum Source: String, Sendable {
+        case measuredAtLoad = "measured at load"
+        case saved
+        case guess = "default"
+        case calls = "measured on calls"
+    }
+
     /// Seconds buffered ahead from which a call gets the studio whatever it costs (the rule before 2026-10-15).
     public static let cushion = 6.0
     /// Share of the time before the call must play that its studio may take (the rest is for her generation and decode).
     public static let share = 0.5
-    /// Seconds the time before a call is never counted under (the first call of a read, a near-empty buffer).
+    /// Seconds the time before a call is never counted under (a near-empty buffer).
     public static let minimumSlack = 1.0
     /// x real time under which the studio counts as slow: the old rule alone.
     public static let fastFrom = 4.0
-    /// x real time assumed before any call measured it (the iPhone 16 measured 23-47x; an older phone may be far slower).
+    /// x real time assumed before anything measured it (the iPhone 16 measured 23-47x; an older phone may be far slower).
     public static let seedX = 8.0
-    /// Share of the speed remembered from an earlier session that a new one starts from.
+    /// The same for a pack with the fast phone vocoder (studio.json "vocoder_model" NephisVocoderFast): the iPhone 16
+    /// measured 32-50x with it (build 375).
+    public static let fastVocoderSeedX = 25.0
+    public static let fastVocoderModel = "NephisVocoderFast"
+    /// Share of the speed saved in an earlier session that a new one starts from when the phone is warm now.
     public static let rememberedShare = 0.5
     /// Her pace for a call's audio from its text, characters per second: slower than her real ~14, so the cost estimate
     /// errs long.
@@ -212,21 +228,43 @@ public struct StudioBudget: Equatable, Sendable {
     /// A faster call than the estimate moves it this share of the way up (a slower one sets it at once).
     public static let riseShare = 0.3
 
-    /// The studio's speed measured so far (x real time), or the remembered one (discounted); nil: nothing known.
+    /// The studio's speed measured so far (x real time), or the saved one; nil: nothing known (the guess).
     public private(set) var measuredX: Double?
+    public private(set) var source: Source
+    /// The guess before anything is known.
+    public let guessX: Double
 
-    /// `rememberedX`: the speed last measured on this phone with this pack (an earlier session), if any.
-    public init(rememberedX: Double? = nil) {
-        if let x = rememberedX, x.isFinite, x > 0 { measuredX = x * Self.rememberedShare }
+    /// `rememberedX`: the speed saved on this phone for this pack (an earlier session), if any. `fastVocoder`: the pack's
+    /// studio has the fast phone vocoder. `warm`: the phone is warm now (fair heat or more): the saved speed counts half.
+    public init(rememberedX: Double? = nil, fastVocoder: Bool = false, warm: Bool = false) {
+        guessX = fastVocoder ? Self.fastVocoderSeedX : Self.seedX
+        if let x = rememberedX, x.isFinite, x > 0 {
+            measuredX = warm ? x * Self.rememberedShare : x
+            source = .saved
+        } else {
+            source = .guess
+        }
     }
 
+    /// studio.json's "vocoder_model" is the fast phone vocoder (NephisVocoderFast, or a variant named after it).
+    public static func isFastVocoder(_ model: String?) -> Bool { model?.hasPrefix(fastVocoderModel) == true }
+
     /// The speed the rule plans with.
-    public var estimateX: Double { measuredX ?? Self.seedX }
+    public var estimateX: Double { measuredX ?? guessX }
+
+    /// The studio's speed measured when its models loaded (NephisStudio.measureSpeed). It replaces a guess or a saved
+    /// speed, never what her calls measured since (they are the real thing).
+    public mutating func measuredAtLoad(_ timesRealTime: Double) {
+        guard timesRealTime.isFinite, timesRealTime > 0, source != .calls else { return }
+        measuredX = timesRealTime
+        source = .measuredAtLoad
+    }
 
     /// A call the studio worked on, at `timesRealTime` (measured, or projected when it gave up mid-call). Slower than the
     /// estimate: the estimate at once (heat, a busy phone); faster: a share of the way up.
     public mutating func record(_ timesRealTime: Double) {
         guard timesRealTime.isFinite, timesRealTime > 0 else { return }
+        source = .calls
         guard let m = measuredX else { measuredX = timesRealTime; return }
         measuredX = timesRealTime < m ? timesRealTime : m + (timesRealTime - m) * Self.riseShare
     }
@@ -238,11 +276,26 @@ public struct StudioBudget: Equatable, Sendable {
     public func cost(characters: Int) -> Double { Self.audioSeconds(characters: characters) / max(0.01, estimateX) }
 
     /// The studio for a call of `characters` with `ahead` seconds buffered ahead of playback. `throttled`: the phone is
-    /// hot (serious heat or worse) or in Low Power Mode.
-    public func use(characters: Int, ahead: Double, throttled: Bool) -> Bool {
+    /// hot (serious heat or worse) or in Low Power Mode. `first`: the first call of a read (a fresh read, after a seek).
+    public func use(characters: Int, ahead: Double, throttled: Bool, first: Bool = false) -> Bool {
         if ahead >= Self.cushion { return true }
         guard !throttled, estimateX >= Self.fastFrom else { return false }
+        if first { return true }
         return cost(characters: characters) <= Self.share * max(ahead, Self.minimumSlack)
+    }
+
+    /// The measuring run when a pack's studio loads (only while nothing is saved for the pack): not on a hot phone
+    /// (`thermal`, ProcessInfo.ThermalState's raw value, serious or more) or in Low Power Mode, where the old rule applies
+    /// anyway and a measurement would undersell the studio later.
+    public static func mayMeasure(thermal: Int, lowPower: Bool) -> Bool { thermal < 2 && !lowPower }
+
+    /// Latents of silence in the measuring run: as many as fit one vocoder piece's kept frames (`chunkFrames` mel frames of
+    /// `hop` samples at `sampleRate`) with the studio's 50 ms of end padding, so the run costs per second what a piece of
+    /// a real call costs (a shorter one would be padded up to ~1 s and read slow). Her studio: 17 latents, 1.36 s.
+    public static func measureLatents(chunkFrames: Int, hop: Int, sampleRate: Int) -> Int {
+        guard chunkFrames > 0, hop > 0, sampleRate > 0 else { return 1 }
+        let kept24 = Double(chunkFrames * hop) * 24_000 / Double(sampleRate)
+        return max(1, Int((kept24 - 1_200) / Double(NephisFlow.samplesPerLatent)))
     }
 }
 

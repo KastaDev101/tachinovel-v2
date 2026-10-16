@@ -521,13 +521,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
                 let text = line.text
-                // Her studio (when on) on every call it can afford from its measured speed, the first call of a read
-                // included (StudioBudget, 2026-10-15: at 23-47x real time it costs ~0.1-0.3 s a call); a slow studio
-                // (cold guess, heat, Low Power Mode) only while playback has a cushion, as before. Forcing a slow one
-                // before playback starts (8e86b7b) left a studio pack's Voice test silent for over a minute: each call's
-                // audio waits for the one before it (2026-10-13). The studio also gives up on a call it can't finish at
-                // real time (NephisFlowSynth, StudioPace).
-                line.studio = Self.studioFor(characters: text.count, ahead: bufferedAhead())
+                // Her studio (when on): always on the first call of a read (2026-10-16), then on every call it can afford
+                // from its speed, measured when it loaded and on her calls (StudioBudget, 2026-10-15: at 23-47x real time
+                // it costs ~0.1-0.3 s a call); a slow studio (under 4x, heat, Low Power Mode) only while playback has a
+                // cushion, as before. Forcing a slow one before playback starts (8e86b7b) left a studio pack's Voice test
+                // silent for over a minute: each call's audio waits for the one before it (2026-10-13). The studio also
+                // gives up on a call it can't finish at real time (NephisFlowSynth, StudioPace).
+                line.studio = Self.studioFor(characters: text.count, ahead: bufferedAhead(), first: reset)
                 // Background priority while plenty is banked (same sound, less heat); user-initiated again when it runs low.
                 relaxedRenders = RenderPacer.relaxed(was: relaxedRenders, buffered: bufferedAhead())
                 if relaxedRenders { line.relaxed = true }
@@ -918,12 +918,13 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     static let leadInAhead = NephisCallPlan.leadInAhead
     /// Her studio for a flow call of `characters` with `ahead` seconds buffered ahead of playback (ExpressiveLine.studio;
-    /// Listen and the Voice speed test): StudioBudget with her studio's speed measured so far, the old cushion rule alone
-    /// on a hot phone (serious heat or worse) or in Low Power Mode. Main thread.
-    static func studioFor(characters: Int, ahead: Double) -> Bool {
+    /// Listen, the Voice speed test and the hand-off): StudioBudget with her studio's speed known so far, always on the first
+    /// call of a read (`first`), the old cushion rule alone on a hot phone (serious heat or worse) or in Low Power Mode.
+    /// Main thread.
+    static func studioFor(characters: Int, ahead: Double, first: Bool) -> Bool {
         let info = ProcessInfo.processInfo
         let throttled = info.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue || info.isLowPowerModeEnabled
-        return ExpressiveService.shared.studioBudget().use(characters: characters, ahead: ahead, throttled: throttled)
+        return ExpressiveService.shared.studioBudget().use(characters: characters, ahead: ahead, throttled: throttled, first: first)
     }
     /// Sentences Kokoro renders ahead when it reads alone (enqueue): while her model rests after a memory warning.
     static var kokoroAloneAhead: Int { max(VoiceSettings.shared.prefs.clampedAhead, 8) }

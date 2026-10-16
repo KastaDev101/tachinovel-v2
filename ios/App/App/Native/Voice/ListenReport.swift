@@ -13,6 +13,7 @@
 import ExpressiveCore
 import ExpressiveEngines
 import Foundation
+import HDVoiceCore
 import os
 import UIKit
 
@@ -41,6 +42,8 @@ final class ListenReport {
         var voices: Set<String> = []
         /// Her numbers when the session began (the report is the change since).
         let stats: ExpressiveService.FlowStats
+        /// Developer › Voice extras when the session began (lead-ins, extra takes, speech checks).
+        let extras: Bool
     }
 
     private var session: Session?
@@ -108,7 +111,7 @@ final class ListenReport {
                           lowPowerStart: info.isLowPowerModeEnabled, lowPowerSeen: info.isLowPowerModeEnabled,
                           batteryStart: level >= 0 ? level : nil,
                           chargingStart: device.batteryState == .charging || device.batteryState == .full,
-                          stats: ExpressiveService.shared.flowStats)
+                          stats: ExpressiveService.shared.flowStats, extras: VoiceSettings.shared.prefs.delivery.extras)
     }
 
     private func note() {
@@ -213,6 +216,9 @@ final class ListenReport {
         out["at"] = iso.string(from: s.started)
         out["ended"] = iso.string(from: ended)
         out["endedBy"] = reason
+        // Developer › Voice extras (lead-ins, extra takes, speech checks): "mixed" when switched during the session.
+        let extrasNow = VoiceSettings.shared.prefs.delivery.extras
+        out["extras"] = extrasNow != s.extras ? "mixed" : extrasNow ? "on" : "off"
         let bundle = Bundle.main.infoDictionary
         out["app"] = "\(bundle?["CFBundleShortVersionString"] as? String ?? "?") (\(bundle?["CFBundleVersion"] as? String ?? "?"))"
         out["listenedSeconds"] = r1(s.playedSeconds)

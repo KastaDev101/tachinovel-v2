@@ -154,6 +154,7 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   studioSound: true,
   systemChime: true,
   systemTone: true,
+  extras: true,
 };
 
 type DeliverySwitch = Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice' | 'pocketInstalled' | 'nephisOff' | 'nephisOffLine'>;
@@ -161,7 +162,7 @@ type DeliverySwitch = Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvail
 /** A delivery switch row (Voice Settings here, the delivery internals in More › Developer). `sub`: a status line. */
 export function deliverySwitch(info: VoiceSettingsInfo, k: DeliverySwitch, label: string, sub = '', disabled = false): string {
   const d = { ...DELIVERY_DEFAULT, ...info.delivery };
-  return `<label class="row"><span class="main"><b>${esc(label)}</b>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${switchInput(`data-act="delivery" data-k="${k}"`, d[k], label, disabled)}</label>`;
+  return `<label class="row"><span class="main"><b>${esc(label)}</b>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${switchInput(`data-act="delivery" data-k="${k}"`, d[k] !== false, label, disabled)}</label>`;
 }
 
 /** Who picks the scene's mood, in words (Voice Settings): Apple Intelligence where the iPhone has it, else the rules. */

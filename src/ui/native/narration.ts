@@ -200,6 +200,9 @@ export interface DeliveryInfo {
   nephisOff?: boolean;
   /** Read only: why, in plain words ("Nephis was switched off after crashing twice in a row, last at 2:32 PM, …"). */
   nephisOffLine?: string | null;
+  /** More › Developer › Voice extras: Nephis's lead-ins, extra takes and speech checks (on by default; absent in older
+   *  builds). Off = one plain take per call: less phone work, the same voice. */
+  extras?: boolean;
 }
 
 /** One "Prepare for the drive" request. */

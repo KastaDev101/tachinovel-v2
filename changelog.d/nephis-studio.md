@@ -1,5 +1,9 @@
 ### Added
 
+- Developer › Voice Extras (on by default): her lead-ins and speech checks. Off renders every Nephis call (Listen, the
+  Voice Speed Test, audio downloads) as one plain take without a lead-in or speech recognition: less phone work, the
+  same voice. The speed test and listening reports say `extras: on|off`, and the speed test screen shows it.
+
 - Download with audio, part 2 (the screens): a novel's "Download with Audio" card, a "Download…" item in its ••• menu
   and the chapter selection's Download open one download sheet: Next 5 · Next 10 · Unread (or the selected chapters),
   Include Narration Audio with her narrator and dialogue packs, the audio's size and time to make, and Make Audio Now ·
@@ -99,6 +103,13 @@
   audio are saved to the Diagnostics folder as speedtest-<date>-<time>.json and .wav.
 
 ### Fixed
+
+- Her studio on the first sentences of a freshly installed pack: build 375's speed test skipped it on calls 1 and 2
+  ("hurry": her plain sound, with its clicks and without the pack's EQ) because a new pack planned with an 8x guess.
+  The first call of a read now always gets her studio (unless the phone is hot, in Low Power Mode or the studio is
+  slow), her studio's speed is measured once as a new pack's studio loads (a tiny run on silence) and saved, the next
+  launch starts from the saved speed, and the guess for the fast phone vocoder is 25x. The speed test shows the speed
+  it planned with and where it came from (measured at load, saved, default, measured on calls).
 
 - Nephis's model no longer reloads at every Listen start, the file → live hand-off, the Voice Speed Test and each audio
   download: the loaded voice was never recorded for her, so each start unloaded and loaded her again (a cold start

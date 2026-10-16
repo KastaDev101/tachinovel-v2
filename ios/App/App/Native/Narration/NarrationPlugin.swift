@@ -233,6 +233,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "systemChime": prefs.delivery.systemChime,
                     "systemTone": prefs.delivery.systemTone,
                     "pocketVoice": prefs.delivery.pocketVoice,
+                    // Developer › Voice extras (her lead-ins, extra takes and speech checks; on by default).
+                    "extras": prefs.delivery.extras,
                     // Nephis switched off after real crashes of her model, and why in plain words (Settings › Voices
                     // shows "Turn Nephis back on").
                     "nephisOff": ExpressiveService.shared.crashDisabled,
@@ -299,6 +301,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = delivery["systemChime"] as? Bool { d.systemChime = v }
                     if let v = delivery["systemTone"] as? Bool { d.systemTone = v }
                     if let v = delivery["pocketVoice"] as? String, DeliverySettings.pocketVoices.contains(v) { d.pocketVoice = v }
+                    if let v = delivery["extras"] as? Bool { d.extras = v }
                     p.delivery = d
                 }
             }

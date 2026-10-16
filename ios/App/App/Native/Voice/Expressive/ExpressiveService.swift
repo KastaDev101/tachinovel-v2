@@ -386,9 +386,14 @@ final class ExpressiveService {
         // nothing and left no numbers).
         let flowAssets = nephis ? nephisFlowAssets : nil
         let studioLog = Logger(subsystem: "app.tachinovel", category: "voice-studio")
+        // Her studio's speed is measured as it loads while nothing is saved for this pack (StudioBudget: a fresh pack's first
+        // calls otherwise planned with a guess and skipped it, build 375).
+        let pack = NephisModelPack.library.activeID
+        let measured: (@Sendable (Double) -> Void)? = flowAssets?.studioDirectory != nil && Self.savedStudioSpeed(pack: pack) == nil
+            ? { x in DispatchQueue.main.async { ExpressiveService.shared.studioMeasuredAtLoad(x, pack: pack) } } : nil
         let flow: (any ExpressiveSynthesizer)? = flowAssets.map {
             NephisFlowSynth(assets: $0, transcriber: NephisSpeech.transcriber(), freeMemoryMB: { ExpressiveService.freeMemoryMB() },
-                            log: { studioLog.notice("\($0, privacy: .public)") })
+                            log: { studioLog.notice("\($0, privacy: .public)") }, studioMeasured: measured)
         }
         // What Nephis needs free to load (crash plan a4): Pocket's room; her studio's models load behind it, in the
         // background, with their own check (NephisFlowSynth.startStudioLoad).
@@ -651,20 +656,25 @@ final class ExpressiveService {
         guard loadedID == .pocketTts, loadState(.pocketTts) == .ready, let flow = synth as? NephisFlowSynth else {
             return completion(.failure(ExpressiveEngineError.notLoaded))
         }
+        // Developer › Voice extras off: one plain take, no lead-in, no speech check, for every flow call (Listen, the Voice
+        // speed test, audio downloads, the hand-off): they all pass here.
+        var line = line
+        NephisCallPlan.extras(&line, on: VoiceSettings.shared.prefs.delivery.extras)
+        let call = line
         // Every call moves her read on: whoever made the last one knows it can go on from there (the hand-off's warm start).
         flowSequence += 1
         let sentinel = self.sentinel
-        let context = "nephis \(line.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        let context = "nephis \(call.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
         // Background priority while playback has plenty banked (ExpressiveLine.relaxed, RenderPacer.relaxed): the same
         // work on the efficient cores and clocks. The call's own tasks (generation, decode, studio, de-wind) inherit it.
-        Task.detached(priority: line.relaxed == true ? TaskPriority.utility : TaskPriority.userInitiated) { [weak self] in
+        Task.detached(priority: call.relaxed == true ? TaskPriority.utility : TaskPriority.userInitiated) { [weak self] in
             sentinel.begin(context)
             let result: Result<ExpressiveAudio, Error>
             // This call's own report (the Voice test's log: studio used or why not, rate, mood, endings). Read from
             // `lastReport` afterwards, it could already be the next call's.
             let report: NephisFlowSynth.Report?
             do {
-                let p = try await flow.prepare(line, seed: nil)
+                let p = try await flow.prepare(call, seed: nil)
                 DispatchQueue.main.async(execute: prepared)
                 let decoded = try await flow.decodeReporting(p)
                 result = .success(decoded.audio)
@@ -777,31 +787,65 @@ final class ExpressiveService {
     private(set) var flowSequence = 0
 
     /// Her studio's speed for the active pack (StudioBudget: which Listen calls get the studio), kept over this app's life
-    /// (a new read doesn't forget it) and remembered per pack for the next launch (`studioSpeedKey`). Main thread; a pack
-    /// change (reloadNephisModel) starts it afresh.
+    /// (a new read doesn't forget it) and saved per pack for the next launch (`studioSpeedKey`), which starts from it (half
+    /// of it on a warm phone). Main thread; a pack change (reloadNephisModel) starts it afresh: from the pack's saved speed,
+    /// else the speed measured as its studio loads, else a guess (25x with the fast phone vocoder, 8x otherwise).
     private var studioBudgetState: (pack: String?, budget: StudioBudget)?
     static let studioSpeedKey = "nephisStudioSpeedX"
+    /// The speed measured as the active pack's studio loaded, this launch (the Voice speed test's report).
+    private(set) var studioLoadX: (pack: String, x: Double)?
+
+    /// The speed saved for `pack` in an earlier session (nil: none).
+    static func savedStudioSpeed(pack: String?) -> Double? {
+        guard let pack, let x = UserDefaults.standard.dictionary(forKey: studioSpeedKey)?[pack] as? Double, x.isFinite, x > 0 else { return nil }
+        return x
+    }
 
     /// Her studio's budget for the active pack (main thread).
     func studioBudget() -> StudioBudget {
         if let s = studioBudgetState { return s.budget }
         let pack = NephisModelPack.library.activeID
-        let remembered = pack.flatMap { UserDefaults.standard.dictionary(forKey: Self.studioSpeedKey)?[$0] as? Double }
-        let budget = StudioBudget(rememberedX: remembered)
+        let vocoder = NephisModelPack.studioDirectory.flatMap { try? NephisStudio.readConfig(in: $0) }?.vocoder_model
+        let warm = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue
+        let budget = StudioBudget(rememberedX: Self.savedStudioSpeed(pack: pack), fastVocoder: StudioBudget.isFastVocoder(vocoder), warm: warm)
         studioBudgetState = (pack, budget)
         return budget
     }
 
-    /// A call her studio worked on, at `x` × real time: into the budget, and remembered for the pack.
+    /// A call her studio worked on, at `x` × real time: into the budget, and saved for the pack.
     private func recordStudioSpeed(_ x: Double) {
         var budget = studioBudget()
         budget.record(x)
         let pack = studioBudgetState?.pack
         studioBudgetState = (pack, budget)
+        saveStudioSpeed(budget, pack: pack)
+    }
+
+    /// Her studio's speed measured as `pack`'s studio loaded (NephisFlowSynth, main thread): the budget starts from it,
+    /// and it is saved, so the next launch starts from it without measuring again. Another pack active by now: ignored.
+    func studioMeasuredAtLoad(_ x: Double, pack: String?) {
+        guard let pack, pack == NephisModelPack.library.activeID else { return }
+        var budget = studioBudget()
+        guard studioBudgetState?.pack == pack else { return }
+        budget.measuredAtLoad(x)
+        studioBudgetState = (pack, budget)
+        studioLoadX = (pack, x)
+        saveStudioSpeed(budget, pack: pack)
+    }
+
+    private func saveStudioSpeed(_ budget: StudioBudget, pack: String?) {
         guard let pack, let measured = budget.measuredX else { return }
         var speeds = UserDefaults.standard.dictionary(forKey: Self.studioSpeedKey) ?? [:]
         speeds[pack] = measured
         UserDefaults.standard.set(speeds, forKey: Self.studioSpeedKey)
+    }
+
+    /// The speed StudioBudget plans with now and where it comes from, for the reports: {x, from, measuredAtLoadX}.
+    func studioPlanJSON() -> [String: Any] {
+        let b = studioBudget()
+        let pack = studioBudgetState?.pack
+        let load = studioLoadX.flatMap { $0.pack == pack ? Self.r2($0.x) : nil }
+        return ["x": Self.r2(b.estimateX), "from": b.source.rawValue, "measuredAtLoadX": load ?? NSNull()]
     }
 
     func resetFlowStats() {
@@ -1190,8 +1234,9 @@ final class ExpressiveService {
                                      "reasons": f.bypassReasons, "lastX": f.studioLastX.map { Self.r2($0) } ?? NSNull(),
                                      "slowestX": f.studioSlowestX.map { Self.r2($0) } ?? NSNull(), "minimumX": StudioPace.minimum,
                                      "units": f.studioUnits ?? NSNull(), "off": f.studioOff ?? NSNull(),
-                                     // The speed StudioBudget plans the next call with (which calls get the studio).
-                                     "plannedX": Self.r2(studioBudget().estimateX)]
+                                     // The speed StudioBudget plans the next call with (which calls get the studio), and
+                                     // where it comes from ("measured at load", "saved", "default", "measured on calls").
+                                     "plannedX": Self.r2(studioBudget().estimateX), "plannedFrom": studioBudget().source.rawValue]
         out["studio"] = studio
         out["rates"] = Dictionary(uniqueKeysWithValues: f.rates.map { (String($0.key), $0.value) })
         out["moods"] = f.moods

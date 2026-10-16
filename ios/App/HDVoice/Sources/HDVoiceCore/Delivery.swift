@@ -102,6 +102,9 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
     public var systemTone: Bool
     /// Which shipped Pocket TTS voice reads: "narrator" (default) or "nephis".
     public var pocketVoice: String
+    /// Developer › "Voice extras" (2026-10-16): Nephis's lead-ins, extra takes and the speech checks that serve them. Off =
+    /// one plain take per call (less phone work, the same voice). On by default.
+    public var extras: Bool
 
     /// Nephis is one voice (no performed or mood reads yet); her own sound (VoiceTilt.nephis), no breaths, read by
     /// her flow engine.
@@ -111,7 +114,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
 
     public init(listenEngine: String? = DeliverySettings.pocketTts, natural: Bool = true, director: String = DeliverySettings.rulesAI, breaths: Bool = true, studioSound: Bool = true,
                 sounds: Bool = true, unit: String = DeliverySettings.chunks, performed: Bool = true, moods: Bool = true,
-                systemChime: Bool = true, systemTone: Bool = true, pocketVoice: String = DeliverySettings.narrator) {
+                systemChime: Bool = true, systemTone: Bool = true, pocketVoice: String = DeliverySettings.narrator, extras: Bool = true) {
         version = Self.currentVersion
         self.listenEngine = listenEngine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
         self.natural = natural
@@ -125,6 +128,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         self.systemChime = systemChime
         self.systemTone = systemTone
         self.pocketVoice = Self.pocketVoices.contains(pocketVoice) ? pocketVoice : Self.narrator
+        self.extras = extras
     }
 
     /// Tolerant decoding: missing or unknown values take their defaults.
@@ -159,10 +163,11 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         systemTone = (try? c.decode(Bool.self, forKey: .systemTone)) ?? d.systemTone
         let voice = try? c.decode(String.self, forKey: .pocketVoice)
         pocketVoice = voice.flatMap { Self.pocketVoices.contains($0) ? $0 : nil } ?? d.pocketVoice
+        extras = (try? c.decode(Bool.self, forKey: .extras)) ?? d.extras
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed, moods, systemChime, systemTone, pocketVoice
+        case version, listenEngine, natural, director, breaths, studioSound, sounds, unit, performed, moods, systemChime, systemTone, pocketVoice, extras
     }
 
     /// listenEngine is written even when nil (Kokoro chosen), so a missing key always means "the default".
@@ -181,6 +186,7 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
         try c.encode(systemChime, forKey: .systemChime)
         try c.encode(systemTone, forKey: .systemTone)
         try c.encode(pocketVoice, forKey: .pocketVoice)
+        try c.encode(extras, forKey: .extras)
     }
 
     public var usesAI: Bool { natural && director == Self.rulesAI }

@@ -121,6 +121,7 @@ export function openDeveloperScreen(): void {
         ${row('long', '15-Minute Test', 'Records what plays while you listen to your own chapter')}
         ${studioRows()}
         ${toggle('best-of-two', 'Best of 2 Takes for Audio', 'Downloaded chapters: two takes per call, the better one kept (twice the work)', dev.bestOfTwo)}
+        ${deliverySwitch(info, 'extras', 'Voice Extras', 'Lead-ins and speech checks. Off = less phone work, same voice')}
       </div>
       <div class="sec">Delivery Internals</div>
       <div class="card" data-testid="dev-delivery">

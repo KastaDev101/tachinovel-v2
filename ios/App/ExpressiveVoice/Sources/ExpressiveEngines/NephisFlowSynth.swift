@@ -272,6 +272,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     private var studioCalls = 0
     /// The app's log (native.log): her studio's load and every call it works on, in one line each.
     private let log: @Sendable (String) -> Void
+    /// Her studio's speed measured when its models load (NephisStudio.measureSpeed), for the app's StudioBudget; nil: not
+    /// measured (the app has a speed saved for this pack already).
+    private let studioMeasured: (@Sendable (Double) -> Void)?
     /// Her studio's reads only: decodes the latents the end guard asks about (PocketTtsSynthesizer.levelProbe).
     private var tailDecoder: PocketTtsLatentDecoder?
     /// The stream decodes, one after the other in call order.
@@ -346,11 +349,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
     static let audibleEndDB = -40.0
 
     public init(assets: Assets, transcriber: NephisTranscriber? = nil, freeMemoryMB: @escaping @Sendable () -> Double? = { nil },
-                log: @escaping @Sendable (String) -> Void = { _ in }) {
+                log: @escaping @Sendable (String) -> Void = { _ in }, studioMeasured: (@Sendable (Double) -> Void)? = nil) {
         self.assets = assets
         self.transcriber = transcriber
         self.freeMemoryMB = freeMemoryMB
         self.log = log
+        self.studioMeasured = studioMeasured
     }
 
     public func setTranscriber(_ t: NephisTranscriber?) {
@@ -783,7 +787,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let lead = first && started && lastVoice == speaker && transcriber != nil && line.leadIn != false ? lastText.map(NephisFlow.lastSentence) : nil
         // Recognition only where it can change something (a lead-in cut, a choice between takes); the take score
         // only between takes. Otherwise the analysis decode only needs the take's ends.
-        let listen = transcriber != nil && (lead != nil || n > 1)
+        let listen = NephisCallPlan.recognizes(takes: n, leadIn: lead != nil, transcriber: transcriber != nil)
         let scoring = n > 1 && !context.isEmpty
         let reference = scoring ? NephisFlow.voiceFeatures(context) : nil
 
@@ -1451,17 +1455,30 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             return studioOff
         }
         let ticket = generation.ticket
+        let measure = studioMeasured != nil
         studioLoading = Task.detached(priority: .utility) { [weak self] in
             let t0 = Date()
             let result: Result<NephisStudio?, Error>
             do { result = .success(try await NephisStudio.load(from: dir)) } catch { result = .failure(error) }
-            await self?.studioLoaded(result, ticket: ticket, ms: Date().timeIntervalSince(t0) * 1000)
+            let ms = Date().timeIntervalSince(t0) * 1000
+            // Its speed on this phone, once per pack (nothing saved for it yet), while it still counts as loading: the
+            // first call then plans with it (StudioBudget), and the Voice speed test, which waits for the load, too. Not on
+            // a hot phone or in Low Power Mode (the old rule applies there anyway).
+            var measured: (x: Double, ms: Double)?
+            let info = ProcessInfo.processInfo
+            if measure, case .success(let loaded?) = result,
+               StudioBudget.mayMeasure(thermal: info.thermalState.rawValue, lowPower: info.isLowPowerModeEnabled) {
+                let m0 = Date()
+                if let x = await loaded.measureSpeed() { measured = (x, Date().timeIntervalSince(m0) * 1000) }
+            }
+            await self?.studioLoaded(result, ticket: ticket, ms: ms, measured: measured)
         }
         return "loading"
     }
 
-    /// Her studio's models are up, or failed to load. Released meanwhile: kept nothing (they go with the task).
-    private func studioLoaded(_ result: Result<NephisStudio?, Error>, ticket: Int, ms: Double) {
+    /// Her studio's models are up, or failed to load, and the speed measured as they loaded. Released meanwhile: kept
+    /// nothing (they go with the task).
+    private func studioLoaded(_ result: Result<NephisStudio?, Error>, ticket: Int, ms: Double, measured: (x: Double, ms: Double)? = nil) {
         guard generation.current(ticket) else { return }
         studioLoading = nil
         switch result {
@@ -1470,6 +1487,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
             studioOff = loaded == nil ? "missing" : nil
             let free = freeMemoryMB().map { "\(Int($0)) MB" } ?? "unknown"
             log(loaded.map { "studio: loaded in \(Int(ms)) ms, compute units \($0.computeUnits), free memory \(free)" } ?? "studio: missing")
+            if let measured {
+                log("studio: speed measured at load: \(StudioPace.words(measured.x)) (\(Int(measured.ms)) ms on silence)")
+                studioMeasured?(measured.x)
+            }
         case .failure(let error):
             dropStudio("failed: \(error)")
         }

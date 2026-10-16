@@ -217,6 +217,23 @@ public enum NephisCallPlan {
         return (min(2, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
     }
 
+    /// Developer › "Voice extras" (DeliverySettings.extras, on by default; 2026-10-16): off, every flow call of hers (Listen,
+    /// the Voice speed test, audio downloads, the hand-off) renders one plain take without a lead-in, whatever its budget
+    /// allowed, so no speech check runs (`recognizes`) and the analysis decode only reads the take's ends (her steady
+    /// speed test spent 13.7 s analysing and 3.6 s recognising of 72.5 s, and over half its Mimi latents on lead-ins).
+    /// Applied once, where every flow call passes (ExpressiveService.synthesizeFlow); on: the line as it was.
+    public static func extras(_ line: inout ExpressiveLine, on: Bool) {
+        guard !on else { return }
+        line.takes = 1
+        line.leadIn = false
+    }
+
+    /// Her engine runs speech recognition on a call's takes only where it can change something: a lead-in to cut off
+    /// (`leadIn`: the call reads one) or a choice between `takes` takes; never without a recogniser (`transcriber`).
+    public static func recognizes(takes: Int, leadIn: Bool, transcriber: Bool) -> Bool {
+        transcriber && (leadIn || takes > 1)
+    }
+
     /// An audio download's call (rendered ahead, never played as it renders): her studio with no time limit (`studio`
     /// nil: it never gives up for pace), one take (two with Developer › "Best of 2 Takes"), the lead-in Listen's calls
     /// get once it is going, background priority (the same sound, less heat).

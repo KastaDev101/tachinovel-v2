@@ -91,14 +91,25 @@ call, device, iOS, heat, Low Power Mode, free memory, the pack (name, `weightsSh
 every call. The report (`speedtest-<date>-<time>.json`) and the audio (`.wav`, 32-bit float at the read's rate) go to
 the Diagnostics folder; "Play result" plays the audio, "Copy report" copies the JSON.
 
-**Her studio in Listen** (`ExpressiveCore/NephisGuards.swift` StudioBudget and NephisStudioSwitch, 2026-10-15): the
-"Her studio" switch is per pack and on by default (an off is kept for that pack until it is installed again). A call
-gets the studio when its estimated work (its text at 12 characters a second, over the studio's measured × real time)
-is at most half the audio buffered ahead of playback, that never counted under 1 s, so the first call of a read gets it
-too when it costs at most 0.5 s. The speed is measured on every call it renders (a slower call sets it at once, a
-faster one moves it 30 % of the way), kept over the app's life and remembered per pack for the next launch at half; with
-nothing known it is 8x. Under 4x, in serious heat or Low Power Mode the old rule alone: the studio only with 6 s
-buffered. The Voice test report's `flow.studio.plannedX` is the speed it plans with.
+**Her studio in Listen** (`ExpressiveCore/NephisGuards.swift` StudioBudget and NephisStudioSwitch, 2026-10-15/16): the
+"Her studio" switch is per pack and on by default (an off is kept for that pack until it is installed again). The first
+call of a read always gets the studio (its first audio ~0.2-0.5 s later on a fast phone). Any other call gets it when
+its estimated work (its text at 12 characters a second, over the studio's × real time) is at most half the audio
+buffered ahead of playback, that never counted under 1 s. The speed: measured once when a pack's studio loads while
+nothing is saved for the pack (`NephisStudio.measureSpeed`: one vocoder piece of silence, 1.36 s, rendered twice, about
+0.1 s of work; not in serious heat or Low Power Mode), then on every call it renders (a slower call sets it at once, a
+faster one moves it 30 % of the way); kept over the app's life and saved per pack, and the next launch starts from the
+saved speed (half of it when the phone is warm). With nothing known: 25x for the fast phone vocoder (studio.json
+`vocoder_model` NephisVocoderFast), else 8x. Under 4x, in serious heat or Low Power Mode the old rule alone, the first
+call included: the studio only with 6 s buffered. The Voice test report's `flow.studio.plannedX`/`plannedFrom` and the
+speed test's `studio.estimate` (`startX`, `startFrom`: "measured at load", "saved", "default", "measured on calls") are
+the speed it plans with and where it came from.
+
+**Voice extras** (More › Developer, `DeliverySettings.extras`, on by default, 2026-10-16): her lead-ins, extra takes and
+the speech checks that serve them. Off: every flow call (Listen, the speed test, audio downloads, the hand-off) renders
+one plain take without a lead-in (`NephisCallPlan.extras`, applied once in `ExpressiveService.synthesizeFlow`), so no
+speech recognition runs and the analysis decode only reads each take's ends. The speed test and listening reports say
+`"extras": "on" | "off"` at the top level.
 
 **Pack tone chain (pack.json `chain`)**, after her voice is made, in this order: first `dewind` `{"passes": 2}` (1-2;
 the de-wind cleaner, below), then `breathPolish` and `eqAfterStudio`

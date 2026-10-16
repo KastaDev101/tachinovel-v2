@@ -230,10 +230,100 @@ final class NephisGuardsTests: XCTestCase {
         XCTAssertFalse(budget.use(characters: 80, ahead: 0, throttled: false))
         // ...but fine with 5 s buffered.
         XCTAssertTrue(budget.use(characters: 80, ahead: 5, throttled: false))
-        // The speed remembered from an earlier session starts at half (a hotter phone now, a busier one).
-        XCTAssertEqual(StudioBudget(rememberedX: 40).estimateX, 20)
         XCTAssertEqual(StudioBudget(rememberedX: 0).estimateX, StudioBudget.seedX)
         XCTAssertEqual(StudioBudget(rememberedX: .nan).estimateX, StudioBudget.seedX)
+        XCTAssertEqual(StudioBudget(rememberedX: .nan).source, .guess)
+    }
+
+    // MARK: - Her studio on the first calls of a fresh pack (2026-10-16: build 375 skipped calls 1 and 2 as "hurry")
+
+    func testAFreshPackGetsItsStudioOnCalls1And2WithTheSpeedMeasuredAtLoad() {
+        // Build 375: a fresh pack planned with the 8x guess, so call 1 (99 characters) cost ~1.0 s and call 2 (146) ~1.5 s,
+        // both over the 0.5 s allowed with nothing buffered.
+        let old = StudioBudget()
+        XCTAssertFalse(old.use(characters: 99, ahead: 0, throttled: false))
+        XCTAssertFalse(old.use(characters: 146, ahead: 0, throttled: false))
+        // Now: the first call of a read always gets it (the phone not throttled, the studio not slow)...
+        XCTAssertTrue(old.use(characters: 99, ahead: 0, throttled: false, first: true))
+        // ...and the speed measured as the studio loaded plans call 2 (~12 s of audio at 31x: ~0.39 s).
+        var budget = StudioBudget(fastVocoder: true)
+        XCTAssertEqual(budget.source, .guess)
+        budget.measuredAtLoad(31.2)
+        XCTAssertEqual(budget.source, .measuredAtLoad)
+        XCTAssertEqual(budget.estimateX, 31.2)
+        XCTAssertTrue(budget.use(characters: 99, ahead: 0, throttled: false, first: true))
+        XCTAssertTrue(budget.use(characters: 146, ahead: 0, throttled: false))
+        // Her calls measure it from then on; the load's measurement never overrides them.
+        budget.record(40)
+        XCTAssertEqual(budget.source, .calls)
+        let afterCalls = budget.estimateX
+        budget.measuredAtLoad(10)
+        XCTAssertEqual(budget.estimateX, afterCalls)
+        XCTAssertEqual(budget.source, .calls)
+        // Nonsense is ignored.
+        var guess = StudioBudget()
+        guess.measuredAtLoad(.nan)
+        guess.measuredAtLoad(0)
+        XCTAssertEqual(guess.source, .guess)
+    }
+
+    func testTheGuessForTheFastPhoneVocoderIs25x() {
+        XCTAssertTrue(StudioBudget.isFastVocoder("NephisVocoderFast"))
+        XCTAssertFalse(StudioBudget.isFastVocoder("NephisVocoder8"))
+        XCTAssertFalse(StudioBudget.isFastVocoder(nil))
+        XCTAssertEqual(StudioBudget(fastVocoder: true).estimateX, 25)
+        XCTAssertEqual(StudioBudget(fastVocoder: false).estimateX, StudioBudget.seedX)
+        // Even before the measurement, call 2 of build 375's test (146 characters, ~12.2 s) fits at 25x: ~0.49 s.
+        XCTAssertTrue(StudioBudget(fastVocoder: true).use(characters: 146, ahead: 0, throttled: false))
+    }
+
+    func testTheSavedSpeedIsUsedAtLaunchAsItWasUnlessThePhoneIsWarm() {
+        let cool = StudioBudget(rememberedX: 40, fastVocoder: true)
+        XCTAssertEqual(cool.estimateX, 40)
+        XCTAssertEqual(cool.source, .saved)
+        XCTAssertTrue(cool.use(characters: 146, ahead: 0, throttled: false))
+        // A warm phone now (fair heat or more): half of it.
+        let warm = StudioBudget(rememberedX: 40, fastVocoder: true, warm: true)
+        XCTAssertEqual(warm.estimateX, 20)
+        XCTAssertEqual(warm.source, .saved)
+        // A measurement at load (only when nothing was saved) replaces a saved speed too.
+        var replaced = cool
+        replaced.measuredAtLoad(30)
+        XCTAssertEqual(replaced.estimateX, 30)
+    }
+
+    func testAThrottledOrSlowStudioKeepsTheOldRuleOnTheFirstCallToo() {
+        var fast = StudioBudget()
+        fast.measuredAtLoad(40)
+        // Hot or Low Power Mode: only with the cushion, the first call included.
+        XCTAssertFalse(fast.use(characters: 20, ahead: 0, throttled: true, first: true))
+        XCTAssertTrue(fast.use(characters: 20, ahead: StudioBudget.cushion, throttled: true, first: true))
+        // Measured under 4x (an older phone): the old rule, the first call included.
+        var slow = StudioBudget(fastVocoder: true)
+        slow.measuredAtLoad(3.5)
+        XCTAssertFalse(slow.use(characters: 20, ahead: 0, throttled: false, first: true))
+        XCTAssertFalse(slow.use(characters: 20, ahead: 5.9, throttled: false, first: true))
+        XCTAssertTrue(slow.use(characters: 400, ahead: 6, throttled: false, first: true))
+        // A studio that ran slow on a call (StudioPace's projection) falls back at once, first call or not.
+        fast.record(0.8)
+        XCTAssertFalse(fast.use(characters: 20, ahead: 0, throttled: false, first: true))
+    }
+
+    func testTheMeasuringRunIsOnePieceOfSilenceAndSkipsAHotPhone() {
+        // Her studio (studio.json: 128 kept frames of 512 samples at 44.1 kHz): 17 latents, 1.36 s.
+        let n = StudioBudget.measureLatents(chunkFrames: 128, hop: 512, sampleRate: 44_100)
+        XCTAssertEqual(n, 17)
+        // With the studio's 50 ms of end padding it fills one vocoder piece and isn't padded up to the blueprint's minimum.
+        let samples = Int((Double(n * NephisFlow.samplesPerLatent + 1_200) * 44_100 / 24_000).rounded())
+        let frames = NephisFlow.studioFrames(samples: samples, hop: 512)
+        XCTAssertLessThanOrEqual(frames, 128)
+        XCTAssertGreaterThanOrEqual(frames, NephisFlow.studioMinFrames)
+        XCTAssertEqual(StudioBudget.measureLatents(chunkFrames: 0, hop: 512, sampleRate: 44_100), 1)
+        // Nominal or fair: measure; serious or critical heat, or Low Power Mode: not.
+        XCTAssertTrue(StudioBudget.mayMeasure(thermal: 0, lowPower: false))
+        XCTAssertTrue(StudioBudget.mayMeasure(thermal: 1, lowPower: false))
+        XCTAssertFalse(StudioBudget.mayMeasure(thermal: 2, lowPower: false))
+        XCTAssertFalse(StudioBudget.mayMeasure(thermal: 0, lowPower: true))
     }
 
     func testASlowOrThrottledStudioIsSkippedAsBefore() {

@@ -167,6 +167,37 @@ final class NephisCallPlanTests: XCTestCase {
         XCTAssertEqual(NephisCallPlan.flowBudget(ahead: 10, readChange: true).takes, 1)
     }
 
+    func testVoiceExtrasOffMeansOnePlainTakeAndNoSpeechCheckAtAnyBuffer() {
+        // Developer › Voice extras off (2026-10-16): whatever the budget allowed, one take, no lead-in, no recognition.
+        for buffered in [0.0, 10, 30, 60, 200] {
+            for readChange in [false, true] {
+                let budget = NephisCallPlan.budget(buffered: buffered, readChange: readChange, switches: 0, warm: false, lastUrgentX: nil)
+                var line = ExpressiveLine(text: "x")
+                line.takes = budget.takes
+                line.leadIn = budget.leadIn
+                var on = line
+                NephisCallPlan.extras(&on, on: true)
+                XCTAssertEqual(on, line, "on: the call as its budget made it")
+                NephisCallPlan.extras(&line, on: false)
+                XCTAssertEqual(line.takes, 1)
+                XCTAssertEqual(line.leadIn, false)
+                XCTAssertFalse(NephisCallPlan.recognizes(takes: line.takes ?? 1, leadIn: line.leadIn == true, transcriber: true))
+            }
+        }
+        // An audio download (a lead-in, two takes with Best of 2) too.
+        var download = ExpressiveLine(text: "x")
+        NephisCallPlan.download(&download, bestOfTwo: true)
+        NephisCallPlan.extras(&download, on: false)
+        XCTAssertEqual(download.takes, 1)
+        XCTAssertEqual(download.leadIn, false)
+        XCTAssertNil(download.studio, "her studio is not an extra")
+        // On: recognition only where it can change something, as before.
+        XCTAssertTrue(NephisCallPlan.recognizes(takes: 1, leadIn: true, transcriber: true))
+        XCTAssertTrue(NephisCallPlan.recognizes(takes: 2, leadIn: false, transcriber: true))
+        XCTAssertFalse(NephisCallPlan.recognizes(takes: 1, leadIn: false, transcriber: true))
+        XCTAssertFalse(NephisCallPlan.recognizes(takes: 2, leadIn: true, transcriber: false))
+    }
+
     func testADownloadCallHasNoTimeLimitAndOneTake() {
         var line = ExpressiveLine(text: "x")
         line.studio = false

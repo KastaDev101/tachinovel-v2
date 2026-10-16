@@ -40,6 +40,10 @@ export function speedLines(r: Obj): Line[] {
   if (r.mode === 'steady' && banked > 0) {
     lines.push({ ok: true, text: `Steady state: started with ${Math.round(banked)} s already buffered, the way Listen runs once it is going.` });
   }
+  // Developer › Voice extras (lead-ins, extra takes, speech checks): A/B runs say which they were.
+  if (r.extras === 'on' || r.extras === 'off') {
+    lines.push({ ok: true, text: r.extras === 'on' ? 'Voice extras: on (lead-ins and speech checks).' : 'Voice extras: off (one plain take per call, no lead-ins or speech checks).' });
+  }
   const breaks = num(r.breaks);
   const breakSeconds = num(r.breakSeconds);
   lines.push(
@@ -74,6 +78,8 @@ export function speedLines(r: Obj): Line[] {
         ? { ok: true, text: `Her studio rendered all ${calls} calls.` }
         : { ok: false, text: `Her studio rendered ${used} of ${calls} calls${why ? ` (others: ${why})` : ''}.` },
     );
+    const estimate = estimateLine(obj(studio.estimate));
+    if (estimate) lines.push(estimate);
   } else if (calls > 0) {
     lines.push({ ok: true, text: 'Her studio is off (or not in this pack): her plain sound.' });
   }
@@ -98,6 +104,24 @@ export function speedLines(r: Obj): Line[] {
   // "…on this iPhone, but iCloud isn’t uploading": written, yet it won't reach the PC (native's UploadCheck).
   if (typeof r.saved === 'string') lines.push({ ok: !/couldn’t|only|not saved|, but /.test(r.saved), text: `Saved ${r.saved}.` });
   return lines;
+}
+
+/** Where the studio speed that decided which calls got her studio came from (StudioBudget), in plain words. */
+const ESTIMATE_FROM: Record<string, string> = {
+  'measured at load': 'measured when her studio loaded',
+  saved: 'saved from an earlier run',
+  default: 'a default guess, nothing measured yet',
+  'measured on calls': 'measured on her calls',
+};
+
+/** The studio speed the test started with and where it came from; ⚠ for a guess. Null for a report without it. */
+export function estimateLine(e: Obj): Line | null {
+  const x = num(e.startX);
+  if (!Number.isFinite(x) || typeof e.startFrom !== 'string') return null;
+  const from = ESTIMATE_FROM[e.startFrom] ?? e.startFrom;
+  const end = num(e.endX);
+  const after = Number.isFinite(end) && Math.abs(end - x) >= 0.05 ? `; ${end.toFixed(1)}× after the test` : '';
+  return { ok: e.startFrom !== 'default', text: `Studio speed planned with: ${x.toFixed(1)}× real time (${from})${after}.` };
 }
 
 /** The de-wind cleaner (pack chain "dewind"): on how many calls it ran, and why not when it didn't; null when the pack's

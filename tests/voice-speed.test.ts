@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { aboutLines, dialogueLine, speedLines, stageRows } from '../src/ui/native/voice-speed.ts';
+import { aboutLines, dialogueLine, estimateLine, speedLines, stageRows } from '../src/ui/native/voice-speed.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8');
@@ -143,6 +143,31 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(read('ios/App/App/Native/Shell/DeveloperOptions.swift')).toContain('localizedTitle: "Voice Speed Test"');
     const swift = read('ios/App/App/Native/Voice/Expressive/ExpressiveVoicePlugin.swift');
     for (const m of ['voiceSpeedTest', 'voiceSpeedTestStop', 'voiceSpeedTestPlay']) expect(swift).toContain(`CAPPluginMethod(name: "${m}"`);
+  });
+
+  it('says where the studio speed it planned with came from, and whether the voice extras were on (2026-10-16)', () => {
+    expect(estimateLine({})).toBeNull();
+    expect(estimateLine({ startX: 31.24, startFrom: 'measured at load', endX: 38.6, endFrom: 'measured on calls' })).toEqual({
+      ok: true,
+      text: 'Studio speed planned with: 31.2× real time (measured when her studio loaded); 38.6× after the test.',
+    });
+    expect(estimateLine({ startX: 40, startFrom: 'saved', endX: 40 })).toEqual({ ok: true, text: 'Studio speed planned with: 40.0× real time (saved from an earlier run).' });
+    // A guess is worth a look: nothing had measured her studio yet.
+    expect(estimateLine({ startX: 25, startFrom: 'default' })?.ok).toBe(false);
+    const withEstimate = speedLines(report({ studio: { read: true, calls: 5, used: 5, reasons: {}, studioEQCalls: 5, estimate: { startX: 31.2, startFrom: 'measured at load' } } }));
+    expect(withEstimate.map((l) => l.text)).toContain('Studio speed planned with: 31.2× real time (measured when her studio loaded).');
+    // Developer › Voice extras: A/B runs say which they were; an older report without it says nothing.
+    expect(speedLines(report({ extras: 'off' }))[0]).toEqual({ ok: true, text: 'Voice extras: off (one plain take per call, no lead-ins or speech checks).' });
+    expect(speedLines(report({ extras: 'on' }))[0]?.text).toBe('Voice extras: on (lead-ins and speech checks).');
+    expect(speedLines(report()).some((l) => l.text.startsWith('Voice extras'))).toBe(false);
+  });
+
+  it('records Voice extras at the top of the speed test and listening reports, and has one switch for it', () => {
+    expect(read('ios/App/App/Native/Voice/VoiceSpeedTest.swift')).toContain('out["extras"] = r.extras ? "on" : "off"');
+    expect(read('ios/App/App/Native/Voice/ListenReport.swift')).toContain('out["extras"] = ');
+    expect(read('src/ui/native/developer-ui.ts')).toContain("deliverySwitch(info, 'extras', 'Voice Extras', 'Lead-ins and speech checks. Off = less phone work, same voice')");
+    // One choke point: every flow call of hers passes ExpressiveService.synthesizeFlow, which applies it.
+    expect(read('ios/App/App/Native/Voice/Expressive/ExpressiveService.swift')).toContain('NephisCallPlan.extras(&line, on: VoiceSettings.shared.prefs.delivery.extras)');
   });
 
   it('says how her dialogue pack did (none without one)', () => {

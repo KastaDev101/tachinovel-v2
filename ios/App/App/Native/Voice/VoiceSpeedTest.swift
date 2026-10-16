@@ -53,6 +53,10 @@ final class VoiceSpeedTest {
         let takes: Int
         let leadIn: Bool
         let issuedAt: Double
+        /// The studio speed StudioBudget planned this call with (× real time) and where it came from ("measured at
+        /// load", "saved", "default", "measured on calls").
+        let plannedX: Double
+        let plannedFrom: String
         var preparedAt: Double?
         var readyAt: Double?
         var samples: [Float] = []
@@ -88,6 +92,10 @@ final class VoiceSpeedTest {
         /// the last call ran at background priority (Listen's RenderPacer.relaxed, with its hysteresis).
         var banked = 0.0
         var relaxed = false
+        /// Developer › Voice extras as the run started (lead-ins, extra takes, speech checks; off = one plain take).
+        var extras = true
+        /// The studio speed StudioBudget planned with as the first call was issued: {x, from, measuredAtLoadX}.
+        var plannedAtStart: [String: Any] = [:]
         var done: ([String: Any]) -> Void
         var progress: ([String: Any]) -> Void
     }
@@ -126,6 +134,7 @@ final class VoiceSpeedTest {
         var r = Run(started: Date(), done: done, progress: progress)
         r.stoppedListen = listening
         r.banked = max(0, min(600, banked.isFinite ? banked : 0))
+        r.extras = VoiceSettings.shared.prefs.delivery.extras
         r.thermalStart = ProcessInfo.processInfo.thermalState.rawValue
         r.thermalMax = r.thermalStart
         r.memoryStart = Self.memory()
@@ -207,12 +216,18 @@ final class VoiceSpeedTest {
         let budget = Self.budget(ahead: ahead, calls: r.calls, readChange: call.readChange, switches: call.switches)
         line.takes = budget.takes
         line.leadIn = budget.leadIn
-        line.studio = HybridSpeechEngine.studioFor(characters: said.count, ahead: ahead)
+        // Voice extras off: one plain take, no lead-in (synthesizeFlow applies it too; here so the report shows what ran).
+        NephisCallPlan.extras(&line, on: VoiceSettings.shared.prefs.delivery.extras)
+        // Her studio always on the first call of the read, then as Listen gives it (StudioBudget).
+        line.studio = HybridSpeechEngine.studioFor(characters: said.count, ahead: ahead, first: r.reset)
         r.relaxed = RenderPacer.relaxed(was: r.relaxed, buffered: ahead)
         if r.relaxed { line.relaxed = true }
         let k = r.calls.count
+        let planned = ExpressiveService.shared.studioPlanJSON()
+        if k == 0 { r.plannedAtStart = planned }
         r.calls.append(Call(n: k + 1, sentences: range, chars: said.count, pauseBefore: line.pauseBefore, ahead: ahead,
-                            studioAsked: line.studio == true, takes: budget.takes, leadIn: budget.leadIn, issuedAt: now,
+                            studioAsked: line.studio == true, takes: line.takes ?? 1, leadIn: line.leadIn == true, issuedAt: now,
+                            plannedX: planned["x"] as? Double ?? 0, plannedFrom: planned["from"] as? String ?? "?",
                             letters: members.map { plan[$0].say.count }))
         r.next = range.upperBound
         r.reset = false
@@ -484,6 +499,8 @@ final class VoiceSpeedTest {
         row["pauseBefore"] = c.pauseBefore ?? NSNull()
         row["aheadS"] = r1(c.ahead)
         row["studioAsked"] = c.studioAsked
+        row["plannedX"] = c.plannedX
+        row["plannedFrom"] = c.plannedFrom
         row["takes"] = c.takes
         row["leadIn"] = c.leadIn
         row["issuedS"] = r2(c.issuedAt)
@@ -588,6 +605,12 @@ final class VoiceSpeedTest {
         studio["dewindNote"] = reports.compactMap(\.dewindNote).last.map { String($0.prefix(160)) } ?? NSNull()
         studio["units"] = reports.compactMap(\.studioUnits).last ?? NSNull()
         studio["off"] = reports.compactMap(\.studioOff).last ?? NSNull()
+        // The speed StudioBudget planned with (which calls got her studio): as the first call was issued, and now, with
+        // where it came from ("measured at load", "saved", "default", "measured on calls").
+        let now = ExpressiveService.shared.studioPlanJSON()
+        studio["estimate"] = ["startX": r.plannedAtStart["x"] ?? NSNull(), "startFrom": r.plannedAtStart["from"] ?? NSNull(),
+                              "endX": now["x"] ?? NSNull(), "endFrom": now["from"] ?? NSNull(),
+                              "measuredAtLoadX": now["measuredAtLoadX"] ?? NSNull()] as [String: Any]
         var device: [String: Any] = ["model": deviceModel(), "ios": iosVersion(), "os": ProcessInfo.processInfo.operatingSystemVersionString]
         device["lowPower"] = ProcessInfo.processInfo.isLowPowerModeEnabled
         device["cores"] = ProcessInfo.processInfo.activeProcessorCount
@@ -600,6 +623,8 @@ final class VoiceSpeedTest {
         out["error"] = error ?? NSNull()
         out["at"] = ISO8601DateFormatter().string(from: r.started)
         out["app"] = appVersion()
+        // Developer › Voice extras (lead-ins, extra takes, speech checks) as the run started: A/B runs say which they were.
+        out["extras"] = r.extras ? "on" : "off"
         out["device"] = device
         out["pack"] = pack()
         out["chain"] = chain()

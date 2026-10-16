@@ -315,6 +315,27 @@ public actor NephisStudio {
         }
     }
 
+    /// Its speed on this phone (× real time), measured once when a pack's studio loads (2026-10-16: StudioBudget planned a
+    /// fresh pack's first calls with an 8x guess and skipped them; the iPhone 16 runs it at 32-50x). One vocoder piece of
+    /// silence (StudioBudget.measureLatents: 1.36 s of audio for her studio) rendered twice: the first run readies the
+    /// models (a real call's first run would pay that instead), the second is timed; its work without the heat rests.
+    /// About 0.1 s of work on an iPhone 16. nil when a run fails, is cancelled or steps aside for heat. The read's carried
+    /// context is cleared afterwards, so the next call starts as if nothing had run.
+    public func measureSpeed() async -> Double? {
+        let n = StudioBudget.measureLatents(chunkFrames: config.chunk_frames, hop: config.hop, sampleRate: config.sample_rate)
+        let pcm = [Float](repeating: 0, count: n * NephisFlow.samplesPerLatent)
+        let latents = [[Float]](repeating: [Float](repeating: 0, count: config.z_dims), count: n)
+        defer { carryPCM = []; carryLatents = [] }
+        var best: Double?
+        for _ in 0..<2 {
+            guard let r = try? await renderReporting(pcm24: pcm, latents: latents), !r.report.bypassed, !Task.isCancelled else { return nil }
+            let work = r.report.resampleMs + r.report.blueprintMs + r.report.refinerMs + r.report.vocoderMs
+            guard work > 0, r.report.audioMs > 0 else { return nil }
+            best = max(best ?? 0, r.report.audioMs / work)
+        }
+        return best
+    }
+
     /// The fallback when the studio skips or fails a call: Mimi's own sound at the studio's rate, so the stream keeps
     /// one sample rate and nothing is dropped (NephisFlowSynth gives it the read's own EQ first, at 24 kHz). Linear
     /// interpolation if even the resampler fails.

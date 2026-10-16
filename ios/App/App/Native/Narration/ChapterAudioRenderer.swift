@@ -335,9 +335,11 @@ final class ChapterAudioRenderer: @unchecked Sendable {
         let source = NarrationTiming.Source(pluginId: chapter.pluginId, novelPath: chapter.novelPath, chapterPath: chapter.chapterPath,
                                             title: chapter.chapterName, voice: voice.text, audioFile: "\(stem).m4a")
         let renderSeconds = cp.calls.reduce(0) { $0 + $1.renderMs } / 1000
+        // Developer › Voice extras off renders one take whatever Best of 2 says (NephisCallPlan.extras, in synthesizeFlow).
+        let extras = VoiceSettings.shared.prefs.delivery.extras
         let render: [String: Any] = [
             "voiceKey": voice.text, "renderer": NarrationVoiceKey.rendererVersion, "sampleRate": readRate,
-            "bitRate": ChapterAudioFiles.bitRate(sampleRate: readRate), "takes": bestOfTwo ? 2 : 1, "calls": cp.calls.count,
+            "bitRate": ChapterAudioFiles.bitRate(sampleRate: readRate), "takes": bestOfTwo && extras ? 2 : 1, "calls": cp.calls.count,
             "incomplete": cp.incomplete, "renderSeconds": (renderSeconds * 10).rounded() / 10, "textHash": textHash, "delivery": delivery.json,
         ]
         let manifest = timing.manifestJSON(source: source, sampleRate: readRate, engine: ("nephis", "Pocket TTS (FluidAudio Core ML) + her studio"),
