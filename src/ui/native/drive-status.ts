@@ -1,6 +1,6 @@
 /**
  * "Prepare for the drive" status, pure (no DOM): normalizing the native answer and the words the UI
- * shows (the novel page card, the sheet, Settings › Voices › In the car). Unit-tested in tests/car.test.ts.
+ * shows (the novel page card, the sheet, More › Voices › In the Car). Unit-tested in tests/car.test.ts.
  */
 import type { DriveJobInfo, DriveStatus } from './narration.ts';
 
@@ -57,10 +57,10 @@ export function driveLine(status: DriveStatus, novelKey: string): string {
         break;
     }
   }
-  return readyText || 'Kokoro reads the next chapters ahead, for the car or offline';
+  return readyText || 'Nephis reads the next chapters ahead, for the car or offline';
 }
 
-/** Settings › Voices › In the car: all prepared audio in one line. */
+/** More › Voices › In the Car: all prepared audio in one line. */
 export function storageLine(status: DriveStatus): string {
   const n = status.prepared.length;
   return n === 0 ? 'Nothing prepared' : `${n} chapter${n === 1 ? '' : 's'} · ${formatBytes(status.totalBytes)}`;

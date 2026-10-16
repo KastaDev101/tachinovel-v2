@@ -87,7 +87,7 @@ export function packsSummary(list: VoicePacks | null): string {
 
 /** Settings › Voices › Voice packs. `onDone`: something changed (Settings › Voices refreshes its row). */
 export function openVoicePacks(onDone: () => void = () => undefined): void {
-  const p = panel('Voice packs', 'voice-packs');
+  const p = panel('Voice Packs', 'voice-packs');
   let list: VoicePacks | null = null;
   let failed = false;
   let editing = false;
@@ -122,7 +122,7 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
     edit.hidden = !list || list.packs.length === 0;
     if (!list) {
       p.body.innerHTML = failed
-        ? '<p class="note">Voice packs aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>'
+        ? '<p class="note">Voice packs aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
         : '<p class="note">Loading…</p>';
       return;
     }
@@ -133,7 +133,7 @@ export function openVoicePacks(onDone: () => void = () => undefined): void {
         : `<div class="sec">On this iPhone</div><div class="card" data-testid="voice-packs-list">${list.packs.map(row).join('')}</div>
       <p class="note">Nephis reads with the pack with the ✓, from her next sentence. ${esc(howToAdd)}</p>
       <div class="sec">Storage</div>
-      <div class="card"><div class="row" data-testid="voice-packs-total"><div class="main"><b>Total used</b><span class="sub">Each pack is 350–500 MB. Packs aren’t in iCloud backups.</span></div><span>${esc(formatBytes(list.totalBytes))}</span></div></div>`;
+      <div class="card"><div class="row" data-testid="voice-packs-total"><div class="main"><b>Total Used</b><span class="sub">Each pack is 350–500 MB. Packs aren’t in iCloud backups.</span></div><span>${esc(formatBytes(list.totalBytes))}</span></div></div>`;
   };
 
   const apply = (call: Promise<unknown>, done?: (l: VoicePacks) => void): void => {

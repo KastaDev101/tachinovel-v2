@@ -60,7 +60,7 @@ function paintCard(card: HTMLElement): void {
   const line = card.querySelector('[data-drive-line]');
   const text = driveLine(latest, key);
   if (line && line.textContent !== text) line.textContent = text;
-  card.querySelector('button')?.setAttribute('aria-label', `Prepare for the drive: ${text}`);
+  card.querySelector('button')?.setAttribute('aria-label', `Prepare for the Drive: ${text}`);
 }
 
 /** Novel page: the drive card (re-applied by v1-hooks after every v1 render). v1's PC-narrator card shows
@@ -81,7 +81,7 @@ export function addDriveCard(pcAudio: boolean): void {
     card.dataset.testid = 'drive-card';
     card.dataset.plugin = ref.pluginId;
     card.dataset.path = ref.novelPath;
-    card.innerHTML = `<button type="button" class="nar-card-main tap tap-dim"><span class="nar-card-icon" aria-hidden="true">${ICON_CAR}</span><span class="nar-card-text"><span class="nar-card-title">Prepare for the drive</span><span class="nar-card-line" data-drive-line></span></span></button><span class="tn-drive-chev" aria-hidden="true">›</span>`;
+    card.innerHTML = `<button type="button" class="nar-card-main tap tap-dim"><span class="nar-card-icon" aria-hidden="true">${ICON_CAR}</span><span class="nar-card-text"><span class="nar-card-title">Prepare for the Drive</span><span class="nar-card-line" data-drive-line></span></span></button><span class="tn-drive-chev" aria-hidden="true">›</span>`;
     card.querySelector('button')?.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -127,7 +127,7 @@ function saveCount(n: number): void {
 /** The sheet for one novel. */
 export function openDriveSheet(novel: NovelRef & { name: string }): void {
   ensureStyle();
-  const p = panel('Prepare for the drive', 'drive-sheet');
+  const p = panel('Prepare for the Drive', 'drive-sheet');
   const key = `${novel.pluginId}:${novel.novelPath}`;
   let count = savedCount();
   let startName = '';
@@ -143,21 +143,21 @@ export function openDriveSheet(novel: NovelRef & { name: string }): void {
           <b>${esc(job.state === 'done' ? `${job.done} of ${job.count} chapters prepared` : job.state === 'failed' ? 'Stopped' : `Preparing ${job.count} chapter${job.count === 1 ? '' : 's'}`)}</b>
           <span class="sub" data-drive-status>${esc(driveLine(latest, key))}${job.current && job.state === 'running' ? ` · ${esc(job.current.title)}` : ''}</span>
           ${busy ? `<div class="prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(jobProgress(job) * 100)}"><i style="width:${(jobProgress(job) * 100).toFixed(1)}%"></i></div>` : ''}
-        </div>${busy ? '<button type="button" class="row" data-act="cancel"><div class="main"><b>Stop preparing</b></div></button>' : ''}</div>`
+        </div>${busy ? '<button type="button" class="row" data-act="cancel"><div class="main"><b>Stop Preparing</b></div></button>' : ''}</div>`
       : '';
     const readyRows = ready
       .map((c) => `<div class="row"><div class="main"><b>${esc(c.title)}</b></div><span class="meta">${formatDuration(c.durationSec)} · ${formatBytes(c.bytes)}</span></div>`)
       .join('');
     p.body.innerHTML = `
-      <p class="note">Kokoro reads the next chapters into audio on this iPhone, so listening in the car never waits for the voice or the internet. Each prepared chapter is deleted after you listen to it.</p>
+      <p class="note">Nephis reads the next chapters into audio on this iPhone, so listening in the car never waits for the voice or the internet. Each prepared chapter is deleted after you listen to it.</p>
       <div class="sec">Chapters</div>
       <div class="chips" role="group" aria-label="How many chapters">${DRIVE_CHAPTER_CHOICES.map((n) => `<button type="button" class="chip${n === count ? ' is-selected' : ''}" data-act="count" data-v="${n}" aria-pressed="${n === count}">${n}</button>`).join('')}</div>
       <p class="note" data-start>${startName ? `Starting where you’d continue: ${esc(startName)}` : 'Starting where you’d continue listening.'}</p>
-      <button type="button" class="btn" data-act="now">Prepare now</button>
-      <button type="button" class="btn alt" data-act="later">When charging or on Wi-Fi</button>
+      <button type="button" class="btn" data-act="now">Prepare Now</button>
+      <button type="button" class="btn alt" data-act="later">When Charging or on Wi-Fi</button>
       ${jobHtml ? `<div class="sec">Progress</div>${jobHtml}` : ''}
       <div class="sec">On this iPhone</div>
-      ${ready.length > 0 ? `<div class="card">${readyRows}</div><p class="note">${ready.length} chapter${ready.length === 1 ? '' : 's'} · ${formatBytes(bytes)}. All prepared audio: ${formatBytes(latest.totalBytes)}.</p><button type="button" class="btn alt" data-act="clear">Remove prepared audio</button>` : '<p class="note">Nothing prepared for this novel yet.</p>'}`;
+      ${ready.length > 0 ? `<div class="card">${readyRows}</div><p class="note">${ready.length} chapter${ready.length === 1 ? '' : 's'} · ${formatBytes(bytes)}. All prepared audio: ${formatBytes(latest.totalBytes)}.</p><button type="button" class="btn alt" data-act="clear">Remove Prepared Audio</button>` : '<p class="note">Nothing prepared for this novel yet.</p>'}`;
   };
 
   const start = async (when: 'now' | 'chargingOrWifi'): Promise<void> => {

@@ -45,21 +45,31 @@ describe('voice volume', () => {
 describe('which voice is speaking', () => {
   const kokoro = { kokoroVoice: 'af_heart', kokoroName: 'Heart' };
 
-  it('Kokoro by name; the system voice as a fallback with the reason', () => {
-    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro' } })).toBe('Kokoro · Heart');
-    expect(voiceLabel({ status: 'loading', engine: 'speech', voice: kokoro })).toBe('Kokoro · Heart');
-    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } })).toBe('System voice (fallback) · Kokoro is catching up');
-    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple' } })).toBe('System voice (fallback)');
-    expect(voiceLabel({ status: 'playing', engine: 'audio' })).toBe('PC audio');
-    // The expressive voice that read the sentence (Nephis, the Narrator), never Kokoro's name for it.
+  it('for the listener: Nephis, or her backup voice standing in (no engine names, no reasons)', () => {
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro', reader: 'Nephis' } })).toBe('Nephis');
-    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', reader: 'Nephis' } })).toBe('System voice (fallback)');
+    expect(voiceLabel({ status: 'loading', engine: 'speech', voice: kokoro })).toBe('Nephis');
+    expect(voiceLabel({ status: 'loading', engine: 'speech' })).toBe('Nephis');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro' } })).toBe('Backup voice');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } })).toBe('Backup voice');
+    expect(voiceLabel({ status: 'playing', engine: 'audio' })).toBe('PC audio');
+  });
+
+  it('with voice details (Developer options): Kokoro by name; the system voice as a fallback with the reason', () => {
+    const d = true;
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro' } }, d)).toBe('Kokoro · Heart');
+    expect(voiceLabel({ status: 'loading', engine: 'speech', voice: kokoro }, d)).toBe('Kokoro · Heart');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } }, d)).toBe('System voice (fallback) · Kokoro is catching up');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple' } }, d)).toBe('System voice (fallback)');
+    expect(voiceLabel({ status: 'playing', engine: 'audio' }, d)).toBe('PC audio');
+    // The expressive voice that read the sentence (Nephis, the Narrator), never Kokoro's name for it.
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro', reader: 'Nephis' } }, d)).toBe('Nephis');
+    expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', reader: 'Nephis' } }, d)).toBe('System voice (fallback)');
   });
 
   it('every fallback reason has words', () => {
     const reasons = ['modelLoading', 'modelUnavailable', 'queueDry', 'thermal', 'segmentFailed', 'disabled'] as const;
     for (const r of reasons) expect(fallbackReason({ fallback: r }), r).not.toBe('');
     expect(fallbackReason({ fallback: 'modelUnavailable', kokoroStatus: 'Turned off after crashing twice' })).toBe('Kokoro unavailable: Turned off after crashing twice');
-    expect(fallbackReason({ fallback: 'disabled' })).toBe('Kokoro is off in More › Voices');
+    expect(fallbackReason({ fallback: 'disabled' })).toBe('Kokoro is turned off');
   });
 });

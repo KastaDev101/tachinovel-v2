@@ -128,7 +128,7 @@ export function openPronounceSheet(opts: { word: string; novel: NovelRef; novelN
   const render = (): void => {
     if (!lists) {
       p.body.innerHTML = failed
-        ? '<p class="note">Pronunciations aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>'
+        ? '<p class="note">Pronunciations aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
         : '<p class="note">Loading…</p>';
       return;
     }

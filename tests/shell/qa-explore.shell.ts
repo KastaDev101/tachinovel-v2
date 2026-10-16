@@ -127,6 +127,19 @@ describe('QA walk', () => {
     console.log('page errors', shell.pageErrors);
   });
 
+  it('walks More › Developer (on by default in the personal flavor)', async () => {
+    await shell.page.locator('[data-testid="screen-voices"] [data-act="close"]').click().catch(() => undefined);
+    await shell.page.getByTestId('tab-more').click();
+    await shell.page.getByTestId('more-developer-options').click();
+    const dev = shell.page.locator('[data-testid="screen-developer"]:not([inert])');
+    await dev.locator('[data-testid="dev-nephis"]').waitFor({ timeout: 5000 });
+    await shot('developer-top');
+    await dev.evaluate((e) => e.querySelector('.body')?.scrollTo(0, 99999));
+    await shot('developer-bottom');
+    await dev.locator('[data-act="close"]').click();
+    expect(shell.pageErrors).toEqual([]);
+  });
+
   it('walks the Listen player while Nephis reads', async () => {
     await shell.page.locator('[data-act="close"]:visible').last().click().catch(() => undefined);
     await shell.page.locator('[data-testid="screen-voices"] [data-act="close"]').click().catch(() => undefined);

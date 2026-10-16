@@ -1,6 +1,6 @@
 /**
  * Voice speed test (src/ui/native/voice-speed.ts) in the PC shell, personal flavor, against a canned ExpressiveVoice
- * plugin: one tap from Settings › Voices and from the Listen player's Voice panel; Run shows native's progress, then
+ * plugin: one tap from More › Developer and (Developer options on) the Listen player's Voice panel, not there without them; Run shows native's progress, then
  * the result in plain words, where the time went and the phone; Play result and Copy report work; Stop asks native
  * to stop.
  * Screenshot: .cache/shell-shots/voice-speed.png
@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
@@ -61,19 +61,19 @@ describe('Voice speed test (PC shell)', () => {
     await shell?.close();
   });
 
-  it('is one tap from Settings › Voices, runs, says how it went, plays the result and copies the report', async () => {
+  it('is one tap from More › Developer, runs, says how it went, plays the result and copies the report', async () => {
     const page = shell.page;
     await page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     const skip = page.getByTestId('onboarding-skip');
     if (await skip.isVisible().catch(() => false)) await skip.click();
-    await page.getByTestId('tab-more').click();
-    await page.getByTestId('more-voices').click();
-    await page.getByTestId('screen-voices').getByTestId('voices-speed').click();
+    await setDeveloperOptions(shell);
+    await openDeveloper(shell);
+    await page.getByTestId('screen-developer').getByTestId('dev-speed').click();
     const screen = page.getByTestId('voice-speed');
     await screen.waitFor({ timeout: 5000 });
     await expect.poll(() => screen.textContent(), { timeout: 5000 }).toContain('Nephis pack: Nephis narrator (clear, deeper), studio on.');
 
-    await screen.getByRole('button', { name: 'Run the speed test' }).click();
+    await screen.getByRole('button', { name: 'Run the Speed Test' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'voiceSpeedTest').length).toBe(1);
     const result = screen.getByTestId('voice-speed-result');
     await result.waitFor({ timeout: 10_000 });
@@ -85,12 +85,12 @@ describe('Voice speed test (PC shell)', () => {
     expect(await screen.getByTestId('voice-speed-stages').textContent()).toContain('Studio vocoder');
     expect(await screen.textContent()).toContain('weights 17304f8de9e6');
 
-    await screen.getByRole('button', { name: 'Play result' }).click();
+    await screen.getByRole('button', { name: 'Play Result' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'voiceSpeedTestPlay')).toEqual([{}]);
-    await screen.getByRole('button', { name: 'Stop playing' }).click();
+    await screen.getByRole('button', { name: 'Stop Playing' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'voiceSpeedTestPlay').length).toBe(2);
     await screen.getByTestId('voice-speed-copy').click();
-    await expect.poll(() => screen.getByTestId('voice-speed-copy').textContent()).toMatch(/Copied|Copy report/);
+    await expect.poll(() => screen.getByTestId('voice-speed-copy').textContent()).toMatch(/Copied|Copy Report/);
     await page.waitForTimeout(450); // slide-in
     await page.screenshot({ path: path.join(shots, 'voice-speed.png') });
 
@@ -99,12 +99,12 @@ describe('Voice speed test (PC shell)', () => {
     expect(shell.pageErrors).toEqual([]);
   });
 
-  it('is one tap from the Listen player’s Voice panel too', async () => {
+  it('is one tap from the Listen player’s Voice panel too, with Developer options on only', async () => {
     const page = shell.page;
     await page.getByTestId('voice-speed').getByRole('button', { name: 'Back', exact: true }).click();
     await expect.poll(() => page.getByTestId('voice-speed').count()).toBe(0);
-    await page.getByTestId('screen-voices').getByRole('button', { name: 'Back', exact: true }).click();
-    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
+    await page.getByTestId('screen-developer').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('screen-developer').count()).toBe(0);
     shell.pluginReplies.set('Narration.state', () => ({
       status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', novelName: 'Alpha Story',
       chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1', position: 10, duration: 600,
@@ -112,8 +112,19 @@ describe('Voice speed test (PC shell)', () => {
     await page.getByTestId('more-listen').click();
     await page.getByTestId('car-player').locator('[data-act="voice"]').click();
     const picker = page.locator('[data-testid="voice-picker"]:not([inert])');
+    // Titled with the novel; Voice Settings and the novel's pronunciations (Title Case rows).
+    await expect.poll(() => picker.locator('h1').textContent(), { timeout: 5000 }).toBe('Alpha Story');
+    expect(await picker.textContent()).toMatch(/Voice Settings[\s\S]*Voice Speed Test[\s\S]*Pronunciations for This Novel/);
     await picker.getByTestId('voices-speed').click();
     await page.getByTestId('voice-speed').waitFor({ timeout: 5000 });
+    await page.getByTestId('voice-speed').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('voice-speed').count()).toBe(0);
+    await picker.getByRole('button', { name: 'Back', exact: true }).click();
+    // Without Developer options the panel has no speed test.
+    await setDeveloperOptions(shell, { on: false });
+    await page.getByTestId('car-player').locator('[data-act="voice"]').click();
+    await expect.poll(() => picker.getByTestId('voices-settings').count(), { timeout: 5000 }).toBe(1);
+    expect(await picker.getByTestId('voices-speed').count()).toBe(0);
     expect(shell.pageErrors).toEqual([]);
   });
 });

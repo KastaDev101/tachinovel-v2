@@ -39,6 +39,10 @@ export function installQaFolder(): void {
     if (s.linked && s.state === 'disconnected' && !warned) {
       warned = true;
       showToast('Diagnostics folder disconnected – reconnect it in More › About › Diagnostics', { tone: 'error', durationMs: 6000 });
+    } else if (s.linked && s.upload && !warned) {
+      // Copies are written, but iCloud doesn't take them: the PC sees nothing (2026-10-15).
+      warned = true;
+      showToast('Diagnostics aren’t reaching iCloud – see More › About › Diagnostics', { tone: 'error', durationMs: 6000 });
     }
   };
   const refresh = (): void => {

@@ -10,7 +10,7 @@
  *  - Deep links: tachinovel://open?plugin=…&novel=…[&chapter=…] are handled natively (CorePlugin
  *    forwards them as `app.deepLink` core events), so nothing to do here.
  */
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { installBootTiming } from './boot-timing.ts';
 import { installStatusBar } from './status-bar.ts';
@@ -19,6 +19,8 @@ interface TachiNativePlugin {
   setKeepAwake(opts: { on: boolean }): Promise<void>;
   /** Web content process terminations since the last call (WebContentRecovery.swift). */
   consumeRecovery(): Promise<{ terminations: number }>;
+  /** The app icon's quick action ("Voice Speed Test", DeveloperOptions.swift), kept natively until listened to. */
+  addListener(event: 'launchAction', fn: (e: { action?: string }) => void): Promise<PluginListenerHandle>;
 }
 
 export const TachiNative = registerPlugin<TachiNativePlugin>('TachiNative');

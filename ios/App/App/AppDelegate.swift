@@ -14,6 +14,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // A launch straight into the background is a BGAppRefreshTask (or CarPlay/audio relaunch); the
         // first start() wins, so pass the reason here (logged and reported by v2.info).
         CoreHost.shared.start(launchReason: application.applicationState == .background ? "background-refresh" : "ui")
+        // Voice defaults made automatic (once), then the app icon's "Voice Speed Test" while Developer options are on.
+        DeveloperOptions.migrateOnce()
+        DeveloperOptions.applyShortcuts()
         DeviceSnapshot.shared.start()
         // Crash/hang reports from MetricKit, kept on the device (Settings › Diagnostics).
         MetricDiagnostics.shared.start()

@@ -68,6 +68,9 @@ describe('Voice speed test (voice-speed.ts)', () => {
     // Her studio gets every call it can afford (StudioBudget): even one call short of audio is worth a look.
     const start = speedLines(report({ studio: { read: true, calls: 6, used: 5, reasons: { hurry: 1 }, studioEQCalls: 5 } }));
     expect(start.find((l) => l.text.startsWith('Her studio rendered 5 of 6'))?.ok).toBe(false);
+    // Written on the iPhone, but iCloud doesn't take it: the PC never sees it (2026-10-15).
+    const stuck = speedLines(report({ saved: 'in TachiNovel-Diagnostics on this iPhone, but iCloud isn’t uploading: not enough storage' }));
+    expect(stuck.find((l) => l.text.startsWith('Saved'))?.ok).toBe(false);
     const all = speedLines(report({ studio: { read: true, calls: 6, used: 6, reasons: {}, studioEQCalls: 6 } }));
     expect(all.find((l) => l.text === 'Her studio rendered all 6 calls.')?.ok).toBe(true);
   });
@@ -114,14 +117,18 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(speedLines(report()).some((l) => l.text.includes('de-wind'))).toBe(false);
   });
 
-  it('is one tap from Settings › Voices and from the Listen player’s Voice panel, and listed on the Voice test and Diagnostics', () => {
+  it('is one tap from Diagnostics, More › Developer, the Voice Test, the app icon and (Developer options) the Listen player’s Voice panel', () => {
     const voices = read('src/ui/native/voices-ui.ts');
     expect(voices).toContain('data-testid="voices-speed"');
-    // Settings › Voices and openVoicePicker (Listen › Voice) both show the row.
-    expect(voices.match(/\$\{SPEED_TEST_ROW\}/g)?.length).toBe(2);
+    // Only openVoicePicker (Listen › Voice) shows the row, and only with Developer options on (cleanup 1, 2026-10-15).
+    expect(voices.match(/\$\{SPEED_TEST_ROW\}/g)?.length).toBe(1);
+    expect(voices).toContain('${isDeveloper() ? `<div class="card" style="margin-top:10px">${SPEED_TEST_ROW}</div>` : \'\'}');
     expect(voices).toContain("if (act === 'voice-speed') openVoiceSpeedTest();");
     expect(read('src/ui/native/voice-test.ts')).toContain('data-testid="voice-test-speed"');
     expect(read('src/ui/native/v1-hooks.ts')).toContain("'diagnostics-voice-speed'");
+    expect(read('src/ui/native/developer-ui.ts')).toContain("row('speed', 'Voice Speed Test'");
+    expect(read('src/ui/native/launch-actions.ts')).toContain("e.action !== 'voiceSpeedTest'");
+    expect(read('ios/App/App/Native/Shell/DeveloperOptions.swift')).toContain('localizedTitle: "Voice Speed Test"');
     const swift = read('ios/App/App/Native/Voice/Expressive/ExpressiveVoicePlugin.swift');
     for (const m of ['voiceSpeedTest', 'voiceSpeedTestStop', 'voiceSpeedTestPlay']) expect(swift).toContain(`CAPPluginMethod(name: "${m}"`);
   });

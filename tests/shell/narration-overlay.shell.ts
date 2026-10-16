@@ -2,7 +2,7 @@
  * v2's narration overlay over the v1 UI (src/ui/native/narration-overlay.ts), in the PC shell:
  *  - "Listen" lives in the reader's bottom bar with v1's tools (same style, one row) and shows and hides
  *    with the bars; while listening, the mini player follows the bars in the reader too;
- *  - the mini player says which voice speaks ("Kokoro · Heart", or "System voice (fallback) · why");
+ *  - the mini player says which voice speaks ("Nephis" or "Backup voice"; with Developer options' voice details "Kokoro · Heart", or "System voice (fallback) · why");
  *  - the Listen player's speed slider + chips and "Voice volume" slider, saved natively (survive a reload);
  *    dragged for real (mouse through WebKit's range control) across the player's 1 s state polls, they
  *    apply while dragging and on release (the phone build ignored the speed slider: the poll rebuilt it);
@@ -20,7 +20,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
 import type { Route } from '../helpers/native-mock.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const fx = (n: string): string => readFileSync(path.join(root, 'tests', 'fixtures', 'demo-site', n), 'utf8');
@@ -281,8 +281,17 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await top().locator('.rd-top button[aria-label="Remove bookmark"]').click();
   });
 
-  it('says which voice speaks, and why the system voice stands in', async () => {
+  it('says which voice speaks: Nephis or her backup voice; with voice details, the engine and why the system voice stands in', async () => {
     const sub = shell.page.locator('.tn-player .tn-title small');
+    // For the listener (cleanup 1, 2026-10-15): no engine names, no reasons.
+    await expect.poll(() => sub.textContent()).toBe('Backup voice');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro', reader: 'Nephis' } });
+    await expect.poll(() => sub.textContent()).toBe('Nephis');
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', fallback: 'queueDry' } });
+    await expect.poll(() => sub.textContent()).toBe('Backup voice');
+    // Developer options › Show Voice Details in the Player.
+    await setDeveloperOptions(shell, { playerDetails: true });
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' } });
     await expect.poll(() => sub.textContent()).toBe('Kokoro · Heart');
     shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', appleName: 'Samantha', fallback: 'modelLoading' } });
     await expect.poll(() => sub.textContent()).toBe('System voice (fallback) · Kokoro is starting');
@@ -290,6 +299,7 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await expect.poll(() => sub.textContent()).toBe('System voice (fallback) · Kokoro unavailable: Turned off after crashing twice');
     shell.emitPluginEvent('Narration', 'state', { status: 'playing', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'kokoro' } });
     await expect.poll(() => sub.textContent()).toBe('Kokoro · Heart');
+    await setDeveloperOptions(shell, { on: false });
   });
 
   it('Listen player: the speed slider and its chips agree, and "Voice volume" goes to 150 %', async () => {

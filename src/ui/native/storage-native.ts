@@ -79,7 +79,7 @@ export function openNativeStorage(onChange: () => void = () => undefined): void 
   const render = (): void => {
     if (!data) {
       p.body.innerHTML = failed
-        ? '<p class="note">Storage isn’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>'
+        ? '<p class="note">Storage isn’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>'
         : '<p class="note">Measuring…</p>';
       return;
     }

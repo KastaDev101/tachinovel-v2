@@ -51,7 +51,7 @@ describe('Prepare for the drive: status words', () => {
       totalBytes: 24_000_000,
     });
     expect(driveLine(ready, KEY)).toBe('2 chapters ready · 15 MB');
-    expect(driveLine(ready, 'nothing:here')).toMatch(/^Kokoro reads the next chapters ahead/);
+    expect(driveLine(ready, 'nothing:here')).toMatch(/^Nephis reads the next chapters ahead/);
     expect(storageLine(ready)).toBe('3 chapters · 24 MB');
     expect(storageLine(normalizeDriveStatus({}))).toBe('Nothing prepared');
   });
@@ -93,8 +93,8 @@ describe('Help › Listening › the car', () => {
 
   it('mentions the settings it points to', () => {
     const text = CAR_HELP.map((i) => i.a).join(' ');
-    expect(text).toContain('Prepare for the drive');
-    expect(text).toContain('More › Voices › In the car › Car buttons');
+    expect(text).toContain('Prepare for the Drive');
+    expect(text).toContain('More › Voices › In the Car › Car Buttons');
     expect(text).toMatch(/Hey Siri/);
   });
 });

@@ -211,6 +211,8 @@ export interface VoiceSettingsInfo {
   /** With pluginId/novelPath: the novel's own choice (null = the default) and the voice it uses. */
   novelVoice?: string | null;
   effectiveVoice?: string;
+  /** Developer options (dev-flags.ts; DeveloperOptions.swift). Older builds: absent. */
+  developer?: { on?: boolean; playerDetails?: boolean; phonemes?: boolean };
 }
 
 /** Listen › the narrator voice: which engine reads chapters (null = Kokoro) and natural delivery's switches. */
@@ -313,6 +315,8 @@ export interface NarrationPlugin {
     narrator?: Partial<NarratorInfo>;
     /** The narrator voice: only the keys sent change. */
     delivery?: Partial<DeliveryInfo>;
+    /** Developer options (dev-flags.ts): only the keys sent change. */
+    developer?: { on?: boolean; playerDetails?: boolean; phonemes?: boolean };
   }): Promise<void>;
   /** Voice mixer: save a new mix (no id) or change one. */
   saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;

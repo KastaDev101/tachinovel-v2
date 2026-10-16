@@ -1,31 +1,29 @@
 /**
  * Voices UI (v2 additions over the unchanged v1 UI):
  *
- *  - Settings › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts): Nephis, her Voice packs
- *    (voice-packs.ts, personal flavor) and the Voice test; the 28 Kokoro
- *    voices, grouped by accent and gender with the best graded first, with ▶ samples and the default one;
- *    the Apple voice that stands in when Kokoro can't keep up (with the "download a Premium voice" hint);
- *    Kokoro on/off, pronunciations, In the car (what the car's side buttons do, prepared audio storage),
- *    and Advanced › "Use PC audio when available" (off by default; the PC narrator is sidelined).
- *  - The voice mixer (Settings › Voices › Mix a voice): two voices and a blend slider, ▶ to listen,
- *    saved under a name in "Your mixes" (on this iPhone), usable as the default or for one novel; edit and
- *    delete. Rules shared with native in voice-mix.ts.
- *  - Narrator mode (Settings › Voices): a dialogue voice (and a second speaker), natural pauses, natural
- *    variation, studio sound, room tone, each with its own switch, and ▶ Without / ▶ With on a test passage.
- *  - The voice picker for one novel (from the Listen player): its own voice (or mix) or the default.
- *  - The pronunciation editor (global, or one novel): word → respelling and/or Kokoro phonemes, the same
- *    lexicon format the PC narrator uses (v1 frontend.ts), so a narrator lexicon can be pasted in.
+ *  - More › Voices (a "Voices" row injected into v1's More list, see v1-hooks.ts), cleanup 1 (2026-10-15): the Nephis
+ *    card (her pack and studio in the personal flavor, "Download Her Voice" while her model isn't on the phone, "Turn
+ *    Nephis Back On" after crashes), Voice Settings (Scene Moods and [System] messages; natural delivery, the AI scene
+ *    reading and studio sound are automatic), Pronunciations, In the Car (Car Buttons, prepared audio). The test tools,
+ *    voice packs, her studio switch, the delivery internals and PC audio are in More › Developer (developer-ui.ts).
+ *  - The voice mixer (More › Developer › Mix a Voice): two voices and a blend slider, ▶ to listen, saved under a name
+ *    in "Your mixes" (on this iPhone); edit and delete. Rules shared with native in voice-mix.ts.
+ *  - Kokoro's voice lists and narrator mode (openKokoroVoices, openNovelKokoro): kept for the backup voice's own
+ *    settings, which a later build brings back.
+ *  - The Listen player's Voice panel for one novel: the Nephis card, Voice Settings, the novel's pronunciations (and
+ *    the Voice Speed Test with Developer options on).
+ *  - The pronunciation editor (global, or one novel): word → respelling, and with Developer options Kokoro phonemes and
+ *    a pasted lexicon (the format the PC narrator uses, v1 frontend.ts).
  *
  * Vanilla DOM like car-mode.ts: these screens live outside v1's navigation stack.
  */
 import { isKokoroPhonemes, validateLexicon, type Lexicon, type LexiconEntry } from '@v1tts/frontend.ts';
 import { engineEntry } from '../../core/narration/user-pronunciations.ts';
 import { callCore } from '../capacitor-client.ts';
+import { isDeveloper, normalizeDeveloper, showsPhonemes, showsVoiceDetails } from './dev-flags.ts';
 import { normalizeDriveStatus, storageLine } from './drive-status.ts';
 import { voiceLabel as describeVoice } from './listen-controls.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
-import { openVoiceTest } from './voice-test.ts';
-import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { groupVoices } from './voice-groups.ts';
 import { ExpressiveVoice, openExpressiveLab } from './expressive-lab.ts';
 import { NARRATOR_PIECES, playTestPassage } from './voice-lab.ts';
@@ -102,12 +100,8 @@ const ICON = {
   play: '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
 };
 
-/** Window event after a voice setting changed here (v1-hooks.ts re-checks "Use PC audio"). */
+/** Window event after a voice setting changed (More › Developer's "Use PC Audio": v1-hooks.ts re-checks it). */
 export const VOICE_SETTINGS_CHANGED = 'tn-voice-settings';
-
-function changed(): void {
-  window.dispatchEvent(new Event(VOICE_SETTINGS_CHANGED));
-}
 
 export const SAMPLE_TEXT = 'The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath.';
 
@@ -133,10 +127,17 @@ export function toast(msg: string): void {
   setTimeout(() => t.remove(), 2600);
 }
 
-/** Subtitle for the mini player / Listen player: which voice is speaking. */
-export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status' | 'prepared'>): string {
-  if (s.engine === 'audio' && s.prepared) return `Kokoro · ${s.voice?.kokoroName ?? 'prepared'} · prepared`;
-  return describeVoice(s);
+/**
+ * Subtitle for the mini player / Listen player: which voice is speaking ("Nephis" or "Backup voice"; the engine and
+ * the reason for a stand-in with Developer options' "Show Voice Details in the Player"). A prepared chapter is filed
+ * under her key ("nephis|<pack>|…", NarrationController.preparedNephisKey) when she made it.
+ */
+export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status' | 'prepared'>, details = showsVoiceDetails()): string {
+  if (s.engine === 'audio' && s.prepared) {
+    if ((s.voice?.kokoroVoice ?? '').startsWith('nephis|')) return 'Nephis · prepared';
+    return details ? `Kokoro · ${s.voice?.kokoroName ?? 'prepared'} · prepared` : 'Backup voice · prepared';
+  }
+  return describeVoice(s, details);
 }
 
 /** Narrator settings from native (absent in older builds: off). Unknown voices read as none. */
@@ -188,10 +189,11 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
       bytes: typeof k.bytes === 'number' ? k.bytes : null,
     },
     apple: r.apple ?? { name: 'System voice', quality: 'default', onlyDefault: true },
+    developer: normalizeDeveloper(r.developer),
   };
 }
 
-const UNAVAILABLE = '<p class="note">Voices aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try again</button>';
+const UNAVAILABLE = '<p class="note">Voices aren’t available right now.</p><button type="button" class="btn alt" data-act="retry">Try Again</button>';
 
 function describe(v: KokoroVoiceInfo): string {
   return v.blurb || (v.grade ? `Kokoro grade ${v.grade}` : `${v.language === 'en-GB' ? 'British' : 'American'} · ${v.gender}`);
@@ -283,7 +285,7 @@ function voiceRows(info: VoiceSettingsInfo, selected: string, editable = false):
     .join('');
   const mixes = info.customVoices ?? [];
   const newRow = editable
-    ? `<button type="button" class="row" data-act="mix-new"><div class="main"><b>Mix a voice</b><span class="sub">Blend two voices into your own</span></div><span aria-hidden="true">›</span></button>`
+    ? `<button type="button" class="row" data-act="mix-new"><div class="main"><b>Mix a Voice</b><span class="sub">Blend two voices into your own</span></div><span aria-hidden="true">›</span></button>`
     : '';
   if (mixes.length === 0 && !newRow) return groups;
   return `${groups}<div class="sub-sec" data-group="mixes">Your mixes</div><div class="card" data-testid="voice-mixes">${mixes.map((m) => mixRow(info, m, selected, editable)).join('')}${newRow}</div>`;
@@ -348,38 +350,35 @@ const DELIVERY_DEFAULT: DeliveryInfo = {
   systemTone: true,
 };
 
-const DELIVERY_SWITCHES: [Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice'>, string, string][] = [
-  ['natural', 'Natural delivery', 'Paragraphs read as one thought, pauses that fit the scene'],
-  ['performed', 'Act out dialogue', 'Quotes and thoughts performed, narration calm (same voice)'],
-  ['moods', 'Mood voices', 'Tense, sad, tender and more where the scene calls for them'],
-  ['sceneAI', 'AI scene reading', 'Apple Intelligence picks the mood of each scene'],
-  ['breaths', 'Breaths', 'Real inhales in the longer pauses'],
-  ['studioSound', 'Studio sound', 'Clean, warm and even'],
-  ['systemChime', 'System message chime', 'A soft chime before [System] lines'],
-  ['systemTone', 'System message voice', 'An interface tone for [System] lines'],
-];
+type DeliverySwitch = Exclude<keyof DeliveryInfo, 'listenEngine' | 'sceneAIAvailable' | 'pocketVoice' | 'pocketInstalled' | 'nephisOff' | 'nephisOffLine'>;
 
-/** Switches that change only the Narrator's reads (Nephis has no acted voice and no added breaths; her moods and the
- * AI scene reading apply to her too: Delivery.read). */
-const NARRATOR_ONLY = new Set<string>(['performed', 'breaths']);
+/** A delivery switch row (Voice Settings here, the delivery internals in More › Developer). */
+export function deliverySwitch(info: VoiceSettingsInfo, k: DeliverySwitch, label: string, sub: string, disabled = false): string {
+  const d = { ...DELIVERY_DEFAULT, ...info.delivery };
+  return `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''} aria-label="${esc(label)}"></label>`;
+}
+
+/** Who picks the scene's mood, in words (Voice Settings): Apple Intelligence where the iPhone has it, else the rules. */
+export function sceneLine(delivery: Partial<DeliveryInfo> | undefined): string {
+  const d = { ...DELIVERY_DEFAULT, ...delivery };
+  if (!d.natural) return 'Natural delivery is off in More › Developer, so she reads without scene moods.';
+  return d.sceneAI && d.sceneAIAvailable === true ? 'Scene moods use Apple Intelligence.' : 'Scene moods use built-in rules.';
+}
+
+/** Voice Settings: Scene Moods and [System] messages. Natural delivery, the AI scene reading and studio sound are
+ * automatic (More › Developer overrides them). */
+function voiceSettingsCards(info: VoiceSettingsInfo): string {
+  const natural = { ...DELIVERY_DEFAULT, ...info.delivery }.natural;
+  return `<div class="sec">Scene</div>
+    <div class="card" data-testid="voices-delivery">${deliverySwitch(info, 'moods', 'Scene Moods', 'Tense, sad, tender and more where the scene calls for them', !natural)}</div>
+    <p class="note" data-testid="voices-scene-line">${esc(sceneLine(info.delivery))}</p>
+    <div class="sec">[System] Messages</div>
+    <div class="card">${deliverySwitch(info, 'systemChime', 'System Message Chime', 'A soft chime before [System] lines')}${deliverySwitch(info, 'systemTone', 'System Message Voice', 'An interface tone for [System] lines')}</div>`;
+}
 
 /** Nephis is the voice reading chapters. */
 function nephisReads(info: VoiceSettingsInfo): boolean {
   return info.delivery?.listenEngine === 'pocket-tts' && info.delivery.pocketVoice === 'nephis';
-}
-
-/** The Narrator's switches (natural delivery, acting, mood voices, AI scene reading, breaths, studio sound, …). */
-function deliveryCard(info: VoiceSettingsInfo): string {
-  const d = { ...DELIVERY_DEFAULT, ...info.delivery };
-  const nephis = nephisReads(info);
-  // Nephis is the app's one voice: switches that only change the old Narrator's reads aren't shown.
-  const rows = DELIVERY_SWITCHES.filter(([k]) => !(nephis && NARRATOR_ONLY.has(k)))
-    .map(
-      ([k, label, sub]) =>
-        `<label class="row"><div class="main"><b>${esc(label)}</b><span class="sub">${esc(sub)}</span></div><input type="checkbox" class="sw" data-act="delivery" data-k="${k}" ${d[k] ? 'checked' : ''} ${k !== 'natural' && !d.natural ? 'disabled' : ''} aria-label="${esc(label)}"></label>`,
-    )
-    .join('');
-  return `<div class="card" data-testid="voices-delivery">${rows}</div>`;
 }
 
 /** Kokoro's three backup voices, shown first (the full list and the mixer are one tap further). */
@@ -390,16 +389,26 @@ const BACKUP_VOICES = ['af_heart', 'af_bella', 'af_nicole'];
  * card, with the download row while her model isn't on the phone. Kokoro (af_nephis, matched to her) stands in only
  * when she can't read (a critically hot phone); the Apple voice is the invisible last resort.
  */
-function nephisCard(info: VoiceSettingsInfo): string {
+function nephisCard(info: VoiceSettingsInfo, withPack = false): string {
   const download =
     info.delivery?.pocketInstalled === false
-      ? `<button type="button" class="row" data-act="expressive"><div class="main"><b>Download her voice</b><span class="sub">About 370 MB, on Wi-Fi</span></div><span aria-hidden="true">›</span></button>`
+      ? `<button type="button" class="row" data-act="expressive"><div class="main"><b>Download Her Voice</b><span class="sub">About 370 MB, on Wi-Fi</span></div><span aria-hidden="true">›</span></button>`
       : '';
   const off = nephisOffLine(info.delivery);
   const offRow = off
-    ? `<button type="button" class="row" data-act="nephis-on" data-testid="voices-nephis-on"><div class="main"><b>Turn Nephis back on</b><span class="sub">${esc(off)} Her backup voice reads meanwhile.</span></div><span aria-hidden="true">›</span></button>`
+    ? `<button type="button" class="row" data-act="nephis-on" data-testid="voices-nephis-on"><div class="main"><b>Turn Nephis Back On</b><span class="sub">${esc(off)} Her backup voice reads meanwhile.</span></div><span aria-hidden="true">›</span></button>`
     : '';
-  return `<div class="card" data-testid="voices-engine"><div class="row"><div class="main"><b>Nephis</b><span class="sub">Her own voice, with moods for the scene. If the phone runs too hot, her backup voice stands in.</span></div></div>${offRow}${download}</div>`;
+  // Her pack and studio (personal flavor), filled in once ExpressiveVoice.status answers.
+  const pack = withPack ? '<span class="sub" data-pack hidden></span>' : '';
+  return `<div class="card" data-testid="voices-engine"><div class="row"><div class="main"><b>Nephis</b><span class="sub">Her own voice, with moods for the scene. If the phone runs too hot, her backup voice stands in.</span>${pack}</div></div>${offRow}${download}</div>`;
+}
+
+/** "Pack: <name> · Studio" from ExpressiveVoice.status().nephisPack; null without a pack (or in older builds). */
+export function packCaption(pack: unknown): string | null {
+  if (!pack || typeof pack !== 'object') return null;
+  const p = pack as { name?: unknown; studio?: unknown; studioOn?: unknown };
+  const name = typeof p.name === 'string' && p.name ? p.name : 'unnamed';
+  return `Pack: ${name}${p.studio === true && p.studioOn === true ? ' · Studio' : ''}`;
 }
 
 /**
@@ -428,30 +437,35 @@ function backupCard(info: VoiceSettingsInfo, selected: string): string {
     return mix ? [mixRow(info, mix, selected, false)] : [];
   });
   return `<div class="card" data-testid="voices-backup">${rows.join('')}
-      <button type="button" class="row" data-act="kokoro-all"><div class="main"><b>All Kokoro voices</b><span class="sub">${info.voices.length} voices and your own mixes</span></div><span aria-hidden="true">›</span></button>
+      <button type="button" class="row" data-act="kokoro-all"><div class="main"><b>All Kokoro Voices</b><span class="sub">${info.voices.length} voices and your own mixes</span></div><span aria-hidden="true">›</span></button>
     </div>`;
 }
 
-/** The Voice speed test's row (Settings › Voices and the Listen player's Voice panel): one tap to it. */
+/** The Voice Speed Test's row (the Listen player's Voice panel, with Developer options on): one tap to it. */
 const SPEED_TEST_ROW =
-  '<button type="button" class="row" data-act="voice-speed" data-testid="voices-speed"><div class="main"><b>Voice speed test</b><span class="sub">Times her voice on a 45-second passage, then saves the report</span></div><span aria-hidden="true">›</span></button>';
+  '<button type="button" class="row" data-act="voice-speed" data-testid="voices-speed"><div class="main"><b>Voice Speed Test</b><span class="sub">Times her voice on a 45-second passage, then saves the report</span></div><span aria-hidden="true">›</span></button>';
 
-const NARRATOR_SETTINGS_ROW = `<div class="card"><button type="button" class="row" data-act="narrator-settings"><div class="main"><b>Voice settings</b><span class="sub">Moods, AI scene reading, studio sound, system messages</span></div><span aria-hidden="true">›</span></button></div>`;
+const VOICE_SETTINGS_ROW = `<div class="card"><button type="button" class="row" data-act="narrator-settings" data-testid="voices-settings"><div class="main"><b>Voice Settings</b><span class="sub">Scene moods and [System] messages</span></div><span aria-hidden="true">›</span></button></div>`;
 
 /** Nephis's model packs (.tnmodel) are a personal-flavor feature (NephisModelPack.swift). */
 const PACKS = __FLAVOR__ === 'personal';
 
-/** Settings › Voices › Narrator settings: natural delivery's switches. */
+/** More › Voices › Voice Settings (and the Listen player's Voice panel): Scene Moods and [System] messages. */
 function openNarratorSettings(onDone: () => void): void {
-  const p = panel('Voice settings', 'narrator-settings');
+  const p = panel('Voice Settings', 'narrator-settings');
   let info: VoiceSettingsInfo | null = null;
+  let failed = false;
   const render = (): void => {
-    p.body.innerHTML = info ? deliveryCard(info) : '<p class="note">Loading…</p>';
+    p.body.innerHTML = info ? voiceSettingsCards(info) : failed ? UNAVAILABLE : '<p class="note">Loading…</p>';
   };
   const load = async (): Promise<void> => {
     info = normalizeVoiceSettings(await Narration.voiceSettings().catch(() => null));
+    failed = !info;
     render();
   };
+  p.body.addEventListener('click', (ev) => {
+    if ((ev.target as Element).closest('[data-act="retry"]')) void load();
+  });
   p.body.addEventListener('change', (ev) => {
     const el = ev.target as HTMLInputElement;
     if (el.dataset.act === 'delivery' && el.dataset.k) void Narration.setVoiceSettings({ delivery: { [el.dataset.k]: el.checked } }).then(load).then(onDone);
@@ -460,9 +474,10 @@ function openNarratorSettings(onDone: () => void): void {
   void load();
 }
 
-/** Every Kokoro voice (and the mixer and Kokoro's narrator mode, for the default); for a novel, its own choice. */
-function openKokoroVoices(novel: { pluginId: string; novelPath: string } | null, onDone: () => void): void {
-  const p = panel('Kokoro voices', 'kokoro-voices');
+/** Every Kokoro voice (and the mixer and Kokoro's narrator mode, for the default); for a novel, its own choice. Not
+ * linked from any screen in this build: the backup voice's settings come back in a later one. */
+export function openKokoroVoices(novel: { pluginId: string; novelPath: string } | null, onDone: () => void): void {
+  const p = panel('Kokoro Voices', 'kokoro-voices');
   let info: VoiceSettingsInfo | null = null;
   const render = (): void => {
     if (!info) {
@@ -503,12 +518,6 @@ function openKokoroVoices(novel: { pluginId: string; novelPath: string } | null,
   void load();
 }
 
-/** The engine row tapped: the Narrator or Nephis (Pocket TTS), Nano, or Kokoro (null), as delivery settings. */
-function engineValue(v: string | undefined): Partial<DeliveryInfo> {
-  if (v === 'pocket-tts:narrator' || v === 'pocket-tts:nephis') return { listenEngine: 'pocket-tts', pocketVoice: v === 'pocket-tts:nephis' ? 'nephis' : 'narrator' };
-  return { listenEngine: v === 'pocket-tts' || v === 'chatterbox-nano' ? v : null };
-}
-
 /** A voice's or a mix's name. */
 function choiceName(info: VoiceSettingsInfo, id: string | undefined): string {
   return info.voices.find((v) => v.id === id)?.name ?? info.customVoices?.find((m) => m.id === id)?.name ?? '';
@@ -532,35 +541,27 @@ export function openVoicesScreen(): void {
       return;
     }
     const k = info.kokoro;
-    const size = typeof k.bytes === 'number' ? ` · ${Math.round(k.bytes / 1e6)} MB` : '';
-    void size;
     // Only a problem with her backup voice is worth a line here.
     const status = !k.bundled
       ? '<p class="note warn">Her backup voice isn’t in this build: the Apple voice stands in when she can’t read.</p>'
       : k.crashDisabled
-        ? `<p class="note warn">Her backup voice was turned off after it crashed twice (a known iOS Core ML issue). <button type="button" data-act="kokoro-on" style="color:#a8b4ff;padding:0">Turn it back on</button></p>`
+        ? `<p class="note warn">Her backup voice was turned off after it crashed twice (a known iOS Core ML issue). <button type="button" data-act="kokoro-on" style="color:#a8b4ff;padding:0">Turn It Back On</button></p>`
         : '';
     p.body.innerHTML = `
       <div class="sec">Voice</div>
-      ${nephisCard(info)}
-      ${NARRATOR_SETTINGS_ROW}
-      ${PACKS ? '<div class="card"><button type="button" class="row" data-act="voice-packs" data-testid="voices-packs"><div class="main"><b>Voice packs</b><span class="sub" data-packs>…</span></div><span aria-hidden="true">›</span></button></div>' : ''}
-      <div class="card"><button type="button" class="row" data-act="voice-test" data-testid="voices-test"><div class="main"><b>Voice test</b><span class="sub">Run it, then copy the report</span></div><span aria-hidden="true">›</span></button>
-        ${SPEED_TEST_ROW}</div>
+      ${nephisCard(info, PACKS)}
+      ${VOICE_SETTINGS_ROW}
       ${status}
       <div class="sec">Pronunciations</div>
-      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the voices get wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
-      <p class="note">A novel’s own list: Listen player › Voice › Pronunciations.</p>
-      <div class="sec">In the car</div>
+      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Words the Voices Get Wrong</b><span class="sub">Names and made-up words, for every novel</span></div><span aria-hidden="true">›</span></button></div>
+      <p class="note">A novel’s own list: Listen player › Voice › Pronunciations for This Novel.</p>
+      <div class="sec">In the Car</div>
       <div class="card" data-testid="voices-car">
-        <div class="row"><div class="main"><b>Car buttons</b><span class="sub">The two side buttons in CarPlay, on the lock screen, headphones and the steering wheel</span></div></div>
-        <div class="row"><div class="chips" role="group" aria-label="Car buttons">${carChip(info.carButtons, 'chapters', 'Chapters')}${carChip(info.carButtons, 'skip15', '15 seconds')}</div></div>
-        <div class="row"><div class="main"><b>Prepared audio</b><span class="sub" data-drive-total>…</span></div><button type="button" class="link" data-act="drive-clear">Remove all</button></div>
+        <div class="row"><div class="main"><b>Car Buttons</b><span class="sub">The two side buttons in CarPlay, on the lock screen, headphones and the steering wheel</span></div></div>
+        <div class="row"><div class="chips" role="group" aria-label="Car buttons">${carChip(info.carButtons, 'chapters', 'Chapters')}${carChip(info.carButtons, 'skip15', '15 Seconds')}</div></div>
+        <div class="row"><div class="main"><b>Prepared Audio</b><span class="sub" data-drive-total>…</span></div><button type="button" class="link" data-act="drive-clear">Remove All</button></div>
       </div>
-      <p class="note">CarPlay shows TachiNovel in its Now Playing screen (Siri: “pause”, “resume”, “next”). To listen without waiting on the voice or the internet, open a novel and tap Prepare for the drive.</p>
-      <div class="sec">Advanced</div>
-      <div class="card"><label class="row"><div class="main"><b>Use PC audio when available</b><span class="sub">Chapters narrated on the PC (“TachiNovel Audio” folder) play instead of Kokoro</span></div><input type="checkbox" class="sw" data-act="pcaudio" ${info.usePCAudio ? 'checked' : ''} aria-label="Use PC audio when available"></label>
-      ${info.usePCAudio ? '<button type="button" class="row" data-act="folder"><div class="main"><b>Audio folder</b><span class="sub" data-folder>…</span></div><span aria-hidden="true">›</span></button>' : ''}</div>`;
+      <p class="note">CarPlay shows TachiNovel in its Now Playing screen (Siri: “pause”, “resume”, “next”). To listen without waiting on the voice or the internet, open a novel and tap Prepare for the Drive.</p>`;
     void Narration.driveStatus()
       .then((s) => {
         const el = p.body.querySelector('[data-drive-total]');
@@ -568,18 +569,14 @@ export function openVoicesScreen(): void {
       })
       .catch(() => undefined);
     if (PACKS) {
-      void ExpressiveVoice.nephisPacks()
-        .then(normalizePacks, () => null)
-        .then((list) => {
-          const el = p.body.querySelector('[data-packs]');
-          if (el) el.textContent = packsSummary(list);
-        });
-    }
-    if (info.usePCAudio) {
-      void Narration.audioFolder()
-        .then((f) => {
-          const el = p.body.querySelector('[data-folder]');
-          if (el) el.textContent = f.linked ? (f.name ?? 'Linked') : 'Not linked: tap to choose iCloud Drive › TachiNovel Audio';
+      void ExpressiveVoice.status()
+        .then((st) => {
+          const caption = packCaption((st as { nephisPack?: unknown }).nephisPack);
+          const el = p.body.querySelector<HTMLElement>('[data-pack]');
+          if (el && caption) {
+            el.textContent = caption;
+            el.hidden = false;
+          }
         })
         .catch(() => undefined);
     }
@@ -596,47 +593,15 @@ export function openVoicesScreen(): void {
     if (el?.dataset.act === 'retry') return void load();
     if (!el || !info) return;
     switch (el.dataset.act ?? '') {
-      case 'sample':
-        void sample(el as HTMLButtonElement, el.dataset.voice ?? 'af_heart');
-        return;
-      case 'pick':
-        if (el.dataset.voice) void Narration.setVoiceSettings({ defaultVoice: el.dataset.voice }).then(load);
-        return;
       case 'lexicon':
-        openLexiconEditor(undefined, 'All novels');
-        return;
-      case 'mix-new':
-        openMixer(info, null, () => void load());
+        openLexiconEditor(undefined, 'All Novels');
         return;
       case 'expressive':
         openExpressiveLab();
         return;
-      case 'engine':
-        void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load);
-        return;
       case 'narrator-settings':
         openNarratorSettings(() => undefined);
         return;
-      case 'voice-test':
-        openVoiceTest();
-        return;
-      case 'voice-speed':
-        openVoiceSpeedTest();
-        return;
-      case 'voice-packs':
-        openVoicePacks(render);
-        return;
-      case 'kokoro-all':
-        openKokoroVoices(null, () => void load());
-        return;
-      case 'narrator-ab':
-        void playTestPassage(el.dataset.v === 'on' ? 'on' : 'off').catch((err: unknown) => toast(`Couldn't play: ${err instanceof Error ? err.message : String(err)}`));
-        return;
-      case 'mix-edit': {
-        const mix = info.customVoices?.find((m) => m.id === el.dataset.mix);
-        if (mix) openMixer(info, mix, () => void load());
-        return;
-      }
       case 'kokoro-on':
         void Narration.setVoiceSettings({ kokoroEnabled: true }).then(load);
         return;
@@ -659,25 +624,8 @@ export function openVoicesScreen(): void {
           })
           .catch(() => undefined);
         return;
-      case 'folder':
-        void Narration.pickAudioFolder().then(load);
-        return;
       default:
     }
-  });
-  p.body.addEventListener('change', (ev) => {
-    const el = ev.target as HTMLInputElement;
-    if (el.dataset.act === 'narrator' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.checked } }).then(load);
-    if (el.dataset.act === 'narrator-pacing-style') void Narration.setVoiceSettings({ narrator: { pacingStyle: el.value === 'natural' ? 'natural' : 'relaxed' } }).then(load);
-    if (el.dataset.act === 'narrator-phrases') void Narration.setVoiceSettings({ narrator: { phraseBreaks: el.checked ? 'clauses' : 'off' } }).then(load);
-    if (el.dataset.act === 'narrator-voice' && el.dataset.k) void Narration.setVoiceSettings({ narrator: { [el.dataset.k]: el.value || null } }).then(load);
-    if (el.dataset.act === 'delivery' && el.dataset.k) void Narration.setVoiceSettings({ delivery: { [el.dataset.k]: el.checked } }).then(load);
-    if (el.dataset.act === 'delivery-engine') {
-      const v = el.value === 'pocket-tts' || el.value === 'chatterbox-nano' ? el.value : null;
-      void Narration.setVoiceSettings({ delivery: { listenEngine: v } }).then(load);
-    }
-    if (el.dataset.act === 'kokoro') void Narration.setVoiceSettings({ kokoroEnabled: el.checked }).then(load);
-    if (el.dataset.act === 'pcaudio') void Narration.setVoiceSettings({ usePCAudio: el.checked }).then(load).then(changed);
   });
   render();
   void load();
@@ -710,7 +658,7 @@ function startingPair(info: VoiceSettingsInfo): { a: string; b: string } {
  * slider and pickers update the screen in place (never rebuilt while a finger is on them).
  */
 export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | null, onDone: () => void): void {
-  const p = panel(existing ? 'Edit mix' : 'Mix a voice', 'voice-mixer');
+  const p = panel(existing ? 'Edit Mix' : 'Mix a Voice', 'voice-mixer');
   const start = existing ?? { ...startingPair(info), percent: 50, name: '' };
   let a = start.a;
   let b = start.b;
@@ -719,8 +667,8 @@ export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | n
   p.body.innerHTML = `
     <div class="sec">Voices</div>
     <div class="card">
-      <label class="row"><div class="main"><b>First voice</b></div><select data-act="mix-a" aria-label="First voice">${voiceOptions(info, a)}</select></label>
-      <label class="row"><div class="main"><b>Second voice</b></div><select data-act="mix-b" aria-label="Second voice">${voiceOptions(info, b)}</select></label>
+      <label class="row"><div class="main"><b>First Voice</b></div><select data-act="mix-a" aria-label="First voice">${voiceOptions(info, a)}</select></label>
+      <label class="row"><div class="main"><b>Second Voice</b></div><select data-act="mix-b" aria-label="Second voice">${voiceOptions(info, b)}</select></label>
     </div>
     <div class="sec">Blend</div>
     <div class="card"><div class="mix">
@@ -728,13 +676,13 @@ export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | n
       <input type="range" class="mix-range" data-act="mix-blend" min="0" max="100" step="1" value="${String(percent)}" aria-label="Blend">
       <div class="mix-ends"><span data-end="a"></span><span data-end="b"></span></div>
     </div></div>
-    <button type="button" class="btn alt" data-act="mix-play">▶ Listen to the mix</button>
+    <button type="button" class="btn alt" data-act="mix-play">▶ Listen to the Mix</button>
     <div class="sec">Name</div>
     <input type="text" data-act="mix-name" maxlength="40" autocomplete="off" aria-label="Name" value="${esc(existing?.name ?? '')}">
     <p class="note warn" data-problem hidden></p>
-    <button type="button" class="btn" data-act="mix-save">${existing ? 'Save changes' : 'Save mix'}</button>
-    ${existing ? '<button type="button" class="btn alt danger" data-act="mix-delete">Delete mix</button>' : ''}
-    <p class="note">Mixes are kept on this iPhone. Pick one in Settings › Voices for every novel, or for one novel in the Listen player › Voice.</p>`;
+    <button type="button" class="btn" data-act="mix-save">${existing ? 'Save Changes' : 'Save Mix'}</button>
+    ${existing ? '<button type="button" class="btn alt danger" data-act="mix-delete">Delete Mix</button>' : ''}
+    <p class="note">Mixes are kept on this iPhone. Her backup voice reads with them once a later build lets you pick one.</p>`;
   const $ = <T extends Element>(sel: string): T => p.body.querySelector(sel) as T;
   const nameInput = $<HTMLInputElement>('[data-act="mix-name"]');
   const reflect = (): void => {
@@ -780,10 +728,10 @@ export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | n
     }
     if (act === 'mix-delete' && existing) {
       if (!deleteArmed) {
-        el.textContent = 'Tap again to delete';
+        el.textContent = 'Tap Again to Delete';
         deleteArmed = setTimeout(() => {
           deleteArmed = null;
-          el.textContent = 'Delete mix';
+          el.textContent = 'Delete Mix';
         }, 4000);
         return;
       }
@@ -806,7 +754,7 @@ export function openMixer(info: VoiceSettingsInfo, existing: CustomVoiceInfo | n
 // ---------------------------------------------------------------- one novel's voice
 
 export function openVoicePicker(novel: { pluginId: string; novelPath: string; name: string }, onChange?: () => void): void {
-  const p = panel(`Voice · ${novel.name || 'This novel'}`, 'voice-picker');
+  const p = panel(novel.name || 'This Novel', 'voice-picker');
   let info: VoiceSettingsInfo | null = null;
   let failed = false;
   const render = (): void => {
@@ -817,32 +765,26 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
     p.body.innerHTML = `
       <div class="sec">Voice</div>
       ${nephisCard(info)}
-      ${NARRATOR_SETTINGS_ROW}
-      <div class="card" style="margin-top:10px">${SPEED_TEST_ROW}</div>
+      ${VOICE_SETTINGS_ROW}
+      ${isDeveloper() ? `<div class="card" style="margin-top:10px">${SPEED_TEST_ROW}</div>` : ''}
       <div class="sec">Pronunciations</div>
-      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for this novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
+      <div class="card"><button type="button" class="row" data-act="lexicon"><div class="main"><b>Pronunciations for This Novel</b><span class="sub">Character names and made-up words</span></div><span aria-hidden="true">›</span></button></div>`;
   };
   const load = async (): Promise<void> => {
     info = normalizeVoiceSettings(await Narration.voiceSettings({ pluginId: novel.pluginId, novelPath: novel.novelPath }).catch(() => null));
     failed = !info;
     render();
   };
-  const kokoroPanel = (): void => openNovelKokoro(novel, () => void load().then(onChange));
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (el?.dataset.act === 'retry') return void load();
     if (!el || !info) return;
     const act = el.dataset.act;
-    if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This novel');
-    if (act === 'engine') {
-      void Narration.setVoiceSettings({ delivery: engineValue(el.dataset.v) }).then(load).then(onChange);
-      if (el.dataset.v === 'kokoro') kokoroPanel();
-    }
-    if (act === 'novel-kokoro') kokoroPanel();
+    if (act === 'lexicon') openLexiconEditor(`${novel.pluginId}:${novel.novelPath}`, novel.name || 'This Novel');
     if (act === 'narrator-settings') openNarratorSettings(() => onChange?.());
     if (act === 'voice-speed') openVoiceSpeedTest();
     if (act === 'expressive') openExpressiveLab();
-    // Her card says "Turn Nephis back on" here too (car mode › Voice): one tap, as in Settings › Voices.
+    // Her card says "Turn Nephis Back On" here too (car mode › Voice): one tap, as in More › Voices.
     if (act === 'nephis-on') {
       void ExpressiveVoice.resetCrashes()
         .then(() => toast('Nephis is back on: she reads from the next sentence.'))
@@ -855,9 +797,10 @@ export function openVoicePicker(novel: { pluginId: string; novelPath: string; na
   void load();
 }
 
-/** Listen player › Voice › Kokoro voice: this novel's Kokoro voice (three first, every voice one tap further). */
-function openNovelKokoro(novel: { pluginId: string; novelPath: string; name: string }, onChange: () => void): void {
-  const p = panel('Kokoro voice', 'novel-kokoro');
+/** This novel's Kokoro voice (three first, every voice one tap further). Not linked from any screen in this build:
+ * the backup voice's settings come back in a later one. */
+export function openNovelKokoro(novel: { pluginId: string; novelPath: string; name: string }, onChange: () => void): void {
+  const p = panel('Kokoro Voice', 'novel-kokoro');
   const key = { pluginId: novel.pluginId, novelPath: novel.novelPath };
   let info: VoiceSettingsInfo | null = null;
   let failed = false;
@@ -871,8 +814,8 @@ function openNovelKokoro(novel: { pluginId: string; novelPath: string; name: str
       <div class="sec">Kokoro voice for this novel</div>
       ${backupCard(info, info.effectiveVoice ?? info.defaultVoice)}
       <p class="note">${own ? 'This novel has its own Kokoro voice.' : `Using the default (${esc(choiceName(info, info.defaultVoice))}).`} Kokoro also stands in when the Narrator can’t keep up.</p>
-      ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the default voice</button>' : ''}
-      <button type="button" class="btn alt" data-act="make-default">Make it the default for all novels</button>`;
+      ${own ? '<button type="button" class="btn alt" data-act="use-default">Use the Default Voice</button>' : ''}
+      <button type="button" class="btn alt" data-act="make-default">Make It the Default for All Novels</button>`;
   };
   const load = async (): Promise<void> => {
     info = normalizeVoiceSettings(await Narration.voiceSettings(key).catch(() => null));
@@ -938,6 +881,7 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
   };
 
   const render = (): void => {
+    const phonemes = showsPhonemes();
     const rows = lex.entries
       .map(
         (e, i) => `<div class="row"><div class="main" data-act="edit" data-i="${i}" role="button" tabindex="0" aria-label="Change ${esc(e.match)}"><b>${esc(e.match)}</b><span class="sub">${e.say ? `says “${esc(e.say)}”` : ''}${e.say && e.ipa ? ' · ' : ''}${e.ipa ? `/${esc(e.ipa)}/` : ''}</span></div>
@@ -952,12 +896,12 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
       <div class="card" style="padding:4px 14px 14px">
         <input type="text" data-f="match" placeholder="Word as written (e.g. Nephis)" autocapitalize="off" autocomplete="off">
         <input type="text" data-f="say" placeholder="Say it like (e.g. NEF-iss)" autocapitalize="off" autocomplete="off">
-        <input type="text" data-f="ipa" placeholder="Kokoro phonemes, optional (e.g. nˈɛfɪs)" autocapitalize="off" autocomplete="off" spellcheck="false">
+        ${phonemes ? '<input type="text" data-f="ipa" placeholder="Kokoro phonemes, optional (e.g. nˈɛfɪs)" autocapitalize="off" autocomplete="off" spellcheck="false">' : ''}
         <button type="button" class="btn" data-act="add">Add</button>
       </div>
-      <p class="note">“Say it like” works with every voice: hyphens between syllables, the stressed one in capitals (NEF-iss, say-SHAHN), or any spelling that sounds right. Tap a word to change it. Phonemes (misaki notation, as in the PC narrator’s lexicon) are exact for Kokoro.</p>
-      <button type="button" class="btn alt" data-act="paste-toggle">${pasteOpen ? 'Hide' : 'Paste a lexicon (JSON)'}</button>
-      ${pasteOpen ? '<textarea data-f="paste" placeholder=\'{"schemaVersion":1,"entries":[{"match":"Nephis","ipa":"nˈɛfɪs"}]}\'></textarea><button type="button" class="btn" data-act="paste">Merge</button>' : ''}`;
+      <p class="note">“Say it like” works with every voice: hyphens between syllables, the stressed one in capitals (NEF-iss, say-SHAHN), or any spelling that sounds right. Tap a word to change it.${phonemes ? ' Phonemes (misaki notation, as in the PC narrator’s lexicon) are exact for Kokoro.' : ''}</p>
+      ${phonemes ? `<button type="button" class="btn alt" data-act="paste-toggle">${pasteOpen ? 'Hide' : 'Paste a Lexicon (JSON)'}</button>` : ''}
+      ${phonemes && pasteOpen ? '<textarea data-f="paste" aria-label="Lexicon JSON" placeholder=\'{"schemaVersion":1,"entries":[{"match":"Nephis","ipa":"nˈɛfɪs"}]}\'></textarea><button type="button" class="btn" data-act="paste">Merge</button>' : ''}`;
   };
 
   const field = (name: string): string => (p.body.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-f="${name}"]`)?.value ?? '').trim();
@@ -970,7 +914,9 @@ export function openLexiconEditor(novelKey: string | undefined, label: string): 
       case 'add': {
         const match = field('match');
         const say = field('say');
-        const ipa = field('ipa');
+        // Without the phonemes field (Developer options off) a word keeps the phonemes it had.
+        const had = lex.entries.find((e) => e.match.trim().toLowerCase() === match.toLowerCase());
+        const ipa = showsPhonemes() ? field('ipa') : (had?.ipa ?? '');
         if (!match) return toast('Type the word as it’s written.');
         if (!say && !ipa) return toast('Add how to say it, or its phonemes.');
         if (ipa && !isKokoroPhonemes(ipa)) return toast('Those phonemes have characters Kokoro can’t speak.');

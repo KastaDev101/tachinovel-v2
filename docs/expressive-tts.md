@@ -67,7 +67,7 @@ Notes that matter for a commercial build later:
 
 ## What the test build does
 
-Voice Lab (More › About › tap the version 5 times) › **Experimental engines**:
+More › Developer › Voice Models (Developer options: More › About › tap the version 7 times), also the Kokoro Voice Lab › **Experimental engines**:
 
 | Piece | Where |
 |---|---|
@@ -86,8 +86,8 @@ synthesis time and × real time per line, Kokoro fallback lines and why, queue-r
 for the speed test: load, first audio, × real time (all / median / slowest 10%), memory before / loaded /
 max, thermal state before and after. "Copy report" puts everything on the clipboard.
 
-**Voice speed test** (Settings › Voices › Voice speed test; also the Listen player's Voice panel, the Voice test page
-and Settings › Diagnostics; `Native/Voice/VoiceSpeedTest.swift`, `ExpressiveCore/NephisSpeedTest.swift`,
+**Voice Speed Test** (More › About › Diagnostics › Voice Speed Test; More › Developer; the app icon's long-press menu,
+the Voice Test page and the Listen player's Voice panel while Developer options are on; `Native/Voice/VoiceSpeedTest.swift`, `ExpressiveCore/NephisSpeedTest.swift`,
 `src/ui/native/voice-speed.ts`): renders a fixed ~45 s passage with the Nephis pack in use exactly as Listen renders it
 (her chain, studio, the pack's `studioEQ`, pauses; calls cut and budgeted as Listen does) without playing it, simulates
 playback (keeps up: every call ready before the one before ends), and reports time to first audio, × real time, the
@@ -177,7 +177,7 @@ Pro behind FluidAudio's numbers, and a 16-core Neural Engine the CI runner lacks
 Downloads take a few extra minutes on Wi-Fi (0.75 GB + 1.37 GB); keep the app open while they run.
 
 1. Install the IPA from the PR's `ios-ipa` artifact with AltStore. Connect to Wi-Fi.
-2. More › About › tap the version 5 times › Voice Lab › **Experimental engines (expressive voices) ›**.
+2. More › About › tap the version 7 times (Developer options), then More › Developer › **Voice Models**.
 3. **Chatterbox Nano** › Download 746 MB (tap twice). Then sample **Emotional dialogue** › ▶ Play
    sample. Listen for the anger, the whisper, the chuckle/gasp/sigh/laugh. Note *Time to first audio* and
    *Expressive / Kokoro lines*.

@@ -1,8 +1,8 @@
 /**
- * Settings › Voices › Voice test: the one page for testing Nephis (Kasta, 2026-10-12: "everything in one page …
- * run the test, then copy report. Something super simple"). No hidden taps: the Voice Lab is for developers only.
- *   - Top (personal flavor): which Nephis pack she reads with (Settings › Voices › Voice packs), whether it has her
- *     studio, whether the studio is on, and the studio switch (ExpressiveVoice.studioEnable) when the pack has one.
+ * More › Developer › Voice Test: the one page for testing Nephis (Kasta, 2026-10-12: "everything in one page …
+ * run the test, then copy report. Something super simple"). More › Developer › 15-Minute Test opens it in its long mode.
+ *   - Top (personal flavor): which Nephis pack she reads with (More › Developer › Voice Packs), whether it has her
+ *     studio and whether the studio is on (its switch is More › Developer › Studio since cleanup 1, 2026-10-15).
  *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
  *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
  *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
@@ -372,16 +372,16 @@ export async function copyText(text: string): Promise<string> {
     return 'Copied';
   } catch {
     await callCore('native.share', { text });
-    return 'Copy report';
+    return 'Copy Report';
   }
 }
 
-/** Settings › Voices › Voice test. */
-export function openVoiceTest(): void {
-  const p = panel('Voice test', 'voice-test');
+/** More › Developer › Voice Test, or (`long`) its 15-Minute Test. */
+export function openVoiceTest(opts: { long?: boolean } = {}): void {
+  const long = opts.long === true;
+  const p = panel(long ? '15-Minute Test' : 'Voice Test', long ? 'voice-test-long' : 'voice-test');
   let running = false;
   let listening = false;
-  let switching = false;
   // "Where her studio runs" checking: no other studio test meanwhile (native refuses a second one too).
   let checking = false;
   let report: Obj | null = null;
@@ -400,11 +400,7 @@ export function openVoiceTest(): void {
     const nephis = STUDIO
       ? `<div class="sec">Nephis</div><div class="card" data-testid="voice-test-pack">${statusLines(status.nephisPack, known)
           .map((t) => `<div class="row"><div class="main">${esc(t)}</div></div>`)
-          .join('')}${
-          known.has
-            ? `<label class="row"><div class="main"><b>Her studio</b><span class="sub">Her 44.1 kHz sound, from her next sentence</span></div><input type="checkbox" class="sw" data-act="studio" data-testid="voice-test-studio" aria-label="Her studio" ${known.on ? 'checked' : ''} ${running || switching ? 'disabled' : ''}></label>`
-            : ''
-        }</div>`
+          .join('')}</div>`
       : '';
     const safety = safetyLines(status.crashes);
     const safetyCard =
@@ -412,30 +408,33 @@ export function openVoiceTest(): void {
         ? `<div class="sec">Her voice model</div><div class="card" data-testid="voice-test-safety">${
             safety.off ? row({ ok: false, text: `${safety.off} Her backup voice reads meanwhile.` }) : ''
           }${safety.lines.map(row).join('')}</div>${
-            safety.off ? `<button type="button" class="btn" data-act="nephis-on" data-testid="voice-test-nephis-on" ${running ? 'disabled' : ''}>Turn Nephis back on</button>` : ''
+            safety.off ? `<button type="button" class="btn" data-act="nephis-on" data-testid="voice-test-nephis-on" ${running ? 'disabled' : ''}>Turn Nephis Back On</button>` : ''
           }`
         : '';
     const lines = running ? [] : [...(studioTest ? studioLines(studioTest) : []), ...(report ? summarize(report) : [])];
     const result = lines.length
       ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${lines.map(row).join('')}</div>
-         ${STUDIO && studioTest?.ran === true && !studioTest.placement ? '<button type="button" class="link" data-act="placement" data-testid="voice-test-placement">Where her studio runs</button>' : ''}
+         ${STUDIO && studioTest?.ran === true && !studioTest.placement ? '<button type="button" class="link" data-act="placement" data-testid="voice-test-placement">Where Her Studio Runs</button>' : ''}
          <div class="sec">What did you hear?</div>
          <div class="card" style="padding:4px 14px 14px"><textarea data-f="notes" aria-label="What did you hear?" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div>
-         <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy report</button>
-         ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the recording</button>' : ''}
+         <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy Report</button>
+         ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the Recording</button>' : ''}
          <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
       : running
         ? ''
         : // No finished test (it never played, or the app was closed mid-test): the report still has the voice's state.
-          '<button type="button" class="btn alt" data-act="copy" data-testid="voice-test-copy">Copy report</button>';
+          '<button type="button" class="btn alt" data-act="copy" data-testid="voice-test-copy">Copy Report</button>';
+    const about = long
+      ? 'Records 15 minutes of what plays while you listen to any chapter the usual way, and notes the phone’s heat, the voice’s speed and every break. Keep TachiNovel open.'
+      : `${STUDIO ? 'Times her studio when it’s on, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.`;
     p.body.innerHTML = `${nephis}${safetyCard}
       <div class="sec">Test</div>
-      <p class="note">${STUDIO ? 'Times her studio when it’s on, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.</p>
-      <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : lines.length ? 'Run it again' : 'Run the test'}</button>
+      <p class="note">${about}</p>
+      <button type="button" class="btn" data-act="${running ? 'stop' : long ? 'long' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the Test' : lines.length ? 'Run It Again' : long ? 'Start Recording' : 'Run the Test'}</button>
       <p class="note" data-testid="voice-test-progress">${esc(progress)}</p>
       ${result}
-      ${running ? '' : '<button type="button" class="link" style="margin-top:8px" data-act="long" data-testid="voice-test-long">Or: 15-minute test with your own chapter</button>'}
-      ${running ? '' : '<button type="button" class="link" style="display:block" data-act="speed" data-testid="voice-test-speed">Or: Voice speed test (45 s, timed, not played aloud)</button>'}`;
+      ${running || long ? '' : '<button type="button" class="link" style="margin-top:8px" data-act="long" data-testid="voice-test-long">Or: 15-Minute Test With Your Own Chapter</button>'}
+      ${running || long ? '' : '<button type="button" class="link" style="display:block" data-act="speed" data-testid="voice-test-speed">Or: Voice Speed Test (45 s, timed, not played aloud)</button>'}`;
   };
 
   /** Only the progress line changes while a test runs (the buttons keep their place and focus). */
@@ -581,7 +580,7 @@ export function openVoiceTest(): void {
         pluginId: 'voice-lab',
         novelPath: 'voice-test',
         chapterPath: 'voice-test/lantern-road',
-        novelName: 'Voice test',
+        novelName: 'Voice Test',
         chapterName: 'The Lantern Road',
         script: dom.script,
         start: { paragraph: 0 },
@@ -705,24 +704,8 @@ export function openVoiceTest(): void {
       const text = JSON.stringify(combinedReport({ status, studio: known, studioTest, voiceTest: report, notes }), null, 2);
       void copyText(text)
         .then((label) => (el.textContent = label))
-        .catch(() => (el.textContent = 'Copy failed'));
+        .catch(() => (el.textContent = 'Copy Failed'));
     }
-  });
-  p.body.addEventListener('change', (ev) => {
-    const el = ev.target as HTMLInputElement;
-    if (el.dataset.act !== 'studio' || switching) return;
-    switching = true;
-    void ExpressiveVoice.studioEnable({ on: el.checked })
-      .then((r) => {
-        known = { has: true, on: r.enabled === true };
-        rememberStudio(known);
-        toast(known.on ? 'Studio on: from her next sentence.' : 'Studio off.');
-      })
-      .catch((err: unknown) => toast(`Couldn’t switch the studio: ${err instanceof Error ? err.message : String(err)}`))
-      .finally(() => {
-        switching = false;
-        render();
-      });
   });
   p.body.addEventListener('input', (ev) => {
     const el = ev.target as HTMLTextAreaElement;

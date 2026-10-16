@@ -49,19 +49,22 @@ describe('Diagnostics with crash reports (PC shell)', () => {
     expect(await share.textContent()).toBe('Share 5 Crash & Hang Reports');
     await page.screenshot({ path: path.join(shots, 'diagnostics.png') });
 
+    // A tinted row of the list right under Copy Full Diagnostics (cleanup 1, 2026-10-15: no floating bar over it).
+    expect(await screen.evaluate((el) => el.querySelector('[data-testid="diagnostics-copy"]')?.nextElementSibling?.getAttribute('data-testid'))).toBe('diagnostics-share-crash-reports');
+    expect(await share.locator('.row-title.is-tint').count()).toBe(1);
     // Dynamic Type: at the largest size the UI follows (root 1.6 × 17 px, see src/ui/native/type.ts) the
-    // button's text scales with v1's and still fits (the button grows instead of clipping).
-    const metrics = () => share.evaluate((el) => ({ font: parseFloat(getComputedStyle(el).fontSize), clipped: el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight }));
-    expect((await metrics()).font).toBeCloseTo(16, 1);
+    // row's text scales with v1's and still fits (the row grows instead of clipping).
+    const metrics = () => share.locator('.row-title').evaluate((el) => ({ font: parseFloat(getComputedStyle(el).fontSize), clipped: el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight }));
+    const base = (await metrics()).font;
     await page.addStyleTag({ content: 'html{font-size:27.2px !important}' });
-    await expect.poll(async () => (await metrics()).font).toBeCloseTo(25.6, 1);
+    await expect.poll(async () => (await metrics()).font).toBeCloseTo(base * 1.6, 1);
     expect((await metrics()).clipped).toBe(false);
     await page.screenshot({ path: path.join(shots, 'diagnostics-large-text.png') });
 
     await share.click();
     await expect.poll(() => existsSync(path.join(shell.core.localAppDir, 'logs', 'metrickit-export.json')), { timeout: 5000 }).toBe(true);
 
-    // Leaving the screen hides the button.
+    // Leaving the screen takes the row with it.
     await screen.getByTestId('nav-back').click();
     await expect.poll(() => share.isVisible(), { timeout: 3000 }).toBe(false);
     expect(shell.pageErrors).toEqual([]);

@@ -98,12 +98,24 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
     await voices.locator('[data-act="close"]').click();
   });
 
-  it('Voice Lab at the largest text size', async () => {
+  it('More › Developer and the Voice Lab at the largest text size', async () => {
     const page = shell.page;
     await page.getByTestId('more-about').click();
     const version = page.locator('[data-testid="screen-about"] .about-version');
     await version.waitFor({ timeout: 5000 });
-    for (let i = 0; i < 5; i++) await version.click();
+    // Developer options: 7 taps on the version (the store build starts without them).
+    for (let i = 0; i < 7; i++) await version.click();
+    await page.locator('[data-testid="screen-about"] [data-testid="about-developer"]').waitFor({ timeout: 5000 });
+    expect((await measure('[data-testid="about-developer"] .row')).clipped).toEqual([]);
+    await page.locator('.nav-root > .layer').last().getByTestId('nav-back').click();
+    await page.getByTestId('more-developer-options').click();
+    const dev = page.locator('[data-testid="screen-developer"]:not([inert])');
+    await dev.locator('[data-testid="dev-legacy"]').waitFor({ timeout: 5000 });
+    await page.waitForTimeout(400);
+    expect((await measure('.tn-v .hd h1')).font).toBeCloseTo(20 * LARGEST, 1);
+    expect((await measure('.tn-v .hd, .tn-v .row')).clipped).toEqual([]);
+    await page.screenshot({ path: path.join(shots, 'large-text-developer.png') });
+    await dev.getByTestId('dev-lab').click();
     const lab = page.getByTestId('voice-lab');
     await lab.waitFor({ state: 'visible', timeout: 5000 });
     expect((await measure('.tn-lab')).font).toBeCloseTo(14 * LARGEST, 1);

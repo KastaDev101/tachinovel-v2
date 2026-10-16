@@ -1,5 +1,16 @@
 ### Added
 
+- Developer options: tap the version in More › About 7 times ("Developer options on"; the first tap still copies the
+  version). While they are on, More has a Developer row (hammer) with the voice's test tools and internals in one
+  grouped list: Voice Speed Test, Voice Test, 15-Minute Test, Voice Packs, her Studio (Automatic / Off) and where it
+  runs; Natural Delivery, AI Scene Reading, Studio Sound and Reset to Defaults; the Scene-Reading and Mood tests, a
+  copied Voice Report, Now Playing, Voice Models and "Show Voice Details in the Player"; Mix a Voice; the phonemes field
+  and JSON paste of the pronunciation editor; Use PC Audio and the Kokoro Voice Lab. A "Developer Options" switch at the
+  bottom of About turns them off. They are kept natively (a page reload keeps them); the personal build starts with
+  them on. The old 5-tap Voice Lab gesture is gone.
+- Long-press the app icon for "Voice Speed Test" (while Developer options are on): it opens the speed test directly.
+- Diagnostics folder: the menu has "Open in Files" (iCloud's upload state shows on each file) and says where the folder
+  is ("iCloud Drive › TachiNovel-Diagnostics").
 - Nephis studio sound (off by default): when a Nephis pack carries the studio models, her voice can be rebuilt at
   44.1 kHz studio quality on the phone. Voice Lab's Studio speed test reports the speed against real time, which
   chip each part runs on and the heat level.
@@ -44,6 +55,12 @@
 
 ### Fixed
 
+- Diagnostics folder: "saved in TachiNovel-Diagnostics" no longer hides that iCloud isn't uploading. Each copy checks
+  how iCloud did with the one before: an upload error (iCloud storage full), a folder outside iCloud Drive, or copies
+  not uploaded for 20 minutes show on the Diagnostics row ("– not uploading"), in its menu (with Reconnect Folder…), in a
+  toast and in the Voice Speed Test's result. A folder moved to Recently Deleted or gone counts as disconnected instead
+  of being written to (and the folder is never recreated as a new local one). Files under logs/ keep their folders
+  (reports/, metrickit/) instead of arriving as "privatereports…".
 - Nephis with a studio pack: her studio is on by default for every pack that has one (the "Her studio" switch is now
   per pack; switching it off is kept for that pack until it is installed again), and it renders every call it can
   afford, the first call of a read included, from its measured speed (a call gets it when its estimated studio time is
@@ -100,6 +117,19 @@
 
 ### Changed
 
+- More › Voices is tidy: the Nephis card (her pack and "Studio" in the personal build), Voice Settings (Scene Moods,
+  [System] messages, and a line saying whether scene moods use Apple Intelligence or the built-in rules),
+  Pronunciations and In the Car. The test tools, voice packs, her studio switch, delivery internals and PC audio moved
+  to More › Developer; the Voice test no longer has the "Her studio" switch.
+- Natural delivery, studio sound and her studio are automatic (AI scene reading wherever Apple Intelligence is
+  available): an "off" saved with the old switches goes back on once; only More › Developer switches them off now.
+- The Listen player's voice chip says "Nephis" (or "Backup voice" while another voice stands in); the engine and the
+  reason for a stand-in show with Developer options' "Show Voice Details in the Player". Its Voice panel is titled with
+  the novel's name and has Voice Settings and Pronunciations for This Novel (the Voice Speed Test with Developer options).
+- "Share N Crash & Hang Reports" is a tinted row under Copy Full Diagnostics instead of a floating bar (and no timer
+  checks for it while the app runs).
+- Wording: Nephis prepares chapters for the drive (the sheet, the novel card and Help said Kokoro); preparing waits
+  with "Paused while you listen"; consistent Title Case for screen titles, row titles and buttons.
 - Turning Nephis back on is one tap: "Turn Nephis back on" in Settings › Voices, the Listen player's Voice panel and on
   the Voice test, which also says in
   plain words what happened ("Closed in the background for memory at 2:32 PM, chapter 1026, phone warm. Not counted

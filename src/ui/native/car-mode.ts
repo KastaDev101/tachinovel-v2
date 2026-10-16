@@ -1,9 +1,10 @@
 /**
  * Listen player: a big-button, glanceable screen for listening (also while driving).
  *
- *  - Recently read novels; a tap continues where you stopped (Narration.playNovel) with the novel's voice:
- *    Kokoro on device, the Apple voice standing in when Kokoro can't keep up.
- *  - Voice: the novel's Kokoro voice (picker with ▶ samples) and its pronunciations (voices-ui.ts).
+ *  - Recently read novels; a tap continues where you stopped (Narration.playNovel) with Nephis; her backup voice
+ *    (Kokoro, then the Apple voice) stands in when she can't read. The chip says "Nephis" or "Backup voice" (the
+ *    engine and the reason with Developer options' voice details).
+ *  - Voice: the novel's panel (voices-ui.ts openVoicePicker): Voice Settings and its pronunciations.
  *  - PC-narrated audio (the iCloud Drive "TachiNovel Audio" folder, tachinovel-narrator) appears only with
  *    Settings › Voices › Advanced › "Use PC audio when available" (off by default).
  *  - Transport: −15 s / play-pause / +15 s / next chapter, scrubbable progress.
@@ -154,7 +155,7 @@ export function installCarMode(): CarMode {
     return `<div class="now">
       <div class="t1">${esc(state.chapterName ?? '')}</div>
       <div class="t2">${esc(novels.find((n) => n.pluginId === state.pluginId && n.novelPath === state.novelPath)?.name ?? recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '')}</div>
-      <span class="eng">${engine}${state.status === 'loading' ? ' · loading…' : ''}</span>
+      <span class="eng">${esc(engine)}${state.status === 'loading' ? ' · loading…' : ''}</span>
       ${dur ? `<div class="bar" data-act="seek"><div><i data-fill style="width:${pct.toFixed(1)}%"></i></div></div><div class="tm"><span data-pos>${fmt(pos)}</span><span data-dur>${durLabel()}</span></div>` : ''}
       <div class="ctl">
         <button type="button" data-act="back" aria-label="Back 15 seconds">${ICON.back15}</button>
@@ -162,7 +163,7 @@ export function installCarMode(): CarMode {
         <button type="button" data-act="fwd" aria-label="Forward 15 seconds">${ICON.fwd15}</button>
         <button type="button" data-act="next" aria-label="Next chapter">${ICON.next}</button>
       </div>
-      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(state.voice?.reader ?? state.voice?.kokoroName ?? 'Kokoro')} ›</span></button>` : ''}
+      ${state.engine !== 'audio' && state.pluginId && state.novelPath ? `<button type="button" class="voice" data-act="voice"><b>Voice</b><span>${esc(engine)} ›</span></button>` : ''}
     </div>`;
   }
 
@@ -229,7 +230,7 @@ export function installCarMode(): CarMode {
       : linked
         ? `<div class="folder"><span>Audio folder: ${esc(folderName || 'linked')}</span><button type="button" data-act="pick">Change</button></div>`
         : `<button type="button" class="link" data-act="pick">Link “TachiNovel Audio” folder</button>
-         <p class="note">Choose iCloud Drive › TachiNovel Audio once. Chapters the PC narrated then play here; other chapters use Kokoro.</p>`;
+         <p class="note">Choose iCloud Drive › TachiNovel Audio once. Chapters the PC narrated then play here; other chapters use Nephis.</p>`;
     const audioRows = novels
       .map((n) => {
         const saved = n.saved ? n.chapters.find((c) => c.chapterPath === n.saved?.chapterPath)?.title : undefined;
@@ -357,7 +358,7 @@ export function installCarMode(): CarMode {
         return;
       case 'voice': {
         if (!state.pluginId || !state.novelPath) return;
-        const name = recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? '';
+        const name = recent.find((r) => r.pluginId === state.pluginId && r.path === state.novelPath)?.novelName ?? state.novelName ?? '';
         openVoicePicker({ pluginId: state.pluginId, novelPath: state.novelPath, name }, () => void refreshState());
         return;
       }

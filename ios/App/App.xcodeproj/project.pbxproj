@@ -61,6 +61,8 @@
 		69874972264DB4360F799EDC /* VoiceRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D3A26F0369D03559BFBE7C /* VoiceRun.swift */; };
 		51D373B886070694C912A2B6 /* DiagnosticsFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */; };
 		D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 358453344F32444A328E6B70 /* VoiceSpeedTest.swift */; };
+		738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */; };
+		E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -129,6 +131,8 @@
 		83D3A26F0369D03559BFBE7C /* VoiceRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceRun.swift"; sourceTree = "<group>"; };
 		425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagnosticsFiles.swift"; sourceTree = "<group>"; };
 		358453344F32444A328E6B70 /* VoiceSpeedTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSpeedTest.swift"; sourceTree = "<group>"; };
+		522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DeveloperOptions.swift"; sourceTree = "<group>"; };
+		1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagFolderPlugin.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -234,6 +238,8 @@
 				83D3A26F0369D03559BFBE7C /* VoiceRun.swift */,
 				425E591781D2B7743DE52321 /* DiagnosticsFiles.swift */,
 				358453344F32444A328E6B70 /* VoiceSpeedTest.swift */,
+				522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */,
+				1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -405,6 +411,8 @@
 				69874972264DB4360F799EDC /* VoiceRun.swift in Sources */,
 				51D373B886070694C912A2B6 /* DiagnosticsFiles.swift in Sources */,
 				D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */,
+				738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */,
+				E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

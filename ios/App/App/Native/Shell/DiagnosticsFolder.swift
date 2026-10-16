@@ -18,7 +18,7 @@
 //  with a 3 s limit, each coordinated write with a 20 s limit, and every outcome is kept: the row, the menu and a
 //  toast say "Disconnected — tap to reconnect" when the folder can't be reached any more.
 //  Everything is small and rate-limited; reading data beyond novel titles and routes never leaves the app.
-//  The web side is src/ui/native/qa-folder.ts.
+//  The web side is src/ui/native/qa-folder.ts; the plugin is DiagFolderPlugin.swift.
 //
 
 @preconcurrency import Capacitor
@@ -28,36 +28,6 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
-/// The page's answer, or nil after the time limit: the first `finish` wins (any thread).
-private final class PageAnswer: @unchecked Sendable {  // @unchecked: state guarded by `lock`
-    private let lock = NSLock()
-    private var result: String??
-    private var waiter: CheckedContinuation<String?, Never>?
-
-    func finish(_ value: String?) {
-        lock.lock()
-        guard result == nil else { return lock.unlock() }
-        result = .some(value)
-        let w = waiter
-        waiter = nil
-        lock.unlock()
-        w?.resume(returning: value)
-    }
-
-    func value() async -> String? {
-        await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
-            lock.lock()
-            if let r = result {
-                lock.unlock()
-                c.resume(returning: r)
-            } else {
-                waiter = c
-                lock.unlock()
-            }
-        }
-    }
-}
-
 @MainActor
 final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
     static let shared = DiagnosticsFolder()
@@ -66,6 +36,10 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
     private static let successKey = "tachinovel.diagnosticsFolderLastSuccess"
     private static let stateKey = "tachinovel.diagnosticsFolderState"
     private static let problemKey = "tachinovel.diagnosticsFolderProblem"
+    /// Why iCloud doesn't take the files (UploadCheck); since when copies sit un-uploaded (a problem after `uploadPatience`).
+    private static let uploadKey = "tachinovel.diagnosticsFolderUpload"
+    private static let pendingKey = "tachinovel.diagnosticsFolderPendingSince"
+    private static let uploadPatience: TimeInterval = 20 * 60
     private static let reportInterval: TimeInterval = 30
     private static let tickInterval: TimeInterval = 15
 
@@ -133,12 +107,19 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
         var stale = false
         do {
             let url = try URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            // A bookmark follows the folder itself: one moved to Recently Deleted, or gone, still resolves (2026-10-15).
+            if url.path.contains("/.Trash/") { return .broken("The folder is in Recently Deleted") }
+            if (try? url.checkResourceIsReachable()) != true { return .broken("The folder can’t be found any more (moved or deleted?)") }
             if stale {
-                let accessing = url.startAccessingSecurityScopedResource()
-                if let fresh = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+                do {
+                    let fresh = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
                     UserDefaults.standard.set(fresh, forKey: Self.bookmarkKey)
+                    UserDefaults.standard.set(url.lastPathComponent, forKey: Self.nameKey)
+                } catch {
+                    return .broken("The link to the folder is out of date (\(error.localizedDescription))")
                 }
-                if accessing { url.stopAccessingSecurityScopedResource() }
             }
             return .ok(url)
         } catch {
@@ -177,6 +158,11 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
         }
     }
 
+    private func forgetUpload() {
+        UserDefaults.standard.removeObject(forKey: Self.uploadKey)
+        UserDefaults.standard.removeObject(forKey: Self.pendingKey)
+    }
+
     private func record(_ h: DiagnosticsPolicy.Health) {
         let d = UserDefaults.standard
         d.set(h.state, forKey: Self.stateKey)
@@ -185,10 +171,27 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
 
     private var folderName: String? { folderURL?.lastPathComponent ?? UserDefaults.standard.string(forKey: Self.nameKey) }
 
+    /// Why iCloud doesn't take the folder's files, in words; nil while it does (or nothing is linked).
+    var uploadProblem: String? {
+        guard isLinked else { return nil }
+        return UserDefaults.standard.string(forKey: Self.uploadKey)
+    }
+
+    /// Whether a link was made (it may be broken: `folderURL` is nil then).
+    var isLinked: Bool { UserDefaults.standard.data(forKey: Self.bookmarkKey) != nil }
+
+    /// "iCloud Drive › TachiNovel-Diagnostics", or the folder's name alone when its place is unknown.
+    private var folderPlace: String? {
+        guard let url = folderURL else { return folderName }
+        return DiagnosticsFiles.place(url).map { "\($0) › \(url.lastPathComponent)" } ?? url.lastPathComponent
+    }
+
     func statusDict() -> [String: Any] {
         let h = health
         return [
-            "linked": UserDefaults.standard.data(forKey: Self.bookmarkKey) != nil,
+            "upload": uploadProblem.map { $0 as Any } ?? NSNull(),
+            "place": folderPlace.map { $0 as Any } ?? NSNull(),
+            "linked": isLinked,
             "name": folderName.map { $0 as Any } ?? NSNull(),
             "lastMirror": lastSuccess.map { $0.timeIntervalSince1970 * 1000 as Any } ?? NSNull(),
             "state": h.state,
@@ -215,6 +218,7 @@ final class DiagnosticsFolder: NSObject, UIDocumentPickerDelegate {
             if let data = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
                 UserDefaults.standard.set(data, forKey: Self.bookmarkKey)
                 UserDefaults.standard.set(url.lastPathComponent, forKey: Self.nameKey)
+                forgetUpload()
                 record(.ok)
                 ok = true
             }
@@ -252,14 +256,15 @@ extension DiagnosticsFolder {
     }
 
     private func menuMessage() -> String {
-        let name = folderName.map { "“\($0)”" } ?? "the folder"
+        let name = folderPlace.map { "“\($0)”" } ?? "the folder"
         let last = lastSuccess.map { " Last copy that worked: \(clock($0))." } ?? ""
+        let upload = uploadProblem.map { " But \($0): the PC won’t see them until that’s fixed (Settings › your name › iCloud)." } ?? ""
         switch health {
         case .off:
             return "Pick a folder, for example iCloud Drive › TachiNovel-Diagnostics. The app log, crash reports and problem reports "
                 + "are copied there at launch, every few minutes (every minute while Listen or a Voice test runs) and when you leave the app."
         case .ok:
-            return "Logs, crash reports and problem reports go to \(name).\(last)"
+            return "Logs, crash reports and problem reports go to \(name).\(last)\(upload)"
         case .disconnected(let why):
             return "Disconnected: \(why). Choose \(name) again to reconnect; reports saved meanwhile are kept on the iPhone and copied then.\(last)"
         case .failing(let why):
@@ -279,21 +284,35 @@ extension DiagnosticsFolder {
                     action()
                 }
             }
-            if case .disconnected = h {
+            // Pick the folder again whenever something is wrong: a broken link, failing copies, iCloud not uploading.
+            let trouble = h != .ok || self.uploadProblem != nil
+            if linked, trouble {
                 sheet.addAction(UIAlertAction(title: "Reconnect Folder…", style: .default, handler: after { self.pickFolder { _ in done() } }))
+            }
+            // Files shows iCloud's own state on each file (a cloud with an arrow: waiting to upload).
+            if let files = self.filesURL {
+                sheet.addAction(UIAlertAction(title: "Open in Files", style: .default, handler: after {
+                    UIApplication.shared.open(files)
+                    done()
+                }))
             }
             if linked {
                 sheet.addAction(UIAlertAction(title: "Report a Problem…", style: .default, handler: after { self.report(done: done) }))
                 if h != .off, !h.isDisconnected {
                     sheet.addAction(UIAlertAction(title: "Copy Diagnostics Now", style: .default, handler: after {
-                        self.mirror(force: true) { Task { @MainActor in DiagnosticsFolder.shared.sayHowItWent(success: "Copied to the folder.") } }
+                        self.mirror(force: true) {
+                            Task { @MainActor in DiagnosticsFolder.shared.sayHowItWent(success: "Copied to the folder on this iPhone.") }
+                        }
                         done()
                     }))
-                    sheet.addAction(UIAlertAction(title: "Change Folder…", style: .default, handler: after { self.pickFolder { _ in done() } }))
+                    if !trouble {
+                        sheet.addAction(UIAlertAction(title: "Change Folder…", style: .default, handler: after { self.pickFolder { _ in done() } }))
+                    }
                 }
                 sheet.addAction(UIAlertAction(title: "Stop Sharing", style: .destructive, handler: after {
                     UserDefaults.standard.removeObject(forKey: Self.bookmarkKey)
                     UserDefaults.standard.removeObject(forKey: Self.nameKey)
+                    self.forgetUpload()
                     self.record(.off)
                     done()
                 }))
@@ -315,7 +334,7 @@ extension DiagnosticsFolder {
         let h = health
         if h == .ok, success == nil { return }
         let title = h == .ok ? "Diagnostics Folder" : (h.isDisconnected ? "Diagnostics Folder Disconnected" : "Couldn’t Copy")
-        let message = h == .ok ? (success ?? "") : menuMessage()
+        let message = h == .ok ? (success ?? "") + (uploadProblem.map { " But \($0)." } ?? "") : menuMessage()
         PresentationQueue.shared.enqueue({ host, finished in
             let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
             if h.isDisconnected {
@@ -418,15 +437,16 @@ extension DiagnosticsFolder {
                         extras["storage.json"] = storage
                     }
                     let outcome: DiagnosticsPolicy.Health
+                    var upload = UploadCheck.fine
                     do {
-                        try DiagnosticsFiles.mirror(root: root, local: local, extras: extras, lastSuccess: since)
+                        upload = try DiagnosticsFiles.mirror(root: root, local: local, extras: extras, lastSuccess: since)
                         outcome = .ok
                     } catch {
                         outcome = DiagnosticsPolicy.classify(error)
                         log.error("Diagnostics folder: \(error.localizedDescription, privacy: .public)")
                     }
                     Task { @MainActor in
-                        DiagnosticsFolder.shared.copied(outcome)
+                        DiagnosticsFolder.shared.copied(outcome, upload: upload)
                         completion?()
                     }
                 }
@@ -434,10 +454,11 @@ extension DiagnosticsFolder {
         }
     }
 
-    private func copied(_ outcome: DiagnosticsPolicy.Health) {
+    private func copied(_ outcome: DiagnosticsPolicy.Health, upload: UploadCheck) {
         copying = false
         if outcome == .ok { lastSuccess = Date() }
         record(outcome)
+        if outcome == .ok { noteUpload(upload) }
         let done = waiting
         waiting = []
         if again {
@@ -446,6 +467,30 @@ extension DiagnosticsFolder {
         } else {
             for d in done { d() }
         }
+    }
+
+    /// How iCloud did with the copy before. Pending for `uploadPatience` is a problem too.
+    private func noteUpload(_ upload: UploadCheck) {
+        let d = UserDefaults.standard
+        switch upload {
+        case .fine:
+            d.removeObject(forKey: Self.pendingKey)
+            d.removeObject(forKey: Self.uploadKey)
+        case .problem(let why):
+            d.set(why, forKey: Self.uploadKey)
+        case .pending:
+            let since = d.double(forKey: Self.pendingKey)
+            if since == 0 { return d.set(Date().timeIntervalSince1970, forKey: Self.pendingKey) }
+            guard Date().timeIntervalSince1970 - since >= Self.uploadPatience else { return }
+            let when = clock(Date(timeIntervalSince1970: since))
+            d.set("iCloud hasn’t uploaded the copies since \(when) (iCloud storage full, or no network?)", forKey: Self.uploadKey)
+        }
+    }
+
+    /// The folder in the Files app.
+    private var filesURL: URL? {
+        guard let path = folderURL?.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        return URL(string: "shareddocuments://" + path)
     }
 
     /// Backgrounding or closing: copy now, under a background task so iOS doesn't suspend the copy halfway.
@@ -550,46 +595,5 @@ private extension DiagnosticsPolicy.Health {
     var isDisconnected: Bool {
         if case .disconnected = self { return true }
         return false
-    }
-}
-
-/// JS: `DiagFolder` (src/ui/native/qa-folder.ts) and the storage map (src/ui/native/storage-native.ts).
-public class DiagFolderPlugin: CAPPlugin, CAPBridgedPlugin {
-    public let identifier = "DiagFolderPlugin"
-    public let jsName = "DiagFolder"
-    public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "menu", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "storage", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "cleanStorage", returnType: CAPPluginReturnPromise),
-    ]
-
-    @objc func status(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated { call.resolve(DiagnosticsFolder.shared.statusDict()) }
-        }
-    }
-
-    @objc func menu(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                DiagnosticsFolder.shared.showMenu { call.resolve(DiagnosticsFolder.shared.statusDict()) }
-            }
-        }
-    }
-
-    /// Settings › Storage › Voices & models: bytes per category (ExpressiveCore StorageMap), off the main thread.
-    @objc func storage(_ call: CAPPluginCall) {
-        DiagnosticsFiles.queue.async {
-            call.resolve(NephisModelPack.storageReport().json())
-        }
-    }
-
-    /// "Clean Up": remove copies and unfinished unpacks only; answers {removed, bytes, report}.
-    @objc func cleanStorage(_ call: CAPPluginCall) {
-        DiagnosticsFiles.queue.async {
-            let result = NephisModelPack.cleanLeftovers()
-            call.resolve(["removed": result.removed, "bytes": Int(result.bytes), "report": NephisModelPack.storageReport().json()])
-        }
     }
 }

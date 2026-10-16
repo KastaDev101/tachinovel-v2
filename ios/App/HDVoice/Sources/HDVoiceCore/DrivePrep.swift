@@ -57,7 +57,7 @@ public enum DrivePrepPolicy {
     public static let defaultCapBytes = 600 * 1_000_000
 
     public static func gate(_ when: DrivePrepWhen, _ c: DriveConditions) -> DrivePrepGate {
-        if c.liveNarration { return .wait("Paused while Kokoro reads aloud") }
+        if c.liveNarration { return .wait("Paused while you listen") }
         if c.thermalThrottled { return .wait("Waiting for the iPhone to cool down") }
         switch when {
         case .now:

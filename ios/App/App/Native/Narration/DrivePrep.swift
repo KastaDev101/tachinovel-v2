@@ -1,13 +1,13 @@
 //
-//  DrivePrep.swift — "Prepare for the drive": a novel's next chapters rendered with Kokoro into local audio
-//  files ahead of time, so playback in the car never waits on synthesis or the network.
+//  DrivePrep.swift — "Prepare for the drive": a novel's next chapters rendered with Nephis (Kokoro when she can't)
+//  into local audio files ahead of time, so playback in the car never waits on synthesis or the network.
 //
 //  - DriveCache: the prepared files (Application Support/DriveAudio, excluded from backups): one AAC .m4a
 //    per chapter + its timestamp manifest (the same format as PC-narrated audio, NarrationManifest.swift),
 //    so prepared chapters play through NarrationController's audio path with sentence highlighting.
 //    Evicted after listening, capped at DrivePrepPolicy.defaultCapBytes (oldest first).
 //  - DrivePrep: the requests (DriveJob, persisted) and the runner: one sentence at a time, never while
-//    Kokoro reads aloud or the phone is hot, and for "when charging or on Wi-Fi" only then. Runs in the
+//    a voice reads aloud or the phone is hot, and for "when charging or on Wi-Fi" only then. Runs in the
 //    foreground, alongside prepared playback in the background, and in a BGProcessingTask.
 //  - ChapterRenderer: one chapter's sentence script → Kokoro → PCM post-processing → AAC + manifest.
 //  The decisions (policy, index, job walk) are platform-free in HDVoiceCore/DrivePrep.swift. Main thread.

@@ -1,5 +1,5 @@
 /**
- * Settings › Voices › Voice packs (src/ui/native/voice-packs.ts) in the PC shell, personal flavor, against a canned
+ * More › Developer › Voice Packs (src/ui/native/voice-packs.ts) in the PC shell, personal flavor, against a canned
  * ExpressiveVoice plugin that keeps a pack list like NephisPackLibrary does:
  *  - the Voices row says which pack she reads with, how many and how much space;
  *  - the page lists each pack (name, made, studio, size), ✓ on hers, and the total used;
@@ -13,7 +13,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
@@ -32,7 +32,7 @@ const answer = (): Record<string, unknown> => ({
 const calls = (method: string): Record<string, unknown>[] =>
   shell.pluginCalls.filter((c) => c.pluginId === 'ExpressiveVoice' && c.methodName === method).map((c) => c.options);
 
-describe('Settings › Voices › Voice packs (PC shell)', () => {
+describe('More › Developer › Voice Packs (PC shell)', () => {
   beforeAll(async () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-voice-packs');
@@ -75,10 +75,9 @@ describe('Settings › Voices › Voice packs (PC shell)', () => {
     await page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     const skip = page.getByTestId('onboarding-skip');
     if (await skip.isVisible().catch(() => false)) await skip.click();
-    await page.getByTestId('tab-more').click();
-    await page.getByTestId('more-voices').click();
-    const voices = page.getByTestId('screen-voices');
-    const entry = voices.getByTestId('voices-packs');
+    await setDeveloperOptions(shell);
+    await openDeveloper(shell);
+    const entry = page.getByTestId('screen-developer').getByTestId('dev-packs');
     await expect.poll(() => entry.textContent(), { timeout: 5000 }).toContain('nephis-r10 · 3 packs · 1.2 GB');
     await entry.click();
 
@@ -141,7 +140,7 @@ describe('Settings › Voices › Voice packs (PC shell)', () => {
     expect(await screen.getByTestId('voice-packs-edit').isVisible()).toBe(false);
     expect(active).toBeNull();
 
-    // Back in Settings › Voices, the row says so.
+    // Back in More › Developer, the row says so.
     await screen.getByRole('button', { name: 'Back' }).click();
     await expect.poll(() => entry.textContent(), { timeout: 5000 }).toContain('None yet: open a .tnmodel file to add one');
     expect(shell.pageErrors).toEqual([]);

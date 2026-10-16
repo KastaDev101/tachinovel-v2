@@ -59,8 +59,8 @@ drive** (under Add to Library / Web View / Share).
     waits too. While the app is closed, iOS runs the work as a background processing task, usually
     overnight on the charger.
 - **While preparing**: the card and the sheet show the chapter being prepared, the progress, or why it
-  waits ("Waiting for charging or Wi-Fi", "Paused while Kokoro reads aloud", "Waiting for the iPhone to
-  cool down"). Live narration always comes first: preparing pauses while Kokoro reads aloud, and continues
+  waits ("Waiting for charging or Wi-Fi", "Paused while you listen", "Waiting for the iPhone to
+  cool down"). Live narration always comes first: preparing pauses while a voice reads aloud, and continues
   while you listen to already-prepared chapters.
 - **Playing**: prepared chapters are used first, wherever a chapter starts: the reader, More › Listen,
   CarPlay, Siri, or the chapter change. They need neither synthesis nor the internet. The spoken sentence
@@ -141,4 +141,4 @@ either way.
 7. On a novel: Prepare for the drive › 3 › Prepare now. Watch the progress, then turn on airplane mode
    and listen: the prepared chapters play, and each is deleted afterwards (More › Voices › In the car ›
    Prepared audio).
-8. Voice Lab (About › tap the version 5 times) › the car section: Now Playing, commands, chapter gaps.
+8. More › Developer › Now Playing (Developer options: About › tap the version 7 times), or the Kokoro Voice Lab (More › Developer › Legacy) › the car section: commands, chapter gaps.

@@ -1,12 +1,66 @@
 //
 //  DiagnosticsFiles.swift — the Diagnostics folder's file work, off the main thread (DiagnosticsFolder.swift decides
 //  when): log tails, the app's os_log lines, coordinated writes with a time limit, the mirror of logs/ and problem
-//  reports kept on the iPhone until they are copied.
+//  reports kept on the iPhone until they are copied, and whether iCloud takes the files (UploadCheck).
 //
 
 import ExpressiveCore
 import Foundation
 import OSLog
+
+/// The page's answer, or nil after the time limit: the first `finish` wins (any thread).
+final class PageAnswer: @unchecked Sendable {  // @unchecked: state guarded by `lock`
+    private let lock = NSLock()
+    private var result: String??
+    private var waiter: CheckedContinuation<String?, Never>?
+
+    func finish(_ value: String?) {
+        lock.lock()
+        guard result == nil else { return lock.unlock() }
+        result = .some(value)
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume(returning: value)
+    }
+
+    func value() async -> String? {
+        await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            lock.lock()
+            if let r = result {
+                lock.unlock()
+                c.resume(returning: r)
+            } else {
+                waiter = c
+                lock.unlock()
+            }
+        }
+    }
+}
+
+/// Whether iCloud takes what the app writes into the folder (Kasta 2026-10-15: the speed test said "saved in
+/// TachiNovel-Diagnostics" for two days while nothing reached the PC). A write into iCloud Drive succeeds on the iPhone
+/// even when iCloud uploads nothing (iCloud storage full, no network), so the copy before is checked a few minutes later.
+enum UploadCheck: Sendable, Equatable {
+    /// iCloud has it, or is on its way.
+    case fine
+    /// Written but not uploaded yet.
+    case pending
+    /// Never leaves the iPhone (the folder isn't in iCloud Drive), or iCloud refused it: why, in words.
+    case problem(String)
+
+    static func of(_ url: URL) -> UploadCheck {
+        let keys: Set<URLResourceKey> = [.isUbiquitousItemKey, .ubiquitousItemIsUploadedKey, .ubiquitousItemUploadingErrorKey]
+        guard let v = try? url.resourceValues(forKeys: keys) else { return .fine } // not there yet: the first copy
+        if v.isUbiquitousItem != true {
+            // A path in iCloud Drive that doesn't report it can't be judged: no false alarm.
+            if url.path.contains("/Mobile Documents/") { return .fine }
+            return .problem("the folder isn’t in iCloud Drive, so its files stay on this iPhone")
+        }
+        if let error = v.ubiquitousItemUploadingError { return .problem("iCloud isn’t uploading: \(error.localizedDescription)") }
+        return v.ubiquitousItemIsUploaded == false ? .pending : .fine
+    }
+}
 
 /// Runs its body once, whichever caller comes first (a reply or its time limit).
 final class OnceGate: @unchecked Sendable {  // @unchecked: `done` is guarded by `lock`
@@ -87,11 +141,33 @@ enum DiagnosticsFiles {
         return Data(Data(text.utf8).suffix(logTailBytes))
     }
 
+    /// The folder the user picked is still there. Writes create only what is under it: a deleted folder must not come
+    /// back as a new local one that nothing syncs (NSFileNoSuchFileError: DiagnosticsPolicy reads it as disconnected).
+    static func requireRoot(_ root: URL) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: root.path])
+        }
+    }
+
+    /// Where the folder lives, for the menu: "iCloud Drive", "Recently Deleted", "On My iPhone", or nil (another provider).
+    static func place(_ root: URL) -> String? {
+        let path = root.path
+        if path.contains("/.Trash/") { return "Recently Deleted" }
+        if path.contains("/Mobile Documents/com~apple~CloudDocs/") { return "iCloud Drive" }
+        if path.contains("/File Provider Storage/") || path.contains("/Containers/Shared/AppGroup/") { return "On My iPhone" }
+        return nil
+    }
+
     /// Mirror the device's logs/ into `root` (logs as tails, other files when new or changed since `lastSuccess`), plus
-    /// extras. A file that fails doesn't stop the others; the first error is thrown at the end.
-    static func mirror(root: URL, local: URL, extras: [String: Data], lastSuccess: Date?) throws {
+    /// extras. A file that fails doesn't stop the others; the first error is thrown at the end. Answers how iCloud did with
+    /// the last copy's status.json (checked before it is replaced).
+    @discardableResult
+    static func mirror(root: URL, local: URL, extras: [String: Data], lastSuccess: Date?) throws -> UploadCheck {
         let accessing = root.startAccessingSecurityScopedResource()
         defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+        try requireRoot(root)
+        let upload = UploadCheck.of(root.appendingPathComponent("status.json"))
         var firstError: Error?
         func attempt(_ body: () throws -> Void) {
             do { try body() } catch { if firstError == nil { firstError = error } }
@@ -112,7 +188,12 @@ enum DiagnosticsFiles {
                 guard name != "app.log", name != "app.1.log", !name.hasPrefix("."),
                       (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
                       let source = fileValues(file), source.size <= maxExtraFileBytes else { continue }
-                let relative = file.path.replacingOccurrences(of: logs.path + "/", with: "")
+                // Path components, symlinks resolved: the walker answers /private/var/… for logs/ at /var/… (2026-10-15: the
+                // files arrived as "privatemetrickit/…", "privatereports/…").
+                let base = logs.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+                let parts = file.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+                guard parts.count > base.count, Array(parts.prefix(base.count)) == base else { continue }
+                let relative = parts.dropFirst(base.count).joined(separator: "/")
                 let target = root.appendingPathComponent(relative)
                 guard DiagnosticsPolicy.shouldCopy(sourceSize: source.size, sourceModified: source.modified,
                                                    targetSize: fileValues(target)?.size, lastSuccess: lastSuccess) else { continue }
@@ -121,6 +202,7 @@ enum DiagnosticsFiles {
         }
         for (name, data) in extras.sorted(by: { $0.key < $1.key }) { attempt { try write(data, to: root.appendingPathComponent(name)) } }
         if let firstError { throw firstError }
+        return upload
     }
 
     /// A problem report kept on the iPhone first (logs/reports/<stamp>/: report.json, screen.jpg, app-log-tail.txt,

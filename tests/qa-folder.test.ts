@@ -63,6 +63,8 @@ describe('Diagnostics folder row (src/ui/native/diag-folder.ts)', () => {
     expect(folderLabel({ linked: true, name: 'TachiNovel-Diagnostics' })).toBe('TachiNovel-Diagnostics'); // an older build
     expect(folderLabel({ linked: true, name: 'TachiNovel-Diagnostics', state: 'disconnected', problem: 'gone' })).toBe('Disconnected – tap to reconnect');
     expect(folderLabel({ linked: true, name: 'TachiNovel-Diagnostics', state: 'failing' })).toBe('TachiNovel-Diagnostics – not copying');
+    // Copies work, but iCloud doesn't take them (2026-10-15: nothing reached the PC for two days).
+    expect(folderLabel({ linked: true, name: 'TachiNovel-Diagnostics', state: 'ok', upload: 'iCloud isn’t uploading' })).toBe('TachiNovel-Diagnostics – not uploading');
   });
 });
 

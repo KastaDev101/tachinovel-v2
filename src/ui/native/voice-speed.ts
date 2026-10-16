@@ -1,6 +1,7 @@
 /**
  * Voice speed test (Kasta, 2026-10-15: "have a diagnostics/speed test ready and easily accessible ... for the phone").
- * Reached from Settings › Voices, the Listen player's Voice panel, the Voice test page and Settings › Diagnostics.
+ * Reached from More › About › Diagnostics, More › Developer, the Voice Test page, the app icon's long-press menu and
+ * (with Developer options on) the Listen player's Voice panel.
  * One tap: native renders a 45-second passage with the Nephis pack in use, exactly the way Listen renders it (her
  * chain, studio, studio EQ, pauses), without playing it (VoiceSpeedTest.swift), then this page says in plain words
  * whether she keeps up, how fast she starts, where the time goes and whether her studio ran on every call. "Play
@@ -84,7 +85,8 @@ export function speedLines(r: Obj): Line[] {
   const device = obj(r.device);
   const heat = `${str(device.thermalStart, '?')} → ${str(device.thermalEnd, '?')}`;
   lines.push({ ok: device.thermalEnd === 'nominal' || device.thermalEnd === 'fair', text: `Phone heat: ${heat}${device.lowPower === true ? ', Low Power Mode on' : ''}.` });
-  if (typeof r.saved === 'string') lines.push({ ok: !/couldn’t|only|not saved/.test(r.saved), text: `Saved ${r.saved}.` });
+  // "…on this iPhone, but iCloud isn’t uploading": written, yet it won't reach the PC (native's UploadCheck).
+  if (typeof r.saved === 'string') lines.push({ ok: !/couldn’t|only|not saved|, but /.test(r.saved), text: `Saved ${r.saved}.` });
   return lines;
 }
 
@@ -149,9 +151,9 @@ export function aboutLines(r: Obj): string[] {
   ];
 }
 
-/** Settings › Voices › Voice speed test (and from Listen › Voice, the Voice test, Settings › Diagnostics). */
+/** The Voice Speed Test (More › About › Diagnostics, More › Developer, the app icon's quick action, …). */
 export function openVoiceSpeedTest(): void {
-  const p = panel('Voice speed test', 'voice-speed');
+  const p = panel('Voice Speed Test', 'voice-speed');
   let running = false;
   let report: Obj | null = null;
   let progress = '';
@@ -181,13 +183,13 @@ export function openVoiceSpeedTest(): void {
             : ''
         }
         ${report?.ran === true ? `<div class="sec">This phone</div><div class="card">${aboutLines(report).map(plain).join('')}</div>` : ''}
-        ${report?.ran === true && Number(report.audioSamples ?? 0) > 0 ? `<button type="button" class="btn" data-act="play" data-testid="voice-speed-play">${playing ? 'Stop playing' : 'Play result'}</button>` : ''}
-        <button type="button" class="btn alt" data-act="copy" data-testid="voice-speed-copy">Copy report</button>`
+        ${report?.ran === true && Number(report.audioSamples ?? 0) > 0 ? `<button type="button" class="btn" data-act="play" data-testid="voice-speed-play">${playing ? 'Stop Playing' : 'Play Result'}</button>` : ''}
+        <button type="button" class="btn alt" data-act="copy" data-testid="voice-speed-copy">Copy Report</button>`
       : '';
     p.body.innerHTML = `
       ${top ? `<div class="card">${plain(top)}</div>` : ''}
       <p class="note">Renders a 45-second passage with Nephis exactly like Listen does, without playing it, and times every step. It takes about a minute; Listen stops while it runs.</p>
-      <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-speed-run">${running ? 'Stop' : report ? 'Run it again' : 'Run the speed test'}</button>
+      <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-speed-run">${running ? 'Stop' : report ? 'Run It Again' : 'Run the Speed Test'}</button>
       <p class="note" data-testid="voice-speed-progress" aria-live="polite">${esc(progress)}</p>
       ${result}`;
   };
@@ -260,7 +262,7 @@ export function openVoiceSpeedTest(): void {
         .then((r) => {
           playing = r.playing;
           render();
-          // Back to "Play result" once it has played (native doesn't say when it ends).
+          // Back to "Play Result" once it has played (native doesn't say when it ends).
           const seconds = typeof r.seconds === 'number' ? r.seconds : 0;
           if (playing && seconds > 0) {
             setTimeout(() => {
@@ -275,7 +277,7 @@ export function openVoiceSpeedTest(): void {
     if (act === 'copy' && report) {
       void copyText(JSON.stringify(report, null, 2))
         .then((label) => (el.textContent = label))
-        .catch(() => (el.textContent = 'Copy failed'));
+        .catch(() => (el.textContent = 'Copy Failed'));
     }
   });
   render();

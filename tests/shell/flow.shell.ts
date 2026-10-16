@@ -131,9 +131,10 @@ describe('v1 UI in the v2 shell (PC)', () => {
         { timeout: 5000 },
       )
       .toMatch(/Nobody answered/);
-    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Kokoro · Heart');
+    // For the listener: her backup voice, no engine names or reasons (those need Developer options' voice details).
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Backup voice');
     shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'speech', voice: { kokoroVoice: 'af_heart', kokoroName: 'Heart', source: 'apple', appleName: 'Ava', fallback: 'queueDry' } });
-    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('System voice (fallback) · Kokoro is catching up');
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Backup voice');
     await shell.page.screenshot({ path: path.join(shots, '5b-speech-highlight.png') });
     shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
   });
@@ -184,7 +185,7 @@ describe('v1 UI in the v2 shell (PC)', () => {
       .toBe('novel/alpha/1');
   });
 
-  it('More › Voices shows Nephis, her settings and the Voice test, and keeps PC audio under Advanced (off)', async () => {
+  it('More › Voices shows Nephis, Voice Settings, Pronunciations and In the Car; the tools wait in More › Developer', async () => {
     shell.pluginReplies.set('Narration.voiceSettings', () => ({
       voices: [
         { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' },
@@ -218,16 +219,53 @@ describe('v1 UI in the v2 shell (PC)', () => {
     await row.click();
     const screen = shell.page.getByTestId('screen-voices');
     await screen.waitFor({ timeout: 5000 });
-    // Nephis is the app's one voice (2026-10-09): her card, her settings, the Voice test; no voice lists.
-    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Voice[\s\S]*Nephis[\s\S]*Voice settings[\s\S]*Voice test/);
+    // Nephis is the app's one voice (2026-10-09); cleanup 1 (2026-10-15): her card, Voice Settings, Pronunciations, In the
+    // Car. The test tools, delivery internals and PC audio are in More › Developer.
+    await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Voice[\s\S]*Nephis[\s\S]*Voice Settings[\s\S]*Pronunciations[\s\S]*In the Car/);
     const text = (await screen.textContent()) ?? '';
-    expect(text).not.toMatch(/Reads chapters|Kokoro voice|Narrator settings|Voice models/);
-    expect(text).toContain('Use PC audio when available');
-    expect(await screen.locator('input[data-act="pcaudio"]').isChecked()).toBe(false);
-    expect(text).not.toContain('Audio folder');
+    expect(text).not.toMatch(/Reads chapters|Kokoro voice|Narrator settings|Voice models|Voice Test|Voice Speed Test|Use PC Audio|Natural Delivery/);
     await shell.page.waitForTimeout(450); // slide-in
     await shell.page.screenshot({ path: path.join(shots, '7-voices.png') });
+    // Voice Settings: Scene Moods and [System] messages, and who picks the scene's mood.
+    await screen.locator('[data-act="narrator-settings"]').click();
+    const settings = shell.page.locator('[data-testid="narrator-settings"]:not([inert])');
+    await expect.poll(() => settings.textContent(), { timeout: 5000 }).toMatch(/Scene Moods[\s\S]*Scene moods use built-in rules[\s\S]*System Message Chime[\s\S]*System Message Voice/);
+    expect((await settings.textContent()) ?? '').not.toMatch(/Natural Delivery|AI Scene Reading|Studio Sound/);
+    await settings.locator('[data-act="close"]').click();
     await screen.locator('[data-act="close"]').click();
+    // The store build starts without Developer options.
+    expect(await shell.page.getByTestId('more-developer-options').count()).toBe(0);
+  });
+
+  it('About: 7 taps on the version turn Developer options on (More › Developer); its switch turns them off', async () => {
+    await shell.page.getByTestId('more-about').click();
+    const about = shell.page.getByTestId('screen-about');
+    await about.waitFor({ timeout: 5000 });
+    const version = about.locator('.about-version');
+    for (let i = 0; i < 7; i++) await version.click();
+    await expect.poll(() => shell.developer?.on, { timeout: 5000 }).toBe(true);
+    const toggle = about.getByTestId('about-developer');
+    await toggle.waitFor({ timeout: 5000 });
+    await top().getByTestId('nav-back').click();
+    const row = shell.page.getByTestId('more-developer-options');
+    await row.waitFor({ timeout: 5000 });
+    await row.click();
+    const dev = shell.page.locator('[data-testid="screen-developer"]:not([inert])');
+    await expect
+      .poll(() => dev.textContent(), { timeout: 5000 })
+      .toMatch(/Voice Speed Test[\s\S]*Voice Test[\s\S]*15-Minute Test[\s\S]*Natural Delivery[\s\S]*AI Scene Reading[\s\S]*Studio Sound[\s\S]*Reset to Defaults[\s\S]*Scene-Reading Test[\s\S]*Mood Test[\s\S]*Voice Report[\s\S]*Now Playing[\s\S]*Voice Models[\s\S]*Mix a Voice[\s\S]*Phonemes and JSON Paste[\s\S]*Use PC Audio/);
+    expect(await dev.locator('input[data-act="pcaudio"]').isChecked()).toBe(false);
+    expect((await dev.textContent()) ?? '').not.toContain('Audio Folder');
+    await shell.page.waitForTimeout(450); // slide-in
+    await shell.page.screenshot({ path: path.join(shots, '7b-developer.png') });
+    await dev.locator('[data-act="close"]').click();
+    // Off again from About's switch: the row goes.
+    await shell.page.getByTestId('more-about').click();
+    await about.getByTestId('about-developer').locator('input').click();
+    await expect.poll(() => shell.developer?.on, { timeout: 5000 }).toBe(false);
+    await expect.poll(() => about.getByTestId('about-developer').count(), { timeout: 5000 }).toBe(0);
+    await top().getByTestId('nav-back').click();
+    await expect.poll(() => shell.page.getByTestId('more-developer-options').count(), { timeout: 5000 }).toBe(0);
   });
 
   it('About › Open Source Licenses shows the voice components (from THIRD_PARTY_NOTICES.md) and keeps LNReader', async () => {

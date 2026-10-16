@@ -287,17 +287,30 @@ final class VoiceSpeedTest {
         Task { @MainActor in
             let folder = DiagnosticsFolder.shared.folderURL
             let name = folder?.lastPathComponent
+            // "Saved" only says the iPhone has it: whether iCloud takes it is the folder's last check (2026-10-15: two days
+            // of "saved in TachiNovel-Diagnostics" never reached the PC).
+            let notUploading = DiagnosticsFolder.shared.uploadProblem
+            let linked = DiagnosticsFolder.shared.isLinked
             DiagnosticsFiles.queue.async {
                 try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
                 try? json.write(to: logs.appendingPathComponent("\(stem).json"), options: .atomic)
                 Self.prune(logs)
-                var saved = "on the iPhone only: no Diagnostics folder is set (Settings › Diagnostics › Diagnostics Folder)"
+                var saved = linked
+                    ? "on the iPhone only: the Diagnostics folder is disconnected (reconnect it in More › About › Diagnostics)"
+                    : "on the iPhone only: no Diagnostics folder is set (More › About › Diagnostics › Diagnostics Folder)"
                 if let folder {
                     let accessing = folder.startAccessingSecurityScopedResource()
                     do {
-                        try DiagnosticsFiles.write(json, to: folder.appendingPathComponent("\(stem).json"))
+                        try DiagnosticsFiles.requireRoot(folder)
+                        let target = folder.appendingPathComponent("\(stem).json")
+                        try DiagnosticsFiles.write(json, to: target)
                         if let wav { try DiagnosticsFiles.write(wav, to: folder.appendingPathComponent("\(stem).wav")) }
                         saved = "in \(name ?? "the Diagnostics folder")"
+                        if case .problem(let why) = UploadCheck.of(target) {
+                            saved += " on this iPhone, but \(why)"
+                        } else if let notUploading {
+                            saved += " on this iPhone, but \(notUploading)"
+                        }
                     } catch {
                         log.error("speed test: couldn’t write to the Diagnostics folder: \(error.localizedDescription, privacy: .public)")
                         saved = "on the iPhone; the Diagnostics folder couldn’t be reached (\(error.localizedDescription)): the report goes there with the next copy"

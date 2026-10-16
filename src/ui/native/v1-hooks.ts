@@ -3,22 +3,30 @@
  *  - More: a "Voices" row (Settings › Voices, voices-ui.ts). v1's "Listen in the Car" screen is about the
  *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
  *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
- *  - About: tap the version to copy it (for bug reports); 5 taps → the hidden Voice Lab (voice-lab.ts).
- *  - Diagnostics: a "Voice Speed Test" row under Copy Full Diagnostics (voice-speed.ts).
+ *  - About: tap the version to copy it (for bug reports); 7 taps turn Developer options on (dev-flags.ts). While they
+ *    are on: a "Developer" row at the bottom of More (developer-ui.ts) and a "Developer Options" switch at the bottom of
+ *    About that turns them off.
+ *  - Diagnostics: "Share N Crash & Hang Reports" (diagnostics-overlay.ts) and "Voice Speed Test" (voice-speed.ts)
+ *    under Copy Full Diagnostics.
  *  - Novel page: "Prepare for the drive" (drive-ui.ts) in place of v1's PC-narrator card (kept with PC audio on).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
 import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
 import { symbols } from '@v1/ui/state/store.ts';
+import { DEVELOPER_CHANGED, isDeveloper, noteDeveloper, setDeveloper } from './dev-flags.ts';
+import { openDeveloperScreen } from './developer-ui.ts';
+import { addCrashReportsRow } from './diagnostics-overlay.ts';
 import { addDriveCard, installDrive } from './drive-ui.ts';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
-import { openVoiceLab } from './voice-lab.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
 import { openVoicesScreen, toast, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
 
-/** Settings › Voices › Advanced › "Use PC audio when available" (off by default). */
+/** More › Developer › Legacy › "Use PC Audio" (off by default). */
 let pcAudio = false;
+
+/** Taps on the version in More › About that turn Developer options on (Android's build-number gesture). */
+export const DEVELOPER_TAPS = 7;
 
 function cloneRow(anchor: HTMLElement, testId: string, title: string, onClick: () => void): HTMLElement {
   const row = anchor.cloneNode(true) as HTMLElement;
@@ -53,13 +61,31 @@ function addMoreRows(): void {
     voices.querySelector<HTMLElement>('.mrow-icon')?.style.setProperty('--icon', `url("${symbols.value.waveform ?? fallbackIconUrl('waveform')}")`);
     (listen ?? anchor).after(voices);
   }
+  // Developer: its own group at the bottom of More, while Developer options are on.
+  const group = more.querySelector<HTMLElement>('[data-testid="more-developer-group"]');
+  if (!isDeveloper()) {
+    group?.remove();
+  } else if (!group) {
+    const list = more.querySelector('.mlist');
+    if (!list) return;
+    const row = cloneRow(anchor, 'more-developer-options', 'Developer', openDeveloperScreen);
+    row.style.display = '';
+    row.querySelector<HTMLElement>('.mrow-icon')?.style.setProperty('--icon', `url("${symbols.value.hammer ?? fallbackIconUrl('hammer')}")`);
+    const g = document.createElement('div');
+    g.className = 'mgroup';
+    g.dataset.testid = 'more-developer-group';
+    g.append(row);
+    list.append(g);
+  }
 }
 
-/** Settings › Diagnostics: "Voice Speed Test" under "Copy Full Diagnostics" (a copy of that row, re-added when v1 re-renders). */
+/** More › About › Diagnostics: "Share N Crash & Hang Reports" (while there are any) and "Voice Speed Test" under "Copy
+ * Full Diagnostics" (copies of that row, re-added when v1 re-renders). */
 function addDiagnosticsRow(): void {
   const screen = document.querySelector('[data-testid="screen-diagnostics"]');
   const anchor = screen?.querySelector<HTMLElement>('[data-testid="diagnostics-copy"]');
   if (!screen || !anchor || screen.querySelector('[data-testid="diagnostics-voice-speed"]')) return;
+  const crash = screen.querySelector<HTMLElement>('[data-testid="diagnostics-share-crash-reports"]') ?? addCrashReportsRow(anchor);
   const row = anchor.cloneNode(true) as HTMLElement;
   row.dataset.testid = 'diagnostics-voice-speed';
   const title = row.querySelector('.row-title');
@@ -69,25 +95,57 @@ function addDiagnosticsRow(): void {
     ev.stopPropagation();
     openVoiceSpeedTest();
   });
-  anchor.after(row);
+  crash.after(row);
 }
+
+/** Taps in a row count while each comes within this long of the one before. */
+const TAP_GAP_MS = 1500;
 
 function hookAboutVersion(): void {
   const version = document.querySelector<HTMLElement>('[data-testid="screen-about"] .about-version');
-  if (!version || version.dataset.tnLab) return;
-  version.dataset.tnLab = '1';
-  let taps: number[] = [];
+  if (!version || version.dataset.tnDev) return;
+  version.dataset.tnDev = '1';
+  let taps = 0;
+  let last = 0;
   version.addEventListener('click', () => {
     const now = Date.now();
-    taps = [...taps.filter((t) => now - t < 3000), now];
-    if (taps.length >= 5) {
-      taps = [];
-      openVoiceLab();
-      return;
-    }
-    // The first tap copies the version (for bug reports); the next ones just count toward the Voice Lab.
-    if (taps.length === 1) void copyVersion(version.textContent.trim());
+    taps = now - last < TAP_GAP_MS ? taps + 1 : 1;
+    last = now;
+    // The first tap copies the version (for bug reports); the next ones count toward Developer options.
+    if (taps === 1) return void copyVersion(version.textContent.trim());
+    if (taps < DEVELOPER_TAPS) return;
+    taps = 0;
+    if (isDeveloper()) return toast('Developer options are already on');
+    void setDeveloper({ on: true })
+      .then(() => toast('Developer options on'))
+      .catch(() => toast('Couldn’t turn Developer options on'));
   });
+}
+
+/** About: "Developer Options" at the bottom while they are on (turning it off hides More › Developer). v1's grouped
+ * list markup (controls.tsx Section + SwitchRow). */
+function addAboutDeveloperSwitch(): void {
+  const list = document.querySelector('[data-testid="screen-about"] .grouped');
+  const section = list?.querySelector<HTMLElement>('[data-testid="about-developer"]');
+  if (!list) return;
+  if (!isDeveloper()) return void section?.remove();
+  if (section) return;
+  const native = 'switch' in HTMLInputElement.prototype;
+  const el = document.createElement('section');
+  el.className = 'group';
+  el.dataset.testid = 'about-developer';
+  el.innerHTML = `<div class="group-body"><label class="row row-switch"><span class="row-main"><span class="row-title">Developer Options</span></span><input type="checkbox" class="${native ? 'switch is-native' : 'switch'}" switch checked aria-label="Developer Options"></label></div><p class="group-footer">Voice tests and internals in More › Developer. Tap the version ${DEVELOPER_TAPS} times to turn them on again.</p>`;
+  el.querySelector('input')?.addEventListener('change', (ev) => {
+    const input = ev.currentTarget as HTMLInputElement;
+    if (input.checked) return;
+    void setDeveloper({ on: false })
+      .then(() => toast('Developer options off'))
+      .catch(() => {
+        input.checked = true;
+        toast('Couldn’t turn Developer options off');
+      });
+  });
+  list.append(el);
 }
 
 async function copyVersion(text: string): Promise<void> {
@@ -106,6 +164,7 @@ export function installV1Hooks(): void {
     try {
       addMoreRows();
       hookAboutVersion();
+      addAboutDeveloperSwitch();
       addDiagnosticsRow();
       addDriveCard(pcAudio);
     } catch (err) {
@@ -123,10 +182,12 @@ export function installV1Hooks(): void {
     void Narration.voiceSettings()
       .then((v) => {
         pcAudio = v.usePCAudio === true;
+        noteDeveloper(v.developer);
         schedule();
       })
       .catch(() => undefined);
   window.addEventListener(VOICE_SETTINGS_CHANGED, refresh);
+  window.addEventListener(DEVELOPER_CHANGED, schedule);
   refresh();
   schedule();
 }

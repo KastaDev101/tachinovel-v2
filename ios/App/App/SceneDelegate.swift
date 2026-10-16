@@ -13,6 +13,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
         for context in connectionOptions.urlContexts { DeepLinks.open(context.url) }
+        // Started from the app icon's long-press menu (DeveloperOptions.swift: "Voice Speed Test").
+        if let item = connectionOptions.shortcutItem { LaunchActions.perform(item) }
+    }
+
+    /// The app icon's long-press menu while the app was running.
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        completionHandler(LaunchActions.perform(shortcutItem))
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

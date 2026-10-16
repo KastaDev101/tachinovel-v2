@@ -13,6 +13,10 @@ export interface DiagFolderStatus {
   state?: 'off' | 'ok' | 'disconnected' | 'failing';
   /** Why, in words, when disconnected or failing. */
   problem?: string | null;
+  /** Copies work, but iCloud doesn't take them (storage full, the folder isn't in iCloud Drive, …): why. Older builds: absent. */
+  upload?: string | null;
+  /** Where the folder is ("iCloud Drive › TachiNovel-Diagnostics"). Older builds: absent. */
+  place?: string | null;
 }
 
 /** The Diagnostics row's value: the folder's name, "Off", or what is wrong. */
@@ -20,6 +24,7 @@ export function folderLabel(s: DiagFolderStatus): string {
   if (!s.linked) return 'Off';
   if (s.state === 'disconnected') return 'Disconnected – tap to reconnect';
   if (s.state === 'failing') return `${s.name ?? 'On'} – not copying`;
+  if (s.upload) return `${s.name ?? 'On'} – not uploading`;
   return s.name ?? 'On';
 }
 

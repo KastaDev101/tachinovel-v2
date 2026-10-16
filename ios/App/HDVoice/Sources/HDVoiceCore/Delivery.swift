@@ -56,7 +56,9 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
 
     /// 2: Pocket TTS became the default Listen engine (version 1 only knew Chatterbox Nano, and saved it as the default).
     /// 3: the AI director ("rules+ai", on-device, where available) became the default (older versions saved "rules").
-    public static let currentVersion = 3
+    /// 4: natural delivery, studio sound and the AI director are automatic (cleanup 1, 2026-10-15): their old switches in
+    /// Settings › Voices are gone, so an "off" saved before version 4 goes back on. Only More › Developer changes them now.
+    public static let currentVersion = 4
     public static let pocketTts = "pocket-tts"
     public static let chatterboxNano = "chatterbox-nano"
     /// The expressive engines Listen can read chapters with.
@@ -142,11 +144,11 @@ public struct DeliverySettings: Sendable, Equatable, Codable {
                 listenEngine = engine.flatMap { Self.listenEngines.contains($0) ? $0 : nil }
             }
         }
-        natural = (try? c.decode(Bool.self, forKey: .natural)) ?? d.natural
+        natural = saved < 4 ? d.natural : (try? c.decode(Bool.self, forKey: .natural)) ?? d.natural
         let savedDirector = try? c.decode(String.self, forKey: .director)
-        director = savedDirector == Self.rulesAI || savedDirector == nil || saved < 3 ? Self.rulesAI : Self.rules
+        director = savedDirector == Self.rulesAI || savedDirector == nil || saved < 4 ? Self.rulesAI : Self.rules
         breaths = (try? c.decode(Bool.self, forKey: .breaths)) ?? d.breaths
-        studioSound = (try? c.decode(Bool.self, forKey: .studioSound)) ?? d.studioSound
+        studioSound = saved < 4 ? d.studioSound : (try? c.decode(Bool.self, forKey: .studioSound)) ?? d.studioSound
         sounds = (try? c.decode(Bool.self, forKey: .sounds)) ?? d.sounds
         unit = (try? c.decode(String.self, forKey: .unit)) == Self.sentences ? Self.sentences : Self.chunks
         performed = (try? c.decode(Bool.self, forKey: .performed)) ?? d.performed

@@ -1,5 +1,5 @@
 /**
- * Voice Lab — hidden (Settings › About › tap the version 5 times). Live numbers from the on-device voice
+ * Voice Lab (More › Developer › Legacy › Kokoro Voice Lab). Live numbers from the on-device voice
  * for tonight's phone test: whether the crash safety fallback tripped, where Core ML runs each Kokoro stage
  * (Neural Engine / CPU / GPU, from its compute plan), time to first audio, per-sentence real-time factor,
  * model load (cold/warm), memory, thermal state and fallbacks to the Apple voice. "Copy report" puts it
@@ -90,7 +90,7 @@ const obj = (x: unknown): Obj => (x && typeof x === 'object' ? (x as Obj) : {});
 let open = false;
 
 /** Voice Lab › Test scene reading: the rules and the on-device AI director against the labelled test scenes. */
-async function sceneReadingTest(): Promise<string> {
+export async function sceneReadingTest(): Promise<string> {
   let rules = 0;
   let ai = 0;
   let total = 0;
@@ -115,7 +115,7 @@ async function sceneReadingTest(): Promise<string> {
 
 /** Voice Lab › Test moods: the on-device AI director over the chapter last started with Listen, next to the rules'
  * moods. The report (copy it) scores against hand labels on the PC; it holds only each sentence's first words. */
-async function chapterMoodTest(): Promise<{ summary: string; report: Obj | null }> {
+export async function chapterMoodTest(): Promise<{ summary: string; report: Obj | null }> {
   const last = lastListened();
   if (!last) return { summary: 'Start Listen on a chapter first, then come back here.', report: null };
   const items = last.script.items;

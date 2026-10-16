@@ -1,26 +1,13 @@
 /**
- * Settings › Diagnostics (v1 screen, unchanged): a "Share Crash & Hang Reports" button when MetricKit
- * reports are stored on the device (src/core/diagnostics/metrickit.ts). Their one-line summaries are
- * already in the screen's "Recent problems" and in the copied/sent diagnostics; this shares the full
+ * More › About › Diagnostics (v1 screen, unchanged): "Share N Crash & Hang Reports", a tinted row right under "Copy Full
+ * Diagnostics" while MetricKit reports are stored on the device (src/core/diagnostics/metrickit.ts). Their one-line
+ * summaries are already in the screen's "Recent Problems" and in the copied/sent diagnostics; this shares the full
  * reports (call stacks) as one JSON file through the share sheet. Nothing is uploaded.
  *
- * Like the narration overlay, the button lives outside v1's Preact tree (fixed position on <body>).
+ * Cleanup 1 (2026-10-15): a row of the list (a copy of v1's, added by v1-hooks.ts when the screen renders) instead of a
+ * floating bar over it, and the count is read once when the screen opens instead of a timer checking twice a second.
  */
 import { sharedClient } from '../capacitor-client.ts';
-import { fs } from './type.ts';
-
-// Text follows Dynamic Type (fs), so the button grows with it: min-height, not height.
-const CSS = `
-.tn-crash{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:58;min-height:50px;border:0;border-radius:14px;
-  display:flex;align-items:center;justify-content:center;text-align:center;padding:10px 16px;box-sizing:border-box;background:rgba(40,40,48,.96);
-  -webkit-backdrop-filter:blur(20px) saturate(1.6);color:#a8b4ff;font:600 ${fs(16)} -apple-system,system-ui,sans-serif;line-height:1.25;
-  box-shadow:0 6px 24px rgba(0,0,0,.35);-webkit-tap-highlight-color:transparent;transition:opacity .15s}
-.tn-crash:active{opacity:.6}
-.tn-crash.is-raised{bottom:calc(env(safe-area-inset-bottom) + 84px)}
-.tn-crash[hidden]{display:none}
-/* Keep the end of the Diagnostics list reachable above the button (its height is measured in render). */
-body.tn-crash-shown [data-testid="screen-diagnostics"] .screen-scroll{padding-bottom:calc(env(safe-area-inset-bottom) + 34px + var(--tn-crash-h, 50px))}
-`;
 
 /** v2 core methods are not in v1's typed BridgeMethods. */
 type Call = (method: string, args?: unknown) => Promise<unknown>;
@@ -29,59 +16,31 @@ export function label(count: number): string {
   return count === 1 ? 'Share 1 Crash or Hang Report' : `Share ${count} Crash & Hang Reports`;
 }
 
-function diagnosticsOnTop(): boolean {
-  const layers = document.querySelectorAll('.nav-root > .layer');
-  const top = layers[layers.length - 1];
-  return top !== undefined && top.querySelector('[data-testid="screen-diagnostics"]') !== null;
+function call(method: string, args?: unknown): Promise<unknown> {
+  const client = sharedClient() as unknown as { call: Call };
+  return client.call(method, args);
 }
 
-export function installDiagnosticsOverlay(): void {
-  const style = document.createElement('style');
-  style.textContent = CSS;
-  document.head.appendChild(style);
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'tn-crash';
-  button.hidden = true;
-  button.setAttribute('data-testid', 'diagnostics-share-crash-reports');
-  document.body.appendChild(button);
-
-  const client = sharedClient() as unknown as { call: Call };
-  const call: Call = (method, args) => client.call(method, args);
-  let onScreen = false;
-  let count = 0;
-
-  const render = (): void => {
-    button.hidden = !(onScreen && count > 0);
-    document.body.classList.toggle('tn-crash-shown', !button.hidden);
-    button.textContent = label(count);
-    // Above the narration mini player when it is showing.
-    button.classList.toggle('is-raised', document.querySelector('.tn-player:not([hidden])') !== null);
-    if (!button.hidden) document.body.style.setProperty('--tn-crash-h', `${button.offsetHeight}px`);
-  };
-
-  const refresh = async (): Promise<void> => {
-    try {
-      const reports = await call('diagnostics.reports');
-      count = Array.isArray(reports) ? reports.length : 0;
-    } catch {
-      count = 0;
-    }
-    render();
-  };
-
-  button.addEventListener('click', () => {
-    void call('diagnostics.shareReports', undefined).catch(() => undefined);
+/** The row under `anchor` (Copy Full Diagnostics), hidden until the stored reports are counted (and while none are). */
+export function addCrashReportsRow(anchor: HTMLElement): HTMLElement {
+  const row = anchor.cloneNode(true) as HTMLElement;
+  row.dataset.testid = 'diagnostics-share-crash-reports';
+  row.hidden = true;
+  const title = row.querySelector<HTMLElement>('.row-title');
+  // At the largest text sizes the row grows to two lines instead of cutting the count off.
+  title?.style.setProperty('white-space', 'normal');
+  row.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void call('diagnostics.shareReports').catch(() => undefined);
   });
-
-  setInterval(() => {
-    const visible = diagnosticsOnTop();
-    if (visible && !onScreen) {
-      onScreen = true;
-      void refresh();
-    } else if (!visible && onScreen) {
-      onScreen = false;
-      render();
-    }
-  }, 600);
+  anchor.after(row);
+  void call('diagnostics.reports')
+    .then((reports) => {
+      const count = Array.isArray(reports) ? reports.length : 0;
+      if (title) title.textContent = label(count);
+      row.hidden = count === 0;
+    })
+    .catch(() => undefined);
+  return row;
 }

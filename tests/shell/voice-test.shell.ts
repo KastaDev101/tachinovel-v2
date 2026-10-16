@@ -1,16 +1,16 @@
 /**
- * Settings › Voices › Voice test (src/ui/native/voice-test.ts) in the PC shell, personal flavor: the one page for
- * testing Nephis, reached without hidden taps. Against canned ExpressiveVoice / Narration plugins:
- *  - the top says which pack is installed, that it has her studio and whether the studio is on; the switch sends
- *    ExpressiveVoice.studioEnable;
+ * More › Developer › Voice Test (src/ui/native/voice-test.ts) in the PC shell, personal flavor (Developer options on): the
+ * one page for testing Nephis. Against canned ExpressiveVoice / Narration plugins:
+ *  - the top says which pack is installed, that it has her studio and whether the studio is on; the page has no studio
+ *    switch any more: More › Developer › Studio (Automatic / Off) sends ExpressiveVoice.studioEnable;
  *  - Run the test runs the studio speed test when her studio is on (native returns with Nephis warm again; with it
  *    off the speed test is skipped and the result says so), then the listening test
  *    (Narration.play), in that order, and says how it went in plain words; where her studio's models run is its own
  *    button ("Where her studio runs": studioTest {placement: true});
  *  - Copy report copies one combined report (pack, studio state and test, the listening test, notes);
  *  - none of the Voice Lab's developer controls appear, and every control has a name for VoiceOver;
- *  - Nephis switched off after real crashes of her model: Settings › Voices and the Voice test say why in plain words
- *    and one tap ("Turn Nephis back on", ExpressiveVoice.resetCrashes) turns her back on; so does the Listen player's
+ *  - Nephis switched off after real crashes of her model: More › Voices and the Voice Test say why in plain words
+ *    and one tap ("Turn Nephis Back On", ExpressiveVoice.resetCrashes) turns her back on; so does the Listen player's
  *    Voice panel (car mode).
  * Screenshots: .cache/shell-shots/voice-test-top.png, voice-test.png, voice-test-nephis-off.png
  */
@@ -18,7 +18,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
@@ -50,7 +50,7 @@ const status = (): Record<string, unknown> => ({
 const calls = (plugin: string, method: string): Record<string, unknown>[] =>
   shell.pluginCalls.filter((c) => c.pluginId === plugin && c.methodName === method).map((c) => c.options);
 
-describe('Settings › Voices › Voice test (PC shell)', () => {
+describe('More › Developer › Voice Test (PC shell)', () => {
   beforeAll(async () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-voice-test');
@@ -103,38 +103,45 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     await page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     const skip = page.getByTestId('onboarding-skip');
     if (await skip.isVisible().catch(() => false)) await skip.click();
-    await page.getByTestId('tab-more').click();
-    await page.getByTestId('more-voices').click();
-    await page.getByTestId('screen-voices').getByTestId('voices-test').click();
+    await setDeveloperOptions(shell);
+    await openDeveloper(shell);
+    const dev = page.locator('[data-testid="screen-developer"]:not([inert])');
+    await dev.getByTestId('dev-test').click();
     const screen = page.getByTestId('voice-test');
     await screen.waitFor({ timeout: 5000 });
 
-    // The status block, then the switch (the pack has a studio, which is off).
+    // The status block (the pack has a studio, which is off); its switch is in More › Developer now.
     const pack = screen.getByTestId('voice-test-pack');
     await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Nephis pack in use: nephis-r9 (made 2026-10-11).');
     expect(await pack.textContent()).toContain('Her studio: in this pack.');
     expect(await pack.textContent()).toContain('Studio: off.');
     // Studio off (2026-10-13: pack 7's studio, switched off, still loaded for the speed test, which never finished):
     // no speed test, straight to the listening test, and the result says it was skipped.
-    await screen.getByRole('button', { name: 'Run the test' }).click();
+    expect(await screen.getByRole('checkbox', { name: 'Her studio' }).count()).toBe(0);
+    await screen.getByRole('button', { name: 'Run the Test' }).click();
     await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(1);
     const skipped = screen.getByTestId('voice-test-result');
     await skipped.waitFor({ timeout: 10_000 });
     expect(await skipped.textContent()).toContain('Studio off: speed test skipped.');
     expect(calls('ExpressiveVoice', 'studioTest')).toEqual([]);
 
-    const toggle = screen.getByRole('checkbox', { name: 'Her studio' });
-    expect(await toggle.isChecked()).toBe(false);
-    await toggle.click();
+    // More › Developer › Studio: Automatic (for the pack in use).
+    await screen.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
+    const automatic = dev.getByRole('button', { name: 'Automatic', exact: true });
+    await expect.poll(() => automatic.getAttribute('aria-pressed'), { timeout: 5000 }).toBe('false');
+    await automatic.click();
     await expect.poll(() => calls('ExpressiveVoice', 'studioEnable')).toEqual([{ on: true }]);
-    await expect.poll(() => pack.textContent()).toContain('Studio: on (she reads at 44.1 kHz).');
-    expect(await screen.getByRole('checkbox', { name: 'Her studio' }).isChecked()).toBe(true);
+    await expect.poll(() => dev.getByRole('button', { name: 'Automatic', exact: true }).getAttribute('aria-pressed')).toBe('true');
+    await dev.getByTestId('dev-test').click();
+    await screen.waitFor({ timeout: 5000 });
+    await expect.poll(() => pack.textContent(), { timeout: 5000 }).toContain('Studio: on (she reads at 44.1 kHz).');
     await page.waitForTimeout(450); // slide-in
     await page.screenshot({ path: path.join(shots, 'voice-test-top.png') });
 
     // One button runs the studio speed test, then the listening test (crash plan a2: native's studio test frees its own
     // studio and returns with Nephis warm again, so nothing is released in between and the start is Listen's).
-    await screen.getByRole('button', { name: 'Run it again' }).click();
+    await screen.getByRole('button', { name: 'Run the Test' }).click();
     await expect.poll(() => calls('ExpressiveVoice', 'studioTest').length, { timeout: 5000 }).toBe(1);
     await expect.poll(() => calls('Narration', 'play').length, { timeout: 5000 }).toBe(2);
     const steps = shell.pluginCalls
@@ -157,7 +164,7 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     expect(text).toContain('No breaks: it never stopped to wait for the voice.');
     expect(text).toContain('Speed: 10.0× real time (goal 8×).');
     expect(await screen.getByTestId('voice-test-progress').textContent()).toBe('Done. Copy the report below.');
-    expect(await screen.getByRole('button', { name: 'Run it again' }).count()).toBe(1);
+    expect(await screen.getByRole('button', { name: 'Run It Again' }).count()).toBe(1);
 
     // No developer controls on this page.
     const all = (await screen.textContent()) ?? '';
@@ -195,19 +202,22 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
   it('says why Nephis is switched off, in plain words, and one tap turns her back on', async () => {
     const page = shell.page;
     nephisOff = true;
-    // Reopen Settings › Voices (it reads the voice settings when it opens): her card offers to turn her back on.
+    // Open More › Voices (it reads the voice settings when it opens): her card offers to turn her back on.
     await page.getByTestId('voice-test').getByRole('button', { name: 'Back' }).click();
     await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
-    await page.getByTestId('screen-voices').getByRole('button', { name: 'Back' }).click();
-    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
+    await page.getByTestId('screen-developer').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('screen-developer').count()).toBe(0);
     await page.getByTestId('more-voices').click();
     const voices = page.getByTestId('screen-voices');
     const offRow = voices.getByTestId('voices-nephis-on');
     await expect.poll(() => offRow.textContent(), { timeout: 5000 }).toContain(OFF_LINE);
-    expect(await offRow.textContent()).toContain('Turn Nephis back on');
+    expect(await offRow.textContent()).toContain('Turn Nephis Back On');
+    await voices.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
 
     // The Voice test says it too, with her last cut-off and how the app last closed.
-    await voices.getByTestId('voices-test').click();
+    await openDeveloper(shell);
+    await page.getByTestId('screen-developer').getByTestId('dev-test').click();
     const screen = page.getByTestId('voice-test');
     const safety = screen.getByTestId('voice-test-safety');
     await expect.poll(() => safety.textContent(), { timeout: 5000 }).toContain(`${OFF_LINE} Her backup voice reads meanwhile.`);
@@ -229,8 +239,8 @@ describe('Settings › Voices › Voice test (PC shell)', () => {
     nephisOff = true;
     await page.getByTestId('voice-test').getByRole('button', { name: 'Back', exact: true }).click();
     await expect.poll(() => page.getByTestId('voice-test').count()).toBe(0);
-    await page.getByTestId('screen-voices').getByRole('button', { name: 'Back', exact: true }).click();
-    await expect.poll(() => page.getByTestId('screen-voices').count()).toBe(0);
+    await page.getByTestId('screen-developer').getByRole('button', { name: 'Back', exact: true }).click();
+    await expect.poll(() => page.getByTestId('screen-developer').count()).toBe(0);
     // She reads a novel aloud: the player offers Voice for it.
     shell.pluginReplies.set('Narration.state', () => ({
       status: 'playing', engine: 'speech', pluginId: 'demo-library', novelPath: 'novel/alpha', novelName: 'Alpha Story',

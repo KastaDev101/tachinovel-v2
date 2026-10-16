@@ -1,6 +1,6 @@
 /**
- * Voice Lab › Experimental engines (src/ui/native/expressive-lab.ts) in the PC shell, against a canned
- * ExpressiveVoice plugin: reachable only through the hidden Voice Lab, a model download needs two taps,
+ * Voice Models (src/ui/native/expressive-lab.ts) in the PC shell, against a canned ExpressiveVoice plugin: reachable
+ * through More › Developer › Voice Models (Developer options), a model download needs two taps,
  * Play / Kokoro A/B / Speed test send the sample's lines with their acting (emotion, style, speaker), pasted
  * text is annotated, and deleting a model needs a second tap too.
  * Screenshots: .cache/shell-shots/expressive-lab-engines.png, expressive-lab.png
@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
+import { openDeveloper, type PcShell, setDeveloperOptions, startPcShell } from '../helpers/pc-shell.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const shots = path.join(root, '.cache', 'shell-shots');
@@ -39,7 +39,7 @@ const status = {
 type Call = { methodName: string; options: Record<string, unknown> };
 const calls = (method: string): Call[] => shell.pluginCalls.filter((c) => c.pluginId === 'ExpressiveVoice' && c.methodName === method);
 
-describe('Voice Lab › Experimental engines (PC shell)', () => {
+describe('More › Developer › Voice Models (PC shell)', () => {
   beforeAll(async () => {
     mkdirSync(shots, { recursive: true });
     const www = path.join(root, '.cache', 'shell-www-expressive');
@@ -52,17 +52,14 @@ describe('Voice Lab › Experimental engines (PC shell)', () => {
     await shell?.close();
   });
 
-  it('opens from the hidden Voice Lab and drives the plugin', async () => {
+  it('opens from More › Developer and drives the plugin', async () => {
     const page = shell.page;
     await page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
     const skip = page.getByTestId('onboarding-skip');
     if (await skip.isVisible().catch(() => false)) await skip.click();
-    await page.getByTestId('tab-more').click();
-    await page.getByTestId('more-about').click();
-    const version = page.locator('[data-testid="screen-about"] .about-version');
-    for (let i = 0; i < 5; i++) await version.click();
-    await page.getByTestId('voice-lab').waitFor({ timeout: 5000 });
-    await page.getByRole('button', { name: /Experimental engines/ }).click();
+    await setDeveloperOptions(shell);
+    await openDeveloper(shell);
+    await page.getByTestId('screen-developer').getByTestId('dev-models').click();
     const lab = page.getByTestId('expressive-lab');
     await lab.waitFor({ timeout: 5000 });
     await expect.poll(() => lab.locator('[data-engine]').count(), { timeout: 5000 }).toBe(2);

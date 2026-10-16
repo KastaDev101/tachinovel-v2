@@ -66,6 +66,24 @@ right away on a memory warning. Compute placement (`KokoroRoute`): the RNN/atten
 doesn't allow GPU work in the background and narration must keep rendering on the lock screen. The Voice
 Lab can switch to FluidAudio's GPU placement for a foreground-only speed comparison.
 
+## Where the settings are (cleanup 1, 2026-10-15)
+
+- **More › Voices** (everyone): the Nephis card (her pack and "Studio" in the personal build, Download Her Voice,
+  Turn Nephis Back On), **Voice Settings** (Scene Moods, the [System] message chime and voice, and a line saying whether
+  scene moods use Apple Intelligence or the built-in rules), **Pronunciations**, **In the Car** (Car Buttons, prepared
+  audio).
+- Natural delivery, studio sound and her studio are automatic; the AI scene reading is on wherever Apple Intelligence
+  is available. `DeliverySettings` version 4 turns an "off" saved before back on once (HDVoiceCore `Delivery.swift`);
+  the studio's per-pack offs are cleared once (`DeveloperOptions.migrateOnce`).
+- **Developer options** (`src/ui/native/dev-flags.ts`, `Native/Shell/DeveloperOptions.swift`): tap the version in
+  More › About 7 times; the switch at the bottom of About turns them off. Kept natively (the Narration plugin's
+  voiceSettings / setVoiceSettings `developer`), on by default in the personal build. **More › Developer**
+  (`developer-ui.ts`) holds the Voice Speed Test, Voice Test, 15-Minute Test, Voice Packs, Studio (Automatic / Off) and
+  where it runs, the delivery internals (Natural Delivery, AI Scene Reading, Studio Sound, Reset to Defaults), the
+  Scene-Reading and Mood tests, the Voice Report, Now Playing, Voice Models, "Show Voice Details in the Player", Mix a
+  Voice, the pronunciation editor's phonemes and JSON paste, Use PC Audio and the Kokoro Voice Lab. While they are on,
+  the app icon's long-press menu offers "Voice Speed Test" (`LaunchActions` → TachiNative `launchAction`).
+
 ## In the car
 
 Kokoro, the Apple fallback, prepared chapters and PC audio all show in CarPlay's Now Playing screen and
@@ -283,7 +301,7 @@ model. Anything above ~2× keeps the queue full.
 4. **Lock the phone for 2 minutes**. Audio keeps going, the lock-screen player works (play/pause, next
    chapter), and there are no gaps between sentences. Unlock and check the mini player label: "Apple
    voice · … Kokoro catching up" means a fallback happened.
-5. **Voice Lab** (More › About › tap the version 5 times): note **Safety fallback** (should say "not
+5. **Voice Lab** (Developer options: More › About › tap the version 7 times; then More › Developer › Legacy › Kokoro Voice Lab): note **Safety fallback** (should say "not
    tripped"), **Where each stage runs** (how many ops of each stage Core ML puts on the Neural Engine, the
    CPU and the GPU), **time to first audio**, **speed (× real time)** and slowest 5%, model load
    (cold/warm), **Kokoro / Apple sentences**, **Queue ran dry**, memory and thermal state. Then tap **Copy

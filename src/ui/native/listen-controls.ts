@@ -34,7 +34,8 @@ export function volumePercent(v: number): number {
   return Math.round(Math.min(VOLUME_MAX_PERCENT, Math.max(0, v * 100)));
 }
 
-/** Why the system voice is speaking instead of Kokoro, in a few words ('' when unknown). */
+/** Why the system voice is speaking instead of Kokoro (her backup voice), in a few words ('' when unknown). Shown only
+ * with Developer options' "Show Voice Details in the Player" (dev-flags.ts). */
 export function fallbackReason(v: Pick<SpeakingVoice, 'fallback' | 'kokoroStatus'>): string {
   switch (v.fallback) {
     case 'modelLoading':
@@ -46,7 +47,7 @@ export function fallbackReason(v: Pick<SpeakingVoice, 'fallback' | 'kokoroStatus
     case 'segmentFailed':
       return 'Kokoro had an error';
     case 'disabled':
-      return 'Kokoro is off in More › Voices';
+      return 'Kokoro is turned off';
     case 'modelUnavailable':
       return v.kokoroStatus ? `Kokoro unavailable: ${v.kokoroStatus}` : 'Kokoro unavailable';
     case undefined:
@@ -54,10 +55,19 @@ export function fallbackReason(v: Pick<SpeakingVoice, 'fallback' | 'kokoroStatus
   }
 }
 
-/** Which voice is speaking: "Nephis", "Kokoro · Heart", or "System voice (fallback) · <reason>". */
-export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>): string {
+/**
+ * Which voice is speaking. For the listener: "Nephis", or "Backup voice" while another voice stands in for her
+ * (cleanup 1, 2026-10-15). With `details` (Developer options): "Nephis", "Kokoro · Heart", or "System voice (fallback) ·
+ * <reason>".
+ */
+export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>, details = false): string {
   if (s.engine === 'audio') return 'PC audio';
   const v = s.voice;
+  if (!details) {
+    // Nothing spoken yet (no source): she is the one about to read.
+    if (!v?.source) return 'Nephis';
+    return v.source === 'kokoro' && v.reader ? v.reader : 'Backup voice';
+  }
   if (!v) return 'Kokoro';
   if (v.source === 'apple') {
     const why = fallbackReason(v);

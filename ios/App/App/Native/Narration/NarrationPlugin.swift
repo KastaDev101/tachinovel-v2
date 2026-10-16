@@ -320,6 +320,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "bytes": k.modelInfo["bytes"] ?? NSNull(),
                 ] as [String: Any],
                 "apple": VoiceSettings.appleSummary(kokoroVoice: prefs.voice(forNovel: nil)),
+                // More › Developer (DeveloperOptions.swift): on, playerDetails, phonemes.
+                "developer": DeveloperOptions.snapshot,
             ]
             if let pluginId, let novelPath {
                 let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
@@ -341,6 +343,10 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             let novel = call.getObject("novel")
             let narrator = call.getObject("narrator")
             let delivery = call.getObject("delivery")
+            if let developer = call.getObject("developer") {
+                DeveloperOptions.update(developer)
+                MainActor.assumeIsolated { DeveloperOptions.applyShortcuts() }
+            }
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }
