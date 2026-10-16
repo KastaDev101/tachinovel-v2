@@ -91,7 +91,8 @@ final class NephisDialogueTests: XCTestCase {
         XCTAssertEqual(route("‘It’s the boys’ turn now,’ she said.", .init(singleQuotes: .dialogue)), [d("It’s the boys’ turn now,"), n("she said.")])
         // Unknown style: speech when the call has no double quotes, thoughts when it has.
         XCTAssertEqual(route("‘Fine,’ she said."), [d("Fine,"), n("she said.")])
-        XCTAssertEqual(route("“Fine,” she said. ‘Liar,’ he thought."), [d("Fine,"), n("she said. ‘Liar,’ he thought.")])
+        XCTAssertEqual(route("“Fine, have it your way,” she said. ‘Liar,’ he thought."),
+                       [d("Fine, have it your way,"), n("she said. ‘Liar,’ he thought.")])
         XCTAssertEqual(QuoteRouter.SingleQuotes.of(["He ran.", "“Stop!” she cried."]), .thought)
         XCTAssertEqual(QuoteRouter.SingleQuotes.of(["He ran.", "‘Stop!’ she cried."]), .dialogue)
     }
