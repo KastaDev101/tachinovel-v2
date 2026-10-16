@@ -36,6 +36,13 @@
 //  output. Only the last ~60-80 ms of a call (two passes' lookahead over her fade-out into the pause the next call starts
 //  with) differ from one offline run over the whole read; everything else is sample for sample the same, and nothing is
 //  lost or doubled. A new read, a seek or a new chapter starts a fresh chain; the read's last call is simply complete.
+//  Measured (MUST-FIX "duh" at joins, 2026-10-15; the lab's NumPy twin of this code with the real network on a 64 s phone
+//  read cut at its 25 call joins): the calls differ from one continuous run by at most -97 dBFS (70 dB under her speech),
+//  a 20 ms or equal-power crossfade changes nothing measurable, and the pads spliced in after the cleaner add at most
+//  -83 dBFS; the joins are not where a "duh" comes from. testJoinsHaveNoTransient keeps it so. Restarting the network
+//  at a paragraph pause (to cap the Neural Engine's fp16 drift) was measured too and isn't done: a fresh network state
+//  differs from the running one by 30-40 dB under the speech for seconds (even after 8 s of the read fed again), more
+//  than the drift itself (46 dB under it after 5 minutes, then steady).
 //
 //  Cost per pass (48 kHz): the network 3.3 M MAC per 10 ms frame (0.33 GMAC per audio second; Core ML on the CPU in
 //  blocks of 8 frames), the DSP ~4 Mflop per second, the resamplers ~2 M MAC per second; the copy at each call's end

@@ -406,6 +406,55 @@ final class NephisDewindTests: XCTestCase {
         XCTAssertLessThan(maxDiff(out, once), 0.01)
     }
 
+    /// MUST-FIX (Kasta 2026-10-15: a "duh" between sentences): a read cut into calls the way the phone cuts it (each call
+    /// opens in the pause before its first word and ends in her fade-out, NephisFlow.fadeOut's -68 dB) comes out of the
+    /// cleaner with no transient at any join. Against one continuous run, the largest difference within 100 ms of a join
+    /// stays 50 dB under the speech (the lab's run of the real network on a real read, 25 joins: 70 dB under, 97 dBFS;
+    /// this stand-in network: 68 dB), and no sample step there is larger than the continuous run's own. A misaligned tail,
+    /// a sample lost or doubled at a join, or a crossfade the wrong way round puts one at speech level.
+    func testJoinsHaveNoTransient() throws {
+        for (rate, passes) in [(44_100, 2), (24_000, 1)] {
+            let lengths = [52_920, 79_380, 1, 114_660, 66_150].map { max(1, $0 * rate / 44_100) }
+            var input: [Float] = []
+            for (k, n) in lengths.enumerated() {
+                var call = voiceLike(n, rate: rate, seed: UInt64(10 + k))
+                let lead = min(n, rate * 15 / 100), fade = min(n - lead, rate * 3 / 10)
+                for i in 0..<lead { call[i] *= 0.0005 }  // the pause before the first word, about -70 dB
+                for i in 0..<fade { call[n - fade + i] *= Float(pow(10, -68 / 20 * Double(i + 1) / Double(fade))) }
+                input += call
+            }
+            let net = ToyNet(framesPerCall: 8)
+            var whole = NephisDewind.Chain(rate: rate, passes: passes, frames: 8)
+            let once = try whole.process(input, net: net) + whole.flush(net: net)
+            var stream = NephisDewind.Stream(settings: .init(passes: passes), sampleRate: rate, framesPerCall: 8)
+            var out: [Float] = []
+            var joins: [Int] = []
+            for n in lengths {
+                out += try stream.process(Array(input[out.count..<(out.count + n)]), net: net)
+                joins.append(out.count)
+            }
+            joins.removeLast()
+            XCTAssertEqual(out.count, once.count)
+            let loud = input.filter { abs($0) > 0.01 }
+            let speech = (loud.reduce(0.0) { $0 + Double($1) * Double($1) } / Double(max(1, loud.count))).squareRoot()
+            let h = rate / 10
+            for j in joins {
+                let lo = max(0, j - h), hi = min(out.count, j + h)
+                var peak = 0.0, stepOut = 0.0, stepRef = 0.0
+                for i in lo..<hi {
+                    peak = max(peak, Double(abs(out[i] - once[i])))
+                    if i > lo {
+                        stepOut = max(stepOut, Double(abs(out[i] - out[i - 1])))
+                        stepRef = max(stepRef, Double(abs(once[i] - once[i - 1])))
+                    }
+                }
+                let db = 20 * log10(peak / speech + 1e-12)
+                XCTAssertLessThan(db, -50, "\(rate) Hz, join at \(j): \(String(format: "%.1f", db)) dB against the speech")
+                XCTAssertLessThanOrEqual(stepOut, stepRef * 1.5 + 1e-5, "\(rate) Hz, join at \(j): a step the continuous run doesn't have")
+            }
+        }
+    }
+
     func testOneCallIsTheWholeReadUpToItsLastLookahead() throws {
         let rate = 24_000  // her Mimi sound
         let input = voiceLike(48_000, rate: rate)
