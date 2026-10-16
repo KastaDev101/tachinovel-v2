@@ -113,9 +113,7 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     public var novelVoices: [String: String]
     /// Kokoro on device (on by default). Off = always the Apple voice.
     public var kokoroEnabled: Bool
-    /// Play PC-narrated chapter files (the "TachiNovel Audio" folder) when they exist. Advanced, off by default.
-    public var usePCAudio: Bool
-    /// Core ML placement of the 7 Kokoro stages (Voice Lab). See KokoroRoute.
+    /// Core ML placement of the 7 Kokoro stages (the default unless an older build's Voice Lab changed it). See KokoroRoute.
     public var route: String
     /// Sentences rendered ahead (2–3).
     public var ahead: Int
@@ -135,14 +133,13 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
     /// nil: her matched voice (af_nephis). Only used while Nephis reads chapters.
     public var backupVoice: String?
 
-    public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true, usePCAudio: Bool = false,
+    public init(defaultVoice: String = VoiceCatalog.defaultVoiceId, novelVoices: [String: String] = [:], kokoroEnabled: Bool = true,
                 route: String = KokoroRoute.backgroundSafe.rawValue, ahead: Int = 3, carButtons: String = CarButtons.chapters.rawValue,
                 speed: Double = SpeechSpeed.defaultValue, volume: Double = VoiceVolume.defaultValue, customVoices: [CustomVoice] = [],
                 narrator: NarratorSettings = NarratorSettings(), delivery: DeliverySettings = DeliverySettings(), backupVoice: String? = nil) {
         self.defaultVoice = defaultVoice
         self.novelVoices = novelVoices
         self.kokoroEnabled = kokoroEnabled
-        self.usePCAudio = usePCAudio
         self.route = route
         self.ahead = ahead
         self.carButtons = carButtons
@@ -161,7 +158,6 @@ public struct VoicePreferences: Sendable, Equatable, Codable {
         defaultVoice = (try? c.decode(String.self, forKey: .defaultVoice)) ?? d.defaultVoice
         novelVoices = (try? c.decode([String: String].self, forKey: .novelVoices)) ?? d.novelVoices
         kokoroEnabled = (try? c.decode(Bool.self, forKey: .kokoroEnabled)) ?? d.kokoroEnabled
-        usePCAudio = (try? c.decode(Bool.self, forKey: .usePCAudio)) ?? d.usePCAudio
         route = (try? c.decode(String.self, forKey: .route)) ?? d.route
         ahead = (try? c.decode(Int.self, forKey: .ahead)) ?? d.ahead
         carButtons = (try? c.decode(String.self, forKey: .carButtons)) ?? d.carButtons

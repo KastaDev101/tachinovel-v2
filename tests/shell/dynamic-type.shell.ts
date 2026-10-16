@@ -31,8 +31,6 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
     const www = path.join(root, '.cache', 'shell-www-dynamic-type');
     await buildAll({ flavor: 'store', ads: false, dev: false, outDir: www });
     shell = await startPcShell({ wwwDir: www, core: { routes: {}, answers: [] } });
-    shell.pluginReplies.set('Narration.audioLibrary', () => ({ linked: false, novels: [] }));
-    shell.pluginReplies.set('Narration.audioFolder', () => ({ linked: false, name: null }));
     shell.pluginReplies.set('Narration.voiceSettings', () => ({
       voices: [
         { id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' },
@@ -40,7 +38,6 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
       ],
       defaultVoice: 'af_heart',
       kokoroEnabled: true,
-      usePCAudio: false,
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
     }));

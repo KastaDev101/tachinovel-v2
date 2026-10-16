@@ -70,7 +70,6 @@ describe('Pronounce a name from the reader (PC shell)', () => {
       defaultVoice: 'af_heart',
       effectiveVoice: 'af_heart',
       kokoroEnabled: true,
-      usePCAudio: false,
       voices: [{ id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm' }],
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: null, bytes: null },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: false },

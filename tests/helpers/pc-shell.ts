@@ -186,7 +186,6 @@ export async function startPcShell(opts: {
       return reply(true, withDeveloper(data));
     }
     if (msg.pluginId === 'Narration' && msg.methodName === 'state') return reply(true, { status: 'idle' });
-    if (msg.pluginId === 'Narration' && msg.methodName === 'audioTiming') return reply(true, { hasAudio: false, json: null });
     if (msg.pluginId === 'Store' && msg.methodName === 'entitlements') return reply(true, { pro: false, source: null });
     reply(true, withDeveloper({}));
   });

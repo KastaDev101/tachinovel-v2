@@ -40,7 +40,6 @@ describe('Voice speed test (PC shell)', () => {
       voices: [{ id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'Warm.' }],
       defaultVoice: 'af_heart',
       kokoroEnabled: true,
-      usePCAudio: false,
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
       delivery: { listenEngine: 'pocket-tts', pocketVoice: 'nephis' },

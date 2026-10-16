@@ -31,7 +31,6 @@
 		A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E7DB03FA36592670553932 /* StorePlugin.swift */; };
 		1224BC553AC55342E652EC3D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */; };
 		FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */; };
-		2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */; };
 		ED85BA88CA34208CCC80086F /* MetricDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */; };
 		D98FFF876A4ACCABB4F7B63E /* AppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7A58A6D270B81377101BD7 /* AppUITests.swift */; };
 		254E775E7FE94083E693EE1E /* HybridSpeechEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEBB9D6F6A29E01AC18BD05F /* HybridSpeechEngine.swift */; };
@@ -106,7 +105,6 @@
 		A22FC39B5653B56B38905B74 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		5462AE7AE519E66588E5B106 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioChapterPlayer.swift"; sourceTree = "<group>"; };
-		335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioLibrary.swift"; sourceTree = "<group>"; };
 		E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/MetricDiagnostics.swift"; sourceTree = "<group>"; };
 		EE7A58A6D270B81377101BD7 /* AppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUITests.swift; sourceTree = "<group>"; };
 		BA27D91257E38C5789D4B12A /* AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -220,7 +218,6 @@
 				A2E2EEF90DB7072A418508D9 /* MainViewController.swift */,
 				D5E7DB03FA36592670553932 /* StorePlugin.swift */,
 				D88EA1AD46AE7E3B63FAA5B5 /* AudioChapterPlayer.swift */,
-				335D1F1A89449F6F5D614B7C /* AudioLibrary.swift */,
 				E6F5395B5F4B93B0FFFA2EF8 /* MetricDiagnostics.swift */,
 				DEBB9D6F6A29E01AC18BD05F /* HybridSpeechEngine.swift */,
 				CAEB9E91E7C6E2B3C059CA77 /* KokoroService.swift */,
@@ -396,7 +393,6 @@
 				3B1E0F5B4FEA99BF02856928 /* MainViewController.swift in Sources */,
 				A3FA75D978A202499D037AF6 /* StorePlugin.swift in Sources */,
 				FFE2CE8E544D2434DFBBCEE9 /* AudioChapterPlayer.swift in Sources */,
-				2AA3465CB4472405A40E5004 /* AudioLibrary.swift in Sources */,
 				ED85BA88CA34208CCC80086F /* MetricDiagnostics.swift in Sources */,
 				254E775E7FE94083E693EE1E /* HybridSpeechEngine.swift in Sources */,
 				D52860A1F0B50DD6E08A1492 /* KokoroService.swift in Sources */,

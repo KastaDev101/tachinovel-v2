@@ -32,8 +32,8 @@
 			</array>
 		</dict>
 		<dict>
-			<!-- UserDefaults read and written only by this app (CA92.1): narration listening positions, the
-			     audio folder bookmark, voice settings, debug-only smoke-test flags. -->
+			<!-- UserDefaults read and written only by this app (CA92.1): voice settings, the Diagnostics
+			     folder bookmark, her studio's measured speed, audio download options, debug-only smoke-test flags. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>

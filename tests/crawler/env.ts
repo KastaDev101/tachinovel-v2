@@ -173,7 +173,6 @@ interface NarrationMockState {
 function defaultVoicePrefs(): {
   defaultVoice: string;
   kokoroEnabled: boolean;
-  usePCAudio: boolean;
   carButtons: string;
   novelVoices: Record<string, string>;
   /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
@@ -182,7 +181,6 @@ function defaultVoicePrefs(): {
   return {
     defaultVoice: 'af_heart',
     kokoroEnabled: true,
-    usePCAudio: false,
     carButtons: 'chapters',
     novelVoices: {},
     customVoices: [],
@@ -210,7 +208,6 @@ export class CrawlEnv {
   /** Answers for the next native action sheets/alerts (FIFO); empty → cancel (-1). */
   readonly answers: number[] = [];
   narration: NarrationMockState = { status: 'idle' };
-  audioLinked = true;
   /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings); native state: reset per launch. */
   voicePrefs = defaultVoicePrefs();
   /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
@@ -481,36 +478,6 @@ export class CrawlEnv {
           };
         case 'requestPersonalVoice':
           return { status: 'denied' };
-        case 'audioFolder':
-          return this.audioLinked ? { linked: true, name: 'TachiNovel Audio' } : { linked: false, name: null };
-        case 'pickAudioFolder':
-          // Document picker: the user cancels.
-          this.nativeUi.push({ kind: 'pickFile', detail: 'audio folder (Narration.pickAudioFolder)' });
-          return { linked: this.audioLinked, cancelled: true };
-        case 'unlinkAudioFolder':
-          this.audioLinked = false;
-          return { linked: false };
-        case 'audioLibrary': {
-          if (!this.audioLinked) return { linked: false, novels: [] };
-          const alpha = this.web.demo[0];
-          return {
-            linked: true,
-            novels: alpha
-              ? [
-                  {
-                    key: `demo-library:novel/${alpha.slug}`,
-                    pluginId: 'demo-library',
-                    novelPath: `novel/${alpha.slug}`,
-                    name: alpha.name,
-                    chapters: [1, 2, 3].map((k) => ({ chapterPath: `novel/${alpha.slug}/${k}`, title: `Chapter ${k}`, number: k, hasTiming: true })),
-                    saved: { chapterPath: `novel/${alpha.slug}/2`, seconds: 95 },
-                  },
-                ]
-              : [],
-          };
-        }
-        case 'audioTiming':
-          return { hasAudio: false, json: null };
         case 'voiceSettings': {
           const v = this.voicePrefs;
           const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
@@ -519,7 +486,6 @@ export class CrawlEnv {
             customVoices: v.customVoices,
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
-            usePCAudio: v.usePCAudio,
             carButtons: v.carButtons,
             kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: '006395f', bytes: 93_100_000 },
             apple: { id: 'com.apple.voice.premium.en-US.Zoe', name: 'Zoe (Premium)', language: 'en-US', quality: 'premium', onlyDefault: false },
@@ -530,7 +496,6 @@ export class CrawlEnv {
           const v = this.voicePrefs;
           if (typeof o.defaultVoice === 'string') v.defaultVoice = o.defaultVoice;
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
-          if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
           if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
@@ -628,7 +593,6 @@ export class CrawlEnv {
     const old = this.core as CoreHarness | undefined;
     this.listeners.clear();
     this.narration = { status: 'idle' };
-    this.audioLinked = true;
     this.voicePrefs = defaultVoicePrefs();
     this.answers.length = 0;
     const core = this.newCore();

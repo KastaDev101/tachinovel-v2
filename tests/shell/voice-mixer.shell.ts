@@ -61,7 +61,6 @@ describe('More › Voices › Backup Voice and the voice mixer (PC shell)', () =
       defaultVoice: 'af_heart',
       backupVoice: prefs.backupVoice,
       kokoroEnabled: true,
-      usePCAudio: false,
       kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 108_900_000 },
       apple: { name: 'Zoe (Premium)', quality: 'premium', onlyDefault: false },
       delivery: { listenEngine: 'pocket-tts', pocketVoice: 'nephis', pocketInstalled: true },

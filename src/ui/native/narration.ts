@@ -4,9 +4,7 @@
  * the car, and continues into the next chapter without the WebView. Engines:
  *  - 'speech': Kokoro-82M on device (bundled model, the default voice) with the Apple system voice taking
  *    over sentence by sentence when Kokoro can't keep up; `source` says which one spoke;
- *  - 'audio': chapter audio files: chapters prepared on this iPhone ("Prepare for the drive", `prepared`),
- *    or PC-narrated files from the linked "TachiNovel Audio" folder, only with Settings › Voices › Advanced ›
- *    "Use PC audio when available" (off by default).
+ *  - 'audio': a chapter's audio file on this iPhone (audio downloads, "Prepare for the drive"; `prepared`).
  * In the car: Now Playing + remote commands (CarPlay's Now Playing screen, steering wheel, Siri), see
  * docs/car.md.
  */
@@ -33,7 +31,7 @@ export interface PlayOptions {
   start: { paragraph: number; sentence?: number };
   /** Continue into the next chapter when this one ends. Default true. */
   autoContinue?: boolean;
-  /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
+  /** 'speech' forces speech even when the chapter has audio on this iPhone. */
   engine?: 'audio' | 'speech';
 }
 
@@ -104,8 +102,8 @@ export interface NarrationState {
   chapterName?: string;
   paragraph?: number;
   sentence?: number;
-  /** Manifest segment id (audio). Chapter position and length in seconds at 1×: exact for audio, estimated
-   * from the text for speech (refined as sentences are spoken). */
+  /** Manifest segment id (a chapter's audio file). Chapter position and length in seconds at 1×: exact for audio,
+   * estimated from the text for speech (refined as sentences are spoken). */
   segment?: number;
   position?: number;
   duration?: number;
@@ -122,31 +120,15 @@ export interface NarrationProgress {
   start?: number;
   end?: number;
   hash?: number;
-  /** Speech: reader paragraph index. Audio: the manifest's block index (the UI re-aligns, see highlight.ts). */
+  /** The reader's paragraph index (a chapter's audio file reports it the same way). */
   paragraph: number;
   sentence?: number;
-  /** Audio: manifest segment id + chapter time (s). */
+  /** A chapter's audio file: its manifest segment id + chapter time (s). */
   segment?: number;
   t?: number;
-  /** UTF-16 range: speech = inside the sentence; audio = inside the block's canonical text. */
+  /** Speech: the word being spoken, a UTF-16 range inside the sentence. */
   charStart?: number;
   charEnd?: number;
-}
-
-export interface AudioChapterInfo {
-  chapterPath: string;
-  title: string;
-  number: number | null;
-  hasTiming: boolean;
-}
-
-export interface AudioNovelInfo {
-  key: string;
-  pluginId: string;
-  novelPath: string;
-  name: string;
-  chapters: AudioChapterInfo[];
-  saved: { chapterPath: string; seconds: number } | null;
 }
 
 export interface KokoroVoiceInfo {
@@ -180,7 +162,6 @@ export interface VoiceSettingsInfo {
    * Older builds: absent. */
   backupVoice?: string | null;
   kokoroEnabled: boolean;
-  usePCAudio: boolean;
   carButtons?: CarButtons;
   /** Listen player: speed 0.5–2.5 and "Voice volume" 0–1.5 (persisted, every voice). */
   speed?: number;
@@ -322,13 +303,6 @@ export interface NarrationPlugin {
   state(): Promise<NarrationState>;
   /** Continue a novel where reading/listening stopped (audio first, system voice otherwise). */
   playNovel(opts: { pluginId: string; novelPath: string; novelName: string; coverUrl?: string }): Promise<void>;
-  audioFolder(): Promise<{ linked: boolean; name?: string | null }>;
-  /** Document picker for the iCloud Drive "TachiNovel Audio" folder (kept as a bookmark). */
-  pickAudioFolder(): Promise<{ linked: boolean; name?: string; cancelled?: boolean }>;
-  unlinkAudioFolder(): Promise<{ linked: boolean }>;
-  audioLibrary(opts?: { refresh?: boolean }): Promise<{ linked: boolean; novels: AudioNovelInfo[] }>;
-  /** Timestamp manifest JSON (v1 experiments/tts/manifest.ts) of a narrated chapter, or null. */
-  audioTiming(opts: { pluginId: string; novelPath: string; chapterPath: string }): Promise<{ hasAudio: boolean; json: string | null }>;
   /** Voices: Kokoro voices, defaults, per-novel choice, Apple fallback. */
   voiceSettings(opts?: { pluginId?: string; novelPath?: string }): Promise<VoiceSettingsInfo>;
   setVoiceSettings(opts: {
@@ -337,7 +311,6 @@ export interface NarrationPlugin {
     backupVoice?: string;
     /** voice null = use the default for this novel. */
     novel?: { pluginId: string; novelPath: string; voice: string | null };
-    usePCAudio?: boolean;
     kokoroEnabled?: boolean;
     carButtons?: CarButtons;
     /** 0.5–2.5 (0.05 steps). */

@@ -14,6 +14,9 @@
  *      silently re-enable them). Requested upstream as a ServicesOptions field (docs/roadmap.md).
  *   3. licenses (UI, both flavors): More › About › Open Source Licenses lists THIRD_PARTY_NOTICES.md
  *      (tools/third-party.ts) instead of v1's hand-written list.
+ *   4. pc-narrator (UI, both flavors): v1's PC-narrator screen ("Listen in the Car") and its novel-page card are stubbed
+ *      out (removed 2026-10-16): More shows v2's Listen row (src/ui/native/v1-hooks.ts) and the novel page the drive
+ *      card (drive-ui.ts). v1's core keeps its narration service; nothing in v2 calls it.
  */
 import type * as esbuild from 'esbuild';
 import { existsSync, readFileSync } from 'node:fs';
@@ -103,6 +106,25 @@ export function licensesPatch(licenses: { name: string; license: string; text: s
     why: 'the Licenses page lists THIRD_PARTY_NOTICES.md',
   };
 }
+
+/** The whole file, once (a stub replaces it). */
+const WHOLE_FILE = /^[\s\S]*$/;
+
+/** UI, both flavors: v1's PC-narrator screen and card become empty components (their imports stay valid). */
+export const PC_NARRATOR_PATCHES: Patch[] = [
+  {
+    file: 'ui/screens/narration.tsx',
+    find: WHOLE_FILE,
+    replace: '/** Stubbed out by tools/v1.ts: the PC narrator was removed from v2 (More › Listen opens the Listen player). */\nexport function NarrationScreen() {\n  return null;\n}\n',
+    why: 'the PC narrator\'s Listen in the Car screen is removed',
+  },
+  {
+    file: 'ui/screens/narration-card.tsx',
+    find: WHOLE_FILE,
+    replace: '/** Stubbed out by tools/v1.ts: the PC narrator was removed from v2 (the novel page shows the drive card). */\nexport function NarrationCard(_props: { pluginId: string; path: string; name: string }) {\n  return null;\n}\n',
+    why: 'the PC narrator\'s novel-page card is removed',
+  },
+];
 
 /** Applies patches to v1 files; throws unless every patch matched exactly once. */
 export function v1PatchPlugin(patches: Patch[]): esbuild.Plugin {

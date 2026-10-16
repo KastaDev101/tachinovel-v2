@@ -1,14 +1,13 @@
 /**
  * Small additions to v1 screens without editing v1 (DOM hooks, re-applied when v1 re-renders):
- *  - More: a "Voices" row (Settings › Voices, voices-ui.ts). v1's "Listen in the Car" screen is about the
- *    PC narrator, which is sidelined: unless Settings › Voices › Advanced › "Use PC audio when available"
- *    is on, that row is hidden and a "Listen" row opens the Listen player instead.
+ *  - More: a "Voices" row (Settings › Voices, voices-ui.ts). v1's "Listen in the Car" row (the PC narrator's screen,
+ *    removed: tools/v1.ts stubs it out) is hidden and a "Listen" row opens the Listen player instead.
  *  - About: tap the version to copy it (for bug reports); 7 taps turn Developer options on (dev-flags.ts). While they
  *    are on: a "Developer" row at the bottom of More (developer-ui.ts) and a "Developer Options" switch at the bottom of
  *    About that turns them off.
  *  - Diagnostics: "Share N Crash & Hang Reports" (diagnostics-overlay.ts) and "Voice Speed Test" (voice-speed.ts)
  *    under Copy Full Diagnostics.
- *  - Novel page: "Prepare for the drive" (drive-ui.ts) in place of v1's PC-narrator card (kept with PC audio on).
+ *  - Novel page: "Prepare for the drive" (drive-ui.ts) where v1's PC-narrator card was (stubbed out at build time).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
 import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
@@ -24,9 +23,6 @@ import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
 import { toast, useV1Kit } from './panel.ts';
 import { openVoicesScreen, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
-
-/** More › Developer › Legacy › "Use PC Audio" (off by default). */
-let pcAudio = false;
 
 /** Taps on the version in More › About that turn Developer options on (Android's build-number gesture). */
 export const DEVELOPER_TAPS = 7;
@@ -50,14 +46,13 @@ function addMoreRows(): void {
   const more = document.querySelector('[data-testid="screen-more"]');
   const anchor = more?.querySelector<HTMLElement>('[data-testid="more-narration"]');
   if (!more || !anchor) return;
-  // v1's PC-narrator screen only when PC audio is on; otherwise our Listen row stands in for it.
-  anchor.style.display = pcAudio ? '' : 'none';
+  // v1's PC-narrator row (its screen is stubbed out) stays hidden: it only anchors our rows. Our Listen row stands in.
+  anchor.style.display = 'none';
   let listen = more.querySelector<HTMLElement>('[data-testid="more-listen"]');
-  if (!pcAudio && !listen) {
+  if (!listen) {
     listen = cloneRow(anchor, 'more-listen', 'Listen', openListenPlayer);
     anchor.after(listen);
   }
-  if (listen) listen.style.display = pcAudio ? 'none' : '';
   if (!more.querySelector('[data-testid="more-voices"]')) {
     const voices = cloneRow(anchor, 'more-voices', 'Voices', openVoicesScreen);
     // Its own icon: Listen keeps the headphones (both used to show them).
@@ -175,7 +170,7 @@ export function installV1Hooks(): void {
       hookAboutVersion();
       addAboutDeveloperSwitch();
       addDiagnosticsRow();
-      addDriveCard(pcAudio);
+      addDriveCard();
     } catch (err) {
       console.warn('v1 hooks', err);
     }
@@ -190,7 +185,6 @@ export function installV1Hooks(): void {
   const refresh = (): void =>
     void Narration.voiceSettings()
       .then((v) => {
-        pcAudio = v.usePCAudio === true;
         noteDeveloper(v.developer);
         schedule();
       })

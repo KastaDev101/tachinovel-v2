@@ -10,7 +10,8 @@
  *  - the mini player must not cover v1's bottom UI: the tab bar (it covered all five tabs while
  *    listening), the reader's bottom bar, the novel page's Resume button;
  *  - scrolling content gets room at its end, so nothing stays under the player;
- *  - "Open the player" on Listen in the Car leaves the screen's last rows reachable, with centered text;
+ *  - More lists Listen, never the PC narrator's Listen in the Car (removed 2026-10-16), even for settings an older
+ *    build saved with PC audio on;
  *  - Listen starts on v1's reading line, goes on from the sentence heard last after a stop (until the page is
  *    touched), and a double tap starts one read.
  * Regression test for the UI crawler findings of 2026-10-06 (docs/qa.md).
@@ -36,7 +37,7 @@ const routes: Record<string, Route> = {
 let shell: PcShell;
 const top = () => shell.page.locator('.nav-root > .layer').last();
 /** What the native side saved through Narration.setVoiceSettings (the mock persists it like UserDefaults). */
-const saved: { speed: number; volume: number; usePCAudio: boolean } = { speed: 1, volume: 1, usePCAudio: false };
+const saved: { speed: number; volume: number } = { speed: 1, volume: 1 };
 
 /** What the overlay asked native to read (Narration.play's options), in order. */
 const playCalls = (): Record<string, unknown>[] => shell.pluginCalls.filter((c) => c.pluginId === 'Narration' && c.methodName === 'play').map((c) => c.options);
@@ -118,10 +119,9 @@ describe('narration overlay over v1 screens (PC shell)', () => {
       ],
     }));
     shell.pluginReplies.set('Narration.setVoiceSettings', (o) => {
-      const a = o as { speed?: number; volume?: number; usePCAudio?: boolean };
+      const a = o as { speed?: number; volume?: number };
       if (typeof a.speed === 'number') saved.speed = a.speed;
       if (typeof a.volume === 'number') saved.volume = a.volume;
-      if (typeof a.usePCAudio === 'boolean') saved.usePCAudio = a.usePCAudio;
       return {};
     });
     await shell.page.getByTestId('screen-library').waitFor({ timeout: 20_000 });
@@ -506,31 +506,15 @@ describe('narration overlay over v1 screens (PC shell)', () => {
     await shell.page.getByTestId('car-player').locator('[data-act="close"]').click();
   });
 
-  it('Listen in the Car: "Open the player" is centered and leaves the last rows reachable', async () => {
-    // That screen is the PC narrator's: More lists it only with Settings › Voices › Advanced › "Use PC audio
-    // when available" on (src/ui/native/v1-hooks.ts); otherwise More › Listen opens the player directly.
-    saved.usePCAudio = true;
+  it('More lists Listen, never the PC narrator\'s Listen in the Car (removed), even with PC audio saved by an older build', async () => {
+    // An older build's saved settings still carry usePCAudio: true; nothing reads it any more.
+    shell.pluginReplies.set('Narration.voiceSettings', () => ({ ...saved, usePCAudio: true, defaultVoice: 'af_heart', voices: [{ id: 'af_heart', name: 'Heart', language: 'en-US', gender: 'female', blurb: 'warm' }] }));
     await shell.page.evaluate(() => window.dispatchEvent(new Event('tn-voice-settings')));
     await shell.page.getByTestId('tab-more').click();
-    await shell.page.getByTestId('more-narration').waitFor({ state: 'visible', timeout: 3000 });
-    await shell.page.getByTestId('more-narration').click();
-    await waitStack(2);
-    const button = shell.page.getByTestId('open-car-player');
-    await button.waitFor({ state: 'visible', timeout: 3000 });
-    expect(await button.evaluate((b) => getComputedStyle(b).textAlign)).toBe('center');
-    const covered = await shell.page.evaluate(async () => {
-      const scroller = document.querySelector('.nav-root > .layer:last-child .screen-scroll');
-      if (!scroller) return 'no scroller';
-      scroller.scrollTop = scroller.scrollHeight;
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const leaves = [...scroller.querySelectorAll('*')].filter((e) => e.children.length === 0 && (e as HTMLElement).innerText?.trim());
-      const last = leaves.reduce<Element | null>((a, e) => (!a || e.getBoundingClientRect().bottom > a.getBoundingClientRect().bottom ? e : a), null);
-      if (!last) return 'no content';
-      const r = last.getBoundingClientRect();
-      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return hit?.closest('.tn-open-car') ? `"${(last as HTMLElement).innerText}" is under the button` : '';
-    });
-    expect(covered).toBe('');
+    await shell.page.getByTestId('more-listen').waitFor({ state: 'visible', timeout: 3000 });
+    await shell.page.waitForTimeout(300); // the hooks re-apply on the next frame
+    expect(await shell.page.getByTestId('more-narration').isVisible()).toBe(false);
+    expect(await shell.page.getByTestId('open-car-player').count()).toBe(0);
   });
 
   it('ran without page errors', () => {

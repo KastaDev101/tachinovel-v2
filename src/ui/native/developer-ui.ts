@@ -9,8 +9,7 @@
  *   - Diagnostics: Scene-Reading Test, Mood Test, Voice Report (copied), Now Playing (read once per tap), Voice Models
  *     (expressive-lab.ts: download, delete, free memory), Show Voice Details in the Player;
  *   - Backup Voice: Mix a Voice (voices-ui.ts openMixer);
- *   - Pronunciations: the phonemes field and JSON paste in the pronunciation editor;
- *   - Legacy: Use PC Audio and its Audio Folder.
+ *   - Pronunciations: the phonemes field and JSON paste in the pronunciation editor.
  * Nothing here polls: each number is read when the screen opens or when its row is tapped.
  */
 import { developer, normalizeDeveloper, noteDeveloper, setDeveloper } from './dev-flags.ts';
@@ -21,7 +20,7 @@ import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
 import { chipSummary, copyText, openVoiceTest } from './voice-test.ts';
 import { chevron, esc, panel, segmented, skeleton, switchInput, toast, unavailable } from './panel.ts';
-import { deliverySwitch, normalizeVoiceSettings, openMixer, VOICE_SETTINGS_CHANGED } from './voices-ui.ts';
+import { deliverySwitch, normalizeVoiceSettings, openMixer } from './voices-ui.ts';
 
 type Obj = Record<string, unknown>;
 
@@ -58,7 +57,6 @@ function withoutVoices(raw: VoiceSettingsInfo): VoiceSettingsInfo {
     voices: [],
     defaultVoice: '',
     kokoroEnabled: raw.kokoroEnabled !== false,
-    usePCAudio: raw.usePCAudio === true,
     kokoro: { bundled: false, status: '', ready: false, crashDisabled: false, crashes: 0, revision: null, bytes: null },
     apple: { name: 'System voice', quality: 'default', onlyDefault: true },
     ...(raw.delivery ? { delivery: raw.delivery } : {}),
@@ -85,7 +83,6 @@ export function openDeveloperScreen(): void {
   let mood = '';
   let moodReport: Obj | null = null;
   let nowPlaying = '';
-  let folder = '';
   let busy = new Set<string>();
 
   const studioRows = (): string => {
@@ -147,21 +144,7 @@ export function openDeveloperScreen(): void {
       <div class="card">${row('mix', 'Mix a Voice', 'Blend two Kokoro voices into your own')}</div>
       <div class="sec">Pronunciations</div>
       <div class="card">${toggle('phonemes', 'Phonemes and JSON Paste', 'Kokoro phonemes and pasted lexicons in the pronunciation editor', dev.phonemes)}</div>
-      <div class="sec">Legacy</div>
-      <div class="card" data-testid="dev-legacy">
-        ${toggle('pcaudio', 'Use PC Audio', 'Chapters narrated on the PC (“TachiNovel Audio” folder) play instead of her voice', info.usePCAudio)}
-        ${info.usePCAudio ? row('folder', 'Audio Folder', folder || '…') : ''}
-      </div>
       <p class="note">Turn Developer options off at the bottom of More › About.</p>`;
-    if (info.usePCAudio && !folder) {
-      void Narration.audioFolder()
-        .then((f) => {
-          folder = f.linked ? (f.name ?? 'Linked') : 'Not linked: tap to choose iCloud Drive › TachiNovel Audio';
-          const el = p.body.querySelector('[data-sub="folder"]');
-          if (el) el.textContent = folder;
-        })
-        .catch(() => undefined);
-    }
   };
 
   const loadPack = async (): Promise<void> => {
@@ -260,12 +243,6 @@ export function openDeveloperScreen(): void {
       case 'mix':
         if (info.voices.length === 0) return toast('Kokoro’s voices aren’t available right now');
         return openMixer(info, null, () => void load());
-      case 'folder':
-        void Narration.pickAudioFolder().then(() => {
-          folder = '';
-          return load();
-        });
-        return;
       default:
     }
   });
@@ -279,10 +256,6 @@ export function openDeveloperScreen(): void {
       void setDeveloper(act === 'phonemes' ? { phonemes: el.checked } : act === 'best-of-two' ? { bestOfTwo: el.checked } : { playerDetails: el.checked })
         .catch((err: unknown) => toast(`Couldn’t change it: ${err instanceof Error ? err.message : String(err)}`))
         .then(render);
-    } else if (act === 'pcaudio') {
-      void Narration.setVoiceSettings({ usePCAudio: el.checked })
-        .then(load)
-        .then(() => window.dispatchEvent(new Event(VOICE_SETTINGS_CHANGED)));
     }
   });
 

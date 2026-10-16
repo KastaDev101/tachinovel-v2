@@ -51,7 +51,7 @@ describe('which voice is speaking', () => {
     expect(voiceLabel({ status: 'loading', engine: 'speech' })).toBe('Nephis');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro' } })).toBe('Backup voice');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } })).toBe('Backup voice');
-    expect(voiceLabel({ status: 'playing', engine: 'audio' })).toBe('PC audio');
+    expect(voiceLabel({ status: 'playing', engine: 'audio' })).toBe('Prepared audio');
   });
 
   it('with voice details (Developer options): Kokoro by name; the system voice as a fallback with the reason', () => {
@@ -60,7 +60,7 @@ describe('which voice is speaking', () => {
     expect(voiceLabel({ status: 'loading', engine: 'speech', voice: kokoro }, d)).toBe('Kokoro · Heart');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', fallback: 'queueDry' } }, d)).toBe('System voice (fallback) · Kokoro is catching up');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple' } }, d)).toBe('System voice (fallback)');
-    expect(voiceLabel({ status: 'playing', engine: 'audio' }, d)).toBe('PC audio');
+    expect(voiceLabel({ status: 'playing', engine: 'audio' }, d)).toBe('Prepared audio');
     // The expressive voice that read the sentence (Nephis, the Narrator), never Kokoro's name for it.
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'kokoro', reader: 'Nephis' } }, d)).toBe('Nephis');
     expect(voiceLabel({ status: 'playing', engine: 'speech', voice: { ...kokoro, source: 'apple', reader: 'Nephis' } }, d)).toBe('System voice (fallback)');

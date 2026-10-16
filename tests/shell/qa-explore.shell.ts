@@ -35,7 +35,6 @@ const settings = (o: Record<string, unknown>): unknown => {
     customVoices: [],
     defaultVoice: 'af_heart',
     kokoroEnabled: true,
-    usePCAudio: false,
     carButtons: 'chapters',
     delivery: { ...delivery },
     kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 108_900_000 },

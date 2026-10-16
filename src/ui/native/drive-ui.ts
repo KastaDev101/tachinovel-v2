@@ -1,9 +1,8 @@
 /**
  * "Prepare for the drive" (v2 addition over the unchanged v1 UI; native side: DrivePrep.swift):
  *
- *  - Novel page: a "Prepare for the drive" card in place of v1's PC-narrator "Listen in the car" card
- *    (which stays only with Settings › Voices › Advanced › "Use PC audio when available"). Its line says
- *    what is ready, what is being prepared and why it waits.
+ *  - Novel page: a "Prepare for the drive" card where v1's PC-narrator "Listen in the car" card was (stubbed out at
+ *    build time, tools/v1.ts). Its line says what is ready, what is being prepared and why it waits.
  *  - The sheet: how many chapters (1/3/5/10, from where listening would resume), now or while charging /
  *    on Wi-Fi, live progress, what is on the iPhone and how much space it takes, Remove.
  * Prepared chapters play first (no synthesis, no network), keep sentence highlighting, and are deleted
@@ -59,13 +58,10 @@ function paintCard(card: HTMLElement): void {
   card.querySelector('button')?.setAttribute('aria-label', `Prepare for the Drive: ${text}`);
 }
 
-/** Novel page: the drive card (re-applied by v1-hooks after every v1 render). v1's PC-narrator card shows
- * only with PC audio on. */
-export function addDriveCard(pcAudio: boolean): void {
+/** Novel page: the drive card (re-applied by v1-hooks after every v1 render). */
+export function addDriveCard(): void {
   const screens = [...document.querySelectorAll<HTMLElement>('[data-testid="screen-novel"]')];
   for (const [i, screen] of screens.entries()) {
-    const v1Card = screen.querySelector<HTMLElement>('[data-testid="narration-card"]');
-    if (v1Card) v1Card.style.display = pcAudio ? '' : 'none';
     if (screen.querySelector('[data-testid="drive-card"]')) continue;
     // Only the newest novel screen matches the last novel.get call.
     const ref = lastNovel;

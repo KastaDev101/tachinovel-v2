@@ -69,7 +69,6 @@ final class VoicePreferencesTests: XCTestCase {
         let p = try JSONDecoder().decode(VoicePreferences.self, from: Data(#"{"defaultVoice":"bf_emma"}"#.utf8))
         XCTAssertEqual(p.defaultVoice, "bf_emma")
         XCTAssertTrue(p.kokoroEnabled)
-        XCTAssertFalse(p.usePCAudio, "PC audio is an advanced, opt-in setting")
         XCTAssertEqual(KokoroRoute.from(p.route), .backgroundSafe)
         XCTAssertEqual(p.clampedAhead, 3)
         let round = try JSONDecoder().decode(VoicePreferences.self, from: try JSONEncoder().encode(p))

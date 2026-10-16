@@ -6,18 +6,17 @@
  *   reading line), or on from the sentence heard last when listening stopped and the page wasn't touched since, with the
  *   novel's voice: Kokoro on device (bundled), the system voice standing in sentence by sentence when Kokoro
  *   can't keep up. While listening it becomes "Player" (opens the Listen player). The sentence script is built from exactly what the reader shows (speech-dom.ts, the v1
- *   narration front-end + the pronunciation lexicon). PC-narrated audio only with Settings › Voices ›
- *   Advanced › "Use PC audio when available".
+ *   narration front-end + the pronunciation lexicon). A chapter with audio on this iPhone (downloads,
+ *   prepared for the drive) plays from its file.
  * - While listening: a mini player on every screen (title, voice, play/pause, stop); tapping the title
  *   opens the Listen player (car-mode.ts). In the reader it follows the bars: hidden while reading with the
  *   bars hidden.
- * - Highlighting: the spoken SENTENCE for every source (speech: from the script's canonical ranges;
- *   narrated audio: timestamps re-aligned onto the reader's DOM, highlight.ts).
+ * - Highlighting: the spoken SENTENCE for every source (from the script's canonical ranges; a chapter's audio file
+ *   reports the same sentences it was rendered from).
  * - Follow along (narration-follow.ts): the view keeps the spoken sentence in the middle; a finger in the reader lets
  *   go of it and a "Back to narration" pill brings it back. Back in the app after listening with the phone locked or
  *   in the car, and when the reader shows again, it jumps to the sentence being spoken (switching chapters if
  *   narration went on) and marks it briefly.
- * - More › Listen in the Car (v1 screen): an "Open player" button at the bottom.
  * pluginId/novelPath for a chapter come from observed bridge calls (chapter.get / progress.save).
  */
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
@@ -28,7 +27,7 @@ import type { Lexicon } from '@v1tts/frontend.ts';
 import { blockRange } from '@v1tts/player/dom-blocks.ts';
 import { callCore, observeCalls } from '../capacitor-client.ts';
 import { installCarMode } from './car-mode.ts';
-import { alignChapter, clearPaint, HIGHLIGHT_CSS, paintRange, paintSegment, type ChapterAlignment } from './highlight.ts';
+import { clearPaint, HIGHLIGHT_CSS, paintRange } from './highlight.ts';
 import { Narration, type NarrationProgress, type NarrationState } from './narration.ts';
 import {
   canReattach,
@@ -58,7 +57,7 @@ const STYLE = `
 /* "Listen" joins the reader's bottom tools: they share the row so five fit on a narrow phone. */
 .rd-tools:has(.tn-rd-listen) .rd-tool{width:auto;flex:1 1 0;min-width:0}
 .rd-tools .tn-rd-listen span{white-space:nowrap}
-.tn-player[hidden],.tn-open-car[hidden]{display:none}
+.tn-player[hidden]{display:none}
 /* While the mini player shows, v1's toasts sit above it instead of overlapping it (reader, tabs, novel page):
    at their usual place, or just above the player's top, whichever is higher. */
 html.tn-player-on .toast-host{bottom:max(var(--toast-bottom, calc(var(--safe-bottom) + 12px)), calc(var(--tn-player-top, 0px) + 8px))}
@@ -70,13 +69,9 @@ html.tn-player-on .toast-host{bottom:max(var(--toast-bottom, calc(var(--safe-bot
 .tn-player .tn-title small{display:block;color:#a1a1aa;font-size:${fs(12)}}
 .tn-player button.tn-ic{border:0;background:transparent;color:inherit;width:40px;height:40px;border-radius:20px;display:flex;align-items:center;justify-content:center;flex:none}
 .tn-player button.tn-ic:active{background:rgba(255,255,255,.12)}
-.tn-open-car{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);z-index:59;min-height:54px;border:0;border-radius:16px;
-  padding:12px 16px;box-sizing:border-box;line-height:1.25;
-  background:#a8b4ff;color:#15151a;font:600 ${fs(17)} -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.35)}
-/* Room at the end of the scrolling content for the floating player / button, so nothing stays under them
-   (their height follows Dynamic Type: measured in render). */
-html.tn-player-on .screen-scroll>.scroll-content::after,html.tn-player-on .reader-content::after,
-html.tn-open-car-on [data-testid="screen-narration"] .screen-scroll>.scroll-content::after{content:"";display:block;height:max(72px, calc(var(--tn-float-h, 60px) + 12px))}
+/* Room at the end of the scrolling content for the floating player, so nothing stays under it (its height follows
+   Dynamic Type: measured in render). */
+html.tn-player-on .screen-scroll>.scroll-content::after,html.tn-player-on .reader-content::after{content:"";display:block;height:max(72px, calc(var(--tn-float-h, 60px) + 12px))}
 .rd-body > .tn-speaking,.rd-body .tn-speaking{background:rgba(168,180,255,.16);border-radius:6px;box-shadow:0 0 0 4px rgba(168,180,255,.16)}
 /* Jumped to the narration: the paragraph glows briefly (with v1's "you were here" bar in the margin). */
 @keyframes tn-here{0%,45%{background-color:rgba(168,180,255,.26)}100%{background-color:rgba(168,180,255,0)}}
@@ -162,9 +157,6 @@ export function installNarrationOverlay(): void {
   /** A Listen tap is still starting (lexicon, cover, play): another tap meanwhile would start a second read. */
   let starting = false;
   let paragraphEl: Element | null = null;
-  /** Timestamp alignment per chapter (re-made when the reader re-renders the chapter body). */
-  const alignments = new Map<string, ChapterAlignment | null>();
-  const timingRequests = new Map<string, Promise<string | null>>();
   /** Speech: the reader's own script per chapter (re-made when the reader re-renders the body). */
   const speechScripts = new Map<string, DomScript>();
   // ---- Follow along (narration-follow.ts) ----
@@ -217,13 +209,6 @@ export function installNarrationOverlay(): void {
     `<button type="button" class="tn-title" aria-label="Open the player" aria-describedby="tn-player-hint"><b></b><small></small></button>` +
     `<button type="button" class="tn-ic tn-stop" aria-label="Stop">${ICON_CLOSE}</button><span id="tn-player-hint" hidden>Opens the player</span>`;
 
-  const openCar = document.createElement('button');
-  openCar.className = 'tn-open-car';
-  openCar.type = 'button';
-  openCar.textContent = 'Open the player';
-  openCar.hidden = true;
-  openCar.dataset.testid = 'open-car-player';
-
   const backToNarration = document.createElement('button');
   backToNarration.className = 'tn-follow';
   backToNarration.type = 'button';
@@ -231,7 +216,7 @@ export function installNarrationOverlay(): void {
   backToNarration.dataset.testid = 'back-to-narration';
   backToNarration.innerHTML = `${ICON_FOLLOW}<span>Back to narration</span>`;
 
-  document.body.append(player, openCar, backToNarration);
+  document.body.append(player, backToNarration);
   const toggle = player.querySelector<HTMLButtonElement>('.tn-toggle') as HTMLButtonElement;
   const titleBtn = player.querySelector<HTMLButtonElement>('.tn-title') as HTMLButtonElement;
   const stop = player.querySelector<HTMLButtonElement>('.tn-stop') as HTMLButtonElement;
@@ -261,18 +246,15 @@ export function installNarrationOverlay(): void {
   };
 
   function render(): void {
-    // Only the screen on top counts: a reader or the Listen in the Car screen further down the stack
-    // (covered by a pushed screen) must not put its buttons over the visible one.
+    // Only the screen on top counts: a reader further down the stack (covered by a pushed screen) must not put its
+    // buttons over the visible one.
     const top = topLayer();
     const reader = top?.querySelector<HTMLElement>('[data-testid="screen-reader"]') ?? null;
-    const onNarrationScreen = !!top?.querySelector('[data-testid="screen-narration"]');
     if (reader) readerTool(reader);
     // In the reader the mini player shows and hides with the bars (like the Listen tool itself).
     const barsHidden = !!reader && !reader.classList.contains('bars-visible'); // the reader root is v1's `.reader`
     set.hidden(player, !active() || car.isOpen || barsHidden);
-    set.hidden(openCar, !onNarrationScreen || active() || car.isOpen);
     document.documentElement.classList.toggle('tn-player-on', !player.hidden);
-    document.documentElement.classList.toggle('tn-open-car-on', !openCar.hidden);
     if (!player.hidden) {
       set.bottom(player, playerBottom(top));
       const edge = `${Math.round(window.innerHeight - player.getBoundingClientRect().top)}px`;
@@ -304,10 +286,9 @@ export function installNarrationOverlay(): void {
       // Above the mini player when it shows (bars up), else just above the home indicator (the CSS default).
       set.bottom(backToNarration, player.hidden ? '' : `${Math.round(window.innerHeight - player.getBoundingClientRect().top + 8)}px`);
     }
-    // Room under scrolling content for whichever floating control shows (taller with larger text).
-    const float = !player.hidden ? player : !openCar.hidden ? openCar : null;
-    if (float) {
-      const h = `${float.offsetHeight}px`;
+    // Room under scrolling content for the mini player (taller with larger text).
+    if (!player.hidden) {
+      const h = `${player.offsetHeight}px`;
       if (document.documentElement.style.getPropertyValue('--tn-float-h') !== h) document.documentElement.style.setProperty('--tn-float-h', h);
     }
   }
@@ -427,11 +408,6 @@ export function installNarrationOverlay(): void {
     car.open();
     render();
   });
-  openCar.addEventListener('click', () => {
-    tapFeedback();
-    car.open();
-    render();
-  });
 
   // A drag, not a tap: iOS sends touchmove for a tap's own finger jitter (the bars tap, the Listen tap itself),
   // which would otherwise discard the resume point and let go of the narration for a plain tap.
@@ -477,7 +453,7 @@ export function installNarrationOverlay(): void {
     attached = true;
     const t = targetFromState(state, heard);
     render();
-    if (t) void highlight(t, { force: true, flash: true, allowSwitch: true });
+    if (t) highlight(t, { force: true, flash: true, allowSwitch: true });
   });
 
   /** The reader on the top layer (the one on screen), if any. */
@@ -617,7 +593,7 @@ export function installNarrationOverlay(): void {
     const t = latest ?? pending.target;
     pending = null;
     // After v1's restore (same frame as the body) and its first tick.
-    requestAnimationFrame(() => requestAnimationFrame(() => void highlight(t, { force: true, flash: true })));
+    requestAnimationFrame(() => requestAnimationFrame(() => highlight(t, { force: true, flash: true })));
   }
 
   /** A reader came on screen: a new one (opened, switched to) or one uncovered again (back from Settings, …). */
@@ -639,7 +615,7 @@ export function installNarrationOverlay(): void {
       pending = { target: t, until: Date.now() + 15_000 };
       return;
     }
-    void highlight(t, { force: true, flash: true, allowSwitch: true });
+    highlight(t, { force: true, flash: true, allowSwitch: true });
   }
 
   /** Back in the app: native kept narrating (lock screen, CarPlay) while the WebView slept; catch up with it. */
@@ -658,7 +634,7 @@ export function installNarrationOverlay(): void {
     const t = returnTarget(state, heard, hiddenAt);
     if (!t) return;
     if (!active()) clearAll();
-    void highlight(t, { force: true, flash: true, allowSwitch: true });
+    highlight(t, { force: true, flash: true, allowSwitch: true });
   }
 
   document.addEventListener('visibilitychange', () => {
@@ -673,36 +649,12 @@ export function installNarrationOverlay(): void {
     returnTimer = window.setTimeout(() => void syncOnReturn(), 350);
   });
 
-  async function alignmentFor(p: NarrationProgress, body: HTMLElement): Promise<ChapterAlignment | null> {
-    const cached = alignments.get(p.chapterPath);
-    if (cached !== undefined && (cached === null || cached.body === body)) return cached;
-    const ref = chapters.get(p.chapterPath) ?? (state.pluginId && state.novelPath ? { pluginId: state.pluginId, novelPath: state.novelPath, chapterPath: p.chapterPath } : null);
-    if (!ref) return null;
-    let req = timingRequests.get(p.chapterPath);
-    if (!req) {
-      req = Narration.audioTiming(ref).then((r) => r.json).catch(() => null);
-      timingRequests.set(p.chapterPath, req);
-    }
-    const json = await req;
-    const al = json ? alignChapter(p.chapterPath, body, json) : null;
-    alignments.set(p.chapterPath, al);
-    return al;
-  }
-
-  async function highlight(p: NarrationProgress, opts: FollowOptions = {}): Promise<void> {
+  function highlight(p: NarrationProgress, opts: FollowOptions = {}): void {
     const root = topReader() ?? readerRoot();
     const body = root ? chapterBody(root, p.chapterPath) : null;
     if (!body) {
       clearAll();
       return onMissing(p, opts);
-    }
-    if (p.engine === 'audio' && p.segment !== undefined) {
-      const al = await alignmentFor(p, body);
-      if (al && al.mode !== 'none') {
-        paragraphEl?.classList.remove('tn-speaking');
-        paragraphEl = null;
-        return follow(paintSegment(al, p.segment), p.chapterPath, opts);
-      }
     }
     if (p.engine !== 'audio' && (p.block !== undefined || p.sentence !== undefined)) {
       let dom = speechScripts.get(p.chapterPath);
@@ -723,7 +675,7 @@ export function installNarrationOverlay(): void {
         return follow(paintRange(range, body.children[p.paragraph] ?? null), p.chapterPath, opts);
       }
     }
-    // No sentence position (or audio without usable timestamps): the paragraph.
+    // No sentence position (native's state while a chapter's audio file plays): the paragraph.
     clearPaint();
     const el = body.children[p.paragraph] ?? null;
     if (el === paragraphEl && !opts.force) return;
@@ -744,7 +696,7 @@ export function installNarrationOverlay(): void {
     render();
   });
   void Narration.addListener('progress', (p) => {
-    // Speech paragraphs are the reader's own; audio's are the manifest's blocks (highlight.ts re-aligns those).
+    // The reader's own paragraphs (a chapter's audio file reports them as speech does).
     if (p.engine !== 'audio') lastSpoken = { chapterPath: p.chapterPath, paragraph: p.paragraph, ...(p.sentence !== undefined ? { sentence: p.sentence } : {}), at: Date.now() };
     heard = {
       ...p,
@@ -756,7 +708,7 @@ export function installNarrationOverlay(): void {
     // In the background (locked, CarPlay) nothing is painted: back in the app the reader jumps to where narration is.
     if (document.visibilityState === 'hidden' || returning) return;
     if (pending) return applyPending();
-    void highlight(p);
+    highlight(p);
   });
   void Narration.state()
     .then((s) => {

@@ -70,7 +70,6 @@ describe('More › Voices (PC shell)', () => {
       defaultVoice: 'af_heart',
       backupVoice: null,
       kokoroEnabled: true,
-      usePCAudio: false,
       carButtons: state.carButtons,
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: true },

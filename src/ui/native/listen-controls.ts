@@ -61,7 +61,7 @@ export function fallbackReason(v: Pick<SpeakingVoice, 'fallback' | 'kokoroStatus
  * <reason>".
  */
 export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'>, details = false): string {
-  if (s.engine === 'audio') return 'PC audio';
+  if (s.engine === 'audio') return 'Prepared audio';
   const v = s.voice;
   if (!details) {
     // Nothing spoken yet (no source): she is the one about to read.

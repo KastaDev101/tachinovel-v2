@@ -9,14 +9,14 @@
  *        best first, then All Voices, with ▶ samples);
  *      Pronunciations: Names & Made-Up Words (every novel);
  *      In the Car: Car Buttons (segmented), Prepared Audio.
- *    The test tools, voice packs, her studio switch, the delivery internals, the mixer and PC audio are in More ›
- *    Developer (developer-ui.ts).
+ *    The test tools, voice packs, her studio switch, the delivery internals and the mixer are in More › Developer
+ *    (developer-ui.ts).
  *  - The voice mixer (More › Developer › Mix a Voice; Edit on a mix in All Voices with Developer options on): two voices
  *    and a blend slider, ▶ to listen, saved under a name in "Your Mixes" (on this iPhone). Rules in voice-mix.ts.
  *  - The Listen player's Voice panel for one novel (titled with the novel): her rows and Voice Settings, the novel's
  *    pronunciations (and the Voice Speed Test with Developer options on).
  *  - Pronunciations (global or one novel, "All Novels | This Novel"): word → respelling, and with Developer options
- *    Kokoro phonemes and a pasted lexicon (the format the PC narrator uses, v1 frontend.ts).
+ *    Kokoro phonemes and a pasted lexicon (v1 frontend.ts's lexicon format).
  *
  * Nothing here polls, except her model's download progress while it downloads (once a second).
  */
@@ -43,7 +43,7 @@ import { openVoiceSpeedTest } from './voice-speed.ts';
 
 type Obj = Record<string, unknown>;
 
-/** Window event after a voice setting changed (More › Developer's "Use PC Audio": v1-hooks.ts re-checks it). */
+/** Window event: the voice settings changed (v1-hooks.ts reads them again: Developer options). */
 export const VOICE_SETTINGS_CHANGED = 'tn-voice-settings';
 
 export const SAMPLE_TEXT = 'The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath.';
@@ -78,7 +78,6 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     defaultVoice: isChoice(r.defaultVoice) ? r.defaultVoice : first.id,
     backupVoice: isChoice(r.backupVoice) ? r.backupVoice : null,
     kokoroEnabled: r.kokoroEnabled !== false,
-    usePCAudio: r.usePCAudio === true,
     carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
     speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
     volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,

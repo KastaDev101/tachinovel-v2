@@ -2,8 +2,8 @@
 //  NarrationManifest.swift — the sentence timestamp file next to a narrated chapter's audio
 //  (v1 experiments/tts/manifest.ts, schema 1, kind "tachinovel.narration").
 //
-//  Read for PC-narrated chapters (the "TachiNovel Audio" folder) and written for chapters prepared on the
-//  iPhone ("Prepare for the drive"), so both play through the same audio path with sentence highlighting.
+//  Written and read for chapters with audio on the iPhone (audio downloads, "Prepare for the drive"), so they play
+//  with sentence highlighting.
 //  Segment tuples: [id, block, start, end, t0Ms, t1Ms, hash24, kindCode] (+ v2: reader paragraph).
 //
 

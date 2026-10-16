@@ -7,8 +7,6 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAll } from '../../tools/build.ts';
-import { buildScript, htmlToBlocks } from '@v1tts/frontend.ts';
-import { encodeSegments } from '@v1tts/manifest.ts';
 import type { Route } from '../helpers/native-mock.ts';
 import { type PcShell, startPcShell } from '../helpers/pc-shell.ts';
 
@@ -139,28 +137,14 @@ describe('v1 UI in the v2 shell (PC)', () => {
     shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
   });
 
-  it('highlights the spoken SENTENCE from narrated-audio timestamps (re-aligned onto the reader DOM)', async () => {
-    // What tachinovel-narrator would write next to the .m4a: segments over the chapter's canonical blocks.
-    const ch = await shell.core.call<{ html: string; title: string }>('chapter.get', { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1' });
-    const script = buildScript(htmlToBlocks(ch.html), { title: ch.title });
-    const manifest = {
-      schemaVersion: 1,
-      kind: 'tachinovel.narration',
-      createdAt: '2026-10-06T00:00:00Z',
-      engine: { name: 'test', runtime: 'test', voice: 'af_heart', speed: 1, frontendVersion: script.frontendVersion },
-      chapter: { pluginId: 'demo-library', novelPath: 'novel/alpha', chapterPath: 'novel/alpha/1', title: ch.title },
-      audio: { file: '0001 - Chapter 1.m4a', durationMs: script.segments.length * 1000, codec: 'aac', sampleRate: 24000, bytes: 1 },
-      textHash: script.textHash,
-      blockCount: script.blocks.length,
-      segments: encodeSegments(
-        script,
-        script.segments.map((s) => [s.id * 1000, s.id * 1000 + 900] as const),
-      ),
-    };
-    shell.pluginReplies.set('Narration.audioTiming', () => ({ hasAudio: true, json: JSON.stringify(manifest) }));
-    const target = script.segments.find((s) => /Nobody answered/.test(htmlToBlocks(ch.html)[s.block]?.text.slice(s.start, s.end) ?? ''));
+  it('a chapter’s audio file (downloaded, prepared) highlights the sentence it was rendered from, like live speech', async () => {
+    const play = shell.pluginCalls.find((c) => c.pluginId === 'Narration' && c.methodName === 'play');
+    const script = play?.options.script as { items: { id: number; block: number; start: number; end: number; hash: number; paragraph: number; text: string }[] };
+    const target = script.items.find((i) => i.text.includes('Nobody answered'));
     expect(target).toBeDefined();
-    shell.emitPluginEvent('Narration', 'progress', { chapterPath: 'novel/alpha/1', engine: 'audio', segment: target?.id, paragraph: target?.block, t: 1 });
+    // Native's audio mode: state engine "audio" (prepared), progress as speech with the script's ranges (NarrationController.audioTick).
+    shell.emitPluginEvent('Narration', 'state', { status: 'playing', engine: 'audio', prepared: true, chapterPath: 'novel/alpha/1', chapterName: 'Chapter 1', voice: { kokoroVoice: 'nephis|pack|x', kokoroName: 'Nephis', source: 'kokoro' } });
+    shell.emitPluginEvent('Narration', 'progress', { chapterPath: 'novel/alpha/1', engine: 'speech', source: 'kokoro', prepared: true, segment: target?.id, block: target?.block, start: target?.start, end: target?.end, hash: target?.hash, paragraph: target?.paragraph, t: 1 });
     await expect
       .poll(
         () =>
@@ -171,8 +155,9 @@ describe('v1 UI in the v2 shell (PC)', () => {
         { timeout: 5000 },
       )
       .toMatch(/Nobody answered/);
-    console.log('alignment', await shell.page.evaluate(() => document.documentElement.dataset.tnAlign));
+    await expect.poll(() => shell.page.locator('.tn-player small').textContent(), { timeout: 5000 }).toBe('Nephis · prepared');
     await shell.page.screenshot({ path: path.join(shots, '5-sentence-highlight.png') });
+    shell.emitPluginEvent('Narration', 'state', { status: 'idle' });
   });
 
   it('saved reading progress through the core', async () => {
@@ -193,7 +178,6 @@ describe('v1 UI in the v2 shell (PC)', () => {
       ],
       defaultVoice: 'af_heart',
       kokoroEnabled: true,
-      usePCAudio: false,
       kokoro: { bundled: true, status: 'ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 97_400_000 },
       apple: { name: 'Samantha', quality: 'default', onlyDefault: true },
     }));
@@ -204,14 +188,14 @@ describe('v1 UI in the v2 shell (PC)', () => {
       await shell.page.waitForTimeout(600);
     }
     await shell.page.getByTestId('tab-more').click();
-    // The PC narrator's "Listen in the Car" screen is hidden (PC audio off); "Listen" opens the player.
+    // v1's PC-narrator row ("Listen in the Car", its screen stubbed out at build time) is hidden; "Listen" opens the player.
     await shell.page.getByTestId('more-listen').waitFor({ timeout: 5000 });
     expect(await shell.page.getByTestId('more-narration').isVisible()).toBe(false);
     await shell.page.getByTestId('more-listen').click();
     const player = shell.page.getByTestId('car-player');
     await player.waitFor({ state: 'visible', timeout: 5000 });
     await expect.poll(() => player.textContent(), { timeout: 5000 }).toMatch(/Listen/);
-    expect((await player.textContent()) ?? '').not.toMatch(/TachiNovel Audio|Narrated on the PC/);
+    expect((await player.textContent()) ?? '').not.toMatch(/TachiNovel Audio|Narrated on the PC|audio folder/i);
     await player.locator('[data-act="close"]').click();
     await player.waitFor({ state: 'hidden', timeout: 5000 });
     const row = shell.page.getByTestId('more-voices');
@@ -220,7 +204,7 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const screen = shell.page.getByTestId('screen-voices');
     await screen.waitFor({ timeout: 5000 });
     // Nephis is the app's one voice (2026-10-09); cleanup 1 (2026-10-15): her card, Voice Settings, Pronunciations, In the
-    // Car. The test tools, delivery internals and PC audio are in More › Developer.
+    // Car. The test tools and delivery internals are in More › Developer.
     await expect.poll(() => screen.textContent(), { timeout: 5000 }).toMatch(/Voice[\s\S]*Nephis[\s\S]*Voice Settings[\s\S]*Pronunciations[\s\S]*In the Car/);
     const text = (await screen.textContent()) ?? '';
     expect(text).not.toMatch(/Reads chapters|Kokoro voice|Narrator settings|Voice models|Voice Test|Voice Speed Test|Use PC Audio|Natural Delivery/);
@@ -253,9 +237,9 @@ describe('v1 UI in the v2 shell (PC)', () => {
     const dev = shell.page.locator('[data-testid="screen-developer"]:not([inert])');
     await expect
       .poll(() => dev.textContent(), { timeout: 5000 })
-      .toMatch(/Voice Speed Test[\s\S]*Voice Test[\s\S]*15-Minute Test[\s\S]*Natural Delivery[\s\S]*AI Scene Reading[\s\S]*Studio Sound[\s\S]*Reset to Defaults[\s\S]*Scene-Reading Test[\s\S]*Mood Test[\s\S]*Voice Report[\s\S]*Now Playing[\s\S]*Voice Models[\s\S]*Mix a Voice[\s\S]*Phonemes and JSON Paste[\s\S]*Use PC Audio/);
-    expect(await dev.locator('input[data-act="pcaudio"]').isChecked()).toBe(false);
-    expect((await dev.textContent()) ?? '').not.toContain('Audio Folder');
+      .toMatch(/Voice Speed Test[\s\S]*Voice Test[\s\S]*15-Minute Test[\s\S]*Natural Delivery[\s\S]*AI Scene Reading[\s\S]*Studio Sound[\s\S]*Reset to Defaults[\s\S]*Scene-Reading Test[\s\S]*Mood Test[\s\S]*Voice Report[\s\S]*Now Playing[\s\S]*Voice Models[\s\S]*Mix a Voice[\s\S]*Phonemes and JSON Paste/);
+    // The removed parts leave nothing behind: no Legacy section (PC audio, its folder, the Kokoro Voice Lab).
+    expect((await dev.textContent()) ?? '').not.toMatch(/Legacy|Use PC Audio|Audio Folder|Kokoro Voice Lab/);
     await shell.page.waitForTimeout(450); // slide-in
     await shell.page.screenshot({ path: path.join(shots, '7b-developer.png') });
     await dev.locator('[data-act="close"]').click();
