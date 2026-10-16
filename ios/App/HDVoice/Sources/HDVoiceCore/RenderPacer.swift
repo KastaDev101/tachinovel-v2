@@ -10,12 +10,24 @@ import Foundation
 /// It also keeps the read's numbers for the Voice test report: seconds generated and played, and the duty cycle (the
 /// share of the read's time with at least one of her calls in flight).
 public struct RenderPacer: Sendable, Equatable {
-    /// Seconds banked ahead at which her renders stop: a cool phone, and from "fair" heat on.
-    public static let cushion = 120.0
+    /// Seconds banked ahead at which her renders stop: a cool phone, and from "fair" heat on. 90 s (heat batch 1,
+    /// 2026-10-15; 120 s before): the same gapless read with less audio made ahead that a seek or a stop throws away.
+    public static let cushion = 90.0
     public static let warmCushion = 60.0
     /// How far below the cushion the bank must drop before she renders again (cool, warm).
     public static let refill = 30.0
     public static let warmRefill = 20.0
+
+    /// Her renders at background priority (heat batch 1, 2026-10-15): once more than `relaxedAbove` seconds are banked
+    /// ahead of playback they run at `.utility` (the efficient cores and clocks: the same sound, less heat), and at
+    /// `.userInitiated` again below `urgentBelow`. Hysteresis, so the priority doesn't flip from call to call.
+    public static let relaxedAbove = 30.0
+    public static let urgentBelow = 15.0
+
+    /// The next render's priority: relaxed (true) or not, from the last one's and the seconds banked now.
+    public static func relaxed(was: Bool, buffered: Double) -> Bool {
+        was ? buffered >= urgentBelow : buffered > relaxedAbove
+    }
 
     /// ProcessInfo.ThermalState raw values: 0 nominal, 1 fair, 2 serious, 3 critical.
     public static func warm(_ thermal: Int) -> Bool { thermal >= 1 }

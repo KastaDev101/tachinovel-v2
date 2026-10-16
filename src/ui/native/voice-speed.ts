@@ -10,6 +10,7 @@
  */
 import type { PluginListenerHandle } from '@capacitor/core';
 import { ExpressiveVoice } from './expressive-lab.ts';
+import { isDeveloper } from './dev-flags.ts';
 import { copyText } from './voice-test.ts';
 import { esc, panel, toast } from './voices-ui.ts';
 
@@ -34,6 +35,11 @@ export function speedLines(r: Obj): Line[] {
     return [{ ok: false, text: why === 'stopped' ? 'The speed test was stopped.' : `Speed test not run: ${why}` }];
   }
   const lines: Line[] = [];
+  // The steady-state run (Developer › "Start With 60 s Buffered"): the calls get what Listen's get once it is going.
+  const banked = num(r.bankedAtStart);
+  if (r.mode === 'steady' && banked > 0) {
+    lines.push({ ok: true, text: `Steady state: started with ${Math.round(banked)} s already buffered, the way Listen runs once it is going.` });
+  }
   const breaks = num(r.breaks);
   const breakSeconds = num(r.breakSeconds);
   lines.push(
@@ -82,6 +88,8 @@ export function speedLines(r: Obj): Line[] {
   if (Number.isFinite(num(slow.x))) {
     lines.push({ ok: num(slow.x) >= 1, text: `Slowest call: #${num(slow.n)} at ${num(slow.x).toFixed(1)}× real time (${num(slow.audioS).toFixed(1)} s of audio).` });
   }
+  const work = workLine(r, calls);
+  if (work) lines.push(work);
   const device = obj(r.device);
   const heat = `${str(device.thermalStart, '?')} → ${str(device.thermalEnd, '?')}`;
   lines.push({ ok: device.thermalEnd === 'nominal' || device.thermalEnd === 'fair', text: `Phone heat: ${heat}${device.lowPower === true ? ', Low Power Mode on' : ''}.` });
@@ -103,6 +111,22 @@ function dewindLine(chain: Obj, studio: Obj): Line | null {
   return Number.isFinite(calls) && n >= calls
     ? { ok: true, text: `${what} ran on all ${calls} calls.` }
     : { ok: false, text: `${what} ran on ${n} of ${Number.isFinite(calls) ? calls : '?'} calls${why}.` };
+}
+
+/** The work behind the sound (heat batch 1): lead-ins, takes, how much Mimi decoded against what plays, and calls at
+ *  background priority; null for a report without it. */
+function workLine(r: Obj, calls: number): Line | null {
+  const w = obj(r.work);
+  const per = num(w.latentsPerPlayed);
+  if (!Number.isFinite(per)) return null;
+  const n = Number.isFinite(calls) ? calls : '?';
+  const leadIns = num(w.leadIns);
+  const relaxed = num(w.relaxedCalls);
+  const background = relaxed > 0 ? `, ${relaxed} at background priority` : '';
+  return {
+    ok: true,
+    text: `Work: lead-ins on ${Number.isFinite(leadIns) ? leadIns : 0} of ${n} calls, ${num(w.takes)} takes; Mimi decoded ${per.toFixed(1)}× the audio played${background}.`,
+  };
 }
 
 /** Where the time went: each stage's total and its share of a second of audio. */
@@ -190,6 +214,12 @@ export function openVoiceSpeedTest(): void {
       ${top ? `<div class="card">${plain(top)}</div>` : ''}
       <p class="note">Renders a 45-second passage with Nephis exactly like Listen does, without playing it, and times every step. It takes about a minute; Listen stops while it runs.</p>
       <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-speed-run">${running ? 'Stop' : report ? 'Run It Again' : 'Run the Speed Test'}</button>
+      ${
+        isDeveloper() && !running
+          ? `<button type="button" class="btn alt" data-act="steady" data-testid="voice-speed-steady">Start With 60 s Buffered</button>
+             <p class="note">Steady state: as if a minute of audio were already waiting, the way Listen runs once it is going (a lead-in and a speech check on every call, background priority).</p>`
+          : ''
+      }
       <p class="note" data-testid="voice-speed-progress" aria-live="polite">${esc(progress)}</p>
       ${result}`;
   };
@@ -207,7 +237,7 @@ export function openVoiceSpeedTest(): void {
     void ExpressiveVoice.voiceSpeedTestPlay({ stop: true }).catch(() => undefined);
   };
 
-  const run = async (): Promise<void> => {
+  const run = async (banked = 0): Promise<void> => {
     stopPlaying();
     running = true;
     report = null;
@@ -223,7 +253,7 @@ export function openVoiceSpeedTest(): void {
       listener = await ExpressiveVoice.addListener('voiceSpeedTest', (e: Obj) => {
         if (typeof e.text === 'string') say(e.text);
       }).catch(() => null);
-      report = await ExpressiveVoice.voiceSpeedTest();
+      report = await ExpressiveVoice.voiceSpeedTest(banked > 0 ? { banked } : undefined);
     } catch (err) {
       report = { ran: false, error: err instanceof Error ? err.message : String(err) };
     } finally {
@@ -248,6 +278,7 @@ export function openVoiceSpeedTest(): void {
     if (!el) return;
     const act = el.dataset.act;
     if (act === 'run' && !running) void run();
+    if (act === 'steady' && !running) void run(60);
     if (act === 'stop' && running) {
       say('Stopping after the current part…');
       void ExpressiveVoice.voiceSpeedTestStop().catch(() => undefined);

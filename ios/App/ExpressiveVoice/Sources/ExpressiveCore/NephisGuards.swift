@@ -307,6 +307,22 @@ public enum ModelOutput {
     public static func floats(_ a: MLMultiArray) -> [Float] {
         MLShapedArray<Float>(converting: a).scalars
     }
+
+    /// `floats`, read straight from the buffer when the array is Float32 laid out densely in shape order (the de-wind
+    /// network's outputs, many times a second: heat batch 1); through `floats` otherwise. The same values either way.
+    public static func denseFloats(_ a: MLMultiArray) -> [Float] {
+        guard a.dataType == .float32 else { return floats(a) }
+        var expected = 1
+        for (dim, stride) in zip(a.shape.map(\.intValue), a.strides.map(\.intValue)).reversed() {
+            if dim > 1, stride != expected { return floats(a) }
+            expected *= dim
+        }
+        let n = a.count
+        let dense: [Float]? = a.withUnsafeBufferPointer(ofType: Float.self) { p in
+            p.count >= n ? Array(UnsafeBufferPointer(rebasing: p.prefix(n))) : nil
+        }
+        return dense ?? floats(a)
+    }
 }
 
 extension NephisFlow {

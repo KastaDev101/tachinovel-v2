@@ -2,8 +2,8 @@
  * Phone QA loop (opt-in, personal use): More › About › Diagnostics › "Diagnostics Folder" lets the user
  * pick a folder once (e.g. iCloud Drive › TachiNovel-Diagnostics; a security-scoped bookmark, no
  * iCloud entitlement needed). The native side (DiagnosticsFolder.swift) then mirrors the app log, MetricKit
- * crash/hang reports and this module's short UI event trail there at launch, every few minutes (every minute
- * while a voice works) and when the app goes to the background, so they sync to the PC. A folder that can't
+ * crash/hang reports and this module's short UI event trail there at launch, every few minutes (every 10 minutes
+ * while a voice works), when a voice stops and when the app goes to the background, so they sync to the PC. A folder that can't
  * be reached any more shows "Disconnected – tap to reconnect" on the row, and a toast once per launch. "Report a Problem" (the same row's menu, or shaking
  * the phone) writes a small bundle: a description, a screenshot, the log tail, versions and the route.
  *

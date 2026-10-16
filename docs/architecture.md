@@ -117,6 +117,11 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   Diagnostics "Recent problems" and in the sent/copied diagnostics. A "Share Crash & Hang Reports" button
   on that screen (`src/ui/native/diagnostics-overlay.ts`) shares the full reports as one JSON file. Nothing
   is uploaded.
+- **Diagnostics folder (opt-in, personal):** `DiagnosticsFolder.swift` mirrors `logs/` and the app's own os_log
+  lines (read incrementally, `NativeLogCache`) into a folder the user picked: at launch, every 5 minutes (every 10
+  while a voice works), when a voice stops and when the app leaves. Each Listen session ends with a small
+  `listen-<date>-<time>.json` (`ListenReport.swift`: time heard, voice and pack, her calls' work, breaks, heat,
+  battery), and the Voice Speed Test writes `speedtest-…json/.wav`.
 
 ## 4. Security model
 - **UI:** v1's strict CSP (script hash, `connect-src 'none'`, no frames/objects) plus `capacitor:` images;

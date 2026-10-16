@@ -6,43 +6,54 @@ final class RenderPacerTests: XCTestCase {
     func testHoldsAtTheCushionAndResumesOnlyBelowTheRefillLine() {
         var p = RenderPacer()
         XCTAssertFalse(p.hold(buffered: 30, thermal: 0, now: 1))
-        XCTAssertFalse(p.hold(buffered: 119.9, thermal: 0, now: 2))
-        XCTAssertTrue(p.hold(buffered: 120, thermal: 0, now: 3), "the cushion met: her renders stop")
+        XCTAssertFalse(p.hold(buffered: 89.9, thermal: 0, now: 2))
+        XCTAssertTrue(p.hold(buffered: 90, thermal: 0, now: 3), "the cushion met: her renders stop")
         // Hysteresis: a sentence played (the bank just under the cushion) is not a reason to render again.
-        XCTAssertTrue(p.hold(buffered: 110, thermal: 0, now: 13))
-        XCTAssertTrue(p.hold(buffered: 90, thermal: 0, now: 33))
-        XCTAssertFalse(p.hold(buffered: 89.9, thermal: 0, now: 34), "below cushion - refill: she renders again")
+        XCTAssertTrue(p.hold(buffered: 80, thermal: 0, now: 13))
+        XCTAssertTrue(p.hold(buffered: 60, thermal: 0, now: 33))
+        XCTAssertFalse(p.hold(buffered: 59.9, thermal: 0, now: 34), "below cushion - refill: she renders again")
         XCTAssertEqual(p.holds, 1)
         XCTAssertEqual(p.heldSeconds, 31, accuracy: 1e-9)
         // And keeps rendering until the cushion is met again.
-        XCTAssertFalse(p.hold(buffered: 100, thermal: 0, now: 40))
-        XCTAssertTrue(p.hold(buffered: 121, thermal: 0, now: 45))
+        XCTAssertFalse(p.hold(buffered: 70, thermal: 0, now: 40))
+        XCTAssertTrue(p.hold(buffered: 91, thermal: 0, now: 45))
         XCTAssertEqual(p.holds, 2)
     }
 
     func testAWarmPhoneKeepsASmallerCushion() {
-        XCTAssertEqual(RenderPacer.target(thermal: 0), 120)
+        XCTAssertEqual(RenderPacer.target(thermal: 0), 90)
         XCTAssertEqual(RenderPacer.target(thermal: 1), 60, "from fair heat on")
         XCTAssertEqual(RenderPacer.target(thermal: 2), 60)
-        XCTAssertEqual(RenderPacer.resumeBelow(thermal: 0), 90)
+        XCTAssertEqual(RenderPacer.resumeBelow(thermal: 0), 60)
         XCTAssertEqual(RenderPacer.resumeBelow(thermal: 1), 40)
         var p = RenderPacer()
         XCTAssertFalse(p.hold(buffered: 70, thermal: 0, now: 1))
         XCTAssertTrue(p.hold(buffered: 70, thermal: 1, now: 2), "the phone warmed: 70 s banked is already enough")
         XCTAssertEqual(p.lastTarget, 60)
-        // Cooling down while holding: the larger cushion's refill line applies at once.
-        XCTAssertFalse(p.hold(buffered: 70, thermal: 0, now: 3))
+        // Cooling down while holding: the larger cushion's refill line applies at once (70 s is over it: still held).
+        XCTAssertTrue(p.hold(buffered: 70, thermal: 0, now: 3))
+        XCTAssertFalse(p.hold(buffered: 59, thermal: 0, now: 4))
     }
 
     func testRecheckFollowsPlaybackWithinBounds() {
-        XCTAssertEqual(RenderPacer.recheck(buffered: 92, thermal: 0), 2, accuracy: 1e-9)
-        XCTAssertEqual(RenderPacer.recheck(buffered: 120, thermal: 0), 5, "never later than 5 s")
-        XCTAssertEqual(RenderPacer.recheck(buffered: 80, thermal: 0), 0.5, "never sooner than 0.5 s")
+        XCTAssertEqual(RenderPacer.recheck(buffered: 62, thermal: 0), 2, accuracy: 1e-9)
+        XCTAssertEqual(RenderPacer.recheck(buffered: 90, thermal: 0), 5, "never later than 5 s")
+        XCTAssertEqual(RenderPacer.recheck(buffered: 50, thermal: 0), 0.5, "never sooner than 0.5 s")
+    }
+
+    func testBackgroundPriorityOnlyWithPlentyBankedWithHysteresis() {
+        XCTAssertFalse(RenderPacer.relaxed(was: false, buffered: 0))
+        XCTAssertFalse(RenderPacer.relaxed(was: false, buffered: 30), "at 30 s still user-initiated")
+        XCTAssertTrue(RenderPacer.relaxed(was: false, buffered: 30.5), "over 30 s banked: background priority")
+        XCTAssertTrue(RenderPacer.relaxed(was: true, buffered: 20), "stays relaxed down to 15 s")
+        XCTAssertTrue(RenderPacer.relaxed(was: true, buffered: 15))
+        XCTAssertFalse(RenderPacer.relaxed(was: true, buffered: 14.9), "under 15 s: user-initiated again")
+        XCTAssertFalse(RenderPacer.relaxed(was: false, buffered: 20), "and stays so until over 30 s again")
     }
 
     func testReleaseStopsAHoldAtOnce() {
         var p = RenderPacer()
-        XCTAssertTrue(p.hold(buffered: 130, thermal: 0, now: 0))
+        XCTAssertTrue(p.hold(buffered: 100, thermal: 0, now: 0))
         p.release(now: 4)
         XCTAssertFalse(p.holding)
         XCTAssertEqual(p.held(at: 10), 4, accuracy: 1e-9)

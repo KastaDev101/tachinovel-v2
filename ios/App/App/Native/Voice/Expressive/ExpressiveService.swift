@@ -870,7 +870,9 @@ final class ExpressiveService {
         }
         let sentinel = self.sentinel
         let context = "nephis \(line.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
-        Task.detached(priority: .userInitiated) { [weak self] in
+        // Background priority while playback has plenty banked (ExpressiveLine.relaxed, RenderPacer.relaxed): the same
+        // work on the efficient cores and clocks. The call's own tasks (generation, decode, studio, de-wind) inherit it.
+        Task.detached(priority: line.relaxed == true ? .utility : .userInitiated) { [weak self] in
             sentinel.begin(context)
             let result: Result<ExpressiveAudio, Error>
             // This call's own report (the Voice test's log: studio used or why not, rate, mood, endings). Read from
@@ -945,6 +947,20 @@ final class ExpressiveService {
         var studioSlowestX: Double?
         var studioUnits: String?
         var studioOff: String?
+        /// Heat counters (heat batch 1): Mimi's latents decoded by the read's stream decoder, the analysis (scratch)
+        /// decoder and the end guard's decoder; the de-wind cleaner's calls and time, split into its network's predictions,
+        /// the network's inputs and outputs, and the signal processing; calls rendered at background priority.
+        var streamLatents = 0
+        var scratchLatents = 0
+        var tailLatents = 0
+        var dewindCalls = 0
+        var dewindMs = 0.0
+        var dewindPredictMs = 0.0
+        var dewindIOMs = 0.0
+        var dewindDSPMs = 0.0
+        var relaxedCalls = 0
+        /// The last call rendered at user-initiated priority (the extras rule: a relaxed call's pace says nothing).
+        var lastUrgent: NephisFlowSynth.Report?
 
         static let logLimit = 400
 
@@ -1002,7 +1018,9 @@ final class ExpressiveService {
         memoryHold.worked(at: Date())
         flowStats.log.append(FlowStats.Call(n: flowStats.calls + 1, atMs: flowStats.audioMs, report: r))
         if flowStats.log.count > FlowStats.logLimit { flowStats.log.removeFirst(flowStats.log.count - FlowStats.logLimit) }
-        if let x = r.studioX {
+        // A call rendered at background priority runs slower on purpose: its studio speed says nothing about what the
+        // phone can do, so it never lowers the speed StudioBudget plans with.
+        if let x = r.studioX, !r.relaxed {
             flowStats.studioLastX = x
             flowStats.studioSlowestX = min(flowStats.studioSlowestX ?? x, x)
             recordStudioSpeed(x)
@@ -1035,7 +1053,17 @@ final class ExpressiveService {
         flowStats.analysisMs += r.analysisMs
         flowStats.recognizeMs += r.recognizeMs
         flowStats.decodeMs += r.decodeMs
+        flowStats.streamLatents += r.streamLatents
+        flowStats.scratchLatents += r.scratchLatents
+        flowStats.tailLatents += r.tailLatents
+        flowStats.dewindCalls += r.dewindPasses > 0 ? 1 : 0
+        flowStats.dewindMs += r.dewindMs
+        flowStats.dewindPredictMs += r.dewindPredictMs
+        flowStats.dewindIOMs += r.dewindIOMs
+        flowStats.dewindDSPMs += r.dewindDSPMs
+        flowStats.relaxedCalls += r.relaxed ? 1 : 0
         flowStats.last = r
+        if !r.relaxed { flowStats.lastUrgent = r }
     }
 
     /// A studio bypass reason for counting, its word before any colon: "failed: <the error>" counts as "failed",
@@ -1054,7 +1082,7 @@ final class ExpressiveService {
     /// One call of the log, for the report.
     private static func callJSON(_ c: FlowStats.Call) -> [String: Any] {
         let r = c.report
-        return [
+        var out: [String: Any] = [
             "n": c.n, "atS": r1(c.atMs / 1000), "seconds": r1(r.audioMs / 1000), "engine": "nephis", "mood": r.mood, "rate": r.sampleRate,
             "studio": studioWord(r), "reason": r.bypassReason.map { String($0.prefix(160)) } ?? NSNull(),
             "pieces": r.pieces, "endedAudible": r.piecesEndingAudible, "tailsExtended": r.tailsExtended,
@@ -1070,6 +1098,16 @@ final class ExpressiveService {
             // The de-wind cleaner on the call (chain "dewind"): its passes (0: it didn't run), time, and why not when asked.
             "dewind": r.dewindPasses, "dewindMs": r1(r.dewindMs), "dewindNote": r.dewindNote.map { String($0.prefix(160)) } ?? NSNull(),
         ]
+        // Heat counters (heat batch 1): the call's work (takes, lead-in, recognition, Mimi's latents per decoder, the de-wind
+        // cleaner's split) and whether it ran at background priority.
+        out["takes"] = r.takes
+        out["leadIn"] = r.leadIn
+        out["listened"] = r.listened
+        out["recognizeMs"] = r1(r.recognizeMs)
+        out["latents"] = ["stream": r.streamLatents, "scratch": r.scratchLatents, "tail": r.tailLatents]
+        out["dewindSplitMs"] = ["predict": r1(r.dewindPredictMs), "io": r1(r.dewindIOMs), "dsp": r1(r.dewindDSPMs)]
+        out["relaxed"] = r.relaxed
+        return out
     }
 
     /// "Turn Nephis back on": her model may be used again at once; a read going on picks her up from the sentence
@@ -1300,6 +1338,7 @@ final class ExpressiveService {
                                       "guardCalls": f.guardCalls]
         out["endings"] = endings
         out["callLog"] = f.log.map(Self.callJSON)
+        out["work"] = Self.workJSON(f)
         // Breaks a listener heard in the last Listen session: waits for her, and sentences another voice read.
         if let s = NarrationController.shared.speechEngine.snapshot {
             out["listen"] = ["breaks": s.underruns, "breakSeconds": Self.r1(s.waitedSeconds), "otherVoiceSentences": s.appleSentences,
@@ -1317,6 +1356,22 @@ final class ExpressiveService {
             out["last"] = last
         }
         return out
+    }
+
+    /// Where the work went in this session (heat batch 1): Mimi's latents per decoder against the latents played, the
+    /// extras (takes, lead-ins, recognition), the de-wind cleaner's time split, and the calls at background priority.
+    static func workJSON(_ f: FlowStats) -> [String: Any] {
+        let played = max(1, f.streamLatents)
+        let audio = max(1, f.audioMs)
+        return [
+            "calls": f.calls, "takes": f.takes, "leadIns": f.leadIns, "listened": f.listened, "recognizeMs": r1(f.recognizeMs),
+            "latents": ["stream": f.streamLatents, "scratch": f.scratchLatents, "tail": f.tailLatents,
+                        // Mimi's latents decoded per latent played (1.0 = only the sound played was decoded).
+                        "perPlayed": r2(Double(f.streamLatents + f.scratchLatents + f.tailLatents) / Double(played))] as [String: Any],
+            "dewind": ["calls": f.dewindCalls, "ms": r1(f.dewindMs), "predictMs": r1(f.dewindPredictMs), "ioMs": r1(f.dewindIOMs),
+                       "dspMs": r1(f.dewindDSPMs), "perAudioSecond": r2(f.dewindMs / audio)] as [String: Any],
+            "relaxedCalls": f.relaxedCalls,
+        ]
     }
 
     static func thermalName() -> String {

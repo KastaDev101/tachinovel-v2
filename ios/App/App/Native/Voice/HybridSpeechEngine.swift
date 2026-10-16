@@ -67,6 +67,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
     private var chapterBrief: String?
     private var briefAsked = false
+    /// The director's answers kept across new reads of a chapter (a seek, a restart: heat batch 1), and how many
+    /// sentences into the brief's read this read starts (its part numbers).
+    private var directorCache = DirectorCache()
+    private var briefOffset = 0
     /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling, "" = as written];
     /// Heteronyms.pocketText uses them where its rules only guessed.
     private var sceneSenses: [Int: [String: String]] = [:]
@@ -141,6 +145,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var paceItem: DispatchWorkItem?
     /// When her last call's latents were ready (the pacing gap counts from there).
     private var lastFlowDone: Date?
+    /// Her renders at background priority (heat batch 1, RenderPacer.relaxed: over 30 s banked, back under 15 s).
+    private var relaxedRenders = false
     /// Her cushion (heat plan 2026-10-13): renders stop once it is banked and start again when playback has drawn it
     /// down (RenderPacer); also the read's generated/played seconds and duty cycle for the Voice test report.
     private var pacer = RenderPacer()
@@ -256,6 +262,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         paceItem?.cancel()
         paceItem = nil
         lastFlowDone = nil
+        relaxedRenders = false
         standIn = nil
         flowBusy = false
         flowNext = -1
@@ -263,6 +270,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         sceneSenses = [:]
         chapterBrief = nil
         briefAsked = false
+        briefOffset = 0
         sceneNext = 0
         sceneBusy = false
         chapterStarts = []
@@ -429,6 +437,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         waitBegan = nil
         let seconds = Date().timeIntervalSince(began)
         log.notice("voice: sentence \(i) after a \(seconds, format: .fixed(precision: 2)) s wait")
+        ListenReport.shared.breakEnded(seconds: seconds)
     }
 
     // MARK: - Kokoro
@@ -509,6 +518,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 // audio waits for the one before it (2026-10-13). The studio also gives up on a call it can't finish at
                 // real time (NephisFlowSynth, StudioPace).
                 line.studio = Self.studioFor(characters: text.count, ahead: bufferedAhead())
+                // Background priority while plenty is banked (same sound, less heat); user-initiated again when it runs low.
+                relaxedRenders = RenderPacer.relaxed(was: relaxedRenders, buffered: bufferedAhead())
+                if relaxedRenders { line.relaxed = true }
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
             }
@@ -636,32 +648,84 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if !briefAsked {
             briefAsked = true
             let g = gen
-            SceneReader.shared.brief(segments.map(sceneSentence)) { [weak self] b in
-                guard let self, g == self.gen else { return }
-                self.chapterBrief = b
+            let count = segments.count
+            let chapterEnd = DirectorCache.chapterEnd(segments.map(\.kokoroText))
+            // This chapter read before (a seek, a restart): its brief from then, no model calls.
+            if let kept = directorCache.brief(end: chapterEnd, sentences: count) {
+                chapterBrief = kept.text
+                briefOffset = kept.offset
+            } else {
+                SceneReader.shared.brief(segments.map(sceneSentence)) { [weak self] b in
+                    guard let self, g == self.gen else { return }
+                    self.chapterBrief = b
+                    if let b { self.directorCache.store(brief: b, end: chapterEnd, sentences: count) }
+                }
             }
         }
         let playing = scheduler?.playing ?? 0
         guard sceneNext <= playing + 2 * Self.sceneWindow + 12 else { return }
         let start = sceneNext
         let end = min(segments.count, start + Self.sceneWindow)
+        // Every sentence of the window read by the director before (this chapter, an earlier read): its answers again.
+        if let kept = keptMoods(start..<end) {
+            for (k, m) in kept.enumerated() { sceneMoods[start + k] = m }
+            sceneNext = end
+            askSenses(start..<end, gen: gen)
+            return pumpScene()
+        }
         let context = segments[max(0, start - Self.sceneContext)..<start].map(sceneSentence)
         let window = segments[start..<end].map(sceneSentence)
         sceneBusy = true
         let g = gen
-        SceneReader.shared.read(context: context, window: window, brief: chapterBrief, part: start / SceneReader.briefPart + 1) { [weak self] moods in
+        SceneReader.shared.read(context: context, window: window, brief: chapterBrief, part: (start + briefOffset) / SceneReader.briefPart + 1) { [weak self] moods in
             guard let self, g == self.gen else { return }
             self.sceneBusy = false
-            if let moods { for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) { self.sceneMoods[start + k] = m } }
-            self.sceneNext = end
-            if self.listenEngine == .pocketTts {
-                let asks = (start..<end).map { (index: $0, text: self.segments[$0].kokoroText, before: $0 > 0 ? self.segments[$0 - 1].kokoroText : "") }
-                SceneReader.shared.senses(asks) { [weak self] senses in
-                    guard let self, g == self.gen else { return }
-                    self.sceneSenses.merge(senses) { _, new in new }
+            if let moods {
+                for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) && self.segments.indices.contains(start + k) {
+                    self.sceneMoods[start + k] = m
+                    self.directorCache.store(mood: m, text: self.segments[start + k].kokoroText, before: self.sceneBefore(start + k))
                 }
             }
+            self.sceneNext = end
+            self.askSenses(start..<end, gen: g)
             self.pumpScene()
+        }
+    }
+
+    /// The sentence before sentence i in this read; nil for the read's first (its context isn't in the read).
+    private func sceneBefore(_ i: Int) -> String? {
+        i > 0 && segments.indices.contains(i - 1) ? segments[i - 1].kokoroText : nil
+    }
+
+    /// The director's moods for these sentences from an earlier read of the chapter, when it read every one of them.
+    private func keptMoods(_ range: Range<Int>) -> [String]? {
+        var out: [String] = []
+        for i in range {
+            guard let m = directorCache.mood(segments[i].kokoroText, before: sceneBefore(i)), SceneMood.moods.contains(m) else { return nil }
+            out.append(m)
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// How to say the homographs of these sentences (Pocket TTS only): an earlier read's answers where the director was
+    /// asked, the on-device model for the rest (it is only asked about sentences that hold one).
+    private func askSenses(_ range: Range<Int>, gen g: Int) {
+        guard listenEngine == .pocketTts else { return }
+        var asks: [(index: Int, text: String, before: String)] = []
+        for i in range where segments.indices.contains(i) {
+            if let known = directorCache.senses(segments[i].kokoroText, before: sceneBefore(i)) {
+                sceneSenses[i] = known
+            } else {
+                asks.append((index: i, text: segments[i].kokoroText, before: sceneBefore(i) ?? ""))
+            }
+        }
+        guard !asks.isEmpty else { return }
+        SceneReader.shared.senses(asks) { [weak self] senses in
+            guard let self, g == self.gen else { return }
+            self.sceneSenses.merge(senses) { _, new in new }
+            for (i, answer) in senses where self.segments.indices.contains(i) {
+                self.directorCache.store(senses: answer, text: self.segments[i].kokoroText, before: self.sceneBefore(i))
+            }
         }
     }
 
@@ -725,8 +789,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // (Voice test 2026-10-09: fair to serious in 90 s with redos and lead-ins; Kasta wants it a tad cooler).
         if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
         // Her last call came in under 1.5× real time (a busy or warm phone): the lightest calls until she is faster
-        // again, so the margin that keeps the read gapless is never spent on extras.
-        if let last = ExpressiveService.shared.flowStats.last, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
+        // again, so the margin that keeps the read gapless is never spent on extras. A call rendered at background
+        // priority (slower on purpose, with plenty banked) doesn't count: the last one at user-initiated priority does.
+        if let last = ExpressiveService.shared.flowStats.lastUrgent, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
         return Self.flowBudget(ahead: bufferedAhead(), readChange: i > 0 && read(for: i) != read(for: i - 1))
     }
 
@@ -740,7 +805,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Audio banked before her renders slow to a steady pace (seconds).
     static let paceFrom = 60.0
 
-    /// Her cushion is banked (RenderPacer: 120 s, 60 s from "fair" heat): hold her renders until playback has drawn it
+    /// Her cushion is banked (RenderPacer: 90 s, 60 s from "fair" heat): hold her renders until playback has drawn it
     /// down by the refill (30 s, 20 s warm), and look again about then. Never while playback waits for audio. The
     /// Voice test's listening part reads through here too (Narration.play), so it is paced exactly as Listen is.
     private func holdForCushion() -> Bool {
@@ -1279,7 +1344,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         if source == .kokoro { lastFallback = nil }
         if !firstAudioLogged {
             firstAudioLogged = true
-            KokoroService.shared.stats.recordFirstAudio(FirstAudioStat(ms: Date().timeIntervalSince(sessionStart) * 1000, source: source.rawValue))
+            let ms = Date().timeIntervalSince(sessionStart) * 1000
+            KokoroService.shared.stats.recordFirstAudio(FirstAudioStat(ms: ms, source: source.rawValue))
+            ListenReport.shared.firstAudio(ms: ms)
         }
         delegate?.speechEngine(didStart: segments[i].id, source: source)
     }

@@ -126,20 +126,13 @@ enum DiagnosticsFiles {
     /// The app's own os_log lines (Logger, subsystem app.tachinovel) from the last `minutes`: the native voice engine's
     /// reasons ("gave unusable audio", studio skipped, memory holds) never reach logs/app.log, so a read that played
     /// nothing without crashing is explained in the folder too (Kasta 2026-10-12). Nil if the store can't be read.
+    /// Read incrementally (heat batch 1, 2026-10-15): each copy reads only the entries logged since the one before
+    /// (`NativeLogCache`), not the whole last hour of the system log again.
     static func nativeLog(minutes: Double = 60) -> Data? {
-        guard let store = try? OSLogStore(scope: .currentProcessIdentifier) else { return nil }
-        let since = store.position(date: Date().addingTimeInterval(-minutes * 60))
-        let mine = NSPredicate(format: "subsystem == %@", "app.tachinovel")
-        guard let entries = try? store.getEntries(at: since, matching: mine) else { return nil }
-        let clock = DateFormatter()
-        clock.dateFormat = "HH:mm:ss.SSS"
-        var text = ""
-        for case let entry as OSLogEntryLog in entries {
-            text += "\(clock.string(from: entry.date)) [\(entry.category)] \(entry.composedMessage)\n"
-        }
-        guard !text.isEmpty else { return nil }
-        return Data(Data(text.utf8).suffix(logTailBytes))
+        nativeLogCache.text(minutes: minutes, maxBytes: logTailBytes)
     }
+
+    private static let nativeLogCache = NativeLogCache()
 
     /// The folder the user picked is still there. Writes create only what is under it: a deleted folder must not come
     /// back as a new local one that nothing syncs (NSFileNoSuchFileError: DiagnosticsPolicy reads it as disconnected).
@@ -226,5 +219,61 @@ enum DiagnosticsFiles {
         let gate = OnceGate()
         CoreHost.shared.request("app.background") { @Sendable _, _ in gate.run(body) }
         queue.asyncAfter(deadline: .now() + timeout) { gate.run(body) }
+    }
+}
+
+/// The app's own os_log lines (subsystem app.tachinovel) of the last hour, kept in memory and read incrementally: each
+/// call reads the system log only from just after the newest line it already has (heat batch 1, 2026-10-15: every copy
+/// used to walk the last 60 minutes of the system log again, every minute while Listen played).
+final class NativeLogCache: @unchecked Sendable {  // @unchecked: every field is touched under `lock`
+    /// The longest window asked for (the mirror's hour; a problem report asks for 30 minutes).
+    static let keepSeconds: TimeInterval = 60 * 60
+    private let lock = NSLock()
+    private var store: OSLogStore?
+    private var lines: [(date: Date, text: String)] = []
+    private var bytes = 0
+    private var newest: Date?
+    private let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    /// The lines of the last `minutes`, at most the last `maxBytes`; nil when there are none or the log can't be read.
+    func text(minutes: Double, maxBytes: Int, now: Date = Date()) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        readNew(now: now, maxBytes: maxBytes)
+        let from = now.addingTimeInterval(-minutes * 60)
+        let start = lines.firstIndex { $0.date >= from } ?? lines.count
+        guard start < lines.count else { return nil }
+        var text = ""
+        for line in lines[start...] { text += line.text }
+        return Data(Data(text.utf8).suffix(maxBytes))
+    }
+
+    private func readNew(now: Date, maxBytes: Int) {
+        if store == nil { store = try? OSLogStore(scope: .currentProcessIdentifier) }
+        guard let store else { return }
+        let oldest = now.addingTimeInterval(-Self.keepSeconds)
+        let since = max(newest ?? oldest, oldest)
+        let mine = NSPredicate(format: "subsystem == %@", "app.tachinovel")
+        if let entries = try? store.getEntries(at: store.position(date: since), matching: mine) {
+            for case let entry as OSLogEntryLog in entries {
+                // The position is at a time: the lines at the newest time already kept are skipped.
+                if let newest, entry.date <= newest { continue }
+                let text = "\(clock.string(from: entry.date)) [\(entry.category)] \(entry.composedMessage)\n"
+                lines.append((entry.date, text))
+                bytes += text.utf8.count
+                newest = entry.date
+            }
+        }
+        // Only the last hour, and never much more than the tail anyone takes.
+        var drop = 0
+        while drop < lines.count, lines[drop].date < oldest || bytes > 2 * maxBytes {
+            bytes -= lines[drop].text.utf8.count
+            drop += 1
+        }
+        if drop > 0 { lines.removeFirst(drop) }
     }
 }

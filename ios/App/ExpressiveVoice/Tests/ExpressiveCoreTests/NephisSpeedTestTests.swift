@@ -67,6 +67,25 @@ final class NephisSpeedTestTests: XCTestCase {
     func testFilesAreNamedByTheMinute() {
         let date = Date(timeIntervalSince1970: 1_792_063_800)  // 2026-10-15 11:30 UTC
         XCTAssertEqual(NephisSpeedTest.fileStem(date, timeZone: TimeZone(identifier: "UTC") ?? .current), "speedtest-2026-10-15-1130")
+        XCTAssertEqual(NephisSpeedTest.fileStem(date, timeZone: TimeZone(identifier: "UTC") ?? .current, steady: true),
+                       "speedtest-steady-2026-10-15-1130")
+    }
+
+    /// The steady-state run ("Start with 60 s buffered"): a minute already waiting plays first, so the calls count as far
+    /// ahead (Listen's lead-ins and background priority) and the first call is only late once that minute has run out.
+    func testAHeadStartPlaysFirst() {
+        let ready: [Double] = [2, 4, 12], seconds: [Double] = [3, 5, 2]
+        XCTAssertEqual(NephisSpeedTest.ahead(at: 0, ready: ready, seconds: seconds, banked: 60), 60, accuracy: 1e-9)
+        XCTAssertEqual(NephisSpeedTest.ahead(at: 4, ready: ready, seconds: seconds, banked: 60), 56 + 8, accuracy: 1e-9)
+        XCTAssertEqual(NephisSpeedTest.ahead(at: 61, ready: ready, seconds: seconds, banked: 60), 10 - 1, accuracy: 1e-9)
+        XCTAssertEqual(NephisSpeedTest.ahead(at: 4, ready: ready, seconds: seconds, banked: 0),
+                       NephisSpeedTest.ahead(at: 4, ready: ready, seconds: seconds), "no head start: as before")
+        let fine = NephisSpeedTest.playback(ready: ready, seconds: seconds, banked: 60)
+        XCTAssertTrue(fine.keepsUp)
+        XCTAssertEqual(fine.end, 70, accuracy: 1e-9)
+        let late = NephisSpeedTest.playback(ready: [70], seconds: [3], banked: 60)
+        XCTAssertEqual(late.lateCalls, [0], "the first call isn't there when the minute runs out")
+        XCTAssertEqual(late.breakSeconds, 10, accuracy: 1e-9)
     }
 
     func testTheWavHoldsTheExactFloatSamples() {

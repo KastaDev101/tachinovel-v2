@@ -118,13 +118,15 @@ public enum NephisSpeedTest {
         public var end: Double
     }
 
-    public static func playback(ready: [Double], seconds: [Double]) -> Playback {
+    /// `banked`: seconds of audio already waiting when the test starts (the steady-state run, "Start with 60 s
+    /// buffered"): playback plays them first, so the first call is late only if it isn't ready when they run out.
+    public static func playback(ready: [Double], seconds: [Double], banked: Double = 0) -> Playback {
         let n = min(ready.count, seconds.count)
         guard n > 0 else { return Playback(firstAudio: nil, breaks: 0, breakSeconds: 0, lateCalls: [], end: 0) }
-        var end = ready[0] + max(0, seconds[0])
+        var end = banked > 0 ? banked : ready[0] + max(0, seconds[0])
         var late: [Int] = []
         var waited = 0.0
-        for k in 1..<n {
+        for k in (banked > 0 ? 0 : 1)..<n {
             if ready[k] > end + 1e-3 {
                 late.append(k)
                 waited += ready[k] - end
@@ -137,10 +139,11 @@ public enum NephisSpeedTest {
     }
 
     /// Seconds of audio ready but not yet played at `now` (the simulated player of `playback`): Listen's "buffered
-    /// ahead", from the calls whose audio is there.
-    public static func ahead(at now: Double, ready: [Double], seconds: [Double]) -> Double {
-        var end = -Double.infinity
-        var left = 0.0
+    /// ahead", from the calls whose audio is there, plus what is left of `banked` (seconds already waiting at the start,
+    /// played first).
+    public static func ahead(at now: Double, ready: [Double], seconds: [Double], banked: Double = 0) -> Double {
+        var end = banked > 0 ? banked : -Double.infinity
+        var left = max(0, banked - now)
         for k in 0..<min(ready.count, seconds.count) where ready[k] <= now {
             let start = max(ready[k], end)
             let played = min(max(0, now - start), max(0, seconds[k]))
@@ -150,14 +153,19 @@ public enum NephisSpeedTest {
         return left
     }
 
-    /// The report's file name without extension: "speedtest-2026-10-15-1130" (local time).
-    public static func fileStem(_ date: Date, timeZone: TimeZone = .current) -> String {
+    /// The report's file name without extension: "speedtest-2026-10-15-1130" (local time); "speedtest-steady-…" for the
+    /// steady-state run.
+    public static func fileStem(_ date: Date, timeZone: TimeZone = .current, steady: Bool = false) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = timeZone
         f.dateFormat = "yyyy-MM-dd-HHmm"
-        return "speedtest-\(f.string(from: date))"
+        return "speedtest-\(steady ? "steady-" : "")\(f.string(from: date))"
     }
+
+    /// The steady-state run's head start (Developer › "Start with 60 s buffered"): Listen once it is going, with a minute
+    /// banked, so the calls get what Listen's calls get then (a lead-in, speech recognition, background priority).
+    public static let steadyBanked = 60.0
 
     /// A WAV file of 32-bit float mono samples (the exact samples, for the PC).
     public static func wavFloat32(_ samples: [Float], sampleRate: Int) -> Data {

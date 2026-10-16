@@ -5,8 +5,8 @@
 //  under logs/ (voice-beat.log, MetricKit crash and hang reports, saved problem reports, …), the app's own os_log
 //  lines (native.log), the Voice Lab numbers, the UI's short event trail, a status file and a storage map
 //  (storage.json, at most every half hour) are copied into that folder, where iCloud syncs them to the PC:
-//   - at launch, every five minutes while the app runs and every minute while a voice works (Listen, a Voice test,
-//     Drive prep), right after a voice stops working (the end of a Voice test or a drive), when the app goes to the
+//   - at launch, every five minutes while the app runs and every 10 minutes while a voice works (Listen, a Voice test,
+//     Drive prep: heat batch 1, every minute before), right after a voice stops working (the end of a Voice test or a drive), when the app goes to the
 //     background or is closed, and on "Copy Diagnostics Now" (DiagnosticsPolicy in ExpressiveCore decides);
 //   - "Report a Problem" (the row's menu, or shaking the phone) keeps logs/reports/<time>/ on the iPhone (what the
 //     user typed, a screenshot, the log tails, the versions and the current route) and copies it over, so a report
@@ -262,7 +262,7 @@ extension DiagnosticsFolder {
         switch health {
         case .off:
             return "Pick a folder, for example iCloud Drive › TachiNovel-Diagnostics. The app log, crash reports and problem reports "
-                + "are copied there at launch, every few minutes (every minute while Listen or a Voice test runs) and when you leave the app."
+                + "are copied there at launch, every few minutes, when Listen or a Voice test stops and when you leave the app."
         case .ok:
             return "Logs, crash reports and problem reports go to \(name).\(last)\(upload)"
         case .disconnected(let why):

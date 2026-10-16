@@ -582,8 +582,10 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - Voice speed test
 
     @objc func voiceSpeedTest(_ call: CAPPluginCall) {
+        // {banked: 60}: the steady-state run (Developer › "Start with 60 s buffered"); absent = the usual run.
+        let banked = call.getDouble("banked") ?? 0
         DispatchQueue.main.async {
-            VoiceSpeedTest.shared.start(progress: { [weak self] p in
+            VoiceSpeedTest.shared.start(banked: banked, progress: { [weak self] p in
                 self?.notifyListeners("voiceSpeedTest", data: p)
             }, done: { report in
                 call.resolve(report)

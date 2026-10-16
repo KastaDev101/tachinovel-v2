@@ -40,6 +40,9 @@
 //  Cost per pass (48 kHz): the network 3.3 M MAC per 10 ms frame (0.33 GMAC per audio second; Core ML on the CPU in
 //  blocks of 8 frames), the DSP ~4 Mflop per second, the resamplers ~2 M MAC per second; the copy at each call's end
 //  adds ~2 model calls per pass. Runs on the synthesis worker (NephisFlowSynth's decode jobs), never the render thread.
+//  Heat batch 1 (2026-10-15): nothing is allocated per frame (FrameWork scratch, the spectra in rings, the features
+//  written in the network's layout), the network's state goes back in as the arrays it came out as (NetState.carried),
+//  and the resamplers run over flat tables; every sum keeps its order, so the output is the same, bit for bit.
 //
 
 import Accelerate
@@ -105,11 +108,16 @@ public enum NephisDewind {
     /// What the network carries from frame to frame (all zeros at a stream's start): the last 2 ERB and DF feature frames,
     /// the last 4 frames of its first DF conv, and the 5 GRU states (encoder, ERB decoder 2, DF decoder 2), in the Core ML
     /// model's own layouts ([1,1,2,32], [1,2,2,96], [1,64,4,96], [5,256]).
-    public struct NetState: Sendable, Equatable {
+    /// `carried`: the state as a Core ML network returned it (NephisDewindModel), fed straight back as its next input
+    /// instead of being copied out and in again (heat batch 1, 2026-10-15); while it is set it is the state and the arrays
+    /// are left as they were. nil: the arrays are the state (a stream's start, a network that keeps its state as arrays).
+    /// A copy of the state (a call's tail, Stream) may share it: a network only ever replaces it, never writes into it.
+    public struct NetState: Sendable {
         public var erbBuf = [Float](repeating: 0, count: 64)
         public var specBuf = [Float](repeating: 0, count: 384)
         public var c0Buf = [Float](repeating: 0, count: 24_576)
         public var h = [Float](repeating: 0, count: 1_280)
+        public var carried: (any Sendable)?
         public init() {}
     }
 
@@ -119,6 +127,25 @@ public enum NephisDewind {
         var re: [Float]
         var im: [Float]
         static let zero = Spectrum(re: [Float](repeating: 0, count: bins), im: [Float](repeating: 0, count: bins))
+    }
+
+    /// One pass's scratch for its frame work (heat batch 1: nothing is allocated per 10 ms frame): the analysis frame, the
+    /// transforms' halves, the spectrum just analysed, the filtered spectrum, the synthesis frame, the band sums and the
+    /// deep filter's tap positions. Nothing in it carries from one frame to the next, so a copy of a pass (a call's tail,
+    /// Stream) shares it: the two never run at the same time (a read's calls run one after another, in one actor).
+    final class FrameWork: @unchecked Sendable {  // @unchecked: scratch used by one pass's calls, one at a time
+        var frame = [Float](repeating: 0, count: fftSize)
+        var even = [Float](repeating: 0, count: fftSize / 2)
+        var odd = [Float](repeating: 0, count: fftSize / 2)
+        var outRe = [Float](repeating: 0, count: fftSize / 2)
+        var outIm = [Float](repeating: 0, count: fftSize / 2)
+        var specRe = [Float](repeating: 0, count: bins)
+        var specIm = [Float](repeating: 0, count: bins)
+        var yRe = [Float](repeating: 0, count: bins)
+        var yIm = [Float](repeating: 0, count: bins)
+        var synth = [Float](repeating: 0, count: fftSize)
+        var sums = [Double](repeating: 0, count: erbBands)
+        var tapAt = [Int](repeating: -1, count: dfOrder)
     }
 
     /// vDSP's real DFT for 960 points (vDSP_fft_zrip only does powers of two). Its packing (DC and Nyquist together in
@@ -187,41 +214,86 @@ public enum NephisDewind {
             return (outRe, outIm)
         }
 
-        /// The true DFT of `x` (n real samples) times `scale`: bins 0…n/2.
-        func forward(_ x: [Float], scale: Float) -> Spectrum {
+        /// The true DFT of `work.frame` (n real samples) times `scale` into `work.specRe`/`specIm` (bins 0…n/2), with no
+        /// allocation. `work` must be sized for this n.
+        func forward(_ work: FrameWork, scale: Float) {
             let h = n / 2
-            let (pr, pi) = Self.execute(forwardSetup, even: Self.evens(x), odd: Self.odds(x))
             let s = forwardScale * scale, si = s * forwardSign
-            var re = [Float](repeating: 0, count: h + 1)
-            var im = [Float](repeating: 0, count: h + 1)
-            re[0] = pr[0] * s
-            re[h] = pi[0] * s
-            for k in 1..<h {
-                re[k] = pr[k] * s
-                im[k] = pi[k] * si
+            work.frame.withUnsafeBufferPointer { x in
+                work.even.withUnsafeMutableBufferPointer { e in
+                    work.odd.withUnsafeMutableBufferPointer { o in
+                        for j in 0..<h {
+                            e[j] = x[2 * j]
+                            o[j] = x[2 * j + 1]
+                        }
+                        work.outRe.withUnsafeMutableBufferPointer { pr in
+                            work.outIm.withUnsafeMutableBufferPointer { pi in
+                                vDSP_DFT_Execute(forwardSetup, e.baseAddress!, o.baseAddress!, pr.baseAddress!, pi.baseAddress!)
+                                work.specRe.withUnsafeMutableBufferPointer { re in
+                                    work.specIm.withUnsafeMutableBufferPointer { im in
+                                        re[0] = pr[0] * s
+                                        im[0] = 0
+                                        re[h] = pi[0] * s
+                                        im[h] = 0
+                                        for k in 1..<h {
+                                            re[k] = pr[k] * s
+                                            im[k] = pi[k] * si
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            return Spectrum(re: re, im: im)
         }
 
-        /// Σ_k Y[k] e^(+2πikt/n) over the whole Hermitian spectrum (numpy's irfft · n): n real samples. The imaginary
-        /// parts of DC and Nyquist are ignored, as irfft does.
-        func inverse(_ y: Spectrum) -> [Float] {
+        /// Σ_k Y[k] e^(+2πikt/n) over the whole Hermitian spectrum `work.yRe`/`yIm` (numpy's irfft · n) into `work.synth`
+        /// (n real samples), with no allocation. The imaginary parts of DC and Nyquist are ignored, as irfft does.
+        func inverse(_ work: FrameWork) {
             let h = n / 2
-            var er = [Float](repeating: 0, count: h)
-            var ei = [Float](repeating: 0, count: h)
-            er[0] = y.re[0]
-            ei[0] = y.re[h]
-            for k in 1..<h {
-                er[k] = y.re[k]
-                ei[k] = y.im[k] * forwardSign
+            work.yRe.withUnsafeBufferPointer { yr in
+                work.yIm.withUnsafeBufferPointer { yi in
+                    work.even.withUnsafeMutableBufferPointer { er in
+                        work.odd.withUnsafeMutableBufferPointer { ei in
+                            er[0] = yr[0]
+                            ei[0] = yr[h]
+                            for k in 1..<h {
+                                er[k] = yr[k]
+                                ei[k] = yi[k] * forwardSign
+                            }
+                            work.outRe.withUnsafeMutableBufferPointer { a in
+                                work.outIm.withUnsafeMutableBufferPointer { b in
+                                    vDSP_DFT_Execute(inverseSetup, er.baseAddress!, ei.baseAddress!, a.baseAddress!, b.baseAddress!)
+                                    work.synth.withUnsafeMutableBufferPointer { out in
+                                        for j in 0..<h {
+                                            out[2 * j] = a[j] * inverseScale
+                                            out[2 * j + 1] = b[j] * inverseScale
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            let (a, b) = Self.execute(inverseSetup, even: er, odd: ei)
-            var out = [Float](repeating: 0, count: n)
-            for j in 0..<h {
-                out[2 * j] = a[j] * inverseScale
-                out[2 * j + 1] = b[j] * inverseScale
-            }
-            return out
+        }
+
+        /// The true DFT of `x` (n real samples) times `scale`: bins 0…n/2 (the tests; the passes use `forward(_:scale:)`).
+        func forward(_ x: [Float], scale: Float) -> Spectrum {
+            let work = FrameWork()
+            work.frame = x
+            forward(work, scale: scale)
+            return Spectrum(re: work.specRe, im: work.specIm)
+        }
+
+        /// The unnormalised inverse of `y`: n real samples (the tests; the passes use `inverse(_:)` on their scratch).
+        func inverse(_ y: Spectrum) -> [Float] {
+            let work = FrameWork()
+            work.yRe = y.re
+            work.yIm = y.im
+            inverse(work)
+            return work.synth
         }
     }
 
@@ -248,8 +320,9 @@ public enum NephisDewind {
         /// Outputs scipy removes at the start, and taps per phase.
         let pre: Int
         let taps: Int
-        /// Per phase, the taps reversed (so an output is a forward dot product over the input).
-        let reversed: [[Double]]
+        /// Per phase, the taps reversed (so an output is a forward dot product over the input), phase after phase in one
+        /// array (`taps` values each).
+        let table: [Double]
         private var history: [Double]
         private var inputs = 0
         private var outputs = 0
@@ -279,12 +352,12 @@ public enum NephisDewind {
             down = d
             pre = (half + prePad) / d
             taps = m
-            reversed = (0..<u).map { phase in (0..<m).map { j in padded[phase + u * (m - 1 - j)] } }
+            table = (0..<u).flatMap { phase in (0..<m).map { j in padded[phase + u * (m - 1 - j)] } }
             history = [Double](repeating: 0, count: m)
         }
 
         /// P[phase][m] (resample_poly's polyphase table), for the tests.
-        func polyphase(_ phase: Int) -> [Double] { reversed[phase].reversed() }
+        func polyphase(_ phase: Int) -> [Double] { Array(table[(phase * taps)..<((phase + 1) * taps)].reversed()) }
 
         static func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
 
@@ -303,16 +376,21 @@ public enum NephisDewind {
         private mutating func emit(_ all: [Double], base: Int, until end: Int) -> [Double] {
             guard end > outputs else { return [] }
             var y = [Double](repeating: 0, count: end - outputs)
+            let first = outputs, up = self.up, down = self.down, pre = self.pre, taps = self.taps
             all.withUnsafeBufferPointer { xa in
-                for j in outputs..<end {
-                    let n = (j + pre) * down
-                    let start = n / up - base - (taps - 1)
-                    // A plain loop in tap order (vDSP's dot product sums in an order that depends on the buffers'
-                    // alignment): the same bits however the stream is cut into calls.
-                    reversed[n % up].withUnsafeBufferPointer { p in
-                        var acc = 0.0
-                        for m in 0..<taps { acc += p[m] * xa[start + m] }
-                        y[j - outputs] = acc
+                table.withUnsafeBufferPointer { tp in
+                    y.withUnsafeMutableBufferPointer { yp in
+                        for j in first..<end {
+                            let n = (j + pre) * down
+                            let start = n / up - base - (taps - 1)
+                            // A plain loop in tap order (vDSP's dot product sums in an order that depends on the buffers'
+                            // alignment): the same bits however the stream is cut into calls.
+                            let p = tp.baseAddress! + (n % up) * taps
+                            let x = xa.baseAddress! + start
+                            var acc = 0.0
+                            for m in 0..<taps { acc += p[m] * x[m] }
+                            yp[j - first] = acc
+                        }
                     }
                 }
             }
@@ -348,22 +426,34 @@ public enum NephisDewind {
         private var erbNorm = NephisDewind.erbNormInit
         private var unitNorm = NephisDewind.unitNormInit
         private var pending: [Float] = []
-        /// Analysis frames done, and the spectra kept (frames spectraBase ..< spectraBase + spectra.count).
+        /// Analysis frames done. The spectra of frames spectraBase ..< analysed are kept, frame i in slot i % slots of the
+        /// rings (`bins` values a slot): the deep filter reaches 2 frames back and 2 ahead, and a block of `frames` waits
+        /// for its features, so `frames` + 4 are ever needed.
         private var analysed = 0
-        private var spectra: [Spectrum] = []
         private var spectraBase = 0
-        /// Features waiting for the next network call, and the output frames made so far.
-        private var blockErb: [[Float]] = []
-        private var blockRe: [[Float]] = []
-        private var blockIm: [[Float]] = []
+        private let slots: Int
+        private var ringRe: [Float]
+        private var ringIm: [Float]
+        /// Features waiting for the next network call, in the network's own layout: `blockErb` [frames][32], `blockSpec`
+        /// [2][frames][96] (real parts, then imaginary parts); `blockCount` rows filled.
+        private var blockErb: [Float]
+        private var blockSpec: [Float]
+        private var blockCount = 0
+        /// Output frames made so far.
         private var produced = 0
         private var state = NetState()
         private(set) var inputs = 0
         private var outputs = 0
         private var skip = fftSize - hop
+        private let work = FrameWork()
 
         init(frames: Int) {
             self.frames = max(1, frames)
+            slots = self.frames + 2 * lookahead + 2
+            ringRe = [Float](repeating: 0, count: slots * bins)
+            ringIm = [Float](repeating: 0, count: slots * bins)
+            blockErb = [Float](repeating: 0, count: self.frames * erbBands)
+            blockSpec = [Float](repeating: 0, count: 2 * self.frames * dfBins)
         }
 
         // Taps for the tests (dsp vectors): every analysis frame and every output frame.
@@ -377,70 +467,79 @@ public enum NephisDewind {
         }
         var trace: Trace?
 
-        private mutating func analyse(_ x: ArraySlice<Float>, dft: RealDFT) -> Spectrum {
-            let w = NephisDewind.window
-            var frame = [Float](repeating: 0, count: fftSize)
-            var k = 0
-            for i in 0..<hop {
-                frame[i] = analysisMemory[i] * w[i]
-            }
-            for v in x {
-                frame[hop + k] = v * w[hop + k]
-                analysisMemory[k] = v
-                k += 1
-            }
-            return dft.forward(frame, scale: Float(2.0 * Double(hop) / Double(fftSize * fftSize)))
+        /// Frame i's place in the rings, or nil when its spectrum isn't kept (before the stream, dropped, or not yet made).
+        private func slot(_ i: Int) -> Int? {
+            i >= spectraBase && i < analysed ? (i % slots) * bins : nil
         }
 
-        /// ERB features (dB under the exponential mean, /40) and the unit-normalised DF features of bins 0…95.
-        private mutating func features(_ x: Spectrum) -> (erb: [Float], re: [Float], im: [Float]) {
-            var sums = [Double](repeating: 0, count: erbBands)
-            let band = NephisDewind.bandOfBin
-            for k in 0..<bins {
-                let p = x.re[k] * x.re[k] + x.im[k] * x.im[k]
-                sums[band[k]] += Double(p)
+        /// The next analysis frame: the 480 samples at `x[at...]` after the 480 before them, windowed, into the spectrum of
+        /// frame `analysed` (work.specRe/specIm and its ring slot).
+        private mutating func analyse(_ x: UnsafeBufferPointer<Float>, at: Int, dft: RealDFT) {
+            let w = NephisDewind.window
+            let work = self.work
+            work.frame.withUnsafeMutableBufferPointer { f in
+                for i in 0..<hop {
+                    f[i] = analysisMemory[i] * w[i]
+                }
+                for k in 0..<hop {
+                    let v = x[at + k]
+                    f[hop + k] = v * w[hop + k]
+                    analysisMemory[k] = v
+                }
             }
-            var erb = [Float](repeating: 0, count: erbBands)
+            dft.forward(work, scale: Float(2.0 * Double(hop) / Double(fftSize * fftSize)))
+            let s = (analysed % slots) * bins
+            for k in 0..<bins {
+                ringRe[s + k] = work.specRe[k]
+                ringIm[s + k] = work.specIm[k]
+            }
+        }
+
+        /// The spectrum just analysed: its ERB features (dB under the exponential mean, /40) and the unit-normalised DF
+        /// features of bins 0…95, into the block's row `row` (the norms move on for every frame; the row counts only once
+        /// the frame is enqueued).
+        private mutating func features(row: Int) {
+            let band = NephisDewind.bandOfBin
+            let work = self.work
+            for b in 0..<erbBands { work.sums[b] = 0 }
+            for k in 0..<bins {
+                let p = work.specRe[k] * work.specRe[k] + work.specIm[k] * work.specIm[k]
+                work.sums[band[k]] += Double(p)
+            }
             for b in 0..<erbBands {
-                let mean = Float(sums[b] / Double(erbWidths[b]))
+                let mean = Float(work.sums[b] / Double(erbWidths[b]))
                 let e = 10 * log10f(mean + Float(1e-10))
                 erbNorm[b] = e * oneMinusAlpha + erbNorm[b] * alpha
-                erb[b] = (e - erbNorm[b]) / 40
+                blockErb[row * erbBands + b] = (e - erbNorm[b]) / 40
             }
-            var re = [Float](repeating: 0, count: dfBins)
-            var im = [Float](repeating: 0, count: dfBins)
             for k in 0..<dfBins {
-                unitNorm[k] = hypotf(x.re[k], x.im[k]) * oneMinusAlpha + unitNorm[k] * alpha
+                unitNorm[k] = hypotf(work.specRe[k], work.specIm[k]) * oneMinusAlpha + unitNorm[k] * alpha
                 // numpy divides a complex64 by a real as x · (1 / s).
                 let inv = 1 / unitNorm[k].squareRoot()
-                re[k] = x.re[k] * inv
-                im[k] = x.im[k] * inv
+                blockSpec[row * dfBins + k] = work.specRe[k] * inv
+                blockSpec[(frames + row) * dfBins + k] = work.specIm[k] * inv
             }
-            return (erb, re, im)
         }
 
-        private func spectrum(_ i: Int) -> Spectrum? {
-            guard i >= spectraBase, i - spectraBase < spectra.count else { return nil }
-            return spectra[i - spectraBase]
-        }
-
-        /// Output frame t's spectrum: the ERB gains above bin 96, the 5-tap deep filter below it.
-        private func enhanced(_ t: Int, gains: ArraySlice<Float>, coefs: ArraySlice<Float>) -> Spectrum {
+        /// Output frame t's spectrum into work.yRe/yIm: the ERB gains above bin 96, the 5-tap deep filter below it.
+        /// `gains`/`coefs`: the network's outputs, this frame's at `g0`/`c0`.
+        private func enhanced(_ t: Int, gains: UnsafeBufferPointer<Float>, g0: Int, coefs: UnsafeBufferPointer<Float>, c0: Int) {
             let band = NephisDewind.bandOfBin
-            let xt = spectrum(t) ?? .zero
-            var y = Spectrum.zero
-            let g0 = gains.startIndex, c0 = coefs.startIndex
+            let work = self.work
+            let xt = slot(t) ?? -1
             for k in dfBins..<bins {
                 let g = gains[g0 + band[k]]
-                y.re[k] = xt.re[k] * g
-                y.im[k] = xt.im[k] * g
+                let xr: Float = xt >= 0 ? ringRe[xt + k] : 0, xi: Float = xt >= 0 ? ringIm[xt + k] : 0
+                work.yRe[k] = xr * g
+                work.yIm[k] = xi * g
             }
-            let taps = (0..<dfOrder).map { spectrum(t - lookahead + $0) }
+            for n in 0..<dfOrder { work.tapAt[n] = slot(t - lookahead + n) ?? -1 }
             for k in 0..<dfBins {
                 var ar: Float = 0, ai: Float = 0
                 for n in 0..<dfOrder {
                     let cr = coefs[c0 + k * 2 * dfOrder + 2 * n], ci = coefs[c0 + k * 2 * dfOrder + 2 * n + 1]
-                    let xr: Float = taps[n]?.re[k] ?? 0, xi: Float = taps[n]?.im[k] ?? 0
+                    let at = work.tapAt[n]
+                    let xr: Float = at >= 0 ? ringRe[at + k] : 0, xi: Float = at >= 0 ? ringIm[at + k] : 0
                     let pr = xr * cr - xi * ci
                     let pi = xr * ci + xi * cr
                     if n == 0 {
@@ -451,86 +550,73 @@ public enum NephisDewind {
                         ai += pi
                     }
                 }
-                y.re[k] = ar
-                y.im[k] = ai
+                work.yRe[k] = ar
+                work.yIm[k] = ai
             }
-            return y
         }
 
-        private mutating func synthesise(_ y: Spectrum, dft: RealDFT) -> [Float] {
+        /// Synthesis of work.yRe/yIm: irfft · 960 · window, overlap-added; 480 samples onto `out`.
+        private mutating func synthesise(dft: RealDFT, into out: inout [Float]) {
             let w = NephisDewind.window
-            let f = dft.inverse(y)
-            var out = [Float](repeating: 0, count: hop)
+            let work = self.work
+            dft.inverse(work)
             for i in 0..<hop {
-                out[i] = f[i] * w[i] + synthesisMemory[i]
-                synthesisMemory[i] = f[hop + i] * w[hop + i]
+                out.append(work.synth[i] * w[i] + synthesisMemory[i])
+                synthesisMemory[i] = work.synth[hop + i] * w[hop + i]
             }
-            return out
-        }
-
-        private mutating func enqueue(erb: [Float], re: [Float], im: [Float]) {
-            blockErb.append(erb)
-            blockRe.append(re)
-            blockIm.append(im)
         }
 
         /// One network call on the block (padded to `frames` with zero features at a flush), and the first `real` of its
-        /// output frames synthesised.
-        private mutating func runBlock(real: Int, net: any DewindNetwork, dft: RealDFT) throws -> [Float] {
+        /// output frames synthesised onto `out`.
+        private mutating func runBlock(real: Int, net: any DewindNetwork, dft: RealDFT, into out: inout [Float]) throws {
             let n = frames
-            while blockErb.count < n { enqueue(erb: [Float](repeating: 0, count: erbBands), re: [Float](repeating: 0, count: dfBins),
-                                               im: [Float](repeating: 0, count: dfBins)) }
-            var featErb = [Float](repeating: 0, count: n * erbBands)
-            var featSpec = [Float](repeating: 0, count: 2 * n * dfBins)
-            for i in 0..<n {
-                for b in 0..<erbBands { featErb[i * erbBands + b] = blockErb[i][b] }
-                for k in 0..<dfBins {
-                    featSpec[i * dfBins + k] = blockRe[i][k]
-                    featSpec[(n + i) * dfBins + k] = blockIm[i][k]
+            if blockCount < n {
+                for i in blockCount..<n {
+                    for b in 0..<erbBands { blockErb[i * erbBands + b] = 0 }
+                    for k in 0..<dfBins {
+                        blockSpec[i * dfBins + k] = 0
+                        blockSpec[(n + i) * dfBins + k] = 0
+                    }
                 }
             }
-            blockErb = []
-            blockRe = []
-            blockIm = []
+            blockCount = 0
+            let featErb = blockErb, featSpec = blockSpec
             let r = try net.run(featErb: featErb, featSpec: featSpec, state: &state)
             guard r.gains.count == n * erbBands, r.coefs.count == n * dfBins * 2 * dfOrder else {
                 throw DewindError.badNetwork("\(r.gains.count) gains, \(r.coefs.count) coefficients for \(n) frames")
             }
-            var out: [Float] = []
-            out.reserveCapacity(real * hop)
-            for i in 0..<real {
-                let g = r.gains[(i * erbBands)..<((i + 1) * erbBands)]
-                let c = r.coefs[(i * dfBins * 2 * dfOrder)..<((i + 1) * dfBins * 2 * dfOrder)]
-                let y = enhanced(produced + i, gains: g, coefs: c)
-                let s = synthesise(y, dft: dft)
-                trace?.enhanced.append(y)
-                trace?.synthesised.append(s)
-                out += s
+            r.gains.withUnsafeBufferPointer { g in
+                r.coefs.withUnsafeBufferPointer { c in
+                    for i in 0..<real {
+                        enhanced(produced + i, gains: g, g0: i * erbBands, coefs: c, c0: i * dfBins * 2 * dfOrder)
+                        synthesise(dft: dft, into: &out)
+                        if trace != nil {
+                            trace?.enhanced.append(Spectrum(re: work.yRe, im: work.yIm))
+                            trace?.synthesised.append(Array(out.suffix(hop)))
+                        }
+                    }
+                }
             }
             produced += real
             // Output frame `produced` needs spectra from produced - 2 on.
             let keepFrom = produced - lookahead
-            if keepFrom > spectraBase {
-                let drop = min(spectra.count, keepFrom - spectraBase)
-                spectra.removeFirst(drop)
-                spectraBase += drop
-            }
-            return out
+            if keepFrom > spectraBase { spectraBase = min(analysed, keepFrom) }
         }
 
-        private mutating func step(_ x: ArraySlice<Float>, net: any DewindNetwork, dft: RealDFT) throws -> [Float] {
-            let spectrum = analyse(x, dft: dft)
-            let f = features(spectrum)
-            trace?.spectra.append(spectrum)
-            trace?.erb.append(f.erb)
-            trace?.specRe.append(f.re)
-            trace?.specIm.append(f.im)
-            spectra.append(spectrum)
+        private mutating func step(_ x: UnsafeBufferPointer<Float>, at: Int, net: any DewindNetwork, dft: RealDFT, into out: inout [Float]) throws {
+            analyse(x, at: at, dft: dft)
+            features(row: blockCount)
+            if trace != nil {
+                trace?.spectra.append(Spectrum(re: work.specRe, im: work.specIm))
+                trace?.erb.append(Array(blockErb[(blockCount * erbBands)..<((blockCount + 1) * erbBands)]))
+                trace?.specRe.append(Array(blockSpec[(blockCount * dfBins)..<((blockCount + 1) * dfBins)]))
+                trace?.specIm.append(Array(blockSpec[((frames + blockCount) * dfBins)..<((frames + blockCount + 1) * dfBins)]))
+            }
             analysed += 1
             // Frames 0 and 1 only warm up the norms (DFN's pad_feat drops their features).
-            guard analysed > lookahead else { return [] }
-            enqueue(erb: f.erb, re: f.re, im: f.im)
-            return try blockErb.count == frames ? runBlock(real: frames, net: net, dft: dft) : []
+            guard analysed > lookahead else { return }
+            blockCount += 1
+            if blockCount == frames { try runBlock(real: frames, net: net, dft: dft, into: &out) }
         }
 
         private mutating func emit(_ y: [Float], limit: Int?) -> [Float] {
@@ -543,17 +629,26 @@ public enum NephisDewind {
             return out
         }
 
+        /// Every whole hop of `all`, step by step onto `out`; returns where the hops end.
+        private mutating func hops(_ all: [Float], net: any DewindNetwork, dft: RealDFT, into out: inout [Float]) throws -> Int {
+            var i = 0
+            try all.withUnsafeBufferPointer { a in
+                while i + hop <= a.count {
+                    try step(a, at: i, net: net, dft: dft, into: &out)
+                    i += hop
+                }
+            }
+            return i
+        }
+
         /// Any number of 48 kHz samples; the output is aligned with the input (delay-compensated) and lags it.
         mutating func process(_ x: [Float], net: any DewindNetwork) throws -> [Float] {
             guard let dft = RealDFT.shared else { throw DewindError.noDFT }
             inputs += x.count
             let all = pending + x
             var out: [Float] = []
-            var i = 0
-            while i + hop <= all.count {
-                out += try step(all[i..<(i + hop)], net: net, dft: dft)
-                i += hop
-            }
+            out.reserveCapacity((all.count / hop + frames) * hop)
+            let i = try hops(all, net: net, dft: dft, into: &out)
             pending = Array(all[i...])
             return emit(out, limit: nil)
         }
@@ -565,18 +660,25 @@ public enum NephisDewind {
             let all = pending + [Float](repeating: 0, count: fftSize)
             pending = []
             var out: [Float] = []
-            var i = 0
-            while i + hop <= all.count {
-                out += try step(all[i..<(i + hop)], net: net, dft: dft)
-                i += hop
-            }
+            out.reserveCapacity((all.count / hop + frames + lookahead) * hop)
+            _ = try hops(all, net: net, dft: dft, into: &out)
             for _ in 0..<lookahead {
-                spectra.append(.zero)
+                // A zero spectrum, and zero features for the network.
+                let s = (analysed % slots) * bins
+                for k in 0..<bins {
+                    ringRe[s + k] = 0
+                    ringIm[s + k] = 0
+                }
                 analysed += 1
-                enqueue(erb: [Float](repeating: 0, count: erbBands), re: [Float](repeating: 0, count: dfBins), im: [Float](repeating: 0, count: dfBins))
-                if blockErb.count == frames { out += try runBlock(real: frames, net: net, dft: dft) }
+                for b in 0..<erbBands { blockErb[blockCount * erbBands + b] = 0 }
+                for k in 0..<dfBins {
+                    blockSpec[blockCount * dfBins + k] = 0
+                    blockSpec[(frames + blockCount) * dfBins + k] = 0
+                }
+                blockCount += 1
+                if blockCount == frames { try runBlock(real: frames, net: net, dft: dft, into: &out) }
             }
-            if !blockErb.isEmpty { out += try runBlock(real: blockErb.count, net: net, dft: dft) }
+            if blockCount > 0 { try runBlock(real: blockCount, net: net, dft: dft, into: &out) }
             return emit(out, limit: inputs)
         }
     }
@@ -693,4 +795,11 @@ public enum NephisDewind {
 public protocol DewindNetwork: Sendable {
     var framesPerCall: Int { get }
     func run(featErb: [Float], featSpec: [Float], state: inout NephisDewind.NetState) throws -> (gains: [Float], coefs: [Float])
+    /// Milliseconds spent so far in the network's predictions and in building and reading its arrays (the Voice speed
+    /// test's and the listening report's split of the cleaner's time); (0, 0) for a network that doesn't measure.
+    func timeSpent() -> (predictMs: Double, ioMs: Double)
+}
+
+extension DewindNetwork {
+    public func timeSpent() -> (predictMs: Double, ioMs: Double) { (0, 0) }
 }

@@ -95,6 +95,9 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     /// Nephis flow: the first call of the next chapter, read on in the same read (HybridSpeechEngine.append): her pause
     /// before it is the chapter break (NephisFlow.chapterPause); nil = none.
     public var chapterStart: Bool?
+    /// Nephis flow: render at background priority (heat batch 1: playback has plenty banked, RenderPacer.relaxed), so the
+    /// phone runs it on its efficient cores and clocks; nil = user-initiated, as always. The sound is the same.
+    public var relaxed: Bool?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text

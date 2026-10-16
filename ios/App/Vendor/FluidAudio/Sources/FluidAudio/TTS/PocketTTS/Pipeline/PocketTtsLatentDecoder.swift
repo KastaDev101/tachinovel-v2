@@ -11,6 +11,8 @@ public actor PocketTtsLatentDecoder {
     private let mimiKeys: PocketTtsMimiKeys
     private let initialState: PocketTtsSynthesizer.MimiState
     private var state: PocketTtsSynthesizer.MimiState
+    /// Latents decoded so far (every `decode`, resets included): the caller's per-call counts (heat batch 1).
+    public private(set) var latentsDecoded = 0
 
     init(model: MLModel, mimiKeys: PocketTtsMimiKeys, initialState: PocketTtsSynthesizer.MimiState) throws {
         self.model = model
@@ -37,6 +39,7 @@ public actor PocketTtsLatentDecoder {
             }
             await MimiGate.shared.release()
             state = s
+            latentsDecoded += 1
             out.append(contentsOf: samples)
         }
         return out

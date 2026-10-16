@@ -10,8 +10,10 @@
 import Foundation
 
 public enum DiagnosticsPolicy {
-    /// While a voice works (Listen playing, a Voice test, a model call in flight): a copy every minute.
-    public static let busyInterval: TimeInterval = 60
+    /// While a voice works (Listen playing, a Voice test, a model call in flight): a copy every 10 minutes (heat batch 1,
+    /// 2026-10-15: every minute woke the radio and read the system log 60 times an hour of listening; the copy when the
+    /// voice stops, when the app goes to the background and with a problem report still come at once).
+    public static let busyInterval: TimeInterval = 10 * 60
     /// Otherwise every five minutes while the app runs.
     public static let idleInterval: TimeInterval = 5 * 60
     /// storage.json is a walk of the whole container: at most every half hour (and on a report or "Copy Now").

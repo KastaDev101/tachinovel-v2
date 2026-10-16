@@ -1,5 +1,14 @@
 ### Added
 
+- A listening report at the end of each Listen session (Stop, 2 minutes idle, or paused and the app left):
+  listen-<date>-<time>.json in the Diagnostics folder with the time heard, the voice and pack, her calls (studio used
+  or skipped and why, the de-wind cleaner and its time, takes, lead-ins, speech checks, Mimi's work), breaks, time to
+  first audio, heat at the start, at its worst and at the end, Low Power Mode, the battery used, × real time and errors.
+  No audio and no book text.
+- Voice Speed Test, with Developer options: "Start With 60 s Buffered" renders the passage the way Listen runs once it
+  is going (a lead-in and a speech check on every call, background priority). Every report now has the work counters
+  and where each call starts in the .wav (for the PC's join check).
+
 - Developer options: tap the version in More › About 7 times ("Developer options on"; the first tap still copies the
   version). While they are on, More has a Developer row (hammer) with the voice's test tools and internals in one
   grouped list: Voice Speed Test, Voice Test, 15-Minute Test, Voice Packs, her Studio (Automatic / Off) and where it
@@ -116,6 +125,16 @@
   pauses about 0.66 s (0.5 s when the same speaker goes on), as in her own recordings, instead of a full paragraph pause.
 
 ### Changed
+
+- Cooler listening, with no change to her sound: her renders run at background priority while more than 30 s is
+  banked (normal again under 15 s; such calls never count toward switching her studio off or skipping extras); she
+  banks 90 s ahead instead of 120 s; the de-wind cleaner allocates nothing per 10 ms frame and feeds its network's
+  state back as Core ML arrays; Mimi's output is read without an object per sample; the AI director keeps its moods,
+  word senses and chapter brief across seeks and restarts of a chapter instead of asking the on-device model again;
+  the Diagnostics folder copies every 10 minutes while a voice works (every minute before) and reads the app's log
+  incrementally.
+- The Voice Lab report (voice-lab.json) and the speed test count her work: takes, lead-ins, speech checks, Mimi's
+  latents per decoder (played, analysis, end guard) and the de-wind cleaner's network, I/O and signal-processing time.
 
 - More › Voices is tidy: the Nephis card (her pack and "Studio" in the personal build), Voice Settings (Scene Moods,
   [System] messages, and a line saying whether scene moods use Apple Intelligence or the built-in rules),

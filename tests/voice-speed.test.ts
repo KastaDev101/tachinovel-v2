@@ -75,6 +75,18 @@ describe('Voice speed test (voice-speed.ts)', () => {
     expect(all.find((l) => l.text === 'Her studio rendered all 6 calls.')?.ok).toBe(true);
   });
 
+  it('says when it ran as the steady state (Developer: 60 s buffered) and what work the calls did', () => {
+    const lines = speedLines(
+      report({ mode: 'steady', bankedAtStart: 60, work: { takes: 6, leadIns: 5, listened: 5, relaxedCalls: 4, latentsPerPlayed: 1.84 } }),
+    );
+    expect(lines[0]).toEqual({ ok: true, text: 'Steady state: started with 60 s already buffered, the way Listen runs once it is going.' });
+    expect(lines).toContainEqual({
+      ok: true,
+      text: 'Work: lead-ins on 5 of 5 calls, 6 takes; Mimi decoded 1.8× the audio played, 4 at background priority.',
+    });
+    expect(speedLines(report()).some((l) => l.text.startsWith('Steady') || l.text.startsWith('Work'))).toBe(false);
+  });
+
   it('says why it didn’t run', () => {
     expect(speedLines({ ran: false, error: 'Choose Nephis as the voice first (Settings › Voices).' })).toEqual([
       { ok: false, text: 'Speed test not run: Choose Nephis as the voice first (Settings › Voices).' },

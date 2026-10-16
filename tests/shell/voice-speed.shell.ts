@@ -93,6 +93,10 @@ describe('Voice speed test (PC shell)', () => {
     await expect.poll(() => screen.getByTestId('voice-speed-copy').textContent()).toMatch(/Copied|Copy Report/);
     await page.waitForTimeout(450); // slide-in
     await page.screenshot({ path: path.join(shots, 'voice-speed.png') });
+    // Developer options: the steady-state run asks native for a minute's head start.
+    await screen.getByRole('button', { name: 'Start With 60 s Buffered' }).click();
+    await expect.poll(() => calls('ExpressiveVoice', 'voiceSpeedTest').at(-1)).toEqual({ banked: 60 });
+    await result.waitFor({ timeout: 10_000 });
 
     // Every control has a name for VoiceOver.
     for (const b of await screen.getByRole('button').all()) expect(((await b.getAttribute('aria-label')) ?? (await b.textContent()) ?? '').trim()).not.toBe('');

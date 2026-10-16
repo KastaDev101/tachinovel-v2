@@ -155,36 +155,93 @@ public final class NephisDewindModel: DewindNetwork, @unchecked Sendable {
         return a
     }
 
+    /// The network's state as it came out of its last prediction (NetState.carried): the four output arrays, fed back as
+    /// the next prediction's inputs (heat batch 1: no 26,000 values copied out and in again per block of frames).
+    final class Carried: @unchecked Sendable {  // @unchecked: never written after init; Core ML only reads the arrays
+        let erbBuf: MLMultiArray
+        let specBuf: MLMultiArray
+        let c0Buf: MLMultiArray
+        let h: MLMultiArray
+
+        init(erbBuf: MLMultiArray, specBuf: MLMultiArray, c0Buf: MLMultiArray, h: MLMultiArray) {
+            self.erbBuf = erbBuf
+            self.specBuf = specBuf
+            self.c0Buf = c0Buf
+            self.h = h
+        }
+    }
+
+    /// Milliseconds in predictions and in building and reading the arrays, since the model loaded (under `lock`).
+    private var predictMs = 0.0
+    private var ioMs = 0.0
+
+    public func timeSpent() -> (predictMs: Double, ioMs: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (predictMs, ioMs)
+    }
+
+    private static func ms(_ from: UInt64, _ to: UInt64) -> Double { Double(to &- from) / 1e6 }
+
     public func run(featErb: [Float], featSpec: [Float], state: inout NephisDewind.NetState) throws -> (gains: [Float], coefs: [Float]) {
         let n = framesPerCall
         let erb = NephisDewind.erbBands, df = NephisDewind.dfBins
         guard featErb.count == n * erb, featSpec.count == 2 * n * df else {
             throw ModelError.badOutput("features: \(featErb.count) + \(featSpec.count) values for \(n) frames")
         }
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        // The state: the arrays the last prediction gave (as they are), or the state's own values (zeros at the start).
+        let carried = state.carried as? Carried
         let input = try MLDictionaryFeatureProvider(dictionary: [
             "feat_erb": try Self.array(featErb, [1, 1, n, erb]),
             "feat_spec": try Self.array(featSpec, [1, 2, n, df]),
-            "erb_buf": try Self.array(state.erbBuf, [1, 1, 2, erb]),
-            "spec_buf": try Self.array(state.specBuf, [1, 2, 2, df]),
-            "c0_buf": try Self.array(state.c0Buf, [1, 64, 4, df]),
-            "h": try Self.array(state.h, [5, 256]),
+            "erb_buf": try carried?.erbBuf ?? Self.array(state.erbBuf, [1, 1, 2, erb]),
+            "spec_buf": try carried?.specBuf ?? Self.array(state.specBuf, [1, 2, 2, df]),
+            "c0_buf": try carried?.c0Buf ?? Self.array(state.c0Buf, [1, 64, 4, df]),
+            "h": try carried?.h ?? Self.array(state.h, [5, 256]),
         ])
+        let t1 = DispatchTime.now().uptimeNanoseconds
         lock.lock()
-        defer { lock.unlock() }
-        let out = try model.prediction(from: input)
-        func read(_ key: String, _ count: Int) throws -> [Float] {
+        let out: MLFeatureProvider
+        do {
+            out = try model.prediction(from: input)
+        } catch {
+            lock.unlock()
+            throw error
+        }
+        lock.unlock()
+        let t2 = DispatchTime.now().uptimeNanoseconds
+        func value(_ key: String) throws -> MLMultiArray {
             guard let a = out.featureValue(for: key)?.multiArrayValue else { throw ModelError.badOutput("no \(key)") }
-            let v = ModelOutput.floats(a)
+            return a
+        }
+        func read(_ key: String, _ count: Int) throws -> [Float] {
+            let v = ModelOutput.denseFloats(try value(key))
             guard v.count == count else { throw ModelError.badOutput("\(key): \(v.count) values, expected \(count)") }
             guard NephisFlow.allFinite(v) else { throw ModelError.badOutput("\(key): not finite") }
             return v
         }
         let gains = try read("gains", n * erb)
         let coefs = try read("coefs", n * df * 2 * NephisDewind.dfOrder)
-        state.erbBuf = try read("erb_buf_out", state.erbBuf.count)
-        state.specBuf = try read("spec_buf_out", state.specBuf.count)
-        state.c0Buf = try read("c0_buf_out", state.c0Buf.count)
-        state.h = try read("h_out", state.h.count)
+        // The next state: the output arrays themselves when they are Float32 in the inputs' shapes (fed back as they are;
+        // a state gone bad shows in the next block's gains, which are checked), else read out as before.
+        let shapes: [(String, [Int])] = [("erb_buf_out", [1, 1, 2, erb]), ("spec_buf_out", [1, 2, 2, df]), ("c0_buf_out", [1, 64, 4, df]),
+                                          ("h_out", [5, 256])]
+        let outs = try shapes.map { try value($0.0) }
+        if zip(outs, shapes).allSatisfy({ $0.dataType == .float32 && $0.shape.map(\.intValue) == $1.1 }) {
+            state.carried = Carried(erbBuf: outs[0], specBuf: outs[1], c0Buf: outs[2], h: outs[3])
+        } else {
+            state.erbBuf = try read("erb_buf_out", state.erbBuf.count)
+            state.specBuf = try read("spec_buf_out", state.specBuf.count)
+            state.c0Buf = try read("c0_buf_out", state.c0Buf.count)
+            state.h = try read("h_out", state.h.count)
+            state.carried = nil
+        }
+        let t3 = DispatchTime.now().uptimeNanoseconds
+        lock.lock()
+        predictMs += Self.ms(t1, t2)
+        ioMs += Self.ms(t0, t1) + Self.ms(t2, t3)
+        lock.unlock()
         return (gains, coefs)
     }
 
@@ -269,6 +326,9 @@ public actor NephisDewinder {
     public struct Outcome: Sendable {
         public var samples: [Float]
         public var ms = 0.0
+        /// Inside `ms`: the network's predictions, and building and reading its arrays (0 for a network that doesn't say).
+        public var predictMs = 0.0
+        public var ioMs = 0.0
         public var error: String?
     }
 
@@ -281,14 +341,20 @@ public actor NephisDewinder {
             stream = NephisDewind.Stream(settings: settings, sampleRate: sampleRate, framesPerCall: framesPerCall)
         }
         let t0 = Date()
+        let spent = network.timeSpent()
+        func outcome(_ samples: [Float], error: String? = nil) -> Outcome {
+            let now = network.timeSpent()
+            return Outcome(samples: samples, ms: Date().timeIntervalSince(t0) * 1000, predictMs: max(0, now.predictMs - spent.predictMs),
+                           ioMs: max(0, now.ioMs - spent.ioMs), error: error)
+        }
         do {
             guard var s = stream else { return Outcome(samples: x) }
             stream = nil  // the copy below is the only one: no copy-on-write of the chain's state
             let y = try s.process(x, net: network)
             stream = s
-            return Outcome(samples: y, ms: Date().timeIntervalSince(t0) * 1000)
+            return outcome(y)
         } catch {
-            return Outcome(samples: x, ms: Date().timeIntervalSince(t0) * 1000, error: "\(error)")
+            return outcome(x, error: "\(error)")
         }
     }
 

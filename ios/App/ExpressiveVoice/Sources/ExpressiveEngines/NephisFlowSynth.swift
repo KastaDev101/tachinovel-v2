@@ -143,6 +143,19 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         public var dewindModel: String?
         public var dewindUnits: String?
         public var dewindNote: String?
+        /// Inside `dewindMs` (heat batch 1): its network's predictions, the network's inputs and outputs (building and
+        /// reading its arrays), and the signal processing around it (resampling, STFT, features, filtering).
+        public var dewindPredictMs = 0.0
+        public var dewindIOMs = 0.0
+        public var dewindDSPMs = 0.0
+        /// Mimi's work on the call (heat batch 1): latents decoded by the read's stream decoder (the sound played), by the
+        /// analysis decoder (levels for the edits, speech recognition, the take score) and by the end guard's own decoder.
+        public var streamLatents = 0
+        public var scratchLatents = 0
+        public var tailLatents = 0
+        /// Rendered at background priority (ExpressiveLine.relaxed: playback had plenty of audio banked); its speed then
+        /// says nothing about the phone's (StudioPace, StudioBudget and the extras rule leave it out).
+        public var relaxed = false
     }
 
     /// A call whose latents are ready: the stream to decode (edits done) and whether the read starts over.
@@ -165,6 +178,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var paced = false
         /// The first call of the next chapter in the same read: the de-wind cleaner starts afresh there (as at a new read).
         var chapterStart = false
+        /// Rendered at background priority (ExpressiveLine.relaxed): its studio's pace doesn't count toward switching the
+        /// studio off for the session.
+        var relaxed = false
     }
 
     private let assets: Assets
@@ -403,6 +419,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let reset = line.flowReset == true
         if reset { forget() }
         var report = Report()
+        report.relaxed = line.relaxed == true
+        // The end guard's decoder is used by this call's takes only (prepares run one at a time).
+        let tailBefore = await tailDecoder?.latentsDecoded ?? 0
         // The app's text, or the text as written for a pack that asks for it (chain "text": "raw").
         let text = assets.chain.pocketText(for: line)
         // The line's mood read (a mood change blends half the old clip and half the new one: NephisFlow.prompt).
@@ -431,9 +450,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         lastMood = mood
         report.mood = mood
+        report.tailLatents = max(0, (await tailDecoder?.latentsDecoded ?? 0) - tailBefore)
         return Prepared(stream: stream, reset: reset, started: t0, report: report, gainDB: chain.moods[mood]?.gainDB ?? 0, pads: pads,
                         toneDB: chain.moods[mood]?.toneDB ?? 0, hurry: line.studio == false, paced: line.studio != nil,
-                        chapterStart: line.chapterStart == true)
+                        chapterStart: line.chapterStart == true, relaxed: line.relaxed == true)
     }
 
     /// The pause between two pieces of one paragraph: a beat after a sentence, longer after "…" or ":".
@@ -677,10 +697,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var dewind = Dewound()
     }
 
-    /// What the de-wind cleaner did with one call.
+    /// What the de-wind cleaner did with one call (`predictMs`, `ioMs`: its network's share of `ms`).
     struct Dewound: Sendable {
         var passes = 0
         var ms = 0.0
+        var predictMs = 0.0
+        var ioMs = 0.0
         var model: String?
         var units: String?
         var note: String?
@@ -696,7 +718,8 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let (cleaner, why) = await load.value
         guard let cleaner else { return Dewound(note: why ?? "not loaded") }
         let r = await cleaner.process(samples, settings: settings, sampleRate: rate, restart: restart)
-        var out = Dewound(ms: r.ms, model: "\(cleaner.name) N\(cleaner.framesPerCall)", units: cleaner.computeUnits)
+        var out = Dewound(ms: r.ms, predictMs: r.predictMs, ioMs: r.ioMs, model: "\(cleaner.name) N\(cleaner.framesPerCall)",
+                          units: cleaner.computeUnits)
         if let error = r.error {
             out.note = "failed: \(error)"
             log("dewind: a call failed: \(error); that call without it, the next one starts afresh")
@@ -748,8 +771,9 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         let studioEQ = assets.chain.studioEQ
         // Her studio's models for the call, asked for in call order (the job itself stays off this actor, as before).
         let studioFor: @Sendable (Bool) async -> (studio: NephisStudio?, reason: String?, n: Int) = { hurry in await self.studioForCall(hurry: hurry) }
-        let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, paced in
-            await self.studioCallDone(n, r, units: units, paced: paced)
+        // A call rendered at background priority (`relaxed`) never counts toward switching the studio off for its pace.
+        let studioDone: @Sendable (Int, NephisStudio.Report, String, Bool) async -> String? = { n, r, units, counts in
+            await self.studioCallDone(n, r, units: units, paced: counts)
         }
         let studioCheck = Self.studioCheck(paced: p.paced, freeMemoryMB: freeMemoryMB)
         let note = log
@@ -806,7 +830,7 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
                         out.postMs += Date().timeIntervalSince(post0) * 1000
                         out.bypassReason = out.studioUsed ? nil : r.report.bypassReason ?? "bypassed"
                         out.studio = r.report
-                        if !p.hurry { out.off = await studioDone(ready.n, r.report, studio.computeUnits, p.paced) }
+                        if !p.hurry { out.off = await studioDone(ready.n, r.report, studio.computeUnits, p.paced && !p.relaxed) }
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
@@ -892,6 +916,10 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         report.dewindModel = decoded.dewind.model
         report.dewindUnits = decoded.dewind.units
         report.dewindNote = decoded.dewind.note
+        report.dewindPredictMs = decoded.dewind.predictMs
+        report.dewindIOMs = decoded.dewind.ioMs
+        report.dewindDSPMs = max(0, decoded.dewind.ms - decoded.dewind.predictMs - decoded.dewind.ioMs)
+        report.streamLatents = p.stream.count
         report.decodeMs = decoded.ms
         report.totalMs = Date().timeIntervalSince(p.started) * 1000
         report.audioMs = Double(samples.count) * 1000 / Double(rate)
@@ -1068,8 +1096,12 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         var latents: [[Float]] = []
         var batch: [[Float]] = []
         var analysis: Task<[Float], Error>?
+        // Latents this take decodes on the scratch decoder (the call's heat counters).
+        var scratchSent = 0
+        defer { report.scratchLatents += scratchSent }
         // Hand latents to the scratch decoder in small batches, in order, without waiting for it.
         func send(_ b: [[Float]]) {
+            scratchSent += b.count
             let previous = analysis
             analysis = Task {
                 var audio = try await previous?.value ?? []
@@ -1114,12 +1146,14 @@ public actor NephisFlowSynth: ExpressiveSynthesizer {
         }
         if n <= Self.headEdge + Self.tailEdge + Self.warmUp {
             // Short take: decoding the rest is about as cheap as the tail.
+            scratchSent += n - Self.headEdge
             audio += try await scratch.decode(Array(latents[Self.headEdge...]))
             return (latents, NephisFlow.levels(audio), NephisFlow.hiss(audio), audio, endOfText, ends)
         }
         let head = NephisFlow.levels(audio)
         let headHiss = NephisFlow.hiss(audio)
         try await scratch.reset()
+        scratchSent += min(n, Self.tailEdge + Self.warmUp)
         let tailAudio = Array(try await scratch.decode(Array(latents.suffix(Self.tailEdge + Self.warmUp)))
             .dropFirst(Self.warmUp * NephisFlow.samplesPerLatent))
         let middle = [Double](repeating: 0, count: n - Self.headEdge - Self.tailEdge)

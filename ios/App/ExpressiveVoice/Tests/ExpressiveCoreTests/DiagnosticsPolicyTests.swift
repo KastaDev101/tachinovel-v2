@@ -1,6 +1,6 @@
 //
 //  DiagnosticsPolicyTests.swift — the Diagnostics folder's schedule and failure words (DiagnosticsPolicy.swift): a copy
-//  right away at launch, every minute while a voice works and every five otherwise; a changed log is copied even at
+//  right away at launch, every 10 minutes while a voice works and every five otherwise; a changed log is copied even at
 //  the same size; a folder the app can't reach any more reads "disconnected", a busy iCloud Drive only "failing".
 //
 
@@ -13,8 +13,9 @@ final class DiagnosticsPolicyTests: XCTestCase {
 
     func testSchedule() {
         XCTAssertTrue(DiagnosticsPolicy.isDue(now: t0, lastAttempt: nil, busy: false), "first copy at launch")
-        XCTAssertFalse(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(30), lastAttempt: t0, busy: true))
-        XCTAssertTrue(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(60), lastAttempt: t0, busy: true))
+        XCTAssertFalse(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(60), lastAttempt: t0, busy: true))
+        XCTAssertFalse(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(9 * 60), lastAttempt: t0, busy: true), "listening: every 10 minutes")
+        XCTAssertTrue(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(10 * 60), lastAttempt: t0, busy: true))
         XCTAssertFalse(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(120), lastAttempt: t0, busy: false))
         XCTAssertTrue(DiagnosticsPolicy.isDue(now: t0.addingTimeInterval(300), lastAttempt: t0, busy: false))
     }

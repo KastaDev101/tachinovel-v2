@@ -72,6 +72,10 @@ final class VoiceSpeedTest {
         var thermalMax = 0
         var memoryStart: [String: Any] = [:]
         var stoppedListen = false
+        /// Seconds already banked at the start (the steady-state run: Developer › "Start with 60 s buffered"), and whether
+        /// the last call ran at background priority (Listen's RenderPacer.relaxed, with its hysteresis).
+        var banked = 0.0
+        var relaxed = false
         var done: ([String: Any]) -> Void
         var progress: ([String: Any]) -> Void
     }
@@ -81,8 +85,9 @@ final class VoiceSpeedTest {
     // MARK: - Start and stop
 
     /// Runs the test; `progress` (main) as it goes ({step, text, done, total}), `done` (main) with the report, or
-    /// {ran: false, error} when it can't run.
-    func start(progress: @escaping ([String: Any]) -> Void, done: @escaping ([String: Any]) -> Void) {
+    /// {ran: false, error} when it can't run. `banked` (seconds, 0 = the usual run): the steady-state run starts as if that
+    /// much audio were already waiting, so its calls are budgeted the way Listen's are once it is going.
+    func start(banked: Double = 0, progress: @escaping ([String: Any]) -> Void, done: @escaping ([String: Any]) -> Void) {
         guard !running else { return done(["ran": false, "busy": true, "error": "The speed test is already running."]) }
         let svc = ExpressiveService.shared
         let delivery = VoiceSettings.shared.prefs.delivery
@@ -106,6 +111,7 @@ final class VoiceSpeedTest {
         if listening { NarrationController.shared.stop() }
         var r = Run(started: Date(), done: done, progress: progress)
         r.stoppedListen = listening
+        r.banked = max(0, min(600, banked.isFinite ? banked : 0))
         r.thermalStart = ProcessInfo.processInfo.thermalState.rawValue
         r.thermalMax = r.thermalStart
         r.memoryStart = Self.memory()
@@ -158,7 +164,7 @@ final class VoiceSpeedTest {
         guard r.next < r.sentences.count else { return }
         let now = seconds(since: t0)
         let ready = r.calls.compactMap { c in c.readyAt.map { (at: $0, seconds: Double(c.samples.count) / Double(max(1, c.rate))) } }
-        let ahead = NephisSpeedTest.ahead(at: now, ready: ready.map(\.at), seconds: ready.map(\.seconds))
+        let ahead = NephisSpeedTest.ahead(at: now, ready: ready.map(\.at), seconds: ready.map(\.seconds), banked: r.banked)
         let i = r.next
         let limit = ahead < NephisSpeedTest.fastStartBelow ? r.sentences[i].text.count : ExpressiveEngineID.pocketTts.maxCharactersPerCall
         let range = NephisSpeedTest.group(r.sentences, from: i, limit: limit)
@@ -177,6 +183,9 @@ final class VoiceSpeedTest {
         line.takes = budget.takes
         line.leadIn = budget.leadIn
         line.studio = HybridSpeechEngine.studioFor(characters: said.count, ahead: ahead)
+        // Background priority as Listen gives it (RenderPacer.relaxed: over 30 s banked, back under 15 s).
+        r.relaxed = RenderPacer.relaxed(was: r.relaxed, buffered: ahead)
+        if r.relaxed { line.relaxed = true }
         let k = r.calls.count
         r.calls.append(Call(n: k + 1, sentences: range, chars: said.count, pauseBefore: line.pauseBefore, ahead: ahead,
                             studioAsked: line.studio == true, takes: budget.takes, leadIn: budget.leadIn, issuedAt: now))
@@ -213,7 +222,8 @@ final class VoiceSpeedTest {
     /// 1.5× real time; otherwise by the audio ready ahead.
     private static func budget(ahead: Double, calls: [Call]) -> (takes: Int, leadIn: Bool) {
         if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
-        if let last = calls.last(where: { $0.report != nil })?.report, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
+        if let last = calls.last(where: { $0.report.map { !$0.relaxed } ?? false })?.report, last.totalMs > 0,
+           last.audioMs / last.totalMs < 1.5 { return (1, false) }
         return HybridSpeechEngine.flowBudget(ahead: ahead, readChange: false)
     }
 
@@ -240,11 +250,15 @@ final class VoiceSpeedTest {
         let callsDone = r.calls.filter { !$0.samples.isEmpty }
         let rate = callsDone.first?.rate ?? NephisFlow.sampleRate
         var audio: [Float] = []
+        // Where each call starts in the .wav (the PC's join check looks at every call boundary).
+        var joins: [[String: Any]] = []
         for c in r.calls where !c.samples.isEmpty {
+            joins.append(["n": c.n, "sample": audio.count, "seconds": Self.r2(Double(audio.count) / Double(max(1, rate)))])
             audio += c.rate == rate ? c.samples : (SessionRate.resample(c.samples, from: c.rate, to: rate) ?? [])
         }
         var report = Self.report(r, error: error, rate: rate, audioSamples: audio.count)
-        let stem = NephisSpeedTest.fileStem(Date())
+        report["callStarts"] = joins
+        let stem = NephisSpeedTest.fileStem(Date(), steady: r.banked > 0)
         report["files"] = ["json": "\(stem).json", "wav": audio.isEmpty ? NSNull() as Any : "\(stem).wav" as Any] as [String: Any]
         // Stopped or refused before any call: nothing to keep.
         guard !r.calls.isEmpty else {
@@ -468,6 +482,9 @@ final class VoiceSpeedTest {
         row["dewindNote"] = rep.dewindNote.map { String($0.prefix(160)) } ?? NSNull()
         row["pieces"] = rep.pieces
         row["mood"] = rep.mood
+        row["latents"] = ["stream": rep.streamLatents, "scratch": rep.scratchLatents, "tail": rep.tailLatents]
+        row["relaxed"] = rep.relaxed
+        row["listened"] = rep.listened
         return row
     }
 
@@ -475,7 +492,7 @@ final class VoiceSpeedTest {
         let calls = r.calls
         let durations = calls.map { Double($0.samples.count) / Double(max(1, $0.rate)) }
         let ready = calls.map { $0.readyAt ?? 0 }
-        let play = NephisSpeedTest.playback(ready: ready, seconds: durations)
+        let play = NephisSpeedTest.playback(ready: ready, seconds: durations, banked: r.banked)
         let audioSeconds = durations.reduce(0, +)
         let renderSeconds = calls.compactMap(\.readyAt).max() ?? 0
         let reports = calls.compactMap(\.report)
@@ -489,7 +506,19 @@ final class VoiceSpeedTest {
             "finishMs": total(\.finishMs).rounded(),
             // Its own stage (not inside eqPostMs): the de-wind cleaner.
             "dewindMs": total(\.dewindMs).rounded(),
+            // Inside dewindMs: its network's predictions, the network's inputs and outputs, the signal processing.
+            "dewindPredictMs": total(\.dewindPredictMs).rounded(), "dewindIOMs": total(\.dewindIOMs).rounded(),
+            "dewindDSPMs": total(\.dewindDSPMs).rounded(),
             "decodeMs": total(\.decodeMs).rounded(), "callsMs": total(\.totalMs).rounded(),
+        ]
+        // The work behind the sound (heat batch 1): extras and Mimi's latents per decoder against those played.
+        func count(_ key: KeyPath<NephisFlowSynth.Report, Int>) -> Int { reports.reduce(0) { $0 + $1[keyPath: key] } }
+        let played = max(1, count(\.streamLatents))
+        let work: [String: Any] = [
+            "takes": count(\.takes), "leadIns": reports.filter(\.leadIn).count, "listened": reports.filter(\.listened).count,
+            "relaxedCalls": reports.filter(\.relaxed).count,
+            "latents": ["stream": count(\.streamLatents), "scratch": count(\.scratchLatents), "tail": count(\.tailLatents)],
+            "latentsPerPlayed": r2(Double(count(\.streamLatents) + count(\.scratchLatents) + count(\.tailLatents)) / Double(played)),
         ]
         var bypass: [String: Int] = [:]
         for rep in reports where rep.studioRead && !rep.studioUsed { bypass[reasonKey(rep.bypassReason), default: 0] += 1 }
@@ -552,6 +581,10 @@ final class VoiceSpeedTest {
         out["breakSeconds"] = r2(play.breakSeconds)
         out["failedCalls"] = calls.filter { $0.error != nil }.count
         out["stages"] = stages
+        out["work"] = work
+        // The steady-state run (Developer › "Start with 60 s buffered"): the head start it began with.
+        out["mode"] = r.banked > 0 ? "steady" : "start"
+        out["bankedAtStart"] = r.banked
         if let k = slowest, let rep = calls[k].report {
             var slow: [String: Any] = ["n": calls[k].n, "x": r2(rep.audioMs / max(1, rep.totalMs)), "totalMs": rep.totalMs.rounded()]
             slow["audioS"] = r2(durations[k])

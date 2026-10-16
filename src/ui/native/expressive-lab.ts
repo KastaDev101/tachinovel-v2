@@ -45,8 +45,9 @@ interface ExpressiveVoicePlugin {
   selectNephisPack(o: { id: string }): Promise<Obj>;
   deleteNephisPack(o: { id: string }): Promise<Obj>;
   /** Voice speed test (VoiceSpeedTest.swift, voice-speed.ts): renders the test passage the way Listen does, without
-   * playing it, and answers the report ({ran: false, error} when it can't run); progress as the "voiceSpeedTest" event. */
-  voiceSpeedTest(): Promise<Obj>;
+   * playing it, and answers the report ({ran: false, error} when it can't run); progress as the "voiceSpeedTest" event.
+   * `banked` (seconds): the steady-state run, as if that much audio were already waiting (Developer: 60). */
+  voiceSpeedTest(o?: { banked?: number }): Promise<Obj>;
   /** Stop: no new call starts; the report then says "stopped". */
   voiceSpeedTestStop(): Promise<{ stopping?: boolean }>;
   /** Plays the last rendered passage ({stop: true}: stops it). */

@@ -63,6 +63,7 @@
 		D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 358453344F32444A328E6B70 /* VoiceSpeedTest.swift */; };
 		738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */; };
 		E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */; };
+		C62A6382457EC850A3A3E00E /* ListenReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD100175DBE8B69DF88584F /* ListenReport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -133,6 +134,7 @@
 		358453344F32444A328E6B70 /* VoiceSpeedTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/VoiceSpeedTest.swift"; sourceTree = "<group>"; };
 		522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DeveloperOptions.swift"; sourceTree = "<group>"; };
 		1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagFolderPlugin.swift"; sourceTree = "<group>"; };
+		FBD100175DBE8B69DF88584F /* ListenReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/ListenReport.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -240,6 +242,7 @@
 				358453344F32444A328E6B70 /* VoiceSpeedTest.swift */,
 				522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */,
 				1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */,
+				FBD100175DBE8B69DF88584F /* ListenReport.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -413,6 +416,7 @@
 				D8FD4AC6653D602032633E15 /* VoiceSpeedTest.swift in Sources */,
 				738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */,
 				E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */,
+				C62A6382457EC850A3A3E00E /* ListenReport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

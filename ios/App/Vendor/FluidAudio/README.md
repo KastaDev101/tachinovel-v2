@@ -24,6 +24,9 @@ Marked "TachiNovel" in the code.
   split, unchanged): a run of sentence marks ("...", "?!") ends one sentence, as in Kyutai's pocket_tts
   (text_chunking.py). FluidAudio ends one at every mark, so "Hah... hahh" came back as "Hah. . . hahh" (or a chunk of
   dots) once regrouped. Nephis packs that read the text as written (chain "text": "raw") turn it on.
+- `PocketTtsLatentDecoder.latentsDecoded`: a running count of the latents it decoded (the app's per-call heat
+  counters). The Mimi decoder's fp16 output is read from its buffer (`readFloatArray`, arm64, unit-stride
+  [1, …, count] layout) instead of an NSNumber per sample: the same values.
 - `PocketTtsSession.setKeepsSentenceOpen(_:)` (default off: unchanged): every chunk of the enqueued text is normalized
   as mid-sentence (casing and trailing comma kept, no full stop or padding added). The Nephis flow engine generates a
   sentence too long for one chunk as pieces of its own (each joined like any piece); FluidAudio ended the first part

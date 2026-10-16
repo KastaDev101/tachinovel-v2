@@ -90,6 +90,8 @@ final class VoiceRun: @unchecked Sendable {
 
     /// NarrationController's status changed (playing = playing or loading its next chapter).
     func narrationChanged(playing now: Bool) {
+        // The listening report follows every change (its session starts and ends here).
+        ListenReport.shared.playing(now)
         guard now != playing else { return }
         playing = now
         journal.setPlaying(now)
@@ -99,6 +101,7 @@ final class VoiceRun: @unchecked Sendable {
     /// Narration was stopped (the user, the sleep timer, a remote command).
     func narrationStopped() {
         journal.stopped()
+        ListenReport.shared.stopped()
     }
 
     /// A voice's verdict on the last run (its call was in flight), as a line in Settings › Diagnostics.
@@ -123,13 +126,16 @@ final class VoiceRun: @unchecked Sendable {
     private func setForeground(_ now: Bool) {
         foreground = now
         journal.setForeground(now)
-        if !now { idleCheck() }
+        if !now {
+            idleCheck()
+            ListenReport.shared.leftApp()
+        }
     }
 
     private var busy: Bool { sentinels.contains { $0.inFlight } }
 
     /// A voice works right now: narration playing, or a model call in flight (a Voice test, Drive prep). The
-    /// Diagnostics folder copies every minute meanwhile (DiagnosticsFolder.swift).
+    /// Diagnostics folder copies every 10 minutes meanwhile, and once when it stops (DiagnosticsFolder.swift).
     var working: Bool { playing || busy }
 
     /// In the background with nothing playing and no model call running: iOS may close the app from here, no crash.
@@ -145,6 +151,7 @@ final class VoiceRun: @unchecked Sendable {
     }
 
     private func beat() {
+        if playing { ListenReport.shared.beat() }
         let labels: (chapter: String?, voice: String?) = playing ? NarrationController.shared.runLabels : (nil, nil)
         let footprint = VoiceLab.memoryFootprintMB()
         let busyNames = sentinels.filter { $0.inFlight }.map(\.name)
