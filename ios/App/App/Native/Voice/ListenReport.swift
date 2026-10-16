@@ -136,8 +136,12 @@ final class ListenReport {
         let name = "listen-\(Self.stamp(s.started)).json"
         let logs = CoreHost.shared.localAppDir.appendingPathComponent("logs", isDirectory: true)
         let log = self.log
-        // Written under a background task (a session that ends as the app leaves), then copied to the folder.
-        let task = UIApplication.shared.beginBackgroundTask(withName: "listen-report")
+        // Written under a background task (a session that ends as the app leaves), then copied to the folder; the task
+        // ends when that is done or when iOS's time for it runs out, whichever comes first.
+        let hold = BackgroundHold()
+        hold.id = UIApplication.shared.beginBackgroundTask(withName: "listen-report") {
+            MainActor.assumeIsolated { hold.end() }
+        }
         DiagnosticsFiles.queue.async {
             do {
                 try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
@@ -148,11 +152,22 @@ final class ListenReport {
             }
             Task { @MainActor in
                 DiagnosticsFolder.shared.mirror(force: true) {
-                    Task { @MainActor in if task != .invalid { UIApplication.shared.endBackgroundTask(task) } }
+                    Task { @MainActor in hold.end() }
                 }
             }
         }
         log.notice("listen report: \(name, privacy: .public) (\(Int(s.playedSeconds)) s heard, \(reason, privacy: .public))")
+    }
+
+    /// The background task a report is written under, ended once (main thread only).
+    private final class BackgroundHold: @unchecked Sendable {  // @unchecked: touched on the main thread only
+        var id = UIBackgroundTaskIdentifier.invalid
+
+        @MainActor func end() {
+            guard id != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(id)
+            id = .invalid
+        }
     }
 
     /// Keeps the newest `kept` listening reports in logs/.
