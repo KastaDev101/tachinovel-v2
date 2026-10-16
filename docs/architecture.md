@@ -228,7 +228,8 @@ What the tests prove without a Mac:
   https://capacitorjs.com/docs/ios/custom-code) and installs `TachiRouter`.
 - `Info.plist`: background modes `audio` + `fetch`, BG task id, `tachinovel://` URL scheme,
   `ITSAppUsesNonExemptEncryption = false`, iCloud container folder "TachiNovel".
-- `PrivacyInfo.xcprivacy`: FileTimestamp `C617.1`, UserDefaults `CA92.1`, no tracking
+- `PrivacyInfo.xcprivacy`: FileTimestamp `C617.1`, UserDefaults `CA92.1`, SystemBootTime `35F9.1`, DiskSpace `E174.1` +
+  `85F4.1` (the audio download's space check), no tracking
   (https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api).
 - `App.entitlements` is empty on purpose (CI can sign without extra capabilities);
   `App.full.entitlements.example` adds iCloud Documents and CarPlay audio once the App ID has them.
@@ -283,7 +284,9 @@ Build numbers come from `GITHUB_RUN_NUMBER`.
 - **Chapter audio (audio downloads, "Prepare for the drive"):** `BGProcessingTask` `app.tachinovel.drive-prep`
   (Native/Narration/DrivePrep.swift). It needs external power when every request waits for charging, and the network
   only while a chapter's text still has to be fetched (texts are saved with the render's work). Renders are resumable
-  (NarrationAudio/work/<chapter>/checkpoint.json) and yield to live reading at the next call. See docs/car.md.
+  (NarrationAudio/work/<chapter>/checkpoint.json) and yield to live reading at the next call. A finished download the
+  user asked for posts a local notification (AudioReadyNotice.swift; permission asked once, at the first audio download).
+  See docs/car.md.
 - **WebContent crash:** Capacitor reloads the WebView; the UI rebuilds from `app.boot` (core state lives
   natively, so nothing is lost).
 

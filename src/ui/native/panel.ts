@@ -1,6 +1,6 @@
 /**
  * The v2 screens' shared look (cleanup 2, 2026-10-16): full-screen panels that slide in over v1's UI (Voices, Voice
- * Settings, the novel's Voice panel, pronunciations, Developer, the voice tests, Prepare for the Drive, storage, the
+ * Settings, the novel's Voice panel, pronunciations, Developer, the voice tests, Narration Audio, storage, the
  * labs), drawn with v1's design tokens (vendor/v1 src/ui/styles/tokens.css) so they follow light and dark mode and
  * look like v1's grouped lists: a centred title with "‹ Back", tinted mixed-case group headers, 16 px cards on
  * --bg-grouped-2, explanations as group footers, SF Symbols (v1's symbols store, used as CSS masks), skeleton rows

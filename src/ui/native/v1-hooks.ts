@@ -7,7 +7,7 @@
  *    About that turns them off.
  *  - Diagnostics: "Share N Crash & Hang Reports" (diagnostics-overlay.ts) and "Voice Speed Test" (voice-speed.ts)
  *    under Copy Full Diagnostics.
- *  - Novel page: "Prepare for the drive" (drive-ui.ts) where v1's PC-narrator card was (stubbed out at build time).
+ *  - Novel page: "Download with Audio" (audio-ui.tsx) where v1's PC-narrator card was (stubbed out at build time).
  * (Open Source Licenses comes from THIRD_PARTY_NOTICES.md at build time: tools/third-party.ts.)
  */
 import { fallbackIconUrl } from '@v1/ui/components/icons.ts';
@@ -17,7 +17,7 @@ import { errorToast, showToast } from '@v1/ui/state/toast.ts';
 import { DEVELOPER_CHANGED, isDeveloper, noteDeveloper, setDeveloper } from './dev-flags.ts';
 import { openDeveloperScreen } from './developer-ui.ts';
 import { addCrashReportsRow } from './diagnostics-overlay.ts';
-import { addDriveCard, installDrive } from './drive-ui.ts';
+import { addAudioCard } from './audio-ui.tsx';
 import { Narration } from './narration.ts';
 import { openListenPlayer } from './narration-overlay.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
@@ -170,7 +170,7 @@ export function installV1Hooks(): void {
       hookAboutVersion();
       addAboutDeveloperSwitch();
       addDiagnosticsRow();
-      addDriveCard();
+      addAudioCard();
     } catch (err) {
       console.warn('v1 hooks', err);
     }
@@ -180,7 +180,6 @@ export function installV1Hooks(): void {
     queued = true;
     requestAnimationFrame(apply);
   };
-  installDrive();
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   const refresh = (): void =>
     void Narration.voiceSettings()

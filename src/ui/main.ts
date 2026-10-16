@@ -12,6 +12,7 @@ import { installQaFolder } from './native/qa-folder.ts';
 import '@v1/ui/main.ts';
 import { HELP } from '@v1/ui/lib/help-data.ts';
 import { installAds } from './monetization/ads.ts';
+import { installAudioDownloads } from './native/audio-ui.tsx';
 import { installVoiceImports } from './native/expressive-lab.ts';
 import { installCarHelp } from './native/help-car.ts';
 import { installLaunchActions } from './native/launch-actions.ts';
@@ -28,6 +29,7 @@ import { installV1Hooks } from './native/v1-hooks.ts';
 installCarHelp(HELP);
 installNarrationOverlay();
 installPronounce(); // "Pronounce" on a selected name in the reader
+installAudioDownloads(); // "Download with audio": v1's novel, Downloads and Storage pages read it (tools/v1-audio.ts)
 installV1Hooks();
 // Nephis is the app's one voice: a phone that had another voice chosen switches to her once.
 void ensureNephis();

@@ -537,7 +537,7 @@ export function openVoicesScreen(): void {
         <div class="row"><span class="main"><b>Car Buttons</b></span>${segmented('car-buttons', 'Car Buttons', [['chapters', 'Chapters'], ['skip15', '15 Seconds']], info.carButtons ?? 'chapters')}</div>
         <div class="row" data-testid="voices-prepared"><span class="main"><b>Prepared Audio</b><span class="sub" data-drive-total>${driveLine === null ? '<span class="skel skel-line" style="width:120px;height:12px;margin-top:3px"></span>' : esc(driveLine)}</span></span>${driveAny ? '<button type="button" class="link" data-act="drive-clear">Remove All</button>' : ''}</div>
       </div>
-      <p class="note">Car Buttons are the two side buttons in CarPlay, on the lock screen, on headphones and on the steering wheel. To listen without waiting on the voice or the internet, open a novel and tap Prepare for the Drive.</p>`;
+      <p class="note">Car Buttons are the two side buttons in CarPlay, on the lock screen, on headphones and on the steering wheel. To listen without waiting on the voice or the internet, open a novel and tap Download with Audio.</p>`;
   };
 
   const loadDrive = (): void =>

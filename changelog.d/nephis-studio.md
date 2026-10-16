@@ -1,5 +1,17 @@
 ### Added
 
+- Download with audio, part 2 (the screens): a novel's "Download with Audio" card, a "Download…" item in its ••• menu
+  and the chapter selection's Download open one download sheet: Next 5 · Next 10 · Unread (or the selected chapters),
+  Include Narration Audio with her narrator and dialogue packs, the audio's size and time to make, and Make Audio Now ·
+  While Charging (both remembered). The text downloads first; the audio needs its size plus 1 GB free. Chapter rows show
+  headphones for text + audio and a ring for the chapter being made. More › Downloads has the Queue (cover, chapter,
+  "Text ✓ · Audio 42 %", why it waits, Pause All / Resume All, ✕ asks while a chapter is half made, Retry after three
+  tries) and Narration Audio (its size → a list per novel with swipe-to-delete and Edit, Delete Audio After Listening,
+  Include Audio in Auto-Download (made only while charging), Delete All Audio); More › Storage has a Narration Audio row;
+  the novel's ••• menu has Remove Downloaded Audio. A notification says when a download is ready to listen offline
+  (permission asked once, at the first audio download, after a short explanation). The screens listen to the audio
+  status only while they show, and nothing polls.
+
 - Audio downloads, part 1 (the engine): chapters render into audio files through the one pipeline Listen plays
   (her calls, her studio always, the dialogue pack, her finishing and real sentence cuts), so a downloaded chapter
   sounds like Listen. The director's moods are worked out for the whole chapter first and stored with the file.
@@ -88,6 +100,10 @@
 
 ### Fixed
 
+- Nephis's model no longer reloads at every Listen start, the file → live hand-off, the Voice Speed Test and each audio
+  download: the loaded voice was never recorded for her, so each start unloaded and loaded her again (a cold start
+  without her studio, and heat). Now the same voice, packs and studio switch reuse the loaded model; a real change still
+  reloads (logged either way).
 - Diagnostics folder: "saved in TachiNovel-Diagnostics" no longer hides that iCloud isn't uploading. Each copy checks
   how iCloud did with the one before: an upload error (iCloud storage full), a folder outside iCloud Drive, or copies
   not uploaded for 20 minutes show on the Diagnostics row ("– not uploading"), in its menu (with Reconnect Folder…), in a
@@ -150,6 +166,8 @@
 
 ### Changed
 
+- "Prepare for the Drive"'s novel card and sheet are replaced by Download with Audio (its engine stays; audio prepared
+  by older builds still plays and shows in More › Voices › In the Car).
 - Cooler listening, with no change to her sound: her renders run at background priority while more than 30 s is
   banked (normal again under 15 s; such calls never count toward switching her studio off or skipping extras); she
   banks 90 s ahead instead of 120 s; the de-wind cleaner allocates nothing per 10 ms frame and feeds its network's

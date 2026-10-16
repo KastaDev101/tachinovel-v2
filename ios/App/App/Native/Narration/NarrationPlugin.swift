@@ -50,6 +50,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "audioDelete", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "audioEstimate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "audioSetOptions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioNotifications", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remoteCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestChapters", returnType: CAPPluginReturnPromise),
@@ -65,11 +66,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             self.n.onProgress = { [weak self] p in self?.notifyListeners("progress", data: p) }
             // "Prepare for the drive" and audio downloads: progress and storage (all novels; the UI filters).
             for name in [DrivePrep.changed, NarrationAudioStore.changed] {
+                // A queue change or progress reuses the audio list for a while; the store's own change reads it again.
+                let progress = name == DrivePrep.changed
                 self.driveObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                     guard let self else { return }
-                    // Only for a page that listens (the audio status walks the work folder).
+                    // Only for a page that listens (the UI listens only while a screen shows the audio).
                     if self.hasListeners("drive") { self.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil)) }
-                    if self.hasListeners("audio") { self.notifyListeners("audio", data: DrivePrep.shared.audioStatus(novelKey: nil)) }
+                    if self.hasListeners("audio") { self.notifyListeners("audio", data: DrivePrep.shared.audioStatus(novelKey: nil, cached: progress)) }
                 })
             }
         }
@@ -475,8 +478,10 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let name = call.getString("novelName") ?? ""
         let cover = call.getString("coverUrl")
         let when = DrivePrepWhen(rawValue: call.getString("when") ?? "") ?? .charging
+        let notify = call.getBool("notify") ?? false
         DispatchQueue.main.async {
-            DrivePrep.shared.enqueue(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, chapters: chapters, when: when)
+            DrivePrep.shared.enqueue(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, chapters: chapters, when: when,
+                                     notify: notify)
             call.resolve(DrivePrep.shared.audioStatus(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)))
         }
     }
@@ -534,13 +539,23 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { call.resolve(DrivePrep.shared.estimate(novelKey: key, chapters: chapters, characters: characters)) }
     }
 
-    /// `deleteAfterListening` (downloads; off by default).
+    /// `deleteAfterListening` (downloads; off by default), `autoDownloadAudio` (audio for auto-downloaded chapters, while
+    /// charging; off by default).
     @objc func audioSetOptions(_ call: CAPPluginCall) {
         let deleteAfter = call.getBool("deleteAfterListening")
+        let autoAudio = call.getBool("autoDownloadAudio")
         DispatchQueue.main.async {
             if let deleteAfter { NarrationAudioStore.deleteAfterListening = deleteAfter }
+            if let autoAudio { NarrationAudioStore.autoDownloadAudio = autoAudio }
             call.resolve(DrivePrep.shared.audioStatus(novelKey: nil))
         }
+    }
+
+    /// The "audio is ready" notification's permission: {status, asked}; `ask` shows the system prompt once (the UI explains
+    /// first). A denial is kept: never asked again.
+    @objc func audioNotifications(_ call: CAPPluginCall) {
+        let done: @Sendable ([String: Any]) -> Void = { result in DispatchQueue.main.async { call.resolve(result) } }
+        if call.getBool("ask") == true { AudioReadyNotice.ask(done) } else { AudioReadyNotice.status(done) }
     }
 
     /// What the lock screen and the car show now, and which remote commands are offered.

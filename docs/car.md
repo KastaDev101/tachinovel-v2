@@ -46,26 +46,41 @@ how it works. Help › Listening in the app has the short version.
   on, the reader follows the voice; scroll the page yourself and it stays where you put it, with a **Back
   to narration** pill to return.
 
-## Prepare for the drive
+## Download with audio
 
-For a drive with patchy signal, or to save battery on the road, open the novel and tap **Prepare for the
-drive** (under Add to Library / Web View / Share).
+For a drive with patchy signal, or to save battery on the road, download chapters with their audio (2026-10-16;
+`src/ui/native/audio-ui.tsx`, `audio-sheet.tsx`, `audio-status.ts`, `audio-live.ts`; v1's pages patched at build time by
+`tools/v1-audio.ts`).
 
-- **How many**: 1, 3, 5 or 10 chapters, starting where you would continue listening (the chapter you are
-  in, from its start, so resuming mid-chapter still works).
-- **When**:
-  - **Prepare now**: right away, on any network (on battery with Low Power Mode on it waits).
-  - **When charging or on Wi-Fi**: waits until one of them is true. On battery with Low Power Mode on it
-    waits too. While the app is closed, iOS runs the work as a background processing task, usually
-    overnight on the charger.
-- **While preparing**: the card and the sheet show the chapter being prepared, the progress and its step
-  (her moods for the chapter, rendering, saving the file), or why it waits ("Waiting for charging or Wi-Fi",
-  "Paused while you listen", "Resuming shortly after listening", "Waiting for the iPhone to cool down",
-  "Waiting for the internet"). Live reading always comes first: preparing stops at the next call when Listen
-  or the Voice Speed Test starts and goes on 30 s after they stop; serious heat pauses it until the iPhone
-  has been at fair or below for two minutes. It continues while you listen to already-prepared chapters,
-  except in the last minute before such a chapter hands over to live reading.
-- **Playing**: prepared chapters are used first, wherever a chapter starts: the reader's Listen (from the
+- **Where**: the novel's **Download with Audio** card (under Add to Library / Web View / Share), **Download…** in its
+  ••• menu, or select chapters (long-press) and tap **Download**.
+- **The sheet** (v1's bottom sheet, sized to its content with a grabber; drag down to close): which chapters (Next 5 ·
+  Next 10 · Unread, from where you would go on reading; or the selected ones), **Include Narration Audio** with her
+  packs ("Nephis · <narrator pack> + <dialogue pack>"), the audio's size (about 16 MB a chapter at 128 kbps) and how long
+  it takes to make (from her measured speed), and **Make Audio**: Now · While Charging. The switch and the timing are
+  remembered. The text downloads first (v1's queue), then the audio is queued. It refuses when the audio and 1 GB
+  wouldn't fit; without her voice on the iPhone it offers Download Her Voice (the text still downloads).
+- **Notification**: at the first audio download the app explains, then asks for permission once (a "no" is kept). When a
+  download finishes, "12 chapters of <novel> are ready to listen offline" (with the app open: a toast instead).
+- **Chapter rows**: headphones for text + audio, a small ring for the chapter being made, the download arrow for text
+  only. Audio made with an older voice shows nothing: it never plays.
+- **More › Downloads**: the **Queue** (cover, chapter, "Text ✓ · Audio 42 %", why it waits: "Waiting for charging",
+  "Paused while you listen", "Paused: iPhone is hot"; a progress ring; ✕ asks while a chapter is half made; Retry after
+  three tries; Pause All / Resume All) and **Narration Audio**: its size (→ each novel's audio, swipe left or Edit to
+  delete; a novel opens its chapters), Delete Audio After Listening (off), Include Audio in Auto-Download (made only
+  while charging, for the chapters v1's auto-download keeps: the core reports them, `src/core/auto-audio.ts`), Delete
+  All Audio. More › Storage has a Narration Audio row; the novel's ••• menu has Remove Downloaded Audio.
+- **Efficiency**: the screens listen to the plugin's `audio` event only while one of them shows (the novel page with
+  its card, the sheet, Downloads, Narration Audio); native sends it only on a change, and progress events reuse the
+  audio list for 30 s and the work folder's size for 10 s. Nothing polls, and none of it wakes the voice.
+- **While making audio**: why it waits ("Waiting for charging", "Paused while you listen", "Resuming shortly after
+  listening", "Waiting for the iPhone to cool down", "Waiting for the internet"). Live reading always comes first:
+  rendering stops at the next call when Listen or the Voice Speed Test starts and goes on 30 s after they stop; serious
+  heat pauses it until the iPhone has been at fair or below for two minutes. It continues while you listen to
+  downloaded chapters, except in the last minute before such a chapter hands over to live reading.
+- **"Prepare for the drive"** (older builds' card and sheet, replaced by the above): its engine stays (the bridge's
+  prepareDrive…); audio it made still plays, is deleted after listening and shows in More › Voices › In the Car.
+- **Playing**: chapters with audio (downloaded or prepared) are used first, wherever a chapter starts: the reader's Listen (from the
   tapped sentence), More › Listen, CarPlay, Siri, or the chapter change. They need neither synthesis nor the
   internet. The spoken sentence is still highlighted, from the real sentence cuts. About a minute before a
   prepared chapter ends whose next chapter has no audio, her model warms up and the next chapter's first
@@ -83,10 +98,10 @@ drive** (under Add to Library / Web View / Share).
   (the new file replaces the old one). Audio of another voice (Kokoro's while Nephis reads) is kept, not
   played.
 
-## Audio downloads (engine; the screens come in part 2)
+## Audio downloads (the engine)
 
-The same queue renders chosen chapters into audio that stays until deleted ("Delete audio after listening",
-off by default). Part 1 is the engine and its bridge; "Prepare for the drive" runs on it.
+The queue renders chosen chapters into audio that stays until deleted ("Delete Audio After Listening",
+off by default). Part 1 (build 373) is the engine and its bridge; part 2 the screens above.
 
 - **One render pipeline** (Native/Voice/NephisRenderPipeline.swift, ExpressiveCore NephisCallPlan.swift): Listen,
   the Voice Speed Test and downloads build each call the same way (sentences per call, the director's text and
@@ -137,7 +152,9 @@ either way.
 | Her one render pipeline, the shared director | `ios/App/App/Native/Voice/NephisRenderPipeline.swift`, `ExpressiveCore/NephisCallPlan.swift` |
 | Timestamp manifest (v1's narration manifest format, plus previous chapter and reader paragraph) | `HDVoiceCore/NarrationManifest.swift` |
 | Playback order (the chapter's audio in the voice that reads now → speech), prefetch, chapter changes, interruptions | `ios/App/App/Native/Narration/NarrationController.swift` |
-| Novel page card and sheet, Settings › Voices › In the car, Help | `src/ui/native/drive-ui.ts`, `drive-status.ts`, `voices-ui.ts`, `help-car.ts` |
+| Download with Audio: the novel card, sheet, badges, queue, Narration Audio; v1 page patches | `src/ui/native/audio-ui.tsx`, `audio-sheet.tsx`, `audio-status.ts`, `audio-live.ts`, `tools/v1-audio.ts` |
+| The "audio is ready" notification; auto-download's audio | `ios/App/App/Native/Narration/AudioReadyNotice.swift`, `DrivePrep.register`, `src/core/auto-audio.ts` |
+| Settings › Voices › In the car, Help | `src/ui/native/drive-status.ts`, `voices-ui.ts`, `help-car.ts` |
 
 ## Tests
 
@@ -176,7 +193,7 @@ either way.
 4. "Hey Siri, pause", then "Hey Siri, resume".
 5. Start navigation with spoken directions: narration pauses for each prompt and continues.
 6. Let a chapter end with the phone locked: the next one starts within a second.
-7. On a novel: Prepare for the drive › 3 › Prepare now. Watch the progress, then turn on airplane mode
-   and listen: the prepared chapters play, and each is deleted afterwards (More › Voices › In the car ›
-   Prepared audio).
+7. On a novel: Download with Audio › Next 5 › Now › Download. Watch the card and More › Downloads › Queue, then
+   turn on airplane mode and listen: the downloaded chapters play (headphones on their rows) and stay until you
+   delete them (More › Downloads › Narration Audio).
 8. More › Developer › Now Playing (Developer options: About › tap the version 7 times), and Voice Report's `car` section: commands, chapter gaps.

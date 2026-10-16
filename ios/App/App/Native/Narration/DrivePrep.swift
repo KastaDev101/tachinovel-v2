@@ -78,7 +78,26 @@ final class DrivePrep: @unchecked Sendable {
             let carried = MainBound(task)
             DispatchQueue.main.async { DrivePrep.shared.runInBackground(carried.value) }
         }
+        // Settings › Downloads › "Include Audio in Auto-Download": the chapters v1's auto-download queues (the core's
+        // "v2.autoDownloaded" event, src/core/auto-audio.ts) get audio too, made only while charging. Registered at launch,
+        // before the core's launch top-up runs.
+        CoreHost.shared.addObserver { event, payload in
+            guard event == autoDownloadedEvent, let data = payload.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let pluginId = obj["pluginId"] as? String, let novelPath = obj["novelPath"] as? String,
+                  let chapters = obj["chapterPaths"] as? [String], !chapters.isEmpty else { return }
+            let name = obj["novelName"] as? String ?? ""
+            let cover = obj["cover"] as? String
+            DispatchQueue.main.async {
+                guard NarrationAudioStore.autoDownloadAudio else { return }
+                DrivePrep.shared.enqueue(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, chapters: chapters,
+                                         when: .charging, notify: false)
+            }
+        }
     }
+
+    /// The core's event for chapters its auto-download queued (src/core/auto-audio.ts).
+    static let autoDownloadedEvent = "v2.autoDownloaded"
 
     func start() {
         guard !started else { return }
@@ -135,13 +154,18 @@ final class DrivePrep: @unchecked Sendable {
 
     /// Audio downloads: these chapters of a novel, in order (merged into its download request; chapters done before are
     /// rendered again only if their audio is gone or older).
-    func enqueue(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, chapters: [String], when: DrivePrepWhen) {
+    /// `notify`: a local notification when the request finishes (a download the user asked for).
+    func enqueue(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, chapters: [String], when: DrivePrepWhen,
+                 notify: Bool = false) {
         start()
         let novelKey = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
         let key = "\(novelKey)\u{1F}\(NarrationAudioKind.download.rawValue)"
         if let i = jobs.firstIndex(where: { $0.key == key }) {
+            let wasDone = jobs[i].finished
             jobs[i].redo(chapters.filter { store.playable(novelKey: novelKey, chapterPath: $0) == nil })
-            jobs[i].when = when
+            // An auto-download top-up (notify false, while charging) never makes a download the user asked for wait.
+            if notify || wasDone || jobs[i].when == .charging { jobs[i].when = when }
+            if notify { jobs[i].notify = true }
             jobs[i].paused = nil
             if !novelName.isEmpty { jobs[i].novelName = novelName }
             if let coverUrl { jobs[i].coverUrl = coverUrl }
@@ -150,8 +174,10 @@ final class DrivePrep: @unchecked Sendable {
             return kick()
         }
         let voice = VoiceSettings.shared.prefs.voice(forNovel: novelKey)
-        replace(DriveJob(pluginId: pluginId, novelPath: novelPath, novelName: novelName, coverUrl: coverUrl, chapters: chapters, kind: .download,
-                         when: when, voice: voice, createdAt: Date().timeIntervalSince1970))
+        var job = DriveJob(pluginId: pluginId, novelPath: novelPath, novelName: novelName, coverUrl: coverUrl, chapters: chapters, kind: .download,
+                           when: when, voice: voice, createdAt: Date().timeIntervalSince1970)
+        if notify { job.notify = true }
+        replace(job)
     }
 
     private func replace(_ job: DriveJob) {
@@ -255,8 +281,24 @@ final class DrivePrep: @unchecked Sendable {
 
     /// Audio downloads (the bridge's audio.status): every request and every chapter's audio, the storage, the settings and
     /// the render speed.
-    func audioStatus(novelKey: String?) -> [String: Any] {
-        let entries = store.entries(novelKey: novelKey)
+    /// `cached`: for a progress event (every half second while a chapter renders) the audio list (it reads the voice's key
+    /// per novel) and the work folder's size (a walk of it) are reused for a while; the store's own event refreshes them.
+    func audioStatus(novelKey: String?, cached: Bool = false) -> [String: Any] {
+        let now = ProcessInfo.processInfo.systemUptime
+        let entries: [[String: Any]]
+        if cached, novelKey == nil, let c = entriesCache, now - c.at < 30 {
+            entries = c.list
+        } else {
+            entries = store.entries(novelKey: novelKey)
+            if novelKey == nil { entriesCache = (entries, now) }
+        }
+        let work: Int
+        if cached, let w = workCache, now - w.at < 10 {
+            work = w.bytes
+        } else {
+            work = store.workBytes
+            workCache = (work, now)
+        }
         return [
             "jobs": jobInfos(novelKey: novelKey, kind: nil),
             "audio": entries,
@@ -264,14 +306,18 @@ final class DrivePrep: @unchecked Sendable {
             "totalBytes": store.index.totalBytes,
             "downloadBytes": store.index.bytes(kind: .download),
             "driveBytes": store.index.bytes(kind: .drive),
-            "workBytes": store.workBytes,
+            "workBytes": work,
             "capBytes": DrivePrepPolicy.defaultCapBytes,
             "deleteAfterListening": NarrationAudioStore.deleteAfterListening,
+            "autoDownloadAudio": NarrationAudioStore.autoDownloadAudio,
             "bestOfTwo": DeveloperOptions.snapshot["bestOfTwo"] == true,
             "speedX": speedX.map { ($0 * 100).rounded() / 100 as Any } ?? NSNull(),
             "voice": NarrationAudioStore.nephisReads ? "nephis" : "kokoro",
         ]
     }
+
+    private var entriesCache: (list: [[String: Any]], at: Double)?
+    private var workCache: (bytes: Int, at: Double)?
 
     private func jobInfos(novelKey: String?, kind: NarrationAudioKind?) -> [[String: Any]] {
         jobs.filter { (novelKey == nil || $0.novelKey == novelKey) && (kind == nil || $0.audioKind == kind) }.map { j -> [String: Any] in
@@ -279,6 +325,7 @@ final class DrivePrep: @unchecked Sendable {
                                     "kind": j.audioKind.rawValue, "count": j.count, "when": j.when.rawValue, "done": j.done.count, "titles": j.titles,
                                     "voice": j.voice, "state": state(of: j), "paused": j.isPaused]
             if let list = j.list { d["chapters"] = list }
+            if let cover = j.coverUrl { d["coverUrl"] = cover }
             if let r = waiting[j.key] { d["reason"] = r }
             if let e = j.lastError { d["error"] = e }
             if runningKey == j.key, let c = current {
@@ -304,9 +351,12 @@ final class DrivePrep: @unchecked Sendable {
         let bitRate = studio ? NarrationAudioEstimate.studioBitRate : NarrationAudioEstimate.plainBitRate
         let e = NarrationAudioEstimate.estimate(chapters: chapters, characters: characters, averageMinutes: average, bitRate: bitRate, speedX: speedX)
         let r1 = { (x: Double) in (x * 10).rounded() / 10 }
+        // Free space for the sheet's check (the audio plus 1 GB left over), as iOS counts it for a download the user asked for.
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let free = (try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
         return ["minutes": r1(e.minutes), "megabytes": r1(e.megabytes), "renderMinutes": r1(e.renderMinutes), "bitRate": bitRate,
                 "megabytesPerMinute": NarrationAudioEstimate.megabytesPerMinute(bitRate: bitRate), "speedX": speedX.map { $0 as Any } ?? NSNull(),
-                "measured": speedX != nil]
+                "measured": speedX != nil, "freeBytes": free.map { $0 as Any } ?? NSNull()]
     }
 
     // MARK: - Runner
@@ -579,6 +629,11 @@ final class DrivePrep: @unchecked Sendable {
     private func completed(_ job: DriveJob, chapterPath: String, title: String, next: String?) {
         retryAfter[job.key] = nil
         update(job.key) { $0.completed(chapterPath, title: title, next: next) }
+        // A download the user asked for is ready: one local notification ("12 chapters of … are ready to listen offline").
+        if let j = jobs.first(where: { $0.key == job.key }), j.finished, j.notify == true, j.audioKind == .download {
+            update(job.key) { $0.notify = nil }
+            AudioReadyNotice.post(novelName: j.novelName, chapters: j.done.count, novelKey: j.novelKey)
+        }
         done()
     }
 

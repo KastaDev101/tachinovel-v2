@@ -15,8 +15,8 @@
  *   3. licenses (UI, both flavors): More › About › Open Source Licenses lists THIRD_PARTY_NOTICES.md
  *      (tools/third-party.ts) instead of v1's hand-written list.
  *   4. pc-narrator (UI, both flavors): v1's PC-narrator screen ("Listen in the Car") and its novel-page card are stubbed
- *      out (removed 2026-10-16): More shows v2's Listen row (src/ui/native/v1-hooks.ts) and the novel page the drive
- *      card (drive-ui.ts). v1's core keeps its narration service; nothing in v2 calls it.
+ *      out (removed 2026-10-16): More shows v2's Listen row (src/ui/native/v1-hooks.ts) and the novel page its
+ *      Download with Audio card (audio-ui.tsx). v1's core keeps its narration service; nothing in v2 calls it.
  */
 import type * as esbuild from 'esbuild';
 import { existsSync, readFileSync } from 'node:fs';

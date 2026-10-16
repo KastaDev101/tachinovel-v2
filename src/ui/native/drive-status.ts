@@ -1,10 +1,10 @@
 /**
- * "Prepare for the drive" status, pure (no DOM): normalizing the native answer and the words the UI
- * shows (the novel page card, the sheet, More › Voices › In the Car). Unit-tested in tests/car.test.ts.
+ * "Prepare for the drive" status, pure (no DOM): normalizing the native answer, sizes and lengths, a request's progress
+ * and step (shared with the audio downloads' screens, audio-status.ts), and More › Voices › In the Car's line for audio
+ * prepared by older builds (the novel card and sheet were replaced by Download with Audio, 2026-10-16). Unit-tested in
+ * tests/car.test.ts.
  */
 import type { DriveJobInfo, DriveStatus } from './narration.ts';
-
-export const DRIVE_CHAPTER_CHOICES = [1, 3, 5, 10] as const;
 
 export function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0 MB';
@@ -46,33 +46,6 @@ const STEP_WORDS: Record<string, string> = {
 
 export function stepWords(step: string | undefined): string {
   return step ? (STEP_WORDS[step] ?? '') : '';
-}
-
-/** One line for a novel: what is being prepared, why it waits, or what is ready. */
-export function driveLine(status: DriveStatus, novelKey: string): string {
-  const job = status.jobs.find((j) => j.novelKey === novelKey);
-  const ready = status.prepared.filter((c) => c.novelKey === novelKey);
-  const bytes = ready.reduce((a, c) => a + c.bytes, 0);
-  const readyText = ready.length > 0 ? `${ready.length} chapter${ready.length === 1 ? '' : 's'} ready · ${formatBytes(bytes)}` : '';
-  if (job) {
-    switch (job.state) {
-      case 'running': {
-        const step = stepWords(job.current?.step);
-        return `Preparing ${Math.min(job.count, job.done + 1)} of ${job.count} · ${Math.round(jobProgress(job) * 100)}%${step ? ` · ${step}` : ''}`;
-      }
-      case 'paused':
-        return `Paused · ${job.done} of ${job.count} ready`;
-      case 'waiting':
-        return `${job.reason ?? 'Waiting'} · ${job.done} of ${job.count} ready`;
-      case 'queued':
-        return `Queued · ${job.done} of ${job.count} ready`;
-      case 'failed':
-        return `Stopped: ${job.error ?? 'something went wrong'}`;
-      case 'done':
-        break;
-    }
-  }
-  return readyText || 'Nephis reads the next chapters ahead, for the car or offline';
 }
 
 /** More › Voices › In the Car: all prepared audio in one line. */

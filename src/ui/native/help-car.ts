@@ -14,7 +14,7 @@ export const CAR_HELP: readonly HelpItem[] = [
   {
     id: 'car-prepare',
     q: 'How do I make sure it never stops to load in the car?',
-    a: 'Open the novel and tap Prepare for the Drive. Nephis reads the next 1, 3, 5 or 10 chapters into audio on your iPhone, right away or while it charges or is on Wi-Fi. Prepared chapters play without the internet and are deleted after you listen to them. More › Voices › In the Car shows how much space they take.',
+    a: 'Open the novel and tap Download with Audio (or select chapters and tap Download). Choose the next 5 or 10 chapters or all unread ones and keep Include Narration Audio on: the text downloads first, then Nephis reads the chapters into audio on your iPhone, right away or while it charges. Downloaded audio plays without the internet and stays until you delete it. More › Downloads shows the queue and how much space the audio takes.',
   },
   {
     id: 'car-buttons',

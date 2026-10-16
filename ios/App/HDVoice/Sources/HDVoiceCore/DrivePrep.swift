@@ -201,6 +201,9 @@ public struct DriveJob: Codable, Equatable, Sendable {
     public var kind: NarrationAudioKind?
     public var list: [String]?
     public var paused: Bool?
+    /// A local notification goes out when the request finishes (a download the user asked for, 2026-10-16; not the
+    /// re-renders of older audio or the auto-download's top-ups). Cleared once sent.
+    public var notify: Bool?
 
     public init(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, count: Int, when: DrivePrepWhen, voice: String, createdAt: Double) {
         self.pluginId = pluginId

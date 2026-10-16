@@ -13,6 +13,7 @@ import { type App, createApp } from '@v1/script/app.ts';
 import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
 import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
+import { reportAutoDownloads } from './auto-audio.ts';
 import { deepLinkProblem } from './deep-link.ts';
 import { clearReports, type DiagnosticSummary, exportReports, listReports, recordPayload } from './diagnostics/metrickit.ts';
 import { voiceEndEntry, type VoiceEndLevel } from './diagnostics/voice-end.ts';
@@ -134,6 +135,8 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     flushLogs: () => platform.flushLogs({ mirror: false }),
   });
   app.attachEvents((event, payload) => host.emit(event, JSON.stringify(payload ?? null)));
+  // "Include Audio in Auto-Download": native hears which chapters v1's smart downloads queued (auto-audio.ts).
+  reportAutoDownloads(app, (event, payload) => host.emit(event, JSON.stringify(payload)));
 
   // Web updates: personal flavor only; the store flavor compiles all of it out (App Store rules).
   const ota =

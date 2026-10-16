@@ -41,6 +41,14 @@ final class NarrationAudioStore: @unchecked Sendable {
         set { UserDefaults.standard.set(newValue, forKey: deleteAfterKey) }
     }
 
+    private static let autoDownloadKey = "tachinovel.audio.autoDownload"
+    /// Settings › Downloads › "Include Audio in Auto-Download" (off by default): the chapters v1's auto-download keeps get
+    /// audio too, made only while charging (DrivePrep.register).
+    static var autoDownloadAudio: Bool {
+        get { UserDefaults.standard.bool(forKey: autoDownloadKey) }
+        set { UserDefaults.standard.set(newValue, forKey: autoDownloadKey) }
+    }
+
     private init() {
         let fm = FileManager.default
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
@@ -266,9 +274,11 @@ final class NarrationAudioStore: @unchecked Sendable {
                 keys[e.novelKey] = .some(current)
             }
             let fresh = NarrationAudioFreshness.of(stored: e.voice, current: current)
-            return ["novelKey": e.novelKey, "chapterPath": e.chapterPath, "title": e.title, "voice": e.voice, "kind": e.kind.rawValue,
-                    "bytes": e.bytes, "durationSec": (e.durationMs / 1000).rounded(), "createdAt": e.createdAt,
-                    "fresh": current == nil ? NSNull() as Any : (fresh == .fresh) as Any] as [String: Any]
+            var d: [String: Any] = ["novelKey": e.novelKey, "chapterPath": e.chapterPath, "title": e.title, "voice": e.voice, "kind": e.kind.rawValue,
+                                    "bytes": e.bytes, "durationSec": (e.durationMs / 1000).rounded(), "createdAt": e.createdAt,
+                                    "fresh": current == nil ? NSNull() as Any : (fresh == .fresh) as Any]
+            if let name = e.novelName, !name.isEmpty { d["novelName"] = name }
+            return d
         }
     }
 

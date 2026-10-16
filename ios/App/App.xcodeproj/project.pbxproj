@@ -65,6 +65,7 @@
 		8A5332B975AC26BAE11E857D /* ChapterAudioRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */; };
 		B920AF37BE5AD6BF2D7AC0F9 /* NarrationAudioStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */; };
 		D13BCCB170909D0E4426EECE /* NephisRenderPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */; };
+		4A2B0C4D397CA44FE762D923 /* AudioReadyNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28D132E0C23E60F134353B9F /* AudioReadyNotice.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -137,6 +138,7 @@
 		B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/ChapterAudioRenderer.swift"; sourceTree = "<group>"; };
 		F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/NarrationAudioStore.swift"; sourceTree = "<group>"; };
 		7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/NephisRenderPipeline.swift"; sourceTree = "<group>"; };
+		28D132E0C23E60F134353B9F /* AudioReadyNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/AudioReadyNotice.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -246,6 +248,7 @@
 				B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */,
 				F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */,
 				7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */,
+				28D132E0C23E60F134353B9F /* AudioReadyNotice.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -421,6 +424,7 @@
 				8A5332B975AC26BAE11E857D /* ChapterAudioRenderer.swift in Sources */,
 				B920AF37BE5AD6BF2D7AC0F9 /* NarrationAudioStore.swift in Sources */,
 				D13BCCB170909D0E4426EECE /* NephisRenderPipeline.swift in Sources */,
+				4A2B0C4D397CA44FE762D923 /* AudioReadyNotice.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
