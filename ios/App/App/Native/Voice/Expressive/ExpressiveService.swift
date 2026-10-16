@@ -331,9 +331,16 @@ final class ExpressiveService {
 
     /// The voice `id` should load with now: the chosen shipped Pocket TTS voice (Narrator or Nephis); a change reloads
     /// the engine with it.
+    /// For Nephis the key also names her narrator and dialogue packs and her studio switch (EngineLoadPlan.pocketRequest),
+    /// so the same voice is reused and a real change reloads.
     private func voiceRequest(for id: ExpressiveEngineID) -> String? {
         switch id {
-        case .pocketTts: return VoiceSettings.shared.prefs.delivery.pocketVoice
+        case .pocketTts:
+            let delivery = VoiceSettings.shared.prefs.delivery
+            guard delivery.isNephis else { return delivery.pocketVoice }
+            let library = NephisModelPack.library
+            return EngineLoadPlan.pocketRequest(voice: delivery.pocketVoice, nephis: true, pack: library.activeID,
+                                                dialogue: library.dialogueID, studio: NephisModelPack.studioDirectory != nil)
         }
     }
 
@@ -341,16 +348,21 @@ final class ExpressiveService {
     func ensureLoaded(_ id: ExpressiveEngineID, completion: @escaping (Result<Void, Error>) -> Void) {
         cancelIdleRelease()
         let request = voiceRequest(for: id)
-        if loadedID == id, loadState(id) == .ready, synth != nil {
-            if request == loadedVoiceRequest { return completion(.success(())) }
-            unload(reason: "switching voice")
-        }
-        if loadedID == id, loadState(id) == .loading {
-            if request == loadingVoiceRequest {
-                loadWaiters.append(completion)
-                return
+        let ready = loadedID == id && loadState(id) == .ready && synth != nil
+        let loading = loadedID == id && loadState(id) == .loading
+        switch EngineLoadPlan.step(loadedReady: ready, loading: loading, loaded: loadedVoiceRequest,
+                                   loadingRequest: loadingVoiceRequest, requested: request) {
+        case .reuse:
+            log.info("expressive: \(id.rawValue, privacy: .public) already loaded with this voice; reload skipped")
+            return completion(.success(()))
+        case .wait:
+            loadWaiters.append(completion)
+            return
+        case .load(let reason):
+            if ready || loading {
+                log.notice("expressive: \(id.rawValue, privacy: .public) reload needed: \(reason, privacy: .public)")
+                unload(reason: "switching voice")
             }
-            unload(reason: "switching voice")
         }
         guard !crashDisabled else { return completion(.failure(ExpressiveError.disabled)) }
         // Resting after a memory warning, or the studio test running: fail at once, another voice reads meanwhile.
@@ -435,6 +447,8 @@ final class ExpressiveService {
                 switch result {
                 case .success(let ms):
                     self.loadStates[id] = .ready
+                    // What it loaded with: the next ensureLoaded with the same request reuses it (EngineLoadPlan).
+                    self.loadedVoiceRequest = request
                     self.lastLoad[id] = (ms: ms, cold: cold)
                     self.loadedThisLaunch.insert(id)
                     waiters.forEach { $0(.success(())) }
