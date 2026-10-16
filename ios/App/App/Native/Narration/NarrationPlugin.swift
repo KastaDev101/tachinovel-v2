@@ -343,10 +343,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             let novel = call.getObject("novel")
             let narrator = call.getObject("narrator")
             let delivery = call.getObject("delivery")
-            if let developer = call.getObject("developer") {
-                DeveloperOptions.update(developer)
-                MainActor.assumeIsolated { DeveloperOptions.applyShortcuts() }
-            }
+            // The app icon's quick action follows when the app goes to the background (AppDelegate).
+            if let developer = call.getObject("developer") { DeveloperOptions.update(developer) }
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }

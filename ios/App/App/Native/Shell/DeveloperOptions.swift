@@ -5,7 +5,7 @@
 //  tunes her voice); the store build starts with them off. The page reads and changes them through the Narration
 //  plugin (voiceSettings / setVoiceSettings, "developer"): on, "Show voice details in the player" (playerDetails) and
 //  the pronunciation editor's phonemes field and JSON paste (phonemes).
-//  While they are on, the app icon's long-press menu offers "Voice Speed Test" (LaunchActions).
+//  While they are on, the app icon's long-press menu offers "Voice Speed Test" (LaunchActions; set on backgrounding).
 //  Also the one-time move to automatic voice defaults: a studio switched off with the old Voice test switch goes back
 //  on (only More › Developer switches it off now). Natural delivery's own move is DeliverySettings version 4 (HDVoiceCore).
 //
@@ -47,12 +47,16 @@ enum DeveloperOptions {
         UserDefaults.standard.set(options, forKey: key)
     }
 
-    /// The app icon's long-press menu: "Voice Speed Test" while Developer options are on.
+    /// The app icon's long-press menu: "Voice Speed Test" while Developer options are on. Set when the app goes to the
+    /// background (Apple's advice for dynamic quick actions; never on the launch path), and only when it changes.
     @MainActor
     static func applyShortcuts() {
+        let on = snapshot["on"] == true
+        let shown = UIApplication.shared.shortcutItems?.contains { $0.type == speedTestShortcut } == true
+        guard on != shown else { return }
         let item = UIApplicationShortcutItem(type: speedTestShortcut, localizedTitle: "Voice Speed Test", localizedSubtitle: nil,
                                              icon: UIApplicationShortcutIcon(systemImageName: "speedometer"), userInfo: nil)
-        UIApplication.shared.shortcutItems = snapshot["on"] == true ? [item] : []
+        UIApplication.shared.shortcutItems = on ? [item] : []
     }
 
     /// Once: her studio is automatic again for every pack (an off from the old Voice test switch doesn't stick).
@@ -68,7 +72,7 @@ enum DeveloperOptions {
 /// cold start from the menu opens the test once the library shows: src/ui/native/launch-actions.ts).
 @MainActor
 enum LaunchActions {
-    static let queued = Notification.Name("tachinovel.launchAction")
+    nonisolated static let queued = Notification.Name("tachinovel.launchAction")
     private static var pending: String?
 
     /// True when `item` is ours (then the page is told).
