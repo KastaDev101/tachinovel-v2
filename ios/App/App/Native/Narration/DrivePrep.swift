@@ -1,488 +1,26 @@
 //
-//  DrivePrep.swift — "Prepare for the drive": a novel's next chapters rendered with Nephis (Kokoro when she can't)
-//  into local audio files ahead of time, so playback in the car never waits on synthesis or the network.
+//  DrivePrep.swift — the queue that renders chapters into audio on this iPhone: "Prepare for the drive" (the next N
+//  chapters, deleted after listening) and audio downloads (chosen chapters, kept), plus the chapters whose audio was made
+//  with an older voice (rendered again while charging). Audio downloads part 1 (2026-10-16): Nephis renders through the
+//  one pipeline Listen plays (ChapterAudioRenderer), resumable, with the director worked out first; Kokoro when she isn't
+//  the reader. Files: NarrationAudioStore. Decisions (when it may run, the index, the jobs, estimates): HDVoiceCore
+//  NarrationAudio.swift and DrivePrep.swift.
 //
-//  - DriveCache: the prepared files (Application Support/DriveAudio, excluded from backups): one AAC .m4a
-//    per chapter + its timestamp manifest (the same format as PC-narrated audio, NarrationManifest.swift),
-//    so prepared chapters play through NarrationController's audio path with sentence highlighting.
-//    Evicted after listening, capped at DrivePrepPolicy.defaultCapBytes (oldest first).
-//  - DrivePrep: the requests (DriveJob, persisted) and the runner: one sentence at a time, never while
-//    a voice reads aloud or the phone is hot, and for "when charging or on Wi-Fi" only then. Runs in the
-//    foreground, alongside prepared playback in the background, and in a BGProcessingTask.
-//  - ChapterRenderer: one chapter's sentence script → Kokoro → PCM post-processing → AAC + manifest.
-//  The decisions (policy, index, job walk) are platform-free in HDVoiceCore/DrivePrep.swift. Main thread.
+//  When it runs (AudioRenderPolicy): live reading always wins (it yields at the next call boundary when Listen or the
+//  Voice speed test starts, and goes on 30 s after they stop); serious heat pauses it until two minutes at fair or below;
+//  Low Power Mode on battery waits; "while charging" / "charging or Wi-Fi" as asked; the network only for a chapter whose
+//  text isn't saved yet; never while a downloaded chapter hands over to live reading. In the foreground, alongside
+//  downloaded playback in the background, and in a BGProcessingTask (external power when every request waits for it,
+//  network only when a chapter's text is still to fetch). Main thread.
 //
 
-@preconcurrency import AVFoundation
 @preconcurrency import BackgroundTasks
 import ExpressiveCore
-import ExpressiveEngines
 import Foundation
 import HDVoiceCore
-import HDVoiceKokoro
 import Network
 import os
 import UIKit
-
-enum DriveError: Error, LocalizedError {
-    case interrupted(String)
-    case failed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .interrupted(let why), .failed(let why): return why
-        }
-    }
-}
-
-// MARK: - Prepared files
-
-/// Main-thread confined (DrivePrep and the controller use it on main).
-final class DriveCache: @unchecked Sendable {
-    static let shared = DriveCache()
-    static let changed = Notification.Name("tachinovel.driveCacheChanged")
-
-    let folder: URL
-    private(set) var index: DriveCacheIndex
-
-    private init() {
-        let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
-        var dir = support.appendingPathComponent("DriveAudio", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try? dir.setResourceValues(values)
-        folder = dir
-        if let data = try? Data(contentsOf: dir.appendingPathComponent("index.json")),
-           let idx = try? JSONDecoder().decode(DriveCacheIndex.self, from: data), idx.schemaVersion == DriveCacheIndex.schema {
-            index = idx
-        } else {
-            index = DriveCacheIndex()
-        }
-        prune()
-    }
-
-    func url(_ file: String) -> URL { folder.appendingPathComponent(file) }
-
-    /// A playable prepared chapter made with `voice` (its files present).
-    func prepared(novelKey: String, chapterPath: String, voice: String) -> PreparedChapter? {
-        guard let c = index.find(novelKey: novelKey, chapterPath: chapterPath, voice: voice) else { return nil }
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: url(c.audioFile).path), fm.fileExists(atPath: url(c.manifestFile).path) else { return nil }
-        return c
-    }
-
-    /// Record a finished chapter; replaced files go, and the cap trims the oldest (never `keep`).
-    func add(_ c: PreparedChapter, keep: Set<String>) {
-        if let old = index.upsert(c), old.audioFile != c.audioFile { deleteFiles([old]) }
-        deleteFiles(index.trim(toBytes: DrivePrepPolicy.defaultCapBytes, keep: keep.union([c.id])))
-        save()
-    }
-
-    /// Listened to the end: the prepared audio isn't needed any more.
-    func evictAfterListening(novelKey: String, chapterPath: String) {
-        let gone = index.remove(novelKey: novelKey, chapterPath: chapterPath)
-        guard !gone.isEmpty else { return }
-        deleteFiles(gone)
-        save()
-    }
-
-    /// Remove one novel's prepared audio, or everything (nil).
-    func remove(novelKey: String?) {
-        deleteFiles(novelKey.map { index.removeNovel($0) } ?? index.removeAll())
-        save()
-    }
-
-    func entries(novelKey: String?) -> [[String: Any]] {
-        let list = novelKey.map { index.chapters(novelKey: $0) } ?? index.chapters
-        return list.map { c in
-            ["novelKey": c.novelKey, "chapterPath": c.chapterPath, "title": c.title, "voice": c.voice, "bytes": c.bytes,
-             "durationSec": (c.durationMs / 1000).rounded(), "createdAt": c.createdAt] as [String: Any]
-        }
-    }
-
-    private func deleteFiles(_ cs: [PreparedChapter]) {
-        for c in cs {
-            try? FileManager.default.removeItem(at: url(c.audioFile))
-            try? FileManager.default.removeItem(at: url(c.manifestFile))
-        }
-    }
-
-    private func save() {
-        if let data = try? JSONEncoder().encode(index) { try? data.write(to: folder.appendingPathComponent("index.json"), options: .atomic) }
-        NotificationCenter.default.post(name: Self.changed, object: nil)
-    }
-
-    /// Entries whose files are gone are dropped; files no entry refers to (an interrupted render) are deleted.
-    private func prune() {
-        let fm = FileManager.default
-        let before = index.chapters.count
-        index.chapters.removeAll { !fm.fileExists(atPath: url($0.audioFile).path) || !fm.fileExists(atPath: url($0.manifestFile).path) }
-        let known = Set(index.chapters.flatMap { [$0.audioFile, $0.manifestFile] } + ["index.json"])
-        for name in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where !known.contains(name) {
-            try? fm.removeItem(at: url(name))
-        }
-        if index.chapters.count != before, let data = try? JSONEncoder().encode(index) {
-            try? data.write(to: folder.appendingPathComponent("index.json"), options: .atomic)
-        }
-    }
-}
-
-// MARK: - One chapter → audio file
-
-/// Renders a chapter's sentence script with Kokoro into `<stem>.m4a` (AAC-LC, mono 24 kHz, 32 kbps,
-/// ~14 MB per hour; Nephis with her studio: 44.1 kHz, 128 kbps, ~58 MB per hour) and `<stem>.json` (timestamp
-/// manifest). Main thread; file writes on a serial queue.
-/// Driven on main; only the audio file is touched on its writer queue (`io`), one write at a time.
-final class ChapterRenderer: @unchecked Sendable {
-    struct Output {
-        let audioFile: String
-        let manifestFile: String
-        let bytes: Int
-        let durationMs: Double
-        let sentences: Int
-    }
-
-    private let chapter: NarrationController.Chapter
-    private let items: [NarrationController.ScriptItem]
-    private let voice: String
-    /// Narrator mode at render time: dialogue voices, pacing, jitter and polish, as live narration has them.
-    private let narrator: NarratorSettings
-    private var polish: NarrationPolish?
-    private let folder: URL
-    private let stem: String
-    private let io = DispatchQueue(label: "app.tachinovel.drive-writer")
-    private var file: AVAudioFile?
-    private var writeError: Error?
-    /// The file's rate (SessionRate): her studio's 44.1 kHz when Nephis prepares with it, else 24 kHz as before. Audio
-    /// that arrives at another rate (her studio switched since the chapter started) is resampled to it before it is
-    /// written, so every buffer matches the file and the timings stay in its frames.
-    private let sampleRate: Int
-    private let format: AVAudioFormat?
-    private var frames: Int = 0
-    /// Audio that couldn't be converted to the file's rate: the chapter fails at the next step.
-    private var conversionFailure: String?
-    private var segments: [NarrationTiming.Segment] = []
-    private var loudness = LoudnessMatcher()
-    private var next = 0
-    private var retried = false
-    /// Waiting for Nephis's model to be allowed to load again (her rest after a memory warning, the studio test).
-    private var restItem: DispatchWorkItem?
-    private var stopReason: String?
-    private var completion: ((Result<Output, Error>) -> Void)?
-
-    /// Asked between sentences: a reason to stop now (cancelled, live narration started, the phone is hot…).
-    var shouldStop: (() -> String?)?
-    /// Sentences done / total.
-    var onProgress: ((Int, Int) -> Void)?
-
-    /// Nephis: whole paragraphs through her flow engine (as live playback reads them), not sentence by sentence.
-    private let nephis: Bool
-    private var groups: [[Int]] = []
-    /// The chapter's curly single quotes (QuoteRouter.SingleQuotes), worked out at her first call with a dialogue pack.
-    private var quoteStyle: QuoteRouter.SingleQuotes?
-
-    init(chapter: NarrationController.Chapter, items: [NarrationController.ScriptItem], voice: String, narrator: NarratorSettings = NarratorSettings(),
-         folder: URL, nephis: Bool = false) {
-        self.chapter = chapter
-        self.items = items
-        self.voice = voice
-        self.narrator = narrator
-        self.nephis = nephis
-        let rate = nephis ? SessionRate.forRead(.pocketTts) : SessionRate.standard
-        sampleRate = rate
-        format = AVAudioFormat(standardFormatWithSampleRate: Double(rate), channels: 1)
-        if nephis { groups = Self.paragraphGroups(items) }
-        polish = narrator.usesPolish ? NarrationPolish(sampleRate: 24_000, roomTone: narrator.usesRoomTone, compressorRatio: narrator.compressorRatio) : nil
-        self.folder = folder
-        stem = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UInt32.random(in: 0...UInt32.max))"
-    }
-
-    /// AAC bit rate for a file at `sampleRate`: 128 kbps for her studio's 44.1 kHz chapters (low rates smear breaths
-    /// and "s" sounds first); 24 kHz chapters keep 32 kbps, as before.
-    static func bitRate(sampleRate: Int) -> Int {
-        sampleRate == SessionRate.standard ? 32_000 : 128_000
-    }
-
-    func start(_ completion: @escaping (Result<Output, Error>) -> Void) {
-        self.completion = completion
-        let url = folder.appendingPathComponent("\(stem).m4a")
-        let rate = sampleRate
-        io.async {
-            let settings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: rate,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: Self.bitRate(sampleRate: rate),
-            ]
-            do {
-                let f = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-                DispatchQueue.main.async {
-                    self.file = f
-                    self.step()
-                }
-            } catch {
-                DispatchQueue.main.async { self.finish(.failure(DriveError.failed("Couldn't create the audio file: \(error.localizedDescription)"))) }
-            }
-        }
-    }
-
-    /// Stop after the sentence in progress (at once while waiting for Nephis).
-    func stop(_ reason: String) {
-        stopReason = reason
-        guard let item = restItem else { return }
-        item.cancel()
-        restItem = nil
-        step()
-    }
-
-    /// Nephis's model may not load for a while (resting after a memory warning, or the studio test running): the chapter
-    /// waits for her and then goes on from the paragraph it was at, instead of failing (crash plan a4). Main thread.
-    private func waitForNephis(_ block: ExpressiveError) {
-        var seconds = 10.0
-        if case .resting(let left) = block { seconds = Double(left) + 1 }
-        retried = false
-        let item = DispatchWorkItem { [weak self] in
-            self?.restItem = nil
-            self?.step()
-        }
-        restItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
-    }
-
-    /// Her calls: the sentences of one reader paragraph together, up to Pocket's per-call limit (400 characters).
-    static func paragraphGroups(_ items: [NarrationController.ScriptItem], limit: Int = 400) -> [[Int]] {
-        var out: [[Int]] = []
-        var cur: [Int] = []
-        var chars = 0
-        for (i, it) in items.enumerated() {
-            if let last = cur.last, items[last].paragraph != it.paragraph || chars + it.text.count > limit {
-                out.append(cur)
-                cur = []
-                chars = 0
-            }
-            cur.append(i)
-            chars += it.text.count + 1
-        }
-        if !cur.isEmpty { out.append(cur) }
-        return out
-    }
-
-    private func step() {
-        if let why = conversionFailure { return finish(.failure(DriveError.failed(why))) }
-        if let why = stopReason ?? shouldStop?() { return finish(.failure(DriveError.interrupted(why))) }
-        if nephis { return nephisStep() }
-        guard next < items.count else { return finalize() }
-        let item = items[next]
-        let sentence = item.narrator
-        let speed = NarratorPlan.rate(1, for: sentence, settings: narrator)
-        let prefs = VoiceSettings.shared.prefs
-        let handle: (Result<KokoroAudio, Error>) -> Void = { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success(let audio):
-                self.append(item, audio)
-                self.retried = false
-                self.next += 1
-                self.onProgress?(self.next, self.items.count)
-                self.step()
-            case .failure(let error):
-                // One retry (a reload after a memory warning, a transient error); then the chapter fails.
-                guard !self.retried else { return self.finish(.failure(DriveError.failed("Kokoro couldn't read a sentence: \(error.localizedDescription)"))) }
-                self.retried = true
-                KokoroService.shared.ensureLoaded { _ in self.step() }
-            }
-        }
-        if let parts = NarratorPlan.parts(for: sentence, settings: narrator, resolve: { prefs.engineVoice($0) }) {
-            KokoroService.shared.synthesize(parts: parts, voice: voice, speed: speed, completion: handle)
-        } else {
-            KokoroService.shared.synthesize(text: item.text, runs: item.runs, voice: voice, speed: speed, completion: handle)
-        }
-    }
-
-    /// One of her calls: the paragraph with its mood read, the director's temperature and the pause before it; the
-    /// better of two takes (there's no hurry ahead of time). Her EQ and the flow stream's soft limit, as live.
-    private func nephisStep() {
-        guard next < groups.count else { return finalize() }
-        let members = groups[next]
-        let its = members.map { items[$0] }
-        let d = VoiceSettings.shared.prefs.delivery
-        // Heteronyms respelled in their sense ("reed" for "to read"), as live (HDVoiceCore Heteronyms).
-        let text = its.map { Heteronyms.pocketText(StyleMapper.plainText($0.natural?.params.say ?? $0.text)) }.joined(separator: " ")
-        var line = ExpressiveLine(text: text, role: d.read(its[0].natural?.voice, speaks: its[0].natural?.speaks ?? false) ?? "narrator")
-        // As written, for a Nephis pack that reads that form (chain "text": "raw"), as live.
-        line.raw = its.map { Heteronyms.pocketText(StyleMapper.plainText($0.natural?.params.raw ?? $0.text)) }.joined(separator: " ")
-        let weights = its.map { Float(max(1, $0.text.count)) }
-        let temps = its.map { $0.natural?.params.temperature ?? 0.7 }
-        line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
-        if members[0] > 0 {
-            let prev = items[members[0] - 1]
-            line.pauseBefore = min(1.4, max(0.35, (prev.naturalMs ?? prev.pauseMs) / 1000))
-            line.handover = prev.natural?.handover.flatMap(NephisFlow.Handover.init(script:))
-        }
-        line.flowReset = next == 0
-        line.flowLast = next == groups.count - 1
-        // Her dialogue pack (when she has one): the quote routing's hints, as live (HybridSpeechEngine.dialogueHints).
-        if ExpressiveService.shared.nephisDialogue, let last = members.last {
-            let style = quoteStyle ?? QuoteRouter.SingleQuotes.of(items.map(\.text))
-            quoteStyle = style
-            line.singleQuotes = style.rawValue
-            let paragraph = items[last].paragraph
-            let rest = items[(last + 1)...].prefix { $0.paragraph == paragraph }.map(\.text)
-            line.restOfParagraph = rest.isEmpty ? nil : rest.joined(separator: " ")
-            line.nextOpensQuote = items[(last + 1)...].first { $0.paragraph != paragraph }.map { QuoteRouter.opensQuote($0.text) } ?? false
-        }
-        line.takes = 2
-        line.leadIn = false
-        ExpressiveService.shared.synthesizeFlow(line, prepared: {}) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                switch result {
-                case .success(let audio) where !audio.samples.isEmpty:
-                    self.appendNephis(members.map { self.items[$0] }, audio.samples, sampleRate: audio.sampleRate)
-                    self.retried = false
-                    self.next += 1
-                    self.onProgress?(min(self.items.count, (members.last ?? 0) + 1), self.items.count)
-                    self.step()
-                default:
-                    // Released for memory, or the studio test runs: wait for her (not a failed paragraph).
-                    if let block = ExpressiveService.shared.loadBlock { return self.waitForNephis(block) }
-                    guard !self.retried else { return self.finish(.failure(DriveError.failed("Nephis couldn't read a paragraph"))) }
-                    self.retried = true
-                    ExpressiveService.shared.ensureLoaded(.pocketTts) { _ in
-                        if let block = ExpressiveService.shared.loadBlock { return self.waitForNephis(block) }
-                        self.step()
-                    }
-                }
-            }
-        }
-    }
-
-    /// Her paragraph into the file: the thump filter, her EQ (Mimi's 24 kHz stream only: her studio's stream comes with
-    /// its tone set, as in NaturalFinish.renderFlow), the flow stream's soft limit, then the file's rate; the sentences'
-    /// times by their share of the letters, after the pause the call starts with (highlighting only).
-    private func appendNephis(_ its: [NarrationController.ScriptItem], _ samples: [Float], sampleRate made: Int) {
-        var out = samples
-        StartupSound.removeThump(&out, sampleRate: made)
-        if made == NaturalFinish.mimiRate { HybridSpeechEngine.nephisTilt.apply(&out, sampleRate: made) }
-        let knee = NaturalFinish.flowKnee
-        let room = NaturalFinish.peakCeiling - knee
-        for i in out.indices {
-            let v = out[i]
-            let a = abs(v)
-            if a > knee { out[i] = (v < 0 ? -1 : 1) * (knee + room * Float(tanh(Double((a - knee) / room)))) }
-        }
-        if made != sampleRate {
-            guard let converted = SessionRate.resample(out, from: made, to: sampleRate) else {
-                conversionFailure = "Couldn't convert her \(made) Hz audio to \(sampleRate) Hz"
-                return
-            }
-            out = converted
-        }
-        let sr = sampleRate
-        let lead = out.firstIndex { abs($0) > 0.003 } ?? 0
-        let letters = its.map { max(1, $0.text.count) }
-        let total = Double(letters.reduce(0, +))
-        let speech = Double(out.count - lead)
-        var at = Double(frames + lead)
-        for (it, n) in zip(its, letters) {
-            let len = speech * Double(n) / total
-            segments.append(NarrationTiming.Segment(id: it.id, block: it.block, start: it.start, end: it.end,
-                                                    t0: at / Double(sr), t1: (at + len) / Double(sr), hash: it.hash, paragraph: it.paragraph))
-            at += len
-        }
-        frames += out.count
-        guard !out.isEmpty, let format, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(out.count)),
-              let ch = buf.floatChannelData?[0] else { return }
-        out.withUnsafeBufferPointer { src in
-            if let base = src.baseAddress { ch.update(from: base, count: out.count) }
-        }
-        buf.frameLength = AVAudioFrameCount(out.count)
-        io.async {
-            guard self.writeError == nil, let f = self.file else { return }
-            do { try f.write(from: buf) } catch { self.writeError = error }
-        }
-    }
-
-    private func append(_ item: NarrationController.ScriptItem, _ audio: KokoroAudio) {
-        let pause = NarratorPlan.pause(for: item.narrator, settings: narrator)
-        var out: [Float]
-        if var p = polish, p.sampleRate == audio.sampleRate {
-            out = p.prepareSentence(audio.samples, pause: pause)
-            polish = p
-        } else {
-            out = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: pause, loudness: &loudness)
-        }
-        var speech = max(0, out.count - PCM.silenceFrames(seconds: pause, sampleRate: audio.sampleRate))
-        // At the file's rate (Kokoro's 24 kHz matches it: a file for Kokoro is always 24 kHz).
-        if audio.sampleRate != sampleRate {
-            guard audio.sampleRate > 0, let converted = SessionRate.resample(out, from: audio.sampleRate, to: sampleRate) else {
-                conversionFailure = "Couldn't convert Kokoro's \(audio.sampleRate) Hz audio to \(sampleRate) Hz"
-                return
-            }
-            speech = Int((Double(speech) * Double(sampleRate) / Double(audio.sampleRate)).rounded())
-            out = converted
-        }
-        let sr = Double(max(1, sampleRate))
-        let t0 = Double(frames) / sr
-        segments.append(NarrationTiming.Segment(id: item.id, block: item.block, start: item.start, end: item.end,
-                                                t0: t0, t1: t0 + Double(speech) / sr, hash: item.hash, paragraph: item.paragraph))
-        frames += out.count
-        guard !out.isEmpty, let format, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(out.count)),
-              let ch = buf.floatChannelData?[0] else { return }
-        out.withUnsafeBufferPointer { src in
-            if let base = src.baseAddress { ch.update(from: base, count: out.count) }
-        }
-        buf.frameLength = AVAudioFrameCount(out.count)
-        io.async {
-            guard self.writeError == nil, let f = self.file else { return }
-            do { try f.write(from: buf) } catch { self.writeError = error }
-        }
-    }
-
-    private func finalize() {
-        let audioName = "\(stem).m4a"
-        let manifestName = "\(stem).json"
-        let durationMs = Double(frames) * 1000 / Double(max(1, sampleRate))
-        io.async {
-            self.file = nil // closes (finishes) the file
-            let failure = self.writeError
-            let bytes = ((try? FileManager.default.attributesOfItem(atPath: self.folder.appendingPathComponent(audioName).path))?[.size] as? NSNumber)?.intValue ?? 0
-            DispatchQueue.main.async {
-                if let failure { return self.finish(.failure(DriveError.failed("Couldn't write the audio: \(failure.localizedDescription)"))) }
-                let timing = NarrationTiming(segments: self.segments, duration: durationMs / 1000,
-                                             nextChapterPath: self.chapter.nextPath, nextTitle: self.chapter.nextName,
-                                             prevChapterPath: self.chapter.prevPath, prevTitle: self.chapter.prevName)
-                let source = NarrationTiming.Source(pluginId: self.chapter.pluginId, novelPath: self.chapter.novelPath, chapterPath: self.chapter.chapterPath,
-                                                    title: self.chapter.chapterName, voice: self.voice, audioFile: audioName)
-                do {
-                    try timing.manifestJSON(source: source).write(to: self.folder.appendingPathComponent(manifestName), options: .atomic)
-                } catch {
-                    return self.finish(.failure(DriveError.failed("Couldn't write the manifest: \(error.localizedDescription)")))
-                }
-                self.finish(.success(Output(audioFile: audioName, manifestFile: manifestName, bytes: bytes, durationMs: durationMs, sentences: self.items.count)))
-            }
-        }
-    }
-
-    private func finish(_ result: Result<Output, Error>) {
-        guard let done = completion else { return }
-        completion = nil
-        if case .failure = result {
-            let stem = self.stem
-            let folder = self.folder
-            io.async {
-                self.file = nil
-                try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(stem).m4a"))
-                try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(stem).json"))
-            }
-        }
-        done(result)
-    }
-}
-
-// MARK: - Requests and the runner
 
 /// Main-thread confined: requests, the runner and the system callbacks all hop to main.
 final class DrivePrep: @unchecked Sendable {
@@ -490,33 +28,46 @@ final class DrivePrep: @unchecked Sendable {
     static let taskId = "app.tachinovel.drive-prep"
     static let changed = Notification.Name("tachinovel.drivePrepChanged")
     private static let jobsKey = "tachinovel.driveJobs"
+    private static let speedKey = "tachinovel.audio.speedX"
 
     private(set) var jobs: [DriveJob] = []
-    private var renderer: ChapterRenderer?
+    private var nephis: ChapterAudioRenderer?
+    private var kokoro: KokoroChapterRenderer?
+    /// The request being worked on (DriveJob.key).
     private var runningKey: String?
-    /// The chapter being rendered: sentences done of all.
     private struct Current {
         let chapterPath: String
         let title: String
-        let sentence: Int
-        let sentences: Int
+        var progress: ChapterAudioProgress
     }
 
     private var current: Current?
     private var waiting: [String: String] = [:]
     private var wifi = false
+    private var online = true
     private let monitor = NWPathMonitor()
     private var started = false
     private var bgTask: BGProcessingTask?
     private var appTask: UIBackgroundTaskIdentifier = .invalid
     private var retryItem: DispatchWorkItem?
-    /// novelKey → uptime before which a failed request isn't retried.
+    /// Request key → uptime before which a failed request isn't retried.
     private var retryAfter: [String: Double] = [:]
-    /// Kokoro was loaded for preparing: release it once preparing goes idle (unless narration uses it).
     private var usedKokoro = false
+    private var usedNephis = false
     private var lastNotify = 0.0
     private var observers: [NSObjectProtocol] = []
+    private var heat = HeatGate()
+    /// Live speech now, and when it last stopped (uptime).
+    private var live = false
+    private var liveEnded: Double?
     private let log = Logger(subsystem: "app.tachinovel", category: "drive")
+    private var store: NarrationAudioStore { NarrationAudioStore.shared }
+
+    /// Her measured render speed for downloads (audio seconds per wall second, a moving average): the estimates' render time.
+    private(set) var speedX: Double? {
+        get { UserDefaults.standard.object(forKey: Self.speedKey) as? Double }
+        set { UserDefaults.standard.set(newValue, forKey: Self.speedKey) }
+    }
 
     private init() {}
 
@@ -524,7 +75,8 @@ final class DrivePrep: @unchecked Sendable {
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskId, using: nil) { task in
             guard let task = task as? BGProcessingTask else { return task.setTaskCompleted(success: false) }
-            DispatchQueue.main.async { DrivePrep.shared.runInBackground(task) }
+            let carried = MainBound(task)
+            DispatchQueue.main.async { DrivePrep.shared.runInBackground(carried.value) }
         }
     }
 
@@ -534,153 +86,332 @@ final class DrivePrep: @unchecked Sendable {
         jobs = Self.loadJobs()
         MainThread.run { UIDevice.current.isBatteryMonitoringEnabled = true }
         monitor.pathUpdateHandler = { [weak self] path in
-            let wifi = path.status == .satisfied && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
+            let online = path.status == .satisfied
+            let wifi = online && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.wifi != wifi else { return }
+                guard let self, self.wifi != wifi || self.online != online else { return }
                 self.wifi = wifi
+                self.online = online
                 self.kick()
             }
         }
         monitor.start(queue: DispatchQueue(label: "app.tachinovel.drive-network"))
         let nc = NotificationCenter.default
         for name in [UIDevice.batteryStateDidChangeNotification, Notification.Name.NSProcessInfoPowerStateDidChange,
-                     ProcessInfo.thermalStateDidChangeNotification, UIApplication.didBecomeActiveNotification, KokoroService.statusChanged] {
+                     ProcessInfo.thermalStateDidChangeNotification, UIApplication.didBecomeActiveNotification, KokoroService.statusChanged,
+                     ExpressiveService.statusChanged] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.kick() })
         }
+        // A voice change (a new pack, her studio, delivery settings): audio of the older voice is queued again (a moment
+        // later, once: a slider sends many changes).
+        for name in [VoiceSettings.changed, NephisModelPack.didInstall, ExpressiveService.statusChanged] {
+            observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.sweepSoon() })
+        }
         kick()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { NarrationAudioStore.shared.sweep(force: true) }
     }
 
-    // MARK: Requests
+    private var sweepItem: DispatchWorkItem?
 
-    /// "Prepare for the drive": the next `count` chapters from `startChapterPath` (default: where listening
-    /// would resume). Replaces the novel's earlier request.
+    private func sweepSoon() {
+        sweepItem?.cancel()
+        let item = DispatchWorkItem { NarrationAudioStore.shared.sweep() }
+        sweepItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: item)
+    }
+
+    // MARK: - Requests
+
+    /// "Prepare for the drive": the next `count` chapters from `startChapterPath` (default: where listening would resume).
+    /// Replaces the novel's earlier drive request.
     func request(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, count: Int, when: DrivePrepWhen, startChapterPath: String?) {
         start()
         let voice = VoiceSettings.shared.prefs.voice(forNovel: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath))
         var job = DriveJob(pluginId: pluginId, novelPath: novelPath, novelName: novelName, coverUrl: coverUrl, count: count, when: when,
                            voice: voice, createdAt: Date().timeIntervalSince1970)
         job.cursor = startChapterPath
-        if runningKey == job.novelKey { renderer?.stop("Replaced by a new request") }
-        jobs.removeAll { $0.novelKey == job.novelKey }
+        replace(job)
+    }
+
+    /// Audio downloads: these chapters of a novel, in order (merged into its download request; chapters done before are
+    /// rendered again only if their audio is gone or older).
+    func enqueue(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, chapters: [String], when: DrivePrepWhen) {
+        start()
+        let novelKey = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
+        let key = "\(novelKey)\u{1F}\(NarrationAudioKind.download.rawValue)"
+        if let i = jobs.firstIndex(where: { $0.key == key }) {
+            jobs[i].redo(chapters.filter { store.playable(novelKey: novelKey, chapterPath: $0) == nil })
+            jobs[i].when = when
+            jobs[i].paused = nil
+            if !novelName.isEmpty { jobs[i].novelName = novelName }
+            if let coverUrl { jobs[i].coverUrl = coverUrl }
+            retryAfter[key] = nil
+            save()
+            return kick()
+        }
+        let voice = VoiceSettings.shared.prefs.voice(forNovel: novelKey)
+        replace(DriveJob(pluginId: pluginId, novelPath: novelPath, novelName: novelName, coverUrl: coverUrl, chapters: chapters, kind: .download,
+                         when: when, voice: voice, createdAt: Date().timeIntervalSince1970))
+    }
+
+    private func replace(_ job: DriveJob) {
+        if runningKey == job.key { stopRunning("Replaced by a new request") }
+        jobs.removeAll { $0.key == job.key }
         jobs.append(job)
+        retryAfter[job.key] = nil
         save()
         kick()
     }
 
-    func cancel(novelKey: String) {
-        if runningKey == novelKey { renderer?.stop("Cancelled") }
-        jobs.removeAll { $0.novelKey == novelKey }
+    /// Audio made with an older voice: its chapters rendered again (while charging), into the request of its kind. A drive
+    /// request still walking its chapters is left to finish its walk.
+    func requeue(_ entries: [NarrationAudioEntry]) {
+        start()
+        var changed = false
+        for e in entries {
+            let key = "\(e.novelKey)\u{1F}\(e.kind.rawValue)"
+            if let i = jobs.firstIndex(where: { $0.key == key }) {
+                if jobs[i].list != nil {
+                    let before = jobs[i]
+                    jobs[i].redo([e.chapterPath])
+                    changed = changed || jobs[i] != before
+                    continue
+                }
+                guard jobs[i].finished else { continue }
+                jobs.remove(at: i)
+            }
+            let src = e.source
+            let voice = VoiceSettings.shared.prefs.voice(forNovel: e.novelKey)
+            jobs.append(DriveJob(pluginId: src.pluginId, novelPath: src.novelPath, novelName: e.novelName ?? "", coverUrl: nil,
+                                 chapters: [e.chapterPath], kind: e.kind, when: .charging, voice: voice, createdAt: Date().timeIntervalSince1970))
+            changed = true
+        }
+        guard changed else { return }
+        log.notice("drive: \(entries.count) chapter(s) made with an older voice queued to render again")
         save()
         kick()
     }
 
-    /// Narration started or stopped (live Kokoro has priority over preparing).
+    /// The novel's requests (of one kind, or both): paused, going on, or dropped.
+    func pause(novelKey: String, kind: NarrationAudioKind?) { setPaused(novelKey: novelKey, kind: kind, true) }
+    func resume(novelKey: String, kind: NarrationAudioKind?) { setPaused(novelKey: novelKey, kind: kind, false) }
+
+    private func setPaused(novelKey: String, kind: NarrationAudioKind?, _ paused: Bool) {
+        start()
+        for i in jobs.indices where jobs[i].novelKey == novelKey && (kind == nil || jobs[i].audioKind == kind) {
+            jobs[i].paused = paused ? true : nil
+            if paused, runningKey == jobs[i].key { stopRunning("Paused") }
+        }
+        save()
+        kick()
+    }
+
+    func cancel(novelKey: String, kind: NarrationAudioKind? = nil) {
+        let gone = jobs.filter { $0.novelKey == novelKey && (kind == nil || $0.audioKind == kind) }
+        for j in gone {
+            if runningKey == j.key { stopRunning("Cancelled") }
+            // The chapter it was working on keeps no half-made audio.
+            if let c = j.cursor { store.removeWork(novelKey: j.novelKey, chapterPath: c) }
+        }
+        jobs.removeAll { j in gone.contains { $0.key == j.key } }
+        save()
+        kick()
+    }
+
+    /// Narration started or stopped: live speech always wins (the render stops after the call in progress) and the queue
+    /// goes on 30 s after it ends.
     func narrationChanged() {
         guard started else { return }
-        if renderer != nil, let job = jobs.first(where: { $0.novelKey == runningKey }), let why = stopReason(job) {
-            renderer?.stop(why)
-        } else if renderer == nil {
+        let now = NarrationController.shared.speaksLive || VoiceSpeedTest.shared.running
+        if now != live {
+            live = now
+            if !now { liveEnded = ProcessInfo.processInfo.systemUptime }
+        }
+        if now || NarrationController.shared.handoffActive {
+            stopRunning(now ? "Paused while you listen" : "Paused while the next chapter gets ready")
+        } else if nephis == nil, kokoro == nil {
             kick()
         }
     }
 
-    // MARK: Status (UI)
+    private func stopRunning(_ why: String) {
+        nephis?.stop(why)
+        kokoro?.stop(why)
+    }
 
+    // MARK: - Status
+
+    /// "Prepare for the drive" (the sheet): its requests and audio only.
     func status(novelKey: String?) -> [String: Any] {
-        let cache = DriveCache.shared
-        let list = jobs.filter { novelKey == nil || $0.novelKey == novelKey }.map { j -> [String: Any] in
-            var d: [String: Any] = ["novelKey": j.novelKey, "pluginId": j.pluginId, "novelPath": j.novelPath, "novelName": j.novelName,
-                                    "count": j.count, "when": j.when.rawValue, "done": j.done.count, "titles": j.titles, "voice": j.voice,
-                                    "state": state(of: j)]
-            if let r = waiting[j.novelKey] { d["reason"] = r }
-            if let e = j.lastError { d["error"] = e }
-            if runningKey == j.novelKey, let c = current {
-                d["current"] = ["chapterPath": c.chapterPath, "title": c.title, "sentence": c.sentence, "sentences": c.sentences] as [String: Any]
-            }
-            return d
-        }
+        let drive = store.entries(novelKey: novelKey, kind: .drive)
         return [
-            "jobs": list,
-            "prepared": cache.entries(novelKey: novelKey),
-            "bytes": novelKey.map { cache.index.bytes(novelKey: $0) } ?? cache.index.totalBytes,
-            "totalBytes": cache.index.totalBytes,
+            "jobs": jobInfos(novelKey: novelKey, kind: .drive),
+            "prepared": drive,
+            "bytes": drive.reduce(0) { $0 + (($1["bytes"] as? Int) ?? 0) },
+            "totalBytes": store.index.bytes(kind: .drive),
             "capBytes": DrivePrepPolicy.defaultCapBytes,
         ]
     }
 
-    private func state(of j: DriveJob) -> String {
-        if runningKey == j.novelKey { return "running" }
-        if j.finished { return j.failures >= DriveJob.maxFailures ? "failed" : "done" }
-        return waiting[j.novelKey] != nil ? "waiting" : "queued"
+    /// Audio downloads (the bridge's audio.status): every request and every chapter's audio, the storage, the settings and
+    /// the render speed.
+    func audioStatus(novelKey: String?) -> [String: Any] {
+        let entries = store.entries(novelKey: novelKey)
+        return [
+            "jobs": jobInfos(novelKey: novelKey, kind: nil),
+            "audio": entries,
+            "bytes": entries.reduce(0) { $0 + (($1["bytes"] as? Int) ?? 0) },
+            "totalBytes": store.index.totalBytes,
+            "downloadBytes": store.index.bytes(kind: .download),
+            "driveBytes": store.index.bytes(kind: .drive),
+            "workBytes": store.workBytes,
+            "capBytes": DrivePrepPolicy.defaultCapBytes,
+            "deleteAfterListening": NarrationAudioStore.deleteAfterListening,
+            "bestOfTwo": DeveloperOptions.snapshot["bestOfTwo"] == true,
+            "speedX": speedX.map { ($0 * 100).rounded() / 100 as Any } ?? NSNull(),
+            "voice": NarrationAudioStore.nephisReads ? "nephis" : "kokoro",
+        ]
     }
 
-    // MARK: Runner
+    private func jobInfos(novelKey: String?, kind: NarrationAudioKind?) -> [[String: Any]] {
+        jobs.filter { (novelKey == nil || $0.novelKey == novelKey) && (kind == nil || $0.audioKind == kind) }.map { j -> [String: Any] in
+            var d: [String: Any] = ["key": j.key, "novelKey": j.novelKey, "pluginId": j.pluginId, "novelPath": j.novelPath, "novelName": j.novelName,
+                                    "kind": j.audioKind.rawValue, "count": j.count, "when": j.when.rawValue, "done": j.done.count, "titles": j.titles,
+                                    "voice": j.voice, "state": state(of: j), "paused": j.isPaused]
+            if let list = j.list { d["chapters"] = list }
+            if let r = waiting[j.key] { d["reason"] = r }
+            if let e = j.lastError { d["error"] = e }
+            if runningKey == j.key, let c = current {
+                d["current"] = ["chapterPath": c.chapterPath, "title": c.title, "sentence": c.progress.sentence, "sentences": c.progress.sentences,
+                                "calls": c.progress.calls, "seconds": (c.progress.seconds * 10).rounded() / 10, "step": c.progress.step] as [String: Any]
+            }
+            return d
+        }
+    }
 
-    private func conditions() -> DriveConditions {
+    private func state(of j: DriveJob) -> String {
+        if runningKey == j.key { return "running" }
+        if j.finished { return j.failures >= DriveJob.maxFailures ? "failed" : "done" }
+        if j.isPaused { return "paused" }
+        return waiting[j.key] != nil ? "waiting" : "queued"
+    }
+
+    /// Minutes, megabytes and render time for `chapters` chapters of a novel (`characters` of text when known).
+    func estimate(novelKey: String?, chapters: Int, characters: Int?) -> [String: Any] {
+        let known = novelKey.map { store.index.entries(novelKey: $0) } ?? store.index.entries
+        let average = known.isEmpty ? nil : known.reduce(0) { $0 + $1.durationMs } / Double(known.count) / 60_000
+        let studio = NarrationAudioStore.nephisReads && SessionRate.forRead(.pocketTts) == SessionRate.studio
+        let bitRate = studio ? NarrationAudioEstimate.studioBitRate : NarrationAudioEstimate.plainBitRate
+        let e = NarrationAudioEstimate.estimate(chapters: chapters, characters: characters, averageMinutes: average, bitRate: bitRate, speedX: speedX)
+        let r1 = { (x: Double) in (x * 10).rounded() / 10 }
+        return ["minutes": r1(e.minutes), "megabytes": r1(e.megabytes), "renderMinutes": r1(e.renderMinutes), "bitRate": bitRate,
+                "megabytesPerMinute": NarrationAudioEstimate.megabytesPerMinute(bitRate: bitRate), "speedX": speedX.map { $0 as Any } ?? NSNull(),
+                "measured": speedX != nil]
+    }
+
+    // MARK: - Runner
+
+    private func conditions() -> AudioRenderConditions {
         let battery = MainThread.run { UIDevice.current.batteryState }
-        let n = NarrationController.shared
-        return DriveConditions(charging: battery == .charging || battery == .full, wifi: wifi,
-                               lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
-                               thermalThrottled: ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue),
-                               liveNarration: n.speaksLive)
+        let now = ProcessInfo.processInfo.systemUptime
+        return AudioRenderConditions(charging: battery == .charging || battery == .full, wifi: wifi, online: online,
+                                     lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, live: live,
+                                     sinceLive: liveEnded.map { now - $0 }, handoff: NarrationController.shared.handoffActive,
+                                     voiceBlocked: voiceBlocked())
+    }
+
+    /// Her voice can't render now (the chosen reader is Nephis): why, in plain words.
+    private func voiceBlocked() -> String? {
+        let svc = ExpressiveService.shared
+        if svc.studioTestRunning { return "Paused for the studio test" }
+        guard NarrationAudioStore.nephisReads else { return nil }
+        if !NarrationController.preparesNephis {
+            return svc.crashDisabled ? "Waiting: Nephis is switched off after crashing" : "Waiting for Nephis to be ready"
+        }
+        if let block = svc.loadBlock { return "Waiting for Nephis (\(block.localizedDescription))" }
+        return nil
+    }
+
+    /// Her next chapter's text is saved (no network needed to render it).
+    private func hasText(_ job: DriveJob) -> Bool {
+        guard let c = job.cursor else { return false }
+        return FileManager.default.fileExists(atPath: store.workFolder(novelKey: job.novelKey, chapterPath: c).appendingPathComponent("chapter.json").path)
     }
 
     private func stopReason(_ job: DriveJob) -> String? {
-        guard jobs.contains(where: { $0.novelKey == job.novelKey }) else { return "Cancelled" }
-        return DrivePrepPolicy.gate(job.when, conditions()).reason
+        guard let j = jobs.first(where: { $0.key == job.key }), !j.finished else { return "Cancelled" }
+        if j.isPaused { return "Paused" }
+        let heatOK = heat.update(thermal: ProcessInfo.processInfo.thermalState.rawValue, now: ProcessInfo.processInfo.systemUptime)
+        return AudioRenderPolicy.gate(j.when, conditions(), heatOK: heatOK, needsText: false).reason
     }
 
-    /// Start the next runnable request, if nothing runs.
+    /// Start the next request that may run, if nothing runs; otherwise say why each waits and look again when it may.
     func kick() {
-        guard started, renderer == nil, runningKey == nil else { return }
+        guard started, nephis == nil, kokoro == nil, runningKey == nil else { return }
         retryItem?.cancel()
         retryItem = nil
-        guard jobs.contains(where: { !$0.finished }) else {
+        let open = jobs.filter { !$0.finished }
+        guard !open.isEmpty else {
             waiting = [:]
-            releaseKokoroIfIdle()
+            releaseIfIdle()
+            notify(force: true)
             return endBackgroundWork()
         }
-        let c = conditions()
         let now = ProcessInfo.processInfo.systemUptime
+        let c = conditions()
+        let heatOK = heat.update(thermal: ProcessInfo.processInfo.thermalState.rawValue, now: now)
         waiting = [:]
-        var nextRetry: Double?
-        for job in jobs where !job.finished {
-            if let t = retryAfter[job.novelKey], t > now {
-                waiting[job.novelKey] = "Trying again shortly"
-                nextRetry = min(nextRetry ?? t, t)
+        var look: Double?
+        for job in open {
+            if job.isPaused {
+                waiting[job.key] = "Paused"
                 continue
             }
-            switch DrivePrepPolicy.gate(job.when, c) {
+            if let t = retryAfter[job.key], t > now {
+                waiting[job.key] = "Trying again shortly"
+                look = min(look ?? .infinity, t - now)
+                continue
+            }
+            switch AudioRenderPolicy.gate(job.when, c, heatOK: heatOK, needsText: !hasText(job)) {
             case .run:
                 return run(job)
             case .wait(let reason):
-                waiting[job.novelKey] = reason
+                waiting[job.key] = reason
             }
         }
-        if let t = nextRetry {
+        // Waits that end on their own: the 30 s after live speech, two minutes cool.
+        if let since = c.sinceLive, since < AudioRenderPolicy.afterLive { look = min(look ?? .infinity, AudioRenderPolicy.afterLive - since + 0.5) }
+        if let left = heat.remaining(now: now) { look = min(look ?? .infinity, left + 1) }
+        if let t = look {
             let item = DispatchWorkItem { [weak self] in self?.kick() }
             retryItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(1, t - now), execute: item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(1, t), execute: item)
         }
         notify(force: true)
-        if jobs.contains(where: { !$0.finished }) { scheduleBackground() }
-        releaseKokoroIfIdle()
+        if open.contains(where: { !$0.isPaused }) { scheduleBackground() }
+        releaseIfIdle()
         endBackgroundWork()
     }
 
-    private func releaseKokoroIfIdle() {
-        guard usedKokoro, !NarrationController.shared.wantsKokoro else { return }
-        usedKokoro = false
-        KokoroService.shared.scheduleIdleRelease(after: 60)
+    /// The voices loaded for rendering go once the queue is idle (unless narration uses them).
+    private func releaseIfIdle() {
+        if usedKokoro, !NarrationController.shared.wantsKokoro {
+            usedKokoro = false
+            KokoroService.shared.scheduleIdleRelease(after: 60)
+        }
+        if usedNephis, !NarrationController.shared.wantsKokoro {
+            usedNephis = false
+            ExpressiveService.shared.scheduleIdleRelease()
+        }
     }
 
     private func run(_ job: DriveJob) {
-        runningKey = job.novelKey
+        runningKey = job.key
         beginBackgroundWork()
         notify(force: true)
         if let cursor = job.cursor { return render(job, chapterPath: cursor) }
-        guard job.done.isEmpty else {
-            update(job.novelKey) { $0.finished = true }
+        guard job.list == nil, job.done.isEmpty else {
+            update(job.key) { $0.finished = true }
             return done()
         }
         // Start where listening would resume (the core knows the last chapter and paragraph).
@@ -688,114 +419,197 @@ final class DrivePrep: @unchecked Sendable {
             let path = ok ? (result as? [String: Any])?["chapterPath"] as? String : nil
             DispatchQueue.main.async {
                 guard let path else {
-                    self.update(job.novelKey) { j in
+                    self.update(job.key) { j in
                         j.lastError = "Read a chapter of this novel first"
                         j.finished = true
                         j.failures = DriveJob.maxFailures
                     }
                     return self.done()
                 }
-                self.update(job.novelKey) { $0.cursor = path }
+                self.update(job.key) { $0.cursor = path }
                 self.render(job, chapterPath: path)
             }
         }
     }
 
+    /// A chapter's text for rendering: saved in its work folder (the core's answer) so an interrupted render goes on
+    /// without the network, else fetched and saved.
+    private func loadChapter(_ job: DriveJob, _ path: String, completion: @escaping (NarrationController.Chapter?) -> Void) {
+        let dir = store.workFolder(novelKey: job.novelKey, chapterPath: path)
+        let file = dir.appendingPathComponent("chapter.json")
+        let make = { (raw: [String: Any]) in
+            NarrationController.chapter(fromCore: raw, pluginId: job.pluginId, novelPath: job.novelPath, chapterPath: path, novelName: job.novelName,
+                                        coverUrl: job.coverUrl)
+        }
+        if let data = try? Data(contentsOf: file), let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            return completion(make(raw))
+        }
+        NarrationController.shared.chapterText(pluginId: job.pluginId, novelPath: job.novelPath, chapterPath: path) { raw in
+            guard let raw else { return completion(nil) }
+            if JSONSerialization.isValidJSONObject(raw), let data = try? JSONSerialization.data(withJSONObject: raw) {
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? data.write(to: file, options: .atomic)
+            }
+            completion(make(raw))
+        }
+    }
+
     private func render(_ job: DriveJob, chapterPath: String) {
-        NarrationController.shared.chapterForPreparing(pluginId: job.pluginId, novelPath: job.novelPath, chapterPath: chapterPath,
-                                                       novelName: job.novelName, coverUrl: job.coverUrl) { ch in
-            guard self.runningKey == job.novelKey else { return self.done() }
+        loadChapter(job, chapterPath) { ch in
+            guard self.runningKey == job.key else { return self.done() }
             guard let ch, let script = ch.script, !script.isEmpty else { return self.failed(job, "Couldn't load \(chapterPath)") }
-            // Nephis reads: her voice, rendered ahead (Kasta, 2026-10-09: in the car the phone only plays files, no
-            // rendering heat). Otherwise Kokoro, filed under the voice plus narrator mode's settings.
-            let nephis = NarrationController.preparesNephis
-            let prefs = VoiceSettings.shared.prefs
-            let key = nephis ? NarrationController.preparedNephisKey : prefs.preparedVoice(voice: job.voice)
-            if DriveCache.shared.prepared(novelKey: job.novelKey, chapterPath: chapterPath, voice: key) != nil {
-                return self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
-            }
-            let ready: (@escaping (String?) -> Void) -> Void = { go in
-                if nephis {
-                    ExpressiveService.shared.ensureLoaded(.pocketTts) { result in
-                        if case .failure(let error) = result { return go("Nephis isn't available (\(error.localizedDescription))") }
-                        go(nil)
-                    }
+            self.store.withCurrentKey(novelKey: job.novelKey) { key in
+                guard self.runningKey == job.key else { return self.done() }
+                guard let key else { return self.failed(job, "Couldn't read the novel's pronunciations") }
+                // Already in the voice that reads now: nothing to render.
+                if let e = self.store.entry(novelKey: job.novelKey, chapterPath: chapterPath), e.voice == key.text {
+                    self.store.removeWork(novelKey: job.novelKey, chapterPath: chapterPath)
+                    return self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
+                }
+                self.current = Current(chapterPath: chapterPath, title: ch.chapterName,
+                                       progress: ChapterAudioProgress(sentence: 0, sentences: script.count, calls: 0, seconds: 0, step: "director"))
+                self.notify(force: true)
+                if key.family == .nephis {
+                    self.renderNephis(job, ch, script, key)
                 } else {
-                    KokoroService.shared.ensureLoaded { status in go(status == .ready ? nil : "Kokoro isn't available (\(KokoroService.shared.statusText))") }
+                    self.renderKokoro(job, ch, script, key)
                 }
             }
-            ready { problem in
-                // Nephis resting after a memory warning (or too little memory, or the studio test): the request waits,
-                // uncounted, and goes on afterwards (crash plan a4).
-                if problem != nil, nephis, let block = ExpressiveService.shared.loadBlock { return self.rest(job, block) }
-                if let problem { return self.failed(job, problem) }
-                if !nephis { self.usedKokoro = true }
-                let r = ChapterRenderer(chapter: ch, items: script, voice: nephis ? "nephis" : job.voice, narrator: prefs.narrator,
-                                        folder: DriveCache.shared.folder, nephis: nephis)
-                r.shouldStop = { [weak self] in self?.stopReason(job) }
-                r.onProgress = { [weak self] i, n in
-                    self?.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: i, sentences: n)
-                    self?.notify(force: false)
+        }
+    }
+
+    private func renderNephis(_ job: DriveJob, _ ch: NarrationController.Chapter, _ script: [NarrationController.ScriptItem], _ key: NarrationVoiceKey) {
+        let svc = ExpressiveService.shared
+        usedNephis = true
+        svc.ensureLoaded(.pocketTts) { result in
+            if case .failure(let error) = result {
+                // Resting after a memory warning (or too little memory, or the studio test): the request waits, uncounted.
+                if let block = svc.loadBlock { return self.rest(job, block) }
+                return self.failed(job, "Nephis isn't available (\(error.localizedDescription))")
+            }
+            // Her studio's and dialogue pack's models load behind hers: every call of the chapter gets them.
+            svc.whenSettled {
+                guard self.runningKey == job.key else { return self.done() }
+                if let why = self.stopReason(job) {
+                    self.log.info("drive: paused (\(why, privacy: .public))")
+                    return self.done()
                 }
-                self.renderer = r
-                self.current = Current(chapterPath: chapterPath, title: ch.chapterName, sentence: 0, sentences: script.count)
-                self.log.info("drive: preparing \(chapterPath, privacy: .public) (\(script.count) sentences)")
-                r.start { result in
-                    self.renderer = nil
-                    self.current = nil
-                    switch result {
-                    case .success(let out):
-                        let entry = PreparedChapter(novelKey: job.novelKey, chapterPath: chapterPath, title: ch.chapterName, voice: key,
-                                                    audioFile: out.audioFile, manifestFile: out.manifestFile, bytes: out.bytes,
-                                                    durationMs: out.durationMs, sentences: out.sentences, createdAt: Date().timeIntervalSince1970)
-                        let keep = Set((self.jobs.first { $0.novelKey == job.novelKey }?.done ?? []).map { DriveCacheIndex.id(novelKey: job.novelKey, chapterPath: $0) })
-                        DriveCache.shared.add(entry, keep: keep)
-                        self.completed(job, chapterPath: chapterPath, title: ch.chapterName, next: ch.nextPath)
-                    case .failure(let error):
-                        if let e = error as? DriveError, case .interrupted(let why) = e {
-                            self.log.info("drive: paused (\(why, privacy: .public))")
-                            self.done()
-                        } else {
-                            self.failed(job, error.localizedDescription)
-                        }
+                self.delivery(job, ch.chapterPath, script) { delivery in
+                    guard self.runningKey == job.key, let delivery else { return self.done() }
+                    let bestOfTwo = DeveloperOptions.snapshot["bestOfTwo"] == true
+                    let r = ChapterAudioRenderer(chapter: ch, items: script, novelKey: job.novelKey, voice: key, delivery: delivery, bestOfTwo: bestOfTwo)
+                    r.shouldStop = { [weak self] in self?.stopReason(job) }
+                    r.onProgress = { [weak self] p in
+                        self?.current?.progress = p
+                        self?.notify(force: false)
+                    }
+                    self.nephis = r
+                    self.log.info("drive: rendering \(ch.chapterPath, privacy: .public) with Nephis (\(script.count) sentences)")
+                    r.start { result in
+                        self.nephis = nil
+                        self.finished(job, ch, key, result, textHash: r.textHash)
                     }
                 }
             }
         }
     }
 
+    /// The chapter's director (ChapterDirector), saved in its work folder so a resumed render keeps the same moods.
+    private func delivery(_ job: DriveJob, _ path: String, _ script: [NarrationController.ScriptItem],
+                          completion: @escaping (ChapterDirector.Delivery?) -> Void) {
+        let file = store.workFolder(novelKey: job.novelKey, chapterPath: path).appendingPathComponent("delivery.json")
+        let hashes = script.map { NarrationAudioHash.fnv($0.text) }
+        if let data = try? Data(contentsOf: file), let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let saved = ChapterDirector.Delivery(json: obj), saved.hashes == hashes {
+            return completion(saved)
+        }
+        ChapterDirector.run(script, stop: { [weak self] in self?.stopReason(job) != nil }) { delivery in
+            if let delivery, let data = try? JSONSerialization.data(withJSONObject: delivery.json) {
+                try? data.write(to: file, options: .atomic)
+            }
+            completion(delivery)
+        }
+    }
+
+    private func renderKokoro(_ job: DriveJob, _ ch: NarrationController.Chapter, _ script: [NarrationController.ScriptItem], _ key: NarrationVoiceKey) {
+        KokoroService.shared.ensureLoaded { status in
+            guard self.runningKey == job.key else { return self.done() }
+            guard status == .ready else { return self.failed(job, "Kokoro isn't available (\(KokoroService.shared.statusText))") }
+            self.usedKokoro = true
+            let r = KokoroChapterRenderer(chapter: ch, items: script, novelKey: job.novelKey, voice: job.voice, key: key,
+                                          narrator: VoiceSettings.shared.prefs.narrator)
+            r.shouldStop = { [weak self] in self?.stopReason(job) }
+            r.onProgress = { [weak self] p in
+                self?.current?.progress = p
+                self?.notify(force: false)
+            }
+            self.kokoro = r
+            r.start { result in
+                self.kokoro = nil
+                self.finished(job, ch, key, result, textHash: nil)
+            }
+        }
+    }
+
+    private func finished(_ job: DriveJob, _ ch: NarrationController.Chapter, _ key: NarrationVoiceKey, _ result: Result<ChapterAudioOutput, Error>,
+                          textHash: String?) {
+        current = nil
+        switch result {
+        case .success(let out):
+            let entry = NarrationAudioEntry(novelKey: job.novelKey, chapterPath: ch.chapterPath, title: ch.chapterName, kind: job.audioKind, voice: key.text,
+                                            audioFile: out.audioFile, manifestFile: out.manifestFile, bytes: out.bytes, durationMs: out.durationMs,
+                                            sentences: out.sentences, createdAt: Date().timeIntervalSince1970, textHash: textHash, novelName: job.novelName)
+            let done = jobs.first { $0.key == job.key }?.done ?? []
+            store.add(entry, keep: Set(done.map { NarrationAudioIndex.id(novelKey: job.novelKey, chapterPath: $0) }))
+            if key.family == .nephis, out.renderSeconds > 1 {
+                speedX = NarrationAudioEstimate.blend(speedX, out.durationMs / 1000 / out.renderSeconds)
+            }
+            log.notice("drive: \(ch.chapterPath, privacy: .public) ready: \(Int(out.durationMs / 1000)) s, \(out.bytes / 1000) KB\(out.incomplete > 0 ? ", \(out.incomplete) call(s) without her studio" : "", privacy: .public)")
+            completed(job, chapterPath: ch.chapterPath, title: ch.chapterName, next: ch.nextPath)
+        case .failure(let error):
+            if let e = error as? DriveError, case .interrupted(let why) = e {
+                log.info("drive: paused (\(why, privacy: .public))")
+                done()
+            } else {
+                failed(job, error.localizedDescription)
+            }
+        }
+    }
+
     private func completed(_ job: DriveJob, chapterPath: String, title: String, next: String?) {
-        retryAfter[job.novelKey] = nil
-        update(job.novelKey) { $0.completed(chapterPath, title: title, next: next) }
+        retryAfter[job.key] = nil
+        update(job.key) { $0.completed(chapterPath, title: title, next: next) }
         done()
     }
 
-    /// Nephis's model can't load for a while (`block`): the request tries again once it may, without counting a failure.
+    /// Her model can't load for a while (`block`): the request tries again once it may, without counting a failure.
     private func rest(_ job: DriveJob, _ block: ExpressiveError) {
         var seconds = 10.0
         if case .resting(let left) = block { seconds = Double(left) + 1 }
         log.info("drive: waiting for Nephis (\(block.localizedDescription, privacy: .public))")
-        retryAfter[job.novelKey] = ProcessInfo.processInfo.systemUptime + seconds
+        retryAfter[job.key] = ProcessInfo.processInfo.systemUptime + seconds
         done()
     }
 
     private func failed(_ job: DriveJob, _ message: String) {
         log.error("drive: \(message, privacy: .public)")
-        update(job.novelKey) { $0.failed(message) }
+        current = nil
+        update(job.key) { $0.failed(message) }
         // Try again in a minute (offline, a source hiccup); three failures in a row end the request.
-        retryAfter[job.novelKey] = ProcessInfo.processInfo.systemUptime + 60
+        retryAfter[job.key] = ProcessInfo.processInfo.systemUptime + 60
         done()
     }
 
     private func done() {
         runningKey = nil
-        renderer = nil
+        nephis = nil
+        kokoro = nil
         current = nil
         kick()
     }
 
     private func update(_ key: String, _ change: (inout DriveJob) -> Void) {
-        guard let i = jobs.firstIndex(where: { $0.novelKey == key }) else { return }
+        guard let i = jobs.firstIndex(where: { $0.key == key }) else { return }
         change(&jobs[i])
         save()
     }
@@ -819,16 +633,18 @@ final class DrivePrep: @unchecked Sendable {
         NotificationCenter.default.post(name: Self.changed, object: nil)
     }
 
-    // MARK: Background time
+    // MARK: - Background time
 
-    /// Finishing the chapter in progress when the app goes to the background (prepared playback keeps the
-    /// app running anyway; otherwise this buys ~30 s, then the BGProcessingTask continues later).
+    /// Finishing the call in progress when the app goes to the background (downloaded playback keeps the app running
+    /// anyway; otherwise this buys ~30 s, then the BGProcessingTask goes on later from the last paragraph).
     private func beginBackgroundWork() {
         guard appTask == .invalid, bgTask == nil else { return }
         appTask = MainThread.run {
             UIApplication.shared.beginBackgroundTask(withName: "drive-prep") { [weak self] in
-                self?.renderer?.stop("Continuing later")
-                self?.endBackgroundWork()
+                DispatchQueue.main.async { [weak self] in
+                    self?.stopRunning("Continuing later")
+                    self?.endBackgroundWork()
+                }
             }
         }
     }
@@ -839,30 +655,35 @@ final class DrivePrep: @unchecked Sendable {
             MainThread.run { UIApplication.shared.endBackgroundTask(task) }
             appTask = .invalid
         }
-        if let task = bgTask, renderer == nil, runningKey == nil {
+        if let task = bgTask, nephis == nil, kokoro == nil, runningKey == nil {
             bgTask = nil
-            task.setTaskCompleted(success: !jobs.contains { !$0.finished })
-            if jobs.contains(where: { !$0.finished }) { scheduleBackground() }
+            let open = jobs.contains { !$0.finished && !$0.isPaused }
+            task.setTaskCompleted(success: !open)
+            if open { scheduleBackground() }
         }
     }
 
     private func scheduleBackground() {
+        let open = jobs.filter { !$0.finished && !$0.isPaused }
+        guard !open.isEmpty else { return }
         let req = BGProcessingTaskRequest(identifier: Self.taskId)
-        req.requiresNetworkConnectivity = true
-        req.requiresExternalPower = jobs.filter { !$0.finished }.allSatisfy { $0.when == .chargingOrWifi }
+        // The network only when a chapter's text still has to be fetched; external power when every request waits for it.
+        req.requiresNetworkConnectivity = open.contains { !hasText($0) }
+        req.requiresExternalPower = open.allSatisfy { $0.when != .now }
         req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         do { try BGTaskScheduler.shared.submit(req) } catch { log.info("drive: background task not scheduled: \(error.localizedDescription, privacy: .public)") }
     }
 
     private func runInBackground(_ task: BGProcessingTask) {
         bgTask = task
+        let carried = MainBound(task)
         task.expirationHandler = { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.renderer?.stop("Continuing later")
-                if let t = self.bgTask {
+                self.stopRunning("Continuing later")
+                if self.bgTask === carried.value {
                     self.bgTask = nil
-                    t.setTaskCompleted(success: false)
+                    carried.value.setTaskCompleted(success: false)
                     self.scheduleBackground()
                 }
             }

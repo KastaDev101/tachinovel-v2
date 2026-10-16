@@ -123,6 +123,7 @@ export function openDeveloperScreen(): void {
         ${row('test', 'Voice Test', 'A 2-minute passage read aloud like Listen, then the report')}
         ${row('long', '15-Minute Test', 'Records what plays while you listen to your own chapter')}
         ${studioRows()}
+        ${toggle('best-of-two', 'Best of 2 Takes for Audio', 'Downloaded chapters: two takes per call, the better one kept (twice the work)', dev.bestOfTwo)}
       </div>
       <div class="sec">Delivery Internals</div>
       <div class="card" data-testid="dev-delivery">
@@ -277,8 +278,8 @@ export function openDeveloperScreen(): void {
     const act = el.dataset.act;
     if (act === 'delivery' && el.dataset.k) {
       void Narration.setVoiceSettings({ delivery: { [el.dataset.k]: el.checked } }).then(load);
-    } else if (act === 'player-details' || act === 'phonemes') {
-      void setDeveloper(act === 'phonemes' ? { phonemes: el.checked } : { playerDetails: el.checked })
+    } else if (act === 'player-details' || act === 'phonemes' || act === 'best-of-two') {
+      void setDeveloper(act === 'phonemes' ? { phonemes: el.checked } : act === 'best-of-two' ? { bestOfTwo: el.checked } : { playerDetails: el.checked })
         .catch((err: unknown) => toast(`Couldn’t change it: ${err instanceof Error ? err.message : String(err)}`))
         .then(render);
     } else if (act === 'pcaudio') {

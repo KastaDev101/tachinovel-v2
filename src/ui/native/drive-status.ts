@@ -37,6 +37,17 @@ export function jobProgress(j: DriveJobInfo): number {
   return Math.min(1, (j.done + part) / j.count);
 }
 
+/** The step of the chapter being rendered, in words (audio downloads' engine, build 373+). */
+const STEP_WORDS: Record<string, string> = {
+  director: 'Reading the chapter for her moods',
+  waiting: 'Waiting for her studio',
+  encoding: 'Saving the file',
+};
+
+export function stepWords(step: string | undefined): string {
+  return step ? (STEP_WORDS[step] ?? '') : '';
+}
+
 /** One line for a novel: what is being prepared, why it waits, or what is ready. */
 export function driveLine(status: DriveStatus, novelKey: string): string {
   const job = status.jobs.find((j) => j.novelKey === novelKey);
@@ -45,8 +56,12 @@ export function driveLine(status: DriveStatus, novelKey: string): string {
   const readyText = ready.length > 0 ? `${ready.length} chapter${ready.length === 1 ? '' : 's'} ready · ${formatBytes(bytes)}` : '';
   if (job) {
     switch (job.state) {
-      case 'running':
-        return `Preparing ${Math.min(job.count, job.done + 1)} of ${job.count} · ${Math.round(jobProgress(job) * 100)}%`;
+      case 'running': {
+        const step = stepWords(job.current?.step);
+        return `Preparing ${Math.min(job.count, job.done + 1)} of ${job.count} · ${Math.round(jobProgress(job) * 100)}%${step ? ` · ${step}` : ''}`;
+      }
+      case 'paused':
+        return `Paused · ${job.done} of ${job.count} ready`;
       case 'waiting':
         return `${job.reason ?? 'Waiting'} · ${job.done} of ${job.count} ready`;
       case 'queued':

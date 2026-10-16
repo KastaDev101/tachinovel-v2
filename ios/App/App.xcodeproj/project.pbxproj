@@ -64,6 +64,9 @@
 		738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */; };
 		E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */; };
 		C62A6382457EC850A3A3E00E /* ListenReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD100175DBE8B69DF88584F /* ListenReport.swift */; };
+		8A5332B975AC26BAE11E857D /* ChapterAudioRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */; };
+		B920AF37BE5AD6BF2D7AC0F9 /* NarrationAudioStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */; };
+		D13BCCB170909D0E4426EECE /* NephisRenderPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -135,6 +138,9 @@
 		522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DeveloperOptions.swift"; sourceTree = "<group>"; };
 		1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Shell/DiagFolderPlugin.swift"; sourceTree = "<group>"; };
 		FBD100175DBE8B69DF88584F /* ListenReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/ListenReport.swift"; sourceTree = "<group>"; };
+		B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/ChapterAudioRenderer.swift"; sourceTree = "<group>"; };
+		F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Narration/NarrationAudioStore.swift"; sourceTree = "<group>"; };
+		7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Voice/NephisRenderPipeline.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -243,6 +249,9 @@
 				522C5F6082A604DA8F3D699D /* DeveloperOptions.swift */,
 				1AF0880F262840620ED6F144 /* DiagFolderPlugin.swift */,
 				FBD100175DBE8B69DF88584F /* ListenReport.swift */,
+				B73CBB823E1E438EB917737F /* ChapterAudioRenderer.swift */,
+				F2BE6D148EDF8456C96F70A8 /* NarrationAudioStore.swift */,
+				7F996ED1F378476418D87C16 /* NephisRenderPipeline.swift */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -417,6 +426,9 @@
 				738D34D3A5ADE27040A38F66 /* DeveloperOptions.swift in Sources */,
 				E6004131A22799AFF0653334 /* DiagFolderPlugin.swift in Sources */,
 				C62A6382457EC850A3A3E00E /* ListenReport.swift in Sources */,
+				8A5332B975AC26BAE11E857D /* ChapterAudioRenderer.swift in Sources */,
+				B920AF37BE5AD6BF2D7AC0F9 /* NarrationAudioStore.swift in Sources */,
+				D13BCCB170909D0E4426EECE /* NephisRenderPipeline.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

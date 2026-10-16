@@ -48,6 +48,14 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "cancelDrive", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "driveStatus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearDrive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioEnqueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioPause", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioResume", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioCancel", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioDelete", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioEstimate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioSetOptions", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remoteCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestChapters", returnType: CAPPluginReturnPromise),
@@ -61,10 +69,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async {
             self.n.onState = { [weak self] s in self?.notifyListeners("state", data: s) }
             self.n.onProgress = { [weak self] p in self?.notifyListeners("progress", data: p) }
-            // "Prepare for the drive" progress and storage (all novels; the UI filters).
-            for name in [DrivePrep.changed, DriveCache.changed] {
+            // "Prepare for the drive" and audio downloads: progress and storage (all novels; the UI filters).
+            for name in [DrivePrep.changed, NarrationAudioStore.changed] {
                 self.driveObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    self?.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil))
+                    guard let self else { return }
+                    // Only for a page that listens (the audio status walks the work folder).
+                    if self.hasListeners("drive") { self.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil)) }
+                    if self.hasListeners("audio") { self.notifyListeners("audio", data: DrivePrep.shared.audioStatus(novelKey: nil)) }
                 })
             }
         }
@@ -105,7 +116,12 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 let ch = NarrationController.Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath,
                                                      novelName: novelName, chapterName: chapterName, coverUrl: coverUrl,
                                                      paragraphs: paragraphs, nextPath: nil, nextName: nil, script: script)
-                self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
+                // Speech asked for explicitly (the Voice Lab, a voice test) reads live; Listen plays the chapter's audio first.
+                if call.getString("engine") == "speech" {
+                    self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
+                } else {
+                    self.n.playPreferringAudio(ch, startParagraph: startParagraph, startSentence: startSentence)
+                }
             } else {
                 self.n.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
             }
@@ -540,7 +556,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
         }
         DispatchQueue.main.async {
-            DrivePrep.shared.cancel(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath))
+            DrivePrep.shared.cancel(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath), kind: .drive)
             call.resolve()
         }
     }
@@ -555,9 +571,108 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     @objc func clearDrive(_ call: CAPPluginCall) {
         let key = call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
         DispatchQueue.main.async {
-            if let key { DrivePrep.shared.cancel(novelKey: key) } else { DrivePrep.shared.jobs.forEach { DrivePrep.shared.cancel(novelKey: $0.novelKey) } }
-            DriveCache.shared.remove(novelKey: key)
+            if let key {
+                DrivePrep.shared.cancel(novelKey: key, kind: .drive)
+            } else {
+                DrivePrep.shared.jobs.filter { $0.audioKind == .drive }.forEach { DrivePrep.shared.cancel(novelKey: $0.novelKey, kind: .drive) }
+            }
+            NarrationAudioStore.shared.remove(novelKey: key, kind: .drive)
             call.resolve(DrivePrep.shared.status(novelKey: key))
+        }
+    }
+
+    // MARK: Audio downloads (part 1: the engine; the screens come in part 2)
+
+    private func novelKey(_ call: CAPPluginCall) -> String? {
+        call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
+    }
+
+    private func kind(_ call: CAPPluginCall) -> NarrationAudioKind? {
+        call.getString("kind").flatMap(NarrationAudioKind.init(rawValue:))
+    }
+
+    /// Every request, every chapter's audio (with whether it is in the current voice), storage, settings, render speed.
+    @objc func audioStatus(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        DispatchQueue.main.async { call.resolve(DrivePrep.shared.audioStatus(novelKey: key)) }
+    }
+
+    /// Render these chapters of a novel into audio: `chapters` (paths, in order), `when` "now", "charging" or
+    /// "chargingOrWifi" (default "charging").
+    @objc func audioEnqueue(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath") else {
+            return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
+        }
+        let chapters = (call.getArray("chapters") ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
+        guard !chapters.isEmpty else { return call.reject("chapters is required", "INVALID_ARGS") }
+        let name = call.getString("novelName") ?? ""
+        let cover = call.getString("coverUrl")
+        let when = DrivePrepWhen(rawValue: call.getString("when") ?? "") ?? .charging
+        DispatchQueue.main.async {
+            DrivePrep.shared.enqueue(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, chapters: chapters, when: when)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)))
+        }
+    }
+
+    @objc func audioPause(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.pause(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    @objc func audioResume(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.resume(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Drop a novel's requests (of one kind, or both); its finished audio stays.
+    @objc func audioCancel(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.cancel(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Delete audio: some chapters of a novel (`chapterPaths`), a novel's (of one kind or both), or all (no novel).
+    @objc func audioDelete(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        let kind = kind(call)
+        let paths = (call.getArray("chapterPaths") ?? []).compactMap { $0 as? String }
+        DispatchQueue.main.async {
+            let store = NarrationAudioStore.shared
+            if let key, !paths.isEmpty {
+                for p in paths { store.remove(novelKey: key, chapterPath: p) }
+            } else {
+                store.remove(novelKey: key, kind: kind)
+            }
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Minutes, megabytes (128 kbps ≈ 0.96 MB a minute) and render time for `chapters` chapters (`characters` of text when
+    /// known), from this novel's audio so far and her measured render speed.
+    @objc func audioEstimate(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        let chapters = max(0, call.getInt("chapters") ?? 1)
+        let characters = call.getInt("characters")
+        DispatchQueue.main.async { call.resolve(DrivePrep.shared.estimate(novelKey: key, chapters: chapters, characters: characters)) }
+    }
+
+    /// `deleteAfterListening` (downloads; off by default).
+    @objc func audioSetOptions(_ call: CAPPluginCall) {
+        let deleteAfter = call.getBool("deleteAfterListening")
+        DispatchQueue.main.async {
+            if let deleteAfter { NarrationAudioStore.deleteAfterListening = deleteAfter }
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: nil))
         }
     }
 

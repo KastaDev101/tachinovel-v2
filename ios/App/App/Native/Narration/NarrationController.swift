@@ -31,6 +31,7 @@
 
 import AVFoundation
 import ExpressiveCore
+import ExpressiveEngines
 import Foundation
 import HDVoiceCore
 import MediaPlayer
@@ -257,6 +258,22 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private var timing: NarrationTiming?
     private var lastSegment: Int?
     private var lastAudioSaveAt = Date.distantPast
+    /// The director's delivery of a chapter whose audio just failed: the live read of it starts with it.
+    private var pendingDelivery: (novelKey: String, chapterPath: String, delivery: [String: Any])?
+    /// The hand-off from a chapter's audio file to live reading (audio downloads part 1): about a minute before a file ends
+    /// whose next chapter has no audio, her model warms and that chapter's first calls render through the shared pipeline,
+    /// so live reading starts with them (HybridSpeechEngine.WarmStart). The render queue steps aside meanwhile.
+    private final class Handoff {
+        let chapterPath: String
+        var warm: HybridSpeechEngine.WarmStart?
+
+        init(chapterPath: String) { self.chapterPath = chapterPath }
+    }
+
+    private var handoff: Handoff?
+    /// A file is handing over to live reading (DrivePrep waits).
+    var handoffActive: Bool { handoff != nil }
+    static let handoffLead = 60.0
     private static let positionsKey = "tachinovel.audioPositions"
 
     override private init() {
@@ -296,6 +313,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         resetSentenceClock()
         current = items.firstIndex { $0.paragraph >= startParagraph && ($0.paragraph > startParagraph || $0.sentence >= startSentence) } ?? 0
         guard !items.isEmpty else { return finishChapter() }
+        seedDirector(ch)
         activateSession()
         installRemoteCommands()
         NowPlayingCenter.shared.setArtwork(cover: ch.coverUrl)
@@ -307,8 +325,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     /// Play a chapter whose text the core fetches (CarPlay, lock-screen auto-continue), or its prepared
     /// audio when there is some.
     func playFromCore(pluginId: String, novelPath: String, chapterPath: String, novelName: String, startParagraph: Int = 0, allowPrepared: Bool = true) {
-        if allowPrepared, let p = preparedChapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) {
-            return playPrepared(p, pluginId: pluginId, novelPath: novelPath, novelName: novelName, startParagraph: startParagraph)
+        if allowPrepared, hasAudio(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) {
+            return withPlayableAudio(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) { [weak self] p in
+                guard let self else { return }
+                if let p { return self.playPrepared(p, pluginId: pluginId, novelPath: novelPath, novelName: novelName, startParagraph: startParagraph) }
+                self.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName,
+                                  startParagraph: startParagraph, allowPrepared: false)
+            }
         }
         if let pre = prefetched, pre.pluginId == pluginId, pre.novelPath == novelPath, pre.chapterPath == chapterPath {
             prefetched = nil
@@ -368,6 +391,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     }
 
     func stop() {
+        handoff = nil
         interruption.userActed()
         VoiceRun.shared.narrationStopped()
         chapterEndedAt = nil
@@ -435,9 +459,18 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     /// Play a chapter with the best source: prepared on this iPhone, else PC-narrated audio (if enabled),
     /// else speech (text fetched ahead when possible).
     func playChapter(pluginId: String, novelPath: String, chapterPath: String, novelName: String, startParagraph: Int) {
-        if let p = preparedChapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) {
-            return playPrepared(p, pluginId: pluginId, novelPath: novelPath, novelName: novelName, startParagraph: startParagraph)
+        if hasAudio(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) {
+            return withPlayableAudio(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) { [weak self] p in
+                guard let self else { return }
+                if let p { return self.playPrepared(p, pluginId: pluginId, novelPath: novelPath, novelName: novelName, startParagraph: startParagraph) }
+                self.playChapterLive(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
+            }
         }
+        playChapterLive(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
+    }
+
+    /// PC-narrated audio (if enabled), else speech.
+    private func playChapterLive(pluginId: String, novelPath: String, chapterPath: String, novelName: String, startParagraph: Int) {
         let usePC = VoiceSettings.shared.prefs.usePCAudio
         // No PC audio: straight to speech, without a thread hop (the chapter change stays seamless).
         guard usePC else {
@@ -505,13 +538,16 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     // MARK: - Audio mode
 
     /// Play a narrated chapter file. `startTime` (chapter seconds) wins over `startParagraph`.
-    func playAudio(_ ac: AudioChapter, startParagraph: Int, startTime: Double?, coverUrl: String? = nil, origin: AudioOrigin = .pc, voice: String? = nil) {
+    func playAudio(_ ac: AudioChapter, startParagraph: Int, startTime: Double?, coverUrl: String? = nil, origin: AudioOrigin = .pc, voice: String? = nil,
+                   startSentence: Int = 0) {
         interruption.userActed()
         generation += 1
         engine.stop()
         stopAudio()
+        handoff = nil
         mode = .audio
         audioOrigin = origin
+        if origin == .prepared { primeAudioKey(novelKey: ac.novelKey) }
         preparedVoice = voice
         if prefetched?.chapterPath == ac.chapterPath { prefetched = nil }
         audioChapter = ac
@@ -538,7 +574,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
                 self.chapter?.prevName = parsed?.prevTitle
                 var chapterTime = startTime ?? 0
                 if startTime == nil, startParagraph > 0 {
-                    let t = origin == .prepared ? parsed?.time(forParagraph: startParagraph) : parsed?.time(forBlock: startParagraph)
+                    let t = origin == .prepared ? parsed?.time(forParagraph: startParagraph, sentence: startSentence) : parsed?.time(forBlock: startParagraph)
                     if let t { chapterTime = t }
                 }
                 self.activateSession()
@@ -556,7 +592,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         guard mode == .audio, let ac = audioChapter else { return fail(message) }
         CoreHost.shared.log.error("narration: audio failed (\(message, privacy: .public)); falling back to speech")
         let paragraph = startParagraph ?? lastSegment.flatMap { timing?.segments[safe: $0].map { $0.paragraph ?? $0.block } } ?? 0
-        if audioOrigin == .prepared { DriveCache.shared.evictAfterListening(novelKey: ac.novelKey, chapterPath: ac.chapterPath) }
+        if audioOrigin == .prepared {
+            let store = NarrationAudioStore.shared
+            let broken = store.entry(novelKey: ac.novelKey, chapterPath: ac.chapterPath)
+            pendingDelivery = store.delivery(novelKey: ac.novelKey, chapterPath: ac.chapterPath).map { (novelKey: ac.novelKey, chapterPath: ac.chapterPath, delivery: $0) }
+            store.remove(novelKey: ac.novelKey, chapterPath: ac.chapterPath)
+            if let broken, broken.kind == .download { DrivePrep.shared.requeue([broken]) }
+        }
         stopAudio()
         mode = .speech
         playFromCore(pluginId: ac.pluginId, novelPath: ac.novelPath, chapterPath: ac.chapterPath, novelName: ac.novelName,
@@ -587,40 +629,161 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         return i > 0 ? novel.chapters[safe: i - 1] : nil
     }
 
-    // MARK: - Prepared chapters ("Prepare for the drive")
+    // MARK: - Chapter audio on this iPhone (audio downloads, "Prepare for the drive")
 
-    /// The chapter's prepared audio, if it was made with the novel's current voice.
-    private func preparedChapter(pluginId: String, novelPath: String, chapterPath: String) -> PreparedChapter? {
-        guard !Self.isSynthetic(pluginId) || NarrationSelfTest.shared.hasChapters else { return nil }
-        let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
-        if Self.preparesNephis, let p = DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: Self.preparedNephisKey) { return p }
-        return DriveCache.shared.prepared(novelKey: key, chapterPath: chapterPath, voice: VoiceSettings.shared.prefs.preparedVoice(forNovel: key))
+    /// The chapter has audio on this iPhone (any voice).
+    private func hasAudio(pluginId: String, novelPath: String, chapterPath: String) -> Bool {
+        guard !Self.isSynthetic(pluginId) || NarrationSelfTest.shared.hasChapters else { return false }
+        return NarrationAudioStore.shared.entry(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath), chapterPath: chapterPath) != nil
     }
 
-    /// Nephis reads chapters and her model can be used: "Prepare for the drive" renders in her voice.
+    /// The chapter's audio may play (synchronous): it has audio, and it is in the voice that reads now or that isn't known
+    /// yet (the novel's lexicon not asked: the chapter change then asks, `withPlayableAudio`). The next chapter is read on
+    /// live only when this is false.
+    private func audioMayPlay(pluginId: String, novelPath: String, chapterPath: String) -> Bool {
+        guard hasAudio(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) else { return false }
+        let store = NarrationAudioStore.shared
+        let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
+        guard store.currentKey(novelKey: key) != nil else { return true }
+        return store.playable(novelKey: key, chapterPath: chapterPath) != nil
+    }
+
+    /// The chapter's audio if it is in the voice that reads now, the novel's lexicon asked again first (audio of an older
+    /// voice is never played: it is queued to render again and the chapter reads live).
+    private func withPlayableAudio(pluginId: String, novelPath: String, chapterPath: String, _ done: @escaping (NarrationAudioEntry?) -> Void) {
+        guard !Self.isSynthetic(pluginId) || NarrationSelfTest.shared.hasChapters else { return done(nil) }
+        set(.loading)
+        NarrationAudioStore.shared.playable(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath), chapterPath: chapterPath, done)
+    }
+
+    /// Listen from the reader (Narration.play with the chapter's text): the chapter's audio when it has some in the voice
+    /// that reads now (from the paragraph and sentence tapped), else live.
+    func playPreferringAudio(_ ch: Chapter, startParagraph: Int, startSentence: Int) {
+        guard hasAudio(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: ch.chapterPath) else {
+            return play(ch, startParagraph: startParagraph, startSentence: startSentence)
+        }
+        withPlayableAudio(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: ch.chapterPath) { [weak self] p in
+            guard let self else { return }
+            guard let p else { return self.play(ch, startParagraph: startParagraph, startSentence: startSentence) }
+            if let cover = ch.coverUrl { self.coverHint = ("\(ch.pluginId):\(ch.novelPath)", cover) }
+            self.playPrepared(p, pluginId: ch.pluginId, novelPath: ch.novelPath, novelName: ch.novelName, startParagraph: startParagraph,
+                              startSentence: startSentence)
+        }
+    }
+
+    /// Nephis reads chapters and her model can be used: chapters are rendered in her voice.
     static var preparesNephis: Bool {
         VoiceSettings.shared.prefs.delivery.isNephis && listenEngine() == .pocketTts && HybridSpeechEngine.nephisCanReadAlone(.pocketTts)
     }
 
-    /// What her prepared chapters are filed under: her model pack (a new pack is a new voice, so old files aren't
-    /// played in a voice that changed), and her studio when it is on (its 44.1 kHz chapters are another sound; without
-    /// it the key is as before).
-    static var preparedNephisKey: String {
-        let info = NephisModelPack.info
-        let sha = (info?["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? "shipped"
-        let studio = SessionRate.forRead(.pocketTts) == SessionRate.studio ? "|studio" : ""
-        // Her dialogue pack reads the quoted dialogue: another sound (without one the key is as before).
-        let dialogue = NephisModelPack.dialogueInfo.map { d in
-            "|dlg:" + ((d["weightsSha256"] as? String).map { String($0.prefix(12)) } ?? ((d["made"] as? String) ?? "pack"))
-        } ?? ""
-        return "nephis|\(sha)|\((info?["made"] as? String) ?? "")\(studio)\(dialogue)"
+    private func playPrepared(_ p: NarrationAudioEntry, pluginId: String, novelPath: String, novelName: String, startParagraph: Int, startSentence: Int = 0) {
+        let store = NarrationAudioStore.shared
+        let ac = AudioChapter(novelKey: p.novelKey, pluginId: pluginId, novelPath: novelPath, novelName: novelName, chapterPath: p.chapterPath,
+                              number: 0, title: p.title, audioURL: store.url(p.audioFile), timingURL: store.url(p.manifestFile))
+        playAudio(ac, startParagraph: startParagraph, startTime: nil, coverUrl: cover(pluginId: pluginId, novelPath: novelPath), origin: .prepared,
+                  voice: p.voice, startSentence: startSentence)
     }
 
-    private func playPrepared(_ p: PreparedChapter, pluginId: String, novelPath: String, novelName: String, startParagraph: Int) {
-        let cache = DriveCache.shared
-        let ac = AudioChapter(novelKey: p.novelKey, pluginId: pluginId, novelPath: novelPath, novelName: novelName, chapterPath: p.chapterPath,
-                              number: 0, title: p.title, audioURL: cache.url(p.audioFile), timingURL: cache.url(p.manifestFile))
-        playAudio(ac, startParagraph: startParagraph, startTime: nil, coverUrl: cover(pluginId: pluginId, novelPath: novelPath), origin: .prepared, voice: p.voice)
+    /// A chapter read live gets the director's moods its audio was made with (a fallback mid-chapter, a chapter whose file
+    /// went), so the voice doesn't change its reading between the file and live.
+    private func seedDirector(_ ch: Chapter) {
+        guard let script = ch.script, !Self.isSynthetic(ch.pluginId) else { return }
+        let key = VoiceSettings.novelKey(pluginId: ch.pluginId, novelPath: ch.novelPath)
+        var delivery: [String: Any]?
+        if let p = pendingDelivery, p.novelKey == key, p.chapterPath == ch.chapterPath { delivery = p.delivery }
+        pendingDelivery = nil
+        if delivery == nil, NarrationAudioStore.shared.entry(novelKey: key, chapterPath: ch.chapterPath) != nil {
+            delivery = NarrationAudioStore.shared.delivery(novelKey: key, chapterPath: ch.chapterPath)
+        }
+        if let delivery { DirectorStore.shared.seed(delivery, texts: script.map(\.text)) }
+        primeAudioKey(novelKey: key)
+    }
+
+    /// The novel has audio on this iPhone: its lexicon asked now, so the next chapter's audio is known fresh at once.
+    private func primeAudioKey(novelKey: String) {
+        let store = NarrationAudioStore.shared
+        guard store.currentKey(novelKey: novelKey) == nil, !store.index.entries(novelKey: novelKey).isEmpty else { return }
+        store.refreshLexicon(novelKey: novelKey) { _ in }
+    }
+
+    /// About a minute before a chapter's audio file ends, when the next chapter will be read live by Nephis: fetch its
+    /// text, warm her model and render its first two calls exactly as Listen would start them (one sentence, then its
+    /// paragraph), so the change is her chapter pause, not a cold start.
+    private func considerHandoff(chapterTime t: Double) {
+        guard handoff == nil, autoContinue, status == .playing, let timing, timing.duration > 0, timing.duration - t <= Self.handoffLead,
+              let ch = chapter, let next = ch.nextPath, !Self.isSynthetic(ch.pluginId), Self.preparesNephis,
+              !hasAudio(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next), !VoiceSettings.shared.prefs.usePCAudio else { return }
+        let h = Handoff(chapterPath: next)
+        handoff = h
+        DrivePrep.shared.narrationChanged()
+        CoreHost.shared.log.notice("narration: \(Int(timing.duration - t)) s left in the file; warming Nephis for \(next, privacy: .public)")
+        let warm = { [weak self] (fetched: Chapter) in
+            guard let self, self.handoff === h else { return }
+            ExpressiveService.shared.ensureLoaded(.pocketTts) { [weak self] result in
+                guard let self, self.handoff === h, case .success = result else { return }
+                ExpressiveService.shared.whenSettled { [weak self] in self?.renderWarm(h, fetched) }
+            }
+        }
+        if let pre = prefetched, pre.chapterPath == next { return warm(pre) }
+        fetchChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next, novelName: ch.novelName) { [weak self] fetched in
+            guard let self, self.handoff === h, let fetched, fetched.script != nil else { return }
+            self.prefetched = fetched
+            warm(fetched)
+        }
+    }
+
+    /// The next chapter's first two calls through the shared pipeline, as HybridSpeechEngine.pumpRender makes them at a
+    /// read's start (the same plan, budget, studio rule, rate and speed), kept for its enqueue.
+    private func renderWarm(_ h: Handoff, _ ch: Chapter) {
+        guard handoff === h else { return }
+        refreshNarrator()
+        let speed = Double(max(0.5, rate))
+        let segs = chapterItems(ch).enumerated().map { k, it in speechSegment(it, id: -1 - k, speed: speed) }
+        guard !segs.isEmpty else { return }
+        let d = VoiceSettings.shared.prefs.delivery
+        let plan = segs.indices.map { k -> NephisCallPlan.Sentence in
+            let read = NephisRenderPipeline.read(at: k, count: segs.count, natural: { segs[$0].natural }, moods: [:], delivery: d, allMoods: true)
+            return NephisRenderPipeline.sentence(segs[k], read: read, chapterStart: false, senses: [:])
+        }
+        let readRate = SessionRate.forRead(.pocketTts)
+        let finisher = NaturalFinisher(NephisRenderPipeline.finish(rate: readRate, seed: 1))
+        let quotes = NephisCallPlan.quoteStyle(segs.map(\.kokoroText))
+        let continues = autoContinue && ch.nextPath != nil
+        var calls: [[Int]] = []
+        var pieces: [[Float]] = []
+        var buffered = 0.0
+        func keep() {
+            guard handoff === h, !calls.isEmpty else { return }
+            h.warm = HybridSpeechEngine.WarmStart(texts: segs[0..<pieces.count].map(\.kokoroText), calls: calls, pieces: pieces, rate: readRate,
+                                                  speed: segs[0].rate, sequence: ExpressiveService.shared.flowSequence)
+            CoreHost.shared.log.notice("narration: \(pieces.count) sentences of \(ch.chapterPath, privacy: .public) ready for the hand-off")
+        }
+        func next() {
+            let i = calls.last.flatMap(\.last).map { $0 + 1 } ?? 0
+            guard handoff === h, calls.count < 2, i < plan.count else { return keep() }
+            let members = NephisCallPlan.group(from: i, count: plan.count, limit: NephisCallPlan.limit(first: plan[i], buffered: buffered)) { plan[$0] }
+            var call = NephisCallPlan.call(members: members, count: plan.count, at: { plan[$0] },
+                                           context: NephisCallPlan.Context(reset: i == 0, continuesIntoNext: continues,
+                                                                           dialogue: ExpressiveService.shared.nephisDialogue, singleQuotes: quotes),
+                                           spoken: NephisRenderPipeline.spoken)
+            let warmPhone = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue
+            let last = ExpressiveService.shared.flowStats.lastUrgent
+            let budget = NephisCallPlan.budget(buffered: buffered, readChange: call.readChange, switches: call.switches, warm: warmPhone,
+                                               lastUrgentX: last.flatMap { $0.totalMs > 0 ? $0.audioMs / $0.totalMs : nil })
+            call.line.takes = budget.takes
+            call.line.leadIn = budget.leadIn
+            call.line.studio = HybridSpeechEngine.studioFor(characters: call.line.text.count, ahead: buffered)
+            NephisRenderPipeline.run(call.line, letters: members.map { plan[$0].say.count }, speed: Double(segs[i].rate), readRate: readRate,
+                                     finisher: finisher) { [weak self] result in
+                guard let self, self.handoff === h, case .success(let audio) = result, audio.pieces.count == members.count,
+                      audio.pieces.allSatisfy({ !$0.isEmpty }) else { return keep() }
+                calls.append(members)
+                pieces += audio.pieces
+                buffered += audio.seconds
+                next()
+            }
+        }
+        next()
     }
 
     /// The novel's cover: from the chapter playing now (same novel), else the one playNovel was given.
@@ -646,6 +809,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private func audioTick(fileTime: Double) {
         guard mode == .audio, let ch = chapter else { return }
         let t = max(0, fileTime - (timing?.offset ?? 0))
+        if audioOrigin == .prepared { considerHandoff(chapterTime: t) }
         // Bundles (.m4b) don't end per chapter: stop at this chapter's length.
         if let timing, timing.offset > 0, timing.duration > 0, t >= timing.duration { return finishChapter() }
         if let timing, let i = timing.segmentIndex(at: t), i != lastSegment {
@@ -973,6 +1137,8 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         engine.continuesIntoNext = autoContinue && chapter?.nextPath != nil
         appliedVoiceKey = voiceKey()
         appendedNext = nil
+        if let h = handoff, let w = h.warm, h.chapterPath == chapter?.chapterPath, current == 0 { engine.warmStart = w }
+        handoff = nil
         engine.enqueue(segs)
         resetSentenceClock()
         if let pre = prefetched { warmUp(pre) }
@@ -1051,13 +1217,13 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         saveProgress(force: true, finished: true)
         // Listened to the end: prepared audio has done its job.
         if mode == .audio, audioOrigin == .prepared, let ac = audioChapter {
-            DriveCache.shared.evictAfterListening(novelKey: ac.novelKey, chapterPath: ac.chapterPath)
+            NarrationAudioStore.shared.listened(novelKey: ac.novelKey, chapterPath: ac.chapterPath)
         }
         if autoContinue, chapter?.nextPath != nil || (mode == .audio && nextAudioChapter() != nil) {
             chapterEndedAt = ProcessInfo.processInfo.systemUptime
             // The next chapter already follows on in the read (and wasn't prepared for the drive since): no stop.
             if mode == .speech, let a = appendedNext, a.chapter.chapterPath == chapter?.nextPath, a.read == engine.session,
-               engine.follows(at: a.start), preparedChapter(pluginId: a.chapter.pluginId, novelPath: a.chapter.novelPath, chapterPath: a.chapter.chapterPath) == nil {
+               engine.follows(at: a.start), !audioMayPlay(pluginId: a.chapter.pluginId, novelPath: a.chapter.novelPath, chapterPath: a.chapter.chapterPath) {
                 return handOff(a)
             }
             return nextChapter()
@@ -1070,31 +1236,45 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     // MARK: - Core round trips
 
     private func fetchChapter(pluginId: String, novelPath: String, chapterPath: String, novelName: String, completion: @escaping (Chapter?) -> Void) {
+        chapterText(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) { [weak self] r in
+            guard let self, let r else { return completion(nil) }
+            completion(Self.chapter(fromCore: r, pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName,
+                                    coverUrl: self.cover(pluginId: pluginId, novelPath: novelPath)))
+        }
+    }
+
+    /// The core's `narration.chapterText` answer for a chapter (on main), nil when it fails. Audio downloads keep it, so an
+    /// interrupted render goes on without the network.
+    func chapterText(pluginId: String, novelPath: String, chapterPath: String, completion: @escaping ([String: Any]?) -> Void) {
         let args: [String: Any] = ["pluginId": pluginId, "novelPath": novelPath, "chapterPath": chapterPath]
         let request: (@escaping (Bool, Any?) -> Void) -> Void = { done in
             // Simulator self-test: a synthetic novel registered by voice-selftest.ts (no source behind it).
             if pluginId == "voice-selftest", let r = NarrationSelfTest.shared.chapterText(chapterPath) { return done(true, r) }
             CoreHost.shared.request("narration.chapterText", args: args, completion: done)
         }
+        let deliver = MainBound(completion)
         request { ok, result in
-            DispatchQueue.main.async {
-                guard ok, let r = result as? [String: Any] else { return completion(nil) }
-                let paragraphs = (r["paragraphs"] as? [[String: Any]] ?? []).map { p in
-                    Paragraph(index: p["index"] as? Int ?? 0, text: p["text"] as? String ?? "",
-                              sentences: p["sentences"] as? [String], scene: (p["pause"] as? String) == "scene")
-                }
-                let next = r["next"] as? [String: Any]
-                let prev = r["prev"] as? [String: Any]
-                completion(Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName,
-                                   chapterName: r["title"] as? String ?? chapterPath, coverUrl: self.cover(pluginId: pluginId, novelPath: novelPath),
-                                   paragraphs: paragraphs,
-                                   nextPath: (next?["locked"] as? Bool) == true ? nil : next?["path"] as? String,
-                                   nextName: next?["name"] as? String,
-                                   script: ScriptItem.parse(r["script"]),
-                                   prevPath: (prev?["locked"] as? Bool) == true ? nil : prev?["path"] as? String,
-                                   prevName: prev?["name"] as? String))
-            }
+            let raw = MainBound(ok ? result as? [String: Any] : nil)
+            DispatchQueue.main.async { deliver.value(raw.value) }
         }
+    }
+
+    /// A chapter from the core's `narration.chapterText` answer.
+    static func chapter(fromCore r: [String: Any], pluginId: String, novelPath: String, chapterPath: String, novelName: String, coverUrl: String?) -> Chapter {
+        let paragraphs = (r["paragraphs"] as? [[String: Any]] ?? []).map { p in
+            Paragraph(index: p["index"] as? Int ?? 0, text: p["text"] as? String ?? "",
+                      sentences: p["sentences"] as? [String], scene: (p["pause"] as? String) == "scene")
+        }
+        let next = r["next"] as? [String: Any]
+        let prev = r["prev"] as? [String: Any]
+        return Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName,
+                       chapterName: r["title"] as? String ?? chapterPath, coverUrl: coverUrl,
+                       paragraphs: paragraphs,
+                       nextPath: (next?["locked"] as? Bool) == true ? nil : next?["path"] as? String,
+                       nextName: next?["name"] as? String,
+                       script: ScriptItem.parse(r["script"]),
+                       prevPath: (prev?["locked"] as? Bool) == true ? nil : prev?["path"] as? String,
+                       prevName: prev?["name"] as? String)
     }
 
     /// Voice Lab's test paragraph and the simulator voice self-test: no novel behind them, so no progress,
@@ -1129,7 +1309,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
             return
         }
         guard prefetchingPath != next else { return }
-        if preparedChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next) != nil { return } // on disk already
+        if audioMayPlay(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next) { return } // on disk already
         prefetchingPath = next
         fetchChapter(pluginId: ch.pluginId, novelPath: ch.novelPath, chapterPath: next, novelName: ch.novelName) { [weak self] fetched in
             guard let self else { return }
@@ -1158,7 +1338,7 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
     private func appendNext(_ next: Chapter) -> Bool {
         guard mode == .speech, autoContinue, status != .loading, let ch = chapter, ch.nextPath == next.chapterPath,
               ch.pluginId == next.pluginId, ch.novelPath == next.novelPath, !VoiceSettings.shared.prefs.usePCAudio,
-              preparedChapter(pluginId: next.pluginId, novelPath: next.novelPath, chapterPath: next.chapterPath) == nil else { return false }
+              !audioMayPlay(pluginId: next.pluginId, novelPath: next.novelPath, chapterPath: next.chapterPath) else { return false }
         if let a = appendedNext, a.chapter.chapterPath == next.chapterPath, a.read == engine.session, engine.follows(at: a.start) { return true }
         let nextItems = chapterItems(next)
         guard !nextItems.isEmpty else { return false }

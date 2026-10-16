@@ -19,6 +19,8 @@ export interface DeveloperInfo {
   playerDetails: boolean;
   /** The pronunciation editor: Kokoro phonemes field and JSON lexicon paste. */
   phonemes: boolean;
+  /** Audio downloads: the better of two takes per call (twice the work). */
+  bestOfTwo: boolean;
 }
 
 /** Window event after Developer options changed (v1-hooks.ts adds or removes the More row and About's switch). */
@@ -31,6 +33,7 @@ export function normalizeDeveloper(raw: unknown): DeveloperInfo {
     on: typeof r.on === 'boolean' ? r.on : __FLAVOR__ === 'personal',
     playerDetails: r.playerDetails === true,
     phonemes: r.phonemes !== false,
+    bestOfTwo: r.bestOfTwo === true,
   };
 }
 
@@ -58,7 +61,8 @@ export function showsPhonemes(): boolean {
 /** Remember native's answer (from a voiceSettings call made anyway); tells listeners when it changed. */
 export function noteDeveloper(raw: unknown): DeveloperInfo {
   const next = normalizeDeveloper(raw);
-  const changed = next.on !== current.on || next.playerDetails !== current.playerDetails || next.phonemes !== current.phonemes;
+  const changed =
+    next.on !== current.on || next.playerDetails !== current.playerDetails || next.phonemes !== current.phonemes || next.bestOfTwo !== current.bestOfTwo;
   current = next;
   if (changed) window.dispatchEvent(new Event(DEVELOPER_CHANGED));
   return next;

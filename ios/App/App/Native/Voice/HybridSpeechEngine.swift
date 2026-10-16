@@ -56,6 +56,21 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// Another chapter follows this read's last sentence (NarrationController: auto-continue with a next chapter), so her
     /// last call keeps its trailing silence for the join into it instead of ending the read there.
     var continuesIntoNext = false
+    /// The read's first calls, already rendered by the shared pipeline (NarrationController's hand-off: a downloaded
+    /// chapter ended and the next one is read live): `enqueue` starts with them instead of a cold call. Taken by `enqueue`.
+    var warmStart: WarmStart?
+
+    struct WarmStart {
+        /// The read's first sentences it was made for (their text), and the sentences of each call, in order.
+        let texts: [String]
+        let calls: [[Int]]
+        /// One finished piece per sentence, at `rate`, made at the listener's `speed`.
+        let pieces: [[Float]]
+        let rate: Int
+        let speed: Float
+        /// ExpressiveService.flowSequence after its last call: still the same, her read goes on from it (no fresh read).
+        let sequence: Int
+    }
     /// When the read began waiting for its next sentence after it had started (the log's underruns); nil = not waiting.
     private var waitBegan: Date?
     /// Listen › the expressive engine that reads chapters (DeliverySettings.listenEngine; Chatterbox Nano = the
@@ -70,9 +85,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The chapter's brief (SceneReader.brief), asked once per read; windows asked before it arrives go without.
     private var chapterBrief: String?
     private var briefAsked = false
-    /// The director's answers kept across new reads of a chapter (a seek, a restart: heat batch 1), and how many
-    /// sentences into the brief's read this read starts (its part numbers).
-    private var directorCache = DirectorCache()
+    /// How many sentences into the brief's read this read starts (its part numbers). The director's answers are kept
+    /// across new reads of a chapter (a seek, a restart: heat batch 1) in DirectorStore, shared with audio downloads.
     private var briefOffset = 0
     /// How to say the homographs of sentences ahead (SceneReader.senses): index → [word: respelling, "" = as written];
     /// Heteronyms.pocketText uses them where its rules only guessed.
@@ -96,6 +110,9 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// start at to continue the read (anything else starts the flow afresh: a seek, a failure).
     private var flowBusy = false
     private var flowNext = -1
+    /// ExpressiveService.flowSequence after this read's last call: anything else read with her engine since (an audio
+    /// download's call while Listen was paused, a test), her next call starts her read afresh.
+    private var flowOwn = -1
     private(set) var standIns = 0
     /// Natural delivery for this session (the expressive engine reads chapters and Settings › Voices › Expressive voices ›
     /// Natural delivery is on); nil = the narrator polish or plain loudness matching as before.
@@ -193,6 +210,8 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     // MARK: - SpeechEngine
 
     func enqueue(_ segs: [SpeechSegment]) {
+        let warm = warmStart
+        warmStart = nil
         stop()
         gen += 1
         // One rate for the whole read, picked before anything is rendered: her studio's 44.1 kHz, else 24 kHz.
@@ -253,6 +272,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // A late render at a paragraph start waits (a longer pause) before the Apple voice takes over.
         s.paragraphStarts = Set(segs.indices.dropFirst().filter { !Self.sameChunk(segs[$0 - 1], segs[$0]) })
         scheduler = s
+        if let warm { useWarmStart(warm) }
         if KokoroService.shared.usable { KokoroService.shared.ensureLoaded() }
         if let id = listenEngine, ExpressiveService.supported(id), ExpressiveService.shared.isInstalled(id), !ExpressiveService.shared.crashDisabled {
             ExpressiveService.shared.ensureLoaded(id) { [weak self] _ in self?.kokoroStatusChanged() }
@@ -270,6 +290,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         standIn = nil
         flowBusy = false
         flowNext = -1
+        flowOwn = -1
         sceneMoods = [:]
         sceneSenses = [:]
         chapterBrief = nil
@@ -477,55 +498,31 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             // "I don't bite…" [stop]. NaturalFinish cuts them apart again.
             // Flow: with almost nothing buffered (the start, after a seek) the first sentence goes alone, so her voice
             // starts sooner; then whole paragraphs.
-            let flowLimit = bufferedAhead() < 4 ? Self.readText(segments[i], expressive: true).count : id.maxCharactersPerCall
+            // Her flow: the shared plan's call (NephisCallPlan via NephisRenderPipeline: what the Voice speed test and
+            // audio downloads ask for too): one sentence alone while almost nothing is buffered (the start, after a
+            // seek: her voice starts sooner), then whole paragraphs.
+            let flowLimit = NephisCallPlan.limit(first: planSentence(i), buffered: bufferedAhead())
             let group = flow ? flowGroup(from: i, limit: flowLimit) : chunkGroup(from: i, limit: id.maxCharactersPerCall)
             let members = [i] + (group.count > 1 ? scheduler?.extendRender(i, through: group[group.count - 1]) ?? [] : [])
-            // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS).
-            // Heteronyms respelled in their sense (HDVoiceCore Heteronyms: "reed" for "she likes to read", "led" for "lead
-            // pipes"), the AI director's sense where the rules only guessed.
-            let text = members.map { j in
-                let t = StyleMapper.plainText(Self.readText(segments[j], expressive: true))
-                return id == .pocketTts ? Heteronyms.pocketText(t, overrides: sceneSenses[j] ?? [:]) : t
-            }.joined(separator: " ")
-            // The read of the same voice for this call: calm narration, performed dialogue/thoughts, or a mood
-            // (tense, sad, tender); the script never puts two reads in one call.
-            var line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
-            // One temperature per call: the letter-weighted mean of the director's (the script keeps calls similar).
-            let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
-            let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
-            line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
-            let syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
+            var line: ExpressiveLine
+            var syllables = 0
             if flow {
-                // The same sentences as written, for a Nephis pack that reads that form (chain "text": "raw"; the
-                // engine picks one of the two): the script's raw form where it has one, else the sentence's text.
-                line.raw = members.map { j in
-                    let t = StyleMapper.plainText(segments[j].natural?.params.raw ?? segments[j].kokoroText)
-                    return Heteronyms.pocketText(t, overrides: sceneSenses[j] ?? [:])
-                }.joined(separator: " ")
-                line.pauseBefore = i > 0 ? Self.flowPause(segments[i - 1]) : nil
-                // Dialogue across that pause (the script's): she takes her own pause there, not a paragraph's. The first
-                // call of an appended chapter gets the chapter break instead.
-                let chapterStart = chapterStarts.contains(i)
-                line.handover = i > 0 && !chapterStart ? segments[i - 1].natural?.handover.flatMap(NephisFlow.Handover.init(script:)) : nil
-                if chapterStart { line.chapterStart = true }
-                line.flowReset = i != flowNext
-                if i != flowNext { ExpressiveService.shared.countEvidence(\.readRestarts) }
-                // The read's last call (its trailing silence played too), unless another chapter is to follow on.
-                line.flowLast = members.last == segments.count - 1 && !continuesIntoNext
-                // Her dialogue pack (when she has one): what the quote routing needs around the call, and the voice
-                // changes it will make, which the call's budget counts (each costs a prompt and a join).
-                var switches = 0
-                if ExpressiveService.shared.nephisDialogue, let last = members.last {
-                    let hints = dialogueHints(after: last)
-                    line.singleQuotes = quoteStyle(at: i).rawValue
-                    line.restOfParagraph = hints.rest
-                    line.nextOpensQuote = hints.nextOpens
-                    switches = Self.voiceChanges(text, context: QuoteRouter.Context(singleQuotes: quoteStyle(at: i), restOfParagraph: hints.rest,
-                                                                                     nextOpensQuote: hints.nextOpens))
-                }
-                let budget = flowBudget(at: i, switches: switches)
+                // The director's shaped text with heteronyms in their sense (the AI director's where the rules only
+                // guessed), the text as written for a "raw" pack, the letter-weighted temperature, the pause before and the
+                // dialogue handover across it (an appended chapter's first call: the chapter break), a fresh read or her
+                // read going on, the read's last call unless another chapter follows, and her dialogue pack's quote hints.
+                let reset = i != flowNext || ExpressiveService.shared.flowSequence != flowOwn
+                let call = NephisCallPlan.call(members: members, count: segments.count, at: { self.planSentence($0) },
+                                               context: NephisCallPlan.Context(reset: reset, continuesIntoNext: continuesIntoNext,
+                                                                               dialogue: ExpressiveService.shared.nephisDialogue,
+                                                                               singleQuotes: quoteStyle(at: i)),
+                                               spoken: NephisRenderPipeline.spoken)
+                line = call.line
+                if reset { ExpressiveService.shared.countEvidence(\.readRestarts) }
+                let budget = flowBudget(readChange: call.readChange, switches: call.switches)
                 line.takes = budget.takes
                 line.leadIn = budget.leadIn
+                let text = line.text
                 // Her studio (when on) on every call it can afford from its measured speed, the first call of a read
                 // included (StudioBudget, 2026-10-15: at 23-47x real time it costs ~0.1-0.3 s a call); a slow studio
                 // (cold guess, heat, Low Power Mode) only while playback has a cushion, as before. Forcing a slow one
@@ -538,6 +535,19 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 if relaxedRenders { line.relaxed = true }
                 flowBusy = true
                 flowNext = (members.last ?? i) + 1
+            } else {
+                // The director's shaped text when it has one (falling endings, a beat before the key word, calmer CAPS),
+                // heteronyms respelled in their sense for Pocket TTS; one read per call; one temperature per call (the
+                // letter-weighted mean of the director's).
+                let text = members.map { j in
+                    let t = StyleMapper.plainText(Self.readText(segments[j], expressive: true))
+                    return id == .pocketTts ? Heteronyms.pocketText(t, overrides: sceneSenses[j] ?? [:]) : t
+                }.joined(separator: " ")
+                line = ExpressiveLine(text: text, role: read(for: i) ?? "narrator")
+                let weights = members.map { Float(max(1, Self.readText(segments[$0], expressive: true).count)) }
+                let temps = members.map { segments[$0].natural?.params.temperature ?? 0.7 }
+                line.temperature = zip(temps, weights).reduce(0) { $0 + $1.0 * $1.1 } / max(1, weights.reduce(0, +))
+                syllables = members.reduce(0) { $0 + (segments[$1].natural?.params.syllables ?? 0) }
             }
             // A flow call frees the next one when its latents are ready (`prepared`), or here if it failed before.
             let prepared = FlowCall()
@@ -573,10 +583,10 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         // A call her engine already gave her EQ (before the tuner's finishing, pack chain "closeness",
                         // "breathAir", "room"): no EQ on top either.
                         let toned = flow && a.toned
-                        if flow, self.studioRead, a.sampleRate == NaturalFinish.mimiRate, self.natural != nil, !mastered, !toned {
-                            // Her Mimi sound without the studio, in her studio's read: natural delivery adds no EQ at
-                            // 44.1 kHz, so it gets hers here, at 24 kHz where it was tuned (as a 24 kHz read gives it).
-                            Self.nephisTilt.apply(&samples, sampleRate: a.sampleRate)
+                        if flow, self.natural != nil {
+                            // Her Mimi sound without the studio, in her studio's read: her EQ at 24 kHz (the pipeline's step).
+                            NephisRenderPipeline.preEQ(&samples, sampleRate: a.sampleRate, readRate: self.sessionRate, mastered: mastered,
+                                                       toned: toned, tilt: Self.nephisTilt)
                         }
                         self.atSessionRate(KokoroAudio(samples: samples, sampleRate: a.sampleRate, synthMs: a.synthMs)) { [weak self] audio in
                             guard let self, g == self.gen, self.scheduler != nil else { return }
@@ -609,12 +619,46 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     self.lastFlowDone = Date()
                     self.pumpRender()
                 }, completion: handle)
+                flowOwn = ExpressiveService.shared.flowSequence
             } else {
                 synthesizeExpressive(line, id: id, syllables: syllables, retry: true, completion: handle)
             }
             return
         }
         renderWithKokoro(i, gen: g)
+    }
+
+    /// The read's first calls from the hand-off's warm start, when they fit this read exactly (her flow, the same sentences,
+    /// rate and speed, inside the render window): their sentences become ready at once, and her read goes on from them
+    /// (no fresh read) when nothing else used her engine since. Otherwise the read starts as usual.
+    private func useWarmStart(_ w: WarmStart) {
+        let members = w.calls.flatMap { $0 }
+        guard listenEngine == .pocketTts, natural != nil, ExpressiveService.shared.usesFlow, w.rate == sessionRate, !w.calls.isEmpty,
+              w.pieces.count == w.texts.count, w.texts.count <= segments.count, members == Array(0..<w.texts.count),
+              zip(w.texts, segments).allSatisfy({ $0 == $1.kokoroText }), abs((segments.first?.rate ?? 0) - w.speed) < 0.001,
+              w.pieces.allSatisfy({ !$0.isEmpty }), let s = scheduler, s.kokoro == .ready, !s.throttled || s.config.patient, !s.paused,
+              s.rendering == nil, s.cursor == 0, w.texts.count <= s.config.ahead else {
+            log.info("voice: the hand-off's warm start doesn't fit this read; it starts as usual")
+            return
+        }
+        for call in w.calls {
+            guard let first = call.first, let last = call.last, scheduler?.nextRender() == first else { return }
+            let taken = call.count > 1 ? scheduler?.extendRender(first, through: last) ?? [] : []
+            for j in call {
+                let buf = makeBuffer(w.pieces[j])
+                scheduler?.renderDone(j, ok: buf != nil)
+                if let buf, scheduler?.isReady(j) == true {
+                    buffers[j] = buf
+                    bufferVoices[j] = ExpressiveEngineID.pocketTts.rawValue
+                }
+            }
+            if taken.count != call.count - 1 { log.error("voice: the warm start's call \(first) was cut by the render window") }
+        }
+        let goesOn = ExpressiveService.shared.flowSequence == w.sequence
+        flowNext = goesOn ? w.texts.count : -1
+        flowOwn = goesOn ? w.sequence : -1
+        lastFlowDone = Date()
+        log.notice("voice: read starts with \(w.texts.count) sentences rendered during the hand-off\(goesOn ? "" : " (her read starts afresh after them)", privacy: .public)")
     }
 
     /// One expressive render, checked for words dropped at the end (CompletenessGuard): a take that looks cut short
@@ -642,17 +686,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     /// The read of the narrator voice for sentence i (nil = the calm Narrator): the AI director's when it has read
     /// the sentence, else the script's; then the settings (Act out dialogue, Mood voices).
     private func read(for i: Int) -> String? {
-        guard segments.indices.contains(i) else { return nil }
         let d = VoiceSettings.shared.prefs.delivery
-        let n = segments[i].natural
-        var voice = n?.voice
-        if d.usesAI {
-            let speaks = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.speaks == true }
-            let system = { (j: Int) in self.segments.indices.contains(j) && self.segments[j].natural?.system == true }
-            let all = listenEngine == .pocketTts && d.isNephis
-            if case .some(let r) = SceneMood.read(at: i, moods: sceneMoods, speaks: speaks, system: system, allMoods: all) { voice = r }
-        }
-        return d.read(voice, speaks: n?.speaks ?? false)
+        return NephisRenderPipeline.read(at: i, count: segments.count, natural: { self.segments[$0].natural }, moods: sceneMoods, delivery: d,
+                                         allMoods: listenEngine == .pocketTts && d.isNephis)
+    }
+
+    /// Sentence i as her calls see it (NephisCallPlan, through the shared pipeline).
+    private func planSentence(_ i: Int) -> NephisCallPlan.Sentence {
+        NephisRenderPipeline.sentence(segments[i], read: read(for: i), chapterStart: chapterStarts.contains(i), senses: sceneSenses[i] ?? [:])
     }
 
     /// Ask the on-device model to read the next window of sentences, up to about two windows ahead of the one playing
@@ -666,14 +707,14 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             let count = segments.count
             let chapterEnd = DirectorCache.chapterEnd(segments.map(\.kokoroText))
             // This chapter read before (a seek, a restart): its brief from then, no model calls.
-            if let kept = directorCache.brief(end: chapterEnd, sentences: count) {
+            if let kept = DirectorStore.shared.cache.brief(end: chapterEnd, sentences: count) {
                 chapterBrief = kept.text
                 briefOffset = kept.offset
             } else {
                 SceneReader.shared.brief(segments.map(sceneSentence)) { [weak self] b in
                     guard let self, g == self.gen else { return }
                     self.chapterBrief = b
-                    if let b { self.directorCache.store(brief: b, end: chapterEnd, sentences: count) }
+                    if let b { DirectorStore.shared.cache.store(brief: b, end: chapterEnd, sentences: count) }
                 }
             }
         }
@@ -698,7 +739,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             if let moods {
                 for (k, m) in moods.enumerated() where SceneMood.moods.contains(m) && self.segments.indices.contains(start + k) {
                     self.sceneMoods[start + k] = m
-                    self.directorCache.store(mood: m, text: self.segments[start + k].kokoroText, before: self.sceneBefore(start + k))
+                    DirectorStore.shared.cache.store(mood: m, text: self.segments[start + k].kokoroText, before: self.sceneBefore(start + k))
                 }
             }
             self.sceneNext = end
@@ -716,7 +757,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func keptMoods(_ range: Range<Int>) -> [String]? {
         var out: [String] = []
         for i in range {
-            guard let m = directorCache.mood(segments[i].kokoroText, before: sceneBefore(i)), SceneMood.moods.contains(m) else { return nil }
+            guard let m = DirectorStore.shared.cache.mood(segments[i].kokoroText, before: sceneBefore(i)), SceneMood.moods.contains(m) else { return nil }
             out.append(m)
         }
         return out.isEmpty ? nil : out
@@ -728,7 +769,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard listenEngine == .pocketTts else { return }
         var asks: [(index: Int, text: String, before: String)] = []
         for i in range where segments.indices.contains(i) {
-            if let known = directorCache.senses(segments[i].kokoroText, before: sceneBefore(i)) {
+            if let known = DirectorStore.shared.cache.senses(segments[i].kokoroText, before: sceneBefore(i)) {
                 sceneSenses[i] = known
             } else {
                 asks.append((index: i, text: segments[i].kokoroText, before: sceneBefore(i) ?? ""))
@@ -739,7 +780,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             guard let self, g == self.gen else { return }
             self.sceneSenses.merge(senses) { _, new in new }
             for (i, answer) in senses where self.segments.indices.contains(i) {
-                self.directorCache.store(senses: answer, text: self.segments[i].kokoroText, before: self.sceneBefore(i))
+                DirectorStore.shared.cache.store(senses: answer, text: self.segments[i].kokoroText, before: self.sceneBefore(i))
             }
         }
     }
@@ -773,81 +814,34 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     /// Nephis's flow: sentence i and the ones after it in the same paragraph (never across a paragraph break, so the
-    /// model never reads one as a comma), same read, up to `limit` characters. Only with natural delivery, whose cutter
-    /// gives each sentence of the call its own buffer (renderedGroup); without it, one sentence per call, as chunkGroup.
-    /// Never across a chapter appended to the read; a sentence the script split mid-way stays in one call (callGroup).
+    /// model never reads one as a comma), same read, up to `limit` characters (NephisCallPlan.group). Only with natural
+    /// delivery, whose cutter gives each sentence of the call its own buffer (renderedGroup); without it, one sentence per
+    /// call, as chunkGroup. Never across a chapter appended to the read; a sentence the script split mid-way stays whole.
     private func flowGroup(from i: Int, limit: Int) -> [Int] {
-        HybridScheduler.callGroup(from: i, count: segments.count, limit: limit, canCut: natural != nil,
-                                  length: { Self.readText(segments[$0], expressive: true).count },
-                                  joins: { j in
-                                      !chapterStarts.contains(j) && (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause
-                                          && read(for: j - 1) == read(for: j)
-                                  },
-                                  continues: { j in HybridScheduler.endsMidSentence(segments[j - 1].kokoroText) })
+        NephisCallPlan.group(from: i, count: segments.count, limit: limit, canCut: natural != nil) { self.planSentence($0) }
     }
 
     /// A pause this long or longer ends a paragraph (the script's paragraph and scene pauses).
-    static let paragraphPause = 0.7
-
-    /// The pause before a flow call: the script's natural pause after the sentence before it, kept in a narrator's
-    /// range (a beat between sentences, a breath between paragraphs, a held moment after "…").
-    static func flowPause(_ before: SpeechSegment) -> Double {
-        min(1.4, max(0.35, before.naturalPause ?? before.pauseAfter))
-    }
-
-    /// What a flow call may cost, from the audio buffered ahead of playback: one plain take when it is short (as
-    /// fast as the Narrator), a lead-in (the sentence before read again, then cut: the tone carries over) from
-    /// `leadInAhead`, best of 2–3 takes when far ahead, and one more take at a change of read (where jumps happen).
-    /// Around a flow call ending at sentence `last`, for the quote routing: the rest of its paragraph (nil: the call
-    /// ends it) and whether the next paragraph opens with a quotation mark (a quotation running on across the break).
-    private func dialogueHints(after last: Int) -> (rest: String?, nextOpens: Bool?) {
-        var rest: [String] = []
-        var j = last + 1
-        while j < segments.count, !chapterStarts.contains(j), (segments[j - 1].naturalPause ?? segments[j - 1].pauseAfter) < Self.paragraphPause {
-            rest.append(Self.readText(segments[j], expressive: true))
-            j += 1
-        }
-        let next = j < segments.count && !chapterStarts.contains(j) ? QuoteRouter.opensQuote(Self.readText(segments[j], expressive: true)) : false
-        return (rest.isEmpty ? nil : rest.joined(separator: " "), next)
-    }
+    static let paragraphPause = NephisCallPlan.paragraphPause
 
     /// The single-quote style of the chapter sentence `i` belongs to (worked out once per chapter).
     private func quoteStyle(at i: Int) -> QuoteRouter.SingleQuotes {
         let start = chapterStarts.filter { $0 <= i }.max() ?? 0
         if let known = quoteStyles[start] { return known }
         let end = chapterStarts.filter { $0 > start }.min() ?? segments.count
-        let style = QuoteRouter.SingleQuotes.of(segments[start..<max(start, end)].map(\.kokoroText))
+        let style = NephisCallPlan.quoteStyle(segments[start..<max(start, end)].map(\.kokoroText))
         quoteStyles[start] = style
         return style
     }
 
-    /// Voice changes inside a call's text with her dialogue pack (QuoteRouter's spans, the narrator reading at its start).
-    static func voiceChanges(_ text: String, context: QuoteRouter.Context) -> Int {
-        var state = QuoteRouter.State()
-        let spans = QuoteRouter.split(text, state: &state, context: context)
-        var changes = 0
-        var dialogue = false
-        for s in spans where s.dialogue != dialogue {
-            changes += 1
-            dialogue = s.dialogue
-        }
-        return changes
-    }
-
-    /// Seconds of buffered audio a voice change is counted as costing when a call's extras are budgeted: a second prompt
-    /// (prefill), its own takes' analysis decode and a join (measured cost on the phone: a few hundred ms at most).
-    static let switchCost = 0.5
-
-    private func flowBudget(at i: Int, switches: Int = 0) -> (takes: Int, leadIn: Bool) {
-        // A warm phone: the lightest calls, so she keeps up without heating it further.
-        // From "fair" on (not only when throttled): extras cost heat, and her 3x target leaves no need for them then
-        // (Voice test 2026-10-09: fair to serious in 90 s with redos and lead-ins; Kasta wants it a tad cooler).
-        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
-        // Her last call came in under 1.5× real time (a busy or warm phone): the lightest calls until she is faster
-        // again, so the margin that keeps the read gapless is never spent on extras. A call rendered at background
-        // priority (slower on purpose, with plenty banked) doesn't count: the last one at user-initiated priority does.
-        if let last = ExpressiveService.shared.flowStats.lastUrgent, last.totalMs > 0, last.audioMs / last.totalMs < 1.5 { return (1, false) }
-        return Self.flowBudget(ahead: bufferedAhead() - Self.switchCost * Double(switches), readChange: i > 0 && read(for: i) != read(for: i - 1))
+    /// What a flow call may cost (NephisCallPlan.budget): the lightest call on a warm phone (from "fair": extras cost heat,
+    /// Voice test 2026-10-09) or after her last user-initiated call came in under 1.5× real time; otherwise by the audio
+    /// buffered ahead, each voice change counted as `NephisCallPlan.switchCost` seconds less.
+    private func flowBudget(readChange: Bool, switches: Int) -> (takes: Int, leadIn: Bool) {
+        let warm = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue
+        let last = ExpressiveService.shared.flowStats.lastUrgent
+        let x = last.flatMap { $0.totalMs > 0 ? $0.audioMs / $0.totalMs : nil }
+        return NephisCallPlan.budget(buffered: bufferedAhead(), readChange: readChange, switches: switches, warm: warm, lastUrgentX: x)
     }
 
     /// Her EQ, with the top lift her installed pack asks for.
@@ -924,7 +918,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         return buffers.filter { $0.key > playing }.values.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
-    static let leadInAhead = 25.0
+    static let leadInAhead = NephisCallPlan.leadInAhead
     /// Her studio for a flow call of `characters` with `ahead` seconds buffered ahead of playback (ExpressiveLine.studio;
     /// Listen and the Voice speed test): StudioBudget with her studio's speed measured so far, the old cushion rule alone
     /// on a hot phone (serious heat or worse) or in Low Power Mode. Main thread.
@@ -942,10 +936,7 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
 
     static func flowBudget(ahead: Double, readChange: Bool) -> (takes: Int, leadIn: Bool) {
-        // At most 2 takes: with the trained model a second take rarely wins, and each one is a whole extra render. With
-        // her three-minute cushion, a second take only once more than two and a half minutes are banked.
-        let base = ahead > 150 ? 2 : 1
-        return (min(2, base + (readChange && ahead > 35 ? 1 : 0)), ahead >= leadInAhead)
+        NephisCallPlan.flowBudget(ahead: ahead, readChange: readChange)
     }
 
     /// Two neighbouring sentences belong to one breath-group chunk: the script's chunk ids (speech-script.ts
@@ -990,11 +981,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         // The next call starts now; this one's chain runs meanwhile, off the main thread.
         scheduler?.releaseSynth(members[0])
         pumpRender()
-        var unit = NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: Double(segments[members[0]].rate), expressive: true)
-        unit.flow = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
-        unit.mastered = unit.flow && mastered
-        unit.toned = unit.flow && toned
-        let flowUnit = unit.flow
+        let speed = Double(segments[members[0]].rate)
+        let flowUnit = ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+        // Her flow call: the shared pipeline's finish (the same as the speed test's and audio downloads').
+        let unit = flowUnit ? NephisRenderPipeline.unit(samples: audio.samples, lines: lines, speed: speed, mastered: mastered, toned: toned)
+                            : NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: speed, expressive: true)
         nf.render(unit) { [weak self] pieces in
             guard let self, g == self.gen, self.scheduler != nil else { return }
             // Voice test evidence: a sentence the cut left without audio is rendered again.
@@ -1075,11 +1066,11 @@ final class HybridSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 // so. Kokoro's stand-in sentences get the same chain and pause, so levels never jump. It runs off the
                 // main thread while the next sentence synthesizes.
                 let expressive = voice == listenEngine?.rawValue
-                var unit = NaturalFinish.Unit(samples: audio.samples, lines: [naturalLine(i, expressive: expressive)],
-                                              speed: expressive ? Double(segments[i].rate) : 1, expressive: expressive)
-                unit.flow = expressive && ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
-                unit.mastered = unit.flow && mastered
-                unit.toned = unit.flow && toned
+                let lines = [naturalLine(i, expressive: expressive)]
+                let speed = expressive ? Double(segments[i].rate) : 1
+                let flowUnit = expressive && ExpressiveService.shared.usesFlow && voice == ExpressiveEngineID.pocketTts.rawValue
+                let unit = flowUnit ? NephisRenderPipeline.unit(samples: audio.samples, lines: lines, speed: speed, mastered: mastered, toned: toned)
+                                    : NaturalFinish.Unit(samples: audio.samples, lines: lines, speed: speed, expressive: expressive)
                 scheduler?.releaseSynth(i)
                 pumpRender()
                 nf.render(unit) { [weak self] pieces in

@@ -54,26 +54,55 @@ drive** (under Add to Library / Web View / Share).
 - **How many**: 1, 3, 5 or 10 chapters, starting where you would continue listening (the chapter you are
   in, from its start, so resuming mid-chapter still works).
 - **When**:
-  - **Prepare now**: right away, on any network.
+  - **Prepare now**: right away, on any network (on battery with Low Power Mode on it waits).
   - **When charging or on Wi-Fi**: waits until one of them is true. On battery with Low Power Mode on it
     waits too. While the app is closed, iOS runs the work as a background processing task, usually
     overnight on the charger.
-- **While preparing**: the card and the sheet show the chapter being prepared, the progress, or why it
-  waits ("Waiting for charging or Wi-Fi", "Paused while you listen", "Waiting for the iPhone to
-  cool down"). Live narration always comes first: preparing pauses while a voice reads aloud, and continues
-  while you listen to already-prepared chapters.
-- **Playing**: prepared chapters are used first, wherever a chapter starts: the reader, More › Listen,
-  CarPlay, Siri, or the chapter change. They need neither synthesis nor the internet. The spoken sentence
-  is still highlighted.
-- **Storage**: AAC, mono, 24 kHz, 32 kbps, about 14 MB per hour (a typical 20-minute chapter is about
-  5 MB). The sheet and More › Voices › In the car show what is on the iPhone. Limits:
-  - each chapter is deleted after you listen to it to the end;
-  - there is a 600 MB cap, oldest first;
-  - Remove clears one novel, and Remove all clears everything;
-  - the files are excluded from iCloud and device backups.
-- **Voice**: the novel's Kokoro voice at the time of preparing. If you change the voice, the prepared
-  chapters are no longer used (prepare again). The same goes for words added to the pronunciation list
-  afterwards.
+- **While preparing**: the card and the sheet show the chapter being prepared, the progress and its step
+  (her moods for the chapter, rendering, saving the file), or why it waits ("Waiting for charging or Wi-Fi",
+  "Paused while you listen", "Resuming shortly after listening", "Waiting for the iPhone to cool down",
+  "Waiting for the internet"). Live reading always comes first: preparing stops at the next call when Listen
+  or the Voice Speed Test starts and goes on 30 s after they stop; serious heat pauses it until the iPhone
+  has been at fair or below for two minutes. It continues while you listen to already-prepared chapters,
+  except in the last minute before such a chapter hands over to live reading.
+- **Playing**: prepared chapters are used first, wherever a chapter starts: the reader's Listen (from the
+  tapped sentence), More › Listen, CarPlay, Siri, or the chapter change. They need neither synthesis nor the
+  internet. The spoken sentence is still highlighted, from the real sentence cuts. About a minute before a
+  prepared chapter ends whose next chapter has no audio, her model warms up and the next chapter's first
+  two calls are rendered, so live reading starts without a cold start.
+- **Storage**: with Nephis and her studio AAC-LC mono 44.1 kHz 128 kbps (about 0.96 MB a minute, ~58 MB an
+  hour); Kokoro or her voice without the studio 24 kHz 32 kbps (~14 MB an hour). Files live in Application
+  Support/NarrationAudio (one folder per novel), excluded from iCloud and device backups. Limits:
+  - each prepared chapter is deleted after you listen to it to the end;
+  - prepared chapters have a 600 MB cap, oldest first (audio downloads have none);
+  - Remove clears one novel, and Remove all clears everything.
+- **Voice**: only audio made with the voice that reads now plays (Kasta, 2026-10-15). Its key is her
+  narrator and dialogue packs, her studio, the packs' chains and the delivery settings, the novel's
+  pronunciation list and the renderer's version (Kokoro: its voice and narrator mode). Audio made with an
+  older version is not played: Listen reads live, and the chapter is queued to render again while charging
+  (the new file replaces the old one). Audio of another voice (Kokoro's while Nephis reads) is kept, not
+  played.
+
+## Audio downloads (engine; the screens come in part 2)
+
+The same queue renders chosen chapters into audio that stays until deleted ("Delete audio after listening",
+off by default). Part 1 is the engine and its bridge; "Prepare for the drive" runs on it.
+
+- **One render pipeline** (Native/Voice/NephisRenderPipeline.swift, ExpressiveCore NephisCallPlan.swift): Listen,
+  the Voice Speed Test and downloads build each call the same way (sentences per call, the director's text and
+  heteronyms, raw text, temperature, pause before, handover, dialogue routing) and finish it the same way (her EQ
+  for a call without her studio in a studio read, the read's rate, NaturalFinish's flow finish and its sentence
+  cuts). A download's calls: her studio always with no time limit, one take (Developer › "Best of 2 Takes for
+  Audio": two), the lead-in, background priority. No volume stage or limiter (volume stays a playback control).
+- **Director first**: the chapter's brief, moods and senses are worked out before rendering (ChapterDirector,
+  shared with Listen through DirectorStore) and stored in the manifest (`render.delivery`), so a chapter read live
+  after its file (a fallback) keeps the same moods.
+- **Resumable**: each call is a 16-bit PCM chunk in NarrationAudio/work/<chapter>/ with checkpoint.json. After an
+  interruption it goes on from the last paragraph it finished, with a fresh read there. The end is one AAC encode
+  pass and an atomic move of the file and its manifest into the novel's folder.
+- **Bridge** (Narration plugin): `audioStatus`, `audioEnqueue` ({chapters, when: now | charging |
+  chargingOrWifi}), `audioPause`, `audioResume`, `audioCancel`, `audioDelete`, `audioEstimate` (minutes, MB,
+  render minutes from her measured speed), `audioSetOptions` ({deleteAfterListening}), and an `audio` event.
 
 ## The CarPlay app (later)
 
@@ -100,8 +129,12 @@ either way.
 | Command mapping (Car buttons, previous = restart or chapter before, ±15 s, scrubbing, speed) | `ios/App/HDVoice/Sources/HDVoiceCore/CarAudio.swift` (`RemoteCommandMap`) |
 | Chapter clock for live speech (estimate, refined per sentence) and the flicker-free Now Playing time | same file: `ChapterTimeline`, `NowPlayingSmoother`, `NowPlayingMetadata` |
 | MediaPlayer glue: Now Playing, artwork cache, remote command targets | `ios/App/App/Native/Narration/CarAudio.swift` |
-| Prepare-for-the-drive policy, index, requests | `HDVoiceCore/DrivePrep.swift` |
-| Rendering, files, background tasks | `ios/App/App/Native/Narration/DrivePrep.swift` |
+| Requests (walk or chapter list), drive policy | `HDVoiceCore/DrivePrep.swift` |
+| Voice key and stale rule, index (schema 2) and its migration, checkpoint, when rendering may run, estimates | `HDVoiceCore/NarrationAudio.swift` |
+| The queue, background tasks, status | `ios/App/App/Native/Narration/DrivePrep.swift` |
+| Files, voice key now, freshness | `ios/App/App/Native/Narration/NarrationAudioStore.swift` |
+| One chapter into a file (Nephis resumable, Kokoro) | `ios/App/App/Native/Narration/ChapterAudioRenderer.swift` |
+| Her one render pipeline, the shared director | `ios/App/App/Native/Voice/NephisRenderPipeline.swift`, `ExpressiveCore/NephisCallPlan.swift` |
 | Timestamp manifest (same format as PC audio, plus previous chapter and reader paragraph) | `HDVoiceCore/NarrationManifest.swift` |
 | Playback order (prepared → PC audio if enabled → speech), prefetch, chapter changes, interruptions | `ios/App/App/Native/Narration/NarrationController.swift` |
 | Novel page card and sheet, Settings › Voices › In the car, Help | `src/ui/native/drive-ui.ts`, `drive-status.ts`, `voices-ui.ts`, `help-car.ts` |
@@ -114,6 +147,11 @@ either way.
     tolerance, real changes shown, pause freezes, rate scaling), metadata for every source, and older
     settings decoding.
   - `DrivePrepTests`: policy, index, eviction, cap, job walk and manifest round trip.
+  - `NarrationAudioTests`: voice keys and the stale rule, the index (kinds, cap on drive audio only) and its
+    migration, list requests and re-renders, the checkpoint's resume and real-cut times, when rendering may run
+    (live, 30 s after, heat, charging, network), estimates, the manifest's render record.
+  - `NephisCallPlanTests` (ExpressiveVoice): the speed test's calls are exactly Listen's for the same passage, and
+    what it asked before the shared plan; grouping, the line, dialogue hints, the budget, a download's call.
 - **Unit, PC** (`tests/car.test.ts`): the card and sheet wording, size and length formatting, the Help
   answers, and the Info.plist and plugin wiring.
 - **Simulator** (job `voice-simulator`, `src/ui/native/voice-selftest-car.ts`): a synthetic three-chapter

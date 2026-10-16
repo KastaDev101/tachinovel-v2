@@ -109,6 +109,14 @@ public struct NarrationTiming: Sendable {
         segments.first { ($0.paragraph ?? $0.block) >= paragraph }?.t0
     }
 
+    /// Start of the `sentence`th sentence (0-based) of reader paragraph `paragraph` (a Listen tap on a sentence); the
+    /// paragraph's start when it has fewer, nil when no paragraph at or after it is in the file.
+    public func time(forParagraph paragraph: Int, sentence: Int) -> Double? {
+        let inParagraph = segments.filter { ($0.paragraph ?? $0.block) == paragraph }
+        if sentence > 0, inParagraph.indices.contains(sentence) { return inParagraph[sentence].t0 }
+        return time(forParagraph: paragraph)
+    }
+
     /// What the chapter was rendered with and where it belongs (written into the manifest).
     public struct Source: Sendable {
         public var pluginId: String
@@ -129,7 +137,10 @@ public struct NarrationTiming: Sendable {
     }
 
     /// The manifest JSON for chapter audio rendered on the device.
-    public func manifestJSON(source: Source, createdAt: Date = Date()) -> Data {
+    /// `sampleRate`: the file's rate; `engine`: the voice's name and runtime (Kokoro's by default); `render`: what the
+    /// audio was made with (audio downloads: the voice key, the director's delivery, the calls), stored as given.
+    public func manifestJSON(source: Source, createdAt: Date = Date(), sampleRate: Int = 24_000,
+                             engine: (name: String, runtime: String)? = nil, render: [String: Any]? = nil) -> Data {
         var chapter: [String: Any] = ["pluginId": source.pluginId, "novelPath": source.novelPath, "chapterPath": source.chapterPath, "title": source.title]
         if let nextChapterPath {
             var next: [String: Any] = ["chapterPath": nextChapterPath]
@@ -142,17 +153,19 @@ public struct NarrationTiming: Sendable {
             chapter["prev"] = prev
         }
         let ms = { (s: Double) -> Int in Int((s * 1000).rounded()) }
-        let obj: [String: Any] = [
+        var obj: [String: Any] = [
             "schemaVersion": 1,
             "kind": "tachinovel.narration",
             "createdAt": ISO8601DateFormatter().string(from: createdAt),
-            "engine": ["name": "kokoro-82m-v1.0", "runtime": "FluidAudio Core ML (iPhone)", "voice": source.voice, "speed": 1, "frontendVersion": 1] as [String: Any],
+            "engine": ["name": engine?.name ?? "kokoro-82m-v1.0", "runtime": engine?.runtime ?? "FluidAudio Core ML (iPhone)", "voice": source.voice,
+                       "speed": 1, "frontendVersion": 1] as [String: Any],
             "chapter": chapter,
-            "audio": ["file": source.audioFile, "format": "m4a", "sampleRate": 24_000, "offsetMs": ms(offset), "durationMs": ms(duration)] as [String: Any],
+            "audio": ["file": source.audioFile, "format": "m4a", "sampleRate": sampleRate, "offsetMs": ms(offset), "durationMs": ms(duration)] as [String: Any],
             "segments": segments.map { s -> [Int] in
                 [s.id, s.block, s.start, s.end, ms(s.t0), ms(s.t1), s.hash ?? 0, 0, s.paragraph ?? s.block]
             },
         ]
+        if let render, JSONSerialization.isValidJSONObject(render) { obj["render"] = render }
         return (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
     }
 }

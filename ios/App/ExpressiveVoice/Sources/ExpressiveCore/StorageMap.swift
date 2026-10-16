@@ -9,7 +9,8 @@
 //                                                      NephisPackLibrary.migrate; an incomplete one stayed for ever)
 //    Library/Application Support/fluidaudio/Models/…   downloaded voice models (Pocket TTS released model, Chatterbox,
 //                                                      NeuTTS); a pack is read in place, never copied here
-//    Library/Application Support/DriveAudio            chapters made ready for the car (capped, pruned by DriveCache)
+//    Library/Application Support/NarrationAudio        chapter audio: downloads and drive prep (NarrationAudioStore;
+//                                                      DriveAudio of older builds moves in at first launch)
 //    Library/Application Support/TachiNovel            the reading app's store (covers, cache, downloads, logs),
 //                                                      imported voices (voices/) and web updates (ota/)
 //    Documents/voice-test.wav, voice-selftest.json     the last Voice test's recording and report
@@ -182,8 +183,9 @@ public enum StorageMap {
         add("modelsOther", "Other voice models", rest.isEmpty ? "None downloaded"
             : rest.map { modelLabels[$0.lastPathComponent] ?? $0.lastPathComponent }.joined(separator: ", "), rest)
 
-        add("drive", "Chapters ready for the car", "Made ahead by Drive prep; removed after listening",
-            [loc.applicationSupport.appendingPathComponent("DriveAudio", isDirectory: true)])
+        add("drive", "Chapter audio", "Audio downloads and chapters ready for the car, in her voice",
+            ["NarrationAudio", "DriveAudio"].map { loc.applicationSupport.appendingPathComponent($0, isDirectory: true) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) })
         let voices = loc.appStore.appendingPathComponent("voices", isDirectory: true)
         let ota = loc.appStore.appendingPathComponent("ota", isDirectory: true)
         add("voices", "Imported voices", ".tnvoice files you added", [voices])

@@ -280,6 +280,10 @@ Build numbers come from `GITHUB_RUN_NUMBER`.
   https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app)
   runs v1's update check with a 22–25 s budget and posts a local notification (provisional
   authorization: quiet delivery, no prompt). Capacitor's notification delegate is left alone.
+- **Chapter audio (audio downloads, "Prepare for the drive"):** `BGProcessingTask` `app.tachinovel.drive-prep`
+  (Native/Narration/DrivePrep.swift). It needs external power when every request waits for charging, and the network
+  only while a chapter's text still has to be fetched (texts are saved with the render's work). Renders are resumable
+  (NarrationAudio/work/<chapter>/checkpoint.json) and yield to live reading at the next call. See docs/car.md.
 - **WebContent crash:** Capacitor reloads the WebView; the UI rebuilds from `app.boot` (core state lives
   natively, so nothing is lost).
 

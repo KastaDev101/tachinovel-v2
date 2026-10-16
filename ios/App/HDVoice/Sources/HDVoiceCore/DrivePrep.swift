@@ -19,6 +19,8 @@ public enum DrivePrepWhen: String, Sendable, Codable, CaseIterable {
     case now
     /// While the iPhone is charging or on Wi-Fi (and not in Low Power Mode on battery).
     case chargingOrWifi
+    /// Only while the iPhone is charging (audio downloads' "while charging", re-renders of audio made with an older voice).
+    case charging
 }
 
 /// The device's situation, sampled by the app.
@@ -66,6 +68,8 @@ public enum DrivePrepPolicy {
             if !c.charging && !c.wifi { return .wait("Waiting for charging or Wi-Fi") }
             if c.lowPower && !c.charging { return .wait("Waiting: Low Power Mode is on") }
             return .run
+        case .charging:
+            return c.charging ? .run : .wait("Waiting for charging")
         }
     }
 }
@@ -191,6 +195,12 @@ public struct DriveJob: Codable, Equatable, Sendable {
     public var lastError: String?
     /// No more chapters to prepare (all done, the last chapter, or a locked one).
     public var finished = false
+    /// Audio downloads (NarrationAudio.swift): the kind of audio the request makes (nil = "Prepare for the drive"), the
+    /// chapters it renders in order (nil = walk `count` chapters from `cursor`), and paused by the user. Optional, so
+    /// requests saved by older builds still load.
+    public var kind: NarrationAudioKind?
+    public var list: [String]?
+    public var paused: Bool?
 
     public init(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, count: Int, when: DrivePrepWhen, voice: String, createdAt: Double) {
         self.pluginId = pluginId
@@ -205,8 +215,38 @@ public struct DriveJob: Codable, Equatable, Sendable {
 
     public var novelKey: String { "\(pluginId):\(novelPath)" }
     public var remaining: Int { finished ? 0 : max(0, count - done.count) }
+    /// The kind of audio it makes ("Prepare for the drive" when not set).
+    public var audioKind: NarrationAudioKind { kind ?? .drive }
+    /// The queue's key: one request per novel and kind.
+    public var key: String { "\(novelKey)\u{1F}\(audioKind.rawValue)" }
+    public var isPaused: Bool { paused == true }
 
-    /// A chapter is ready; `next` is the following chapter (nil = none, or locked).
+    /// A list request (audio downloads, re-renders): `chapters` in order, `when` as asked.
+    public init(pluginId: String, novelPath: String, novelName: String, coverUrl: String?, chapters: [String], kind: NarrationAudioKind,
+                when: DrivePrepWhen, voice: String, createdAt: Double) {
+        self.init(pluginId: pluginId, novelPath: novelPath, novelName: novelName, coverUrl: coverUrl, count: 1, when: when, voice: voice,
+                  createdAt: createdAt)
+        self.kind = kind
+        self.list = []
+        add(chapters)
+    }
+
+    /// More chapters for a list request (ones already listed are skipped); a finished request goes on.
+    public mutating func add(_ chapters: [String]) {
+        var l = list ?? []
+        for c in chapters where !c.isEmpty && !l.contains(c) { l.append(c) }
+        list = l
+        count = max(1, l.count)
+        cursor = l.first { !done.contains($0) }
+        finished = cursor == nil
+        if !finished {
+            failures = 0
+            lastError = nil
+        }
+    }
+
+    /// A chapter is ready; `next` is the following chapter (nil = none, or locked). A list request goes on with the next
+    /// chapter of its list.
     public mutating func completed(_ chapterPath: String, title: String, next: String?) {
         if !done.contains(chapterPath) {
             done.append(chapterPath)
@@ -214,8 +254,34 @@ public struct DriveJob: Codable, Equatable, Sendable {
         }
         failures = 0
         lastError = nil
+        if let list {
+            cursor = list.first { !done.contains($0) }
+            if cursor == nil { finished = true }
+            return
+        }
         cursor = next
         if next == nil || done.count >= count { finished = true }
+    }
+
+    /// Chapters to render again (their audio went, or was made with an older voice): out of `done`, into the list.
+    public mutating func redo(_ chapters: [String]) {
+        for c in chapters {
+            while let i = done.firstIndex(of: c) {
+                done.remove(at: i)
+                if titles.indices.contains(i) { titles.remove(at: i) }
+            }
+        }
+        add(chapters)
+    }
+
+    /// A list request drops a chapter that can't be rendered (locked, gone, the user deleted it from the queue).
+    public mutating func skipped(_ chapterPath: String) {
+        guard var l = list else { return }
+        l.removeAll { $0 == chapterPath }
+        list = l
+        count = max(1, l.count)
+        cursor = l.first { !done.contains($0) }
+        if cursor == nil { finished = true }
     }
 
     /// Too many failures in a row stop the request (it can be started again).

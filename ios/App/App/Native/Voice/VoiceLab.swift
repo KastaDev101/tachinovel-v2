@@ -49,8 +49,11 @@ enum VoiceLab {
                 "nowPlaying": NowPlayingCenter.shared.snapshot(),
                 "commands": RemoteCommandHub.shared.snapshot(),
                 "carPlayTemplates": CarPlayFeature.templatesEnabled,
-                "preparedBytes": DriveCache.shared.index.totalBytes,
-                "preparedChapters": DriveCache.shared.index.chapters.count,
+                "preparedBytes": NarrationAudioStore.shared.index.totalBytes,
+                "preparedChapters": NarrationAudioStore.shared.index.entries.count,
+                // Audio downloads: the queue's requests (state, reason, progress) and her measured render speed.
+                "audioJobs": DrivePrep.shared.audioStatus(novelKey: nil)["jobs"] ?? [Any](),
+                "audioSpeedX": DrivePrep.shared.speedX ?? 0,
                 "chapterGapsMs": NarrationController.shared.chapterGapsMs,
             ] as [String: Any],
         ]

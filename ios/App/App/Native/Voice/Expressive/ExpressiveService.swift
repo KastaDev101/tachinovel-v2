@@ -905,6 +905,8 @@ final class ExpressiveService {
         guard loadedID == .pocketTts, loadState(.pocketTts) == .ready, let flow = synth as? NephisFlowSynth else {
             return completion(.failure(ExpressiveEngineError.notLoaded))
         }
+        // Every call moves her read on: whoever made the last one knows it can go on from there (the hand-off's warm start).
+        flowSequence += 1
         let sentinel = self.sentinel
         let context = "nephis \(line.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
         // Background priority while playback has plenty banked (ExpressiveLine.relaxed, RenderPacer.relaxed): the same
@@ -1025,6 +1027,8 @@ final class ExpressiveService {
     }
 
     private(set) var flowStats = FlowStats()
+    /// Her flow calls made so far (main thread): a caller that made the last one can continue her read without a reset.
+    private(set) var flowSequence = 0
 
     /// Her studio's speed for the active pack (StudioBudget: which Listen calls get the studio), kept over this app's life
     /// (a new read doesn't forget it) and remembered per pack for the next launch (`studioSpeedKey`). Main thread; a pack

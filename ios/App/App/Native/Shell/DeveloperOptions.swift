@@ -3,8 +3,8 @@
 //  turns Developer options on; the "Developer Options" switch at the bottom of About turns them off. They are kept here,
 //  natively, so a reload of the page or a web update keeps them. The personal build starts with them on (Kasta still
 //  tunes her voice); the store build starts with them off. The page reads and changes them through the Narration
-//  plugin (voiceSettings / setVoiceSettings, "developer"): on, "Show voice details in the player" (playerDetails) and
-//  the pronunciation editor's phonemes field and JSON paste (phonemes).
+//  plugin (voiceSettings / setVoiceSettings, "developer"): on, "Show voice details in the player" (playerDetails),
+//  the pronunciation editor's phonemes field and JSON paste (phonemes), and audio downloads' "Best of 2 Takes" (bestOfTwo).
 //  While they are on, the app icon's long-press menu offers "Voice Speed Test" (LaunchActions; set on backgrounding).
 //  Also the one-time move to automatic voice defaults: a studio switched off with the old Voice test switch goes back
 //  on (only More › Developer switches it off now). Natural delivery's own move is DeliverySettings version 4 (HDVoiceCore).
@@ -17,7 +17,7 @@ import UIKit
 enum DeveloperOptions {
     private static let key = "tachinovel.developerOptions"
     private static let migratedKey = "tachinovel.automaticVoiceDefaults"
-    private static let names = ["on", "playerDetails", "phonemes"]
+    private static let names = ["on", "playerDetails", "phonemes", "bestOfTwo"]
     /// The app icon's quick action (LaunchActions).
     static var speedTestShortcut: String { "\(Bundle.main.bundleIdentifier ?? "tachinovel").voice-speed-test" }
 
@@ -35,6 +35,8 @@ enum DeveloperOptions {
             "on": saved["on"] as? Bool ?? personal,
             "playerDetails": saved["playerDetails"] as? Bool ?? false,
             "phonemes": saved["phonemes"] as? Bool ?? true,
+            // Audio downloads: the better of two takes per call (twice the work), off by default.
+            "bestOfTwo": saved["bestOfTwo"] as? Bool ?? false,
         ]
     }
 

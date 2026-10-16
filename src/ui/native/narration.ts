@@ -251,15 +251,27 @@ export interface DriveJobInfo {
   count: number;
   done: number;
   titles: string[];
-  when: 'now' | 'chargingOrWifi';
+  when: AudioWhen;
   voice: string;
-  state: 'running' | 'waiting' | 'queued' | 'done' | 'failed';
+  state: 'running' | 'waiting' | 'queued' | 'paused' | 'done' | 'failed';
   /** Why it waits (charging/Wi-Fi, live narration, heat). */
   reason?: string;
   error?: string;
-  /** The chapter being rendered: sentences done of all. */
-  current?: { chapterPath: string; title: string; sentence: number; sentences: number };
+  /** The chapter being rendered: sentences done of all, her calls so far, seconds of audio made, and the step
+   * ('director': her moods for the chapter, 'rendering', 'waiting': for her studio or memory, 'encoding': the file). */
+  current?: { chapterPath: string; title: string; sentence: number; sentences: number; calls?: number; seconds?: number; step?: AudioStep };
+  /** Audio downloads (build 373+): the request's key (novel + kind), kind, paused, and its chapters in order (a list request). */
+  key?: string;
+  kind?: AudioKind;
+  paused?: boolean;
+  chapters?: string[];
 }
+
+/** When a request may render: right away, only while charging, or while charging or on Wi-Fi. */
+export type AudioWhen = 'now' | 'charging' | 'chargingOrWifi';
+/** Downloads stay until deleted; drive audio goes after listening. */
+export type AudioKind = 'download' | 'drive';
+export type AudioStep = 'director' | 'rendering' | 'waiting' | 'encoding';
 
 export interface PreparedChapterInfo {
   novelKey: string;
@@ -269,6 +281,42 @@ export interface PreparedChapterInfo {
   bytes: number;
   durationSec: number;
   createdAt: number;
+  /** Audio downloads (build 373+): its kind, and whether it is in the voice that reads now (null: not checked yet).
+   * Audio of an older voice never plays: it is queued to render again. */
+  kind?: AudioKind;
+  fresh?: boolean | null;
+}
+
+/** Audio downloads (the engine, build 373+): every request and every chapter's audio on this iPhone. */
+export interface AudioStatus {
+  jobs: DriveJobInfo[];
+  audio: PreparedChapterInfo[];
+  /** Bytes for the novel asked about (or all), and the totals. */
+  bytes: number;
+  totalBytes: number;
+  downloadBytes: number;
+  driveBytes: number;
+  /** Chapters being rendered (resumable work). */
+  workBytes: number;
+  /** Drive audio's cap (downloads have none). */
+  capBytes: number;
+  deleteAfterListening: boolean;
+  /** Developer › Best of 2 Takes. */
+  bestOfTwo: boolean;
+  /** Her measured render speed (audio seconds per second), null until a chapter was rendered. */
+  speedX: number | null;
+  voice: 'nephis' | 'kokoro';
+}
+
+export interface AudioEstimate {
+  minutes: number;
+  megabytes: number;
+  /** At her measured speed (real time until measured). */
+  renderMinutes: number;
+  bitRate: number;
+  megabytesPerMinute: number;
+  speedX: number | null;
+  measured: boolean;
 }
 
 export interface DriveStatus {
@@ -350,6 +398,19 @@ export interface NarrationPlugin {
   driveStatus(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
   /** Delete prepared audio: one novel, or all (no args). */
   clearDrive(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
+  /** Audio downloads: requests, audio (with `fresh`), storage, settings and render speed; one novel or all. */
+  audioStatus(opts?: { pluginId?: string; novelPath?: string }): Promise<AudioStatus>;
+  /** Render these chapters (paths, in order) into audio, kept until deleted; merged into the novel's download request. */
+  audioEnqueue(opts: { pluginId: string; novelPath: string; novelName: string; coverUrl?: string; chapters: string[]; when?: AudioWhen }): Promise<AudioStatus>;
+  audioPause(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  audioResume(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Drop a novel's requests (finished audio stays). */
+  audioCancel(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Delete audio: chapters of a novel, a novel's (of a kind), or all (no args). */
+  audioDelete(opts?: { pluginId?: string; novelPath?: string; chapterPaths?: string[]; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Minutes, megabytes and render time for `chapters` chapters (`characters` of text when known). */
+  audioEstimate(opts: { pluginId?: string; novelPath?: string; chapters: number; characters?: number }): Promise<AudioEstimate>;
+  audioSetOptions(opts: { deleteAfterListening?: boolean }): Promise<AudioStatus>;
   /** What the lock screen / car show now and which remote commands are offered (Voice Lab, self-test). */
   nowPlaying(): Promise<{ info: Record<string, unknown>; commands: Record<string, unknown>; state: NarrationState; carPlayTemplates: boolean; chapterGapsMs?: number[] }>;
   /** Simulator self-test only: a remote command through the handler MPRemoteCommandCenter calls. */
@@ -359,6 +420,7 @@ export interface NarrationPlugin {
   addListener(event: 'state', fn: (s: NarrationState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'progress', fn: (p: NarrationProgress) => void): Promise<PluginListenerHandle>;
   addListener(event: 'drive', fn: (s: DriveStatus) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'audio', fn: (s: AudioStatus) => void): Promise<PluginListenerHandle>;
 }
 
 export const Narration = registerPlugin<NarrationPlugin>('Narration');

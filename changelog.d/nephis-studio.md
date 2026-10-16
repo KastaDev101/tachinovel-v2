@@ -1,5 +1,19 @@
 ### Added
 
+- Audio downloads, part 1 (the engine): chapters render into audio files through the one pipeline Listen plays
+  (her calls, her studio always, the dialogue pack, her finishing and real sentence cuts), so a downloaded chapter
+  sounds like Listen. The director's moods are worked out for the whole chapter first and stored with the file.
+  Renders resume from the last paragraph after an interruption, yield to live reading at the next call (and go on
+  30 s after), pause at serious heat until two minutes cool, and wait in Low Power Mode on battery. Audio made with
+  an older voice or settings is never played: Listen reads live and the chapter is rendered again while charging.
+  Files are AAC 44.1 kHz 128 kbps with her studio. About a minute before a downloaded chapter ends, the next
+  chapter's first calls are rendered so live reading starts at once. "Prepare for the drive" runs on the new engine;
+  its files move to Application Support/NarrationAudio. Bridge for the coming screens: audioStatus, audioEnqueue,
+  audioPause, audioResume, audioCancel, audioDelete, audioEstimate, audioSetOptions. Developer › "Best of 2 Takes
+  for Audio". The reader's Listen plays a chapter's audio first when it has some in the current voice.
+- The Voice Speed Test builds and finishes its calls with the same pipeline as Listen (its .wav is what Listen plays
+  before the volume stage).
+
 - Nephis's dialogue voice: a second Nephis pack with the role "dialogue" (pack.json, or Developer › Voice Packs › Edit ›
   "For Dialogue") reads quoted dialogue while her narrator pack reads the narration, in one continuous read. Quote
   routing handles tags inside a quote pair, quotations over several calls and paragraphs, stray marks, single-quoted

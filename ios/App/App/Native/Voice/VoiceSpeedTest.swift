@@ -9,8 +9,10 @@
 //  4 s is ready, then paragraphs up to Pocket's 400 characters; her studio from 6 s ready; a lead-in from 25 s; one
 //  take when the phone is warm), each issued as soon as the call before has its latents (ExpressiveService.synthesizeFlow,
 //  in her crash sentinel). A simulated player then tells whether playback would ever have waited (NephisSpeedTest).
-//  Only the player's own finishing (volume stage, limiter, sentence cutting) is left out: the Voice test's recording has
-//  it.
+//  Since audio downloads part 1 (2026-10-16) its calls and their finish go through the one pipeline Listen and audio
+//  downloads use (NephisRenderPipeline: NephisCallPlan's calls, her EQ step, the read's rate, NaturalFinish's flow finish),
+//  so the .wav is what Listen plays before its volume stage, at 1×. Only "Voice volume" and its limiter are left out: the
+//  Voice test's recording has them.
 //
 //  The report: time to first audio, render time against audio (× real time), keeps up (yes/no, the breaks), the time
 //  per stage (Pocket generation, Mimi decode, studio blueprint, studio vocoder, EQ/post), the slowest call, every call,
@@ -54,6 +56,10 @@ final class VoiceSpeedTest {
         var readyAt: Double?
         var samples: [Float] = []
         var rate = 0
+        var mastered = false
+        var toned = false
+        /// Letters of each sentence's text (where the pipeline's finish cuts the call into sentences).
+        var letters: [Int] = []
         var report: NephisFlowSynth.Report?
         var error: String?
     }
@@ -65,6 +71,9 @@ final class VoiceSpeedTest {
         var studioWaitMs = 0.0
         var callsStarted: Date?
         var sentences: [NephisSpeedTest.Sentence] = []
+        /// The passage as her calls see it (NephisCallPlan, exactly as Listen's segments map to it) and its quote style.
+        var plan: [NephisCallPlan.Sentence] = []
+        var quotes = QuoteRouter.SingleQuotes.thought
         var calls: [Call] = []
         var next = 0
         var reset = true
@@ -103,6 +112,8 @@ final class VoiceSpeedTest {
         }
         running = true
         stopAsked = false
+        // Audio downloads step aside (her engine is the test's alone).
+        DrivePrep.shared.narrationChanged()
         // One voice at a time: the lab player, a preview and the old engine speed test stop; Listen stops (its place is
         // saved: it goes on from there, with a fresh read, when you play again).
         ExpressiveLabPlayer.shared.stop()
@@ -120,6 +131,8 @@ final class VoiceSpeedTest {
         // With her dialogue pack the passage goes on with a short exchange (dialogue tags, a split quote, laughter), so the
         // test shows both voices; the narrator-only passage is unchanged (the lab compares its audio with the locked one).
         r.sentences = NephisSpeedTest.sentences(NephisSpeedTest.passageFor(dialogue: svc.nephisDialogue))
+        r.plan = NephisSpeedTest.planSentences(r.sentences)
+        r.quotes = NephisCallPlan.quoteStyle(r.plan.map(\.text))
         run = r
         say("load", "Loading her voice…")
         let t0 = Date()
@@ -177,37 +190,29 @@ final class VoiceSpeedTest {
         let ready = r.calls.compactMap { c in c.readyAt.map { (at: $0, seconds: Double(c.samples.count) / Double(max(1, c.rate))) } }
         let ahead = NephisSpeedTest.ahead(at: now, ready: ready.map(\.at), seconds: ready.map(\.seconds), banked: r.banked)
         let i = r.next
-        let limit = ahead < NephisSpeedTest.fastStartBelow ? r.sentences[i].text.count : ExpressiveEngineID.pocketTts.maxCharactersPerCall
-        let range = NephisSpeedTest.group(r.sentences, from: i, limit: limit)
-        let text = r.sentences[range].map(\.text).joined(separator: " ")
-        // As Listen's call (HybridSpeechEngine.pumpRender): calm narration, her text as written for a "raw" pack,
-        // heteronyms resolved, the app's pause before it, her studio on every call it can afford (StudioBudget), extras
-        // only when far ahead.
-        let said = Heteronyms.pocketText(StyleMapper.plainText(text))
-        var line = ExpressiveLine(text: said, role: "narrator")
-        line.temperature = 0.7
-        line.raw = said
-        line.pauseBefore = NephisSpeedTest.pauseBefore(r.sentences, at: i)
-        line.flowReset = r.reset
-        line.flowLast = range.upperBound >= r.sentences.count
-        // Her dialogue pack: the quote routing's hints, as Listen sends them (the passage quotes speech with double quotes).
-        if ExpressiveService.shared.nephisDialogue {
-            let paragraph = r.sentences[range.upperBound - 1].paragraph
-            let rest = r.sentences[range.upperBound...].prefix { $0.paragraph == paragraph }.map(\.text)
-            line.singleQuotes = QuoteRouter.SingleQuotes.thought.rawValue
-            line.restOfParagraph = rest.isEmpty ? nil : rest.joined(separator: " ")
-            line.nextOpensQuote = r.sentences[range.upperBound...].first { $0.paragraph != paragraph }.map { QuoteRouter.opensQuote($0.text) } ?? false
-        }
-        let budget = Self.budget(ahead: ahead, calls: r.calls)
+        // Listen's call through the shared plan (HybridSpeechEngine.pumpRender: NephisCallPlan via NephisRenderPipeline): one
+        // sentence while little is buffered, then paragraphs; calm narration, heteronyms resolved, the text as written for a
+        // "raw" pack, the app's pause before it, her dialogue pack's quote hints; her studio on every call it can afford
+        // (StudioBudget), extras only when far ahead, background priority as Listen gives it.
+        let plan = r.plan
+        let members = NephisCallPlan.group(from: i, count: plan.count, limit: NephisCallPlan.limit(first: plan[i], buffered: ahead)) { plan[$0] }
+        let call = NephisCallPlan.call(members: members, count: plan.count, at: { plan[$0] },
+                                       context: NephisCallPlan.Context(reset: r.reset, dialogue: ExpressiveService.shared.nephisDialogue,
+                                                                       singleQuotes: r.quotes),
+                                       spoken: NephisRenderPipeline.spoken)
+        let range = i..<((members.last ?? i) + 1)
+        var line = call.line
+        let said = line.text
+        let budget = Self.budget(ahead: ahead, calls: r.calls, readChange: call.readChange, switches: call.switches)
         line.takes = budget.takes
         line.leadIn = budget.leadIn
         line.studio = HybridSpeechEngine.studioFor(characters: said.count, ahead: ahead)
-        // Background priority as Listen gives it (RenderPacer.relaxed: over 30 s banked, back under 15 s).
         r.relaxed = RenderPacer.relaxed(was: r.relaxed, buffered: ahead)
         if r.relaxed { line.relaxed = true }
         let k = r.calls.count
         r.calls.append(Call(n: k + 1, sentences: range, chars: said.count, pauseBefore: line.pauseBefore, ahead: ahead,
-                            studioAsked: line.studio == true, takes: budget.takes, leadIn: budget.leadIn, issuedAt: now))
+                            studioAsked: line.studio == true, takes: budget.takes, leadIn: budget.leadIn, issuedAt: now,
+                            letters: members.map { plan[$0].say.count }))
         r.next = range.upperBound
         r.reset = false
         r.thermalMax = max(r.thermalMax, ProcessInfo.processInfo.thermalState.rawValue)
@@ -226,6 +231,8 @@ final class VoiceSpeedTest {
             case .success(let audio):
                 self.run?.calls[k].samples = audio.samples
                 self.run?.calls[k].rate = audio.sampleRate
+                self.run?.calls[k].mastered = audio.mastered
+                self.run?.calls[k].toned = audio.toned
             case .failure(let error):
                 self.run?.calls[k].error = error.localizedDescription
                 // Listen reads a failed call with another voice and her next call starts a fresh read.
@@ -237,13 +244,13 @@ final class VoiceSpeedTest {
         })
     }
 
-    /// Listen's budget for a call (HybridSpeechEngine.flowBudget): one plain take on a warm phone or after a call under
-    /// 1.5× real time; otherwise by the audio ready ahead.
-    private static func budget(ahead: Double, calls: [Call]) -> (takes: Int, leadIn: Bool) {
-        if ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue { return (1, false) }
-        if let last = calls.last(where: { $0.report.map { !$0.relaxed } ?? false })?.report, last.totalMs > 0,
-           last.audioMs / last.totalMs < 1.5 { return (1, false) }
-        return HybridSpeechEngine.flowBudget(ahead: ahead, readChange: false)
+    /// Listen's budget for a call (NephisCallPlan.budget): one plain take on a warm phone or after a call (at user-initiated
+    /// priority) under 1.5× real time; otherwise by the audio ready ahead, each voice change counted as less.
+    private static func budget(ahead: Double, calls: [Call], readChange: Bool, switches: Int) -> (takes: Int, leadIn: Bool) {
+        let warm = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.fair.rawValue
+        let last = calls.last(where: { $0.report.map { !$0.relaxed } ?? false })?.report
+        let x = last.flatMap { $0.totalMs > 0 ? $0.audioMs / $0.totalMs : nil }
+        return NephisCallPlan.budget(buffered: ahead, readChange: readChange, switches: switches, warm: warm, lastUrgentX: x)
     }
 
     private func callEnded() {
@@ -265,15 +272,23 @@ final class VoiceSpeedTest {
         run = nil
         running = false
         stopAsked = false
+        DrivePrep.shared.narrationChanged()
         ExpressiveService.shared.scheduleIdleRelease()
-        let callsDone = r.calls.filter { !$0.samples.isEmpty }
-        let rate = callsDone.first?.rate ?? NephisFlow.sampleRate
+        // The audio as Listen plays it before its volume stage (the shared pipeline's finish: her EQ for a call without her
+        // studio in a studio read, the read's rate, the thump filter and soft limit, the cut into sentences), at 1x.
+        let rate = SessionRate.forRead(.pocketTts)
+        var finish = NephisRenderPipeline.finish(rate: rate, seed: 1)
+        let tilt = HybridSpeechEngine.nephisTilt
         var audio: [Float] = []
         // Where each call starts in the .wav (the PC's join check looks at every call boundary).
         var joins: [[String: Any]] = []
         for c in r.calls where !c.samples.isEmpty {
             joins.append(["n": c.n, "sample": audio.count, "seconds": Self.r2(Double(audio.count) / Double(max(1, rate)))])
-            audio += c.rate == rate ? c.samples : (SessionRate.resample(c.samples, from: c.rate, to: rate) ?? [])
+            var samples = c.samples
+            NephisRenderPipeline.preEQ(&samples, sampleRate: c.rate, readRate: rate, mastered: c.mastered, toned: c.toned, tilt: tilt)
+            let converted = SessionRate.resample(samples, from: c.rate, to: rate) ?? []
+            let unit = NephisRenderPipeline.unit(samples: converted, letters: c.letters, speed: 1, mastered: c.mastered, toned: c.toned)
+            audio += finish.render(unit).flatMap(\.frames)
         }
         var report = Self.report(r, error: error, rate: rate, audioSamples: audio.count)
         report["callStarts"] = joins

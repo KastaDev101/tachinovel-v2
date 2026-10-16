@@ -41,6 +41,12 @@ describe('Prepare for the drive: status words', () => {
     expect(driveLine(running, KEY)).toBe('Preparing 2 of 5 · 30%');
     expect(driveLine(status({ jobs: [job({ state: 'waiting', reason: 'Waiting for charging or Wi-Fi', done: 2 })] }), KEY)).toBe('Waiting for charging or Wi-Fi · 2 of 5 ready');
     expect(driveLine(status({ jobs: [job({ state: 'failed', error: 'offline' })] }), KEY)).toBe('Stopped: offline');
+    // The engine's steps (audio downloads part 1) and a paused request.
+    const director = status({ jobs: [job({ current: { chapterPath: 'c2', title: 'Two', sentence: 0, sentences: 60, step: 'director' } })] });
+    expect(driveLine(director, KEY)).toBe('Preparing 2 of 5 · 20% · Reading the chapter for her moods');
+    const encoding = status({ jobs: [job({ current: { chapterPath: 'c2', title: 'Two', sentence: 60, sentences: 60, step: 'encoding' } })] });
+    expect(driveLine(encoding, KEY)).toBe('Preparing 2 of 5 · 40% · Saving the file');
+    expect(driveLine(status({ jobs: [job({ state: 'paused', done: 3 })] }), KEY)).toBe('Paused · 3 of 5 ready');
     const ready = status({
       jobs: [job({ state: 'done', done: 2, count: 2 })],
       prepared: [
@@ -114,7 +120,8 @@ describe('native wiring', () => {
   it('the Narration plugin registers the car methods the UI calls', () => {
     const swift = readFileSync(path.join(root, 'ios', 'App', 'App', 'Native', 'Narration', 'NarrationPlugin.swift'), 'utf8');
     const methods = [...swift.matchAll(/CAPPluginMethod\(name: "([A-Za-z]+)"/g)].map((m) => m[1]);
-    for (const m of ['prepareDrive', 'cancelDrive', 'driveStatus', 'clearDrive', 'nowPlaying', 'remoteCommand', 'selfTestChapters']) {
+    const audio = ['audioStatus', 'audioEnqueue', 'audioPause', 'audioResume', 'audioCancel', 'audioDelete', 'audioEstimate', 'audioSetOptions'];
+    for (const m of ['prepareDrive', 'cancelDrive', 'driveStatus', 'clearDrive', 'nowPlaying', 'remoteCommand', 'selfTestChapters', ...audio]) {
       expect(methods, m).toContain(m);
       expect(swift, m).toContain(`@objc func ${m}(_ call: CAPPluginCall)`);
     }
