@@ -4,9 +4,7 @@
  * the car, and continues into the next chapter without the WebView. Engines:
  *  - 'speech': Kokoro-82M on device (bundled model, the default voice) with the Apple system voice taking
  *    over sentence by sentence when Kokoro can't keep up; `source` says which one spoke;
- *  - 'audio': chapter audio files: chapters prepared on this iPhone ("Prepare for the drive", `prepared`),
- *    or PC-narrated files from the linked "TachiNovel Audio" folder, only with Settings › Voices › Advanced ›
- *    "Use PC audio when available" (off by default).
+ *  - 'audio': a chapter's audio file on this iPhone (audio downloads, "Prepare for the drive"; `prepared`).
  * In the car: Now Playing + remote commands (CarPlay's Now Playing screen, steering wheel, Siri), see
  * docs/car.md.
  */
@@ -33,10 +31,8 @@ export interface PlayOptions {
   start: { paragraph: number; sentence?: number };
   /** Continue into the next chapter when this one ends. Default true. */
   autoContinue?: boolean;
-  /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
+  /** 'speech' forces speech even when the chapter has audio on this iPhone. */
   engine?: 'audio' | 'speech';
-  /** Voice Lab A/B: narrator mode off, or on with the saved pieces, for this play only. */
-  narrator?: 'on' | 'off';
 }
 
 export interface NarrationVoice {
@@ -106,8 +102,8 @@ export interface NarrationState {
   chapterName?: string;
   paragraph?: number;
   sentence?: number;
-  /** Manifest segment id (audio). Chapter position and length in seconds at 1×: exact for audio, estimated
-   * from the text for speech (refined as sentences are spoken). */
+  /** Manifest segment id (a chapter's audio file). Chapter position and length in seconds at 1×: exact for audio,
+   * estimated from the text for speech (refined as sentences are spoken). */
   segment?: number;
   position?: number;
   duration?: number;
@@ -124,31 +120,15 @@ export interface NarrationProgress {
   start?: number;
   end?: number;
   hash?: number;
-  /** Speech: reader paragraph index. Audio: the manifest's block index (the UI re-aligns, see highlight.ts). */
+  /** The reader's paragraph index (a chapter's audio file reports it the same way). */
   paragraph: number;
   sentence?: number;
-  /** Audio: manifest segment id + chapter time (s). */
+  /** A chapter's audio file: its manifest segment id + chapter time (s). */
   segment?: number;
   t?: number;
-  /** UTF-16 range: speech = inside the sentence; audio = inside the block's canonical text. */
+  /** Speech: the word being spoken, a UTF-16 range inside the sentence. */
   charStart?: number;
   charEnd?: number;
-}
-
-export interface AudioChapterInfo {
-  chapterPath: string;
-  title: string;
-  number: number | null;
-  hasTiming: boolean;
-}
-
-export interface AudioNovelInfo {
-  key: string;
-  pluginId: string;
-  novelPath: string;
-  name: string;
-  chapters: AudioChapterInfo[];
-  saved: { chapterPath: string; seconds: number } | null;
 }
 
 export interface KokoroVoiceInfo {
@@ -160,23 +140,6 @@ export interface KokoroVoiceInfo {
   /** Kokoro's own grade for the voice (A best … F), and its rank (higher is better). */
   grade?: string;
   gradeRank?: number;
-}
-
-/** Narrator mode (HDVoiceCore Narrator.swift): each piece has its own switch; off by default. */
-export interface NarratorInfo {
-  enabled: boolean;
-  /** Quoted speech in this voice (a voice or mix id); null = the narrator's voice. */
-  dialogueVoice: string | null;
-  /** The other speaker of an exchange; null = one dialogue voice. */
-  secondDialogueVoice: string | null;
-  pacing: boolean;
-  jitter: boolean;
-  polish: boolean;
-  roomTone: boolean;
-  /** Short pauses between phrases: 'clauses' (the default) or 'off'. */
-  phraseBreaks: 'off' | 'clauses';
-  /** Pause lengths with pacing on: 'relaxed' (the default) or 'natural'. */
-  pacingStyle: 'relaxed' | 'natural';
 }
 
 /** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */
@@ -195,14 +158,15 @@ export interface VoiceSettingsInfo {
   /** Saved mixes; `defaultVoice`, `novelVoice` and `effectiveVoice` may be one of their ids. */
   customVoices?: CustomVoiceInfo[];
   defaultVoice: string;
+  /** The Kokoro voice that reads when Nephis can't (More › Voices › Backup Voice); null: her matched voice (af_nephis).
+   * Older builds: absent. */
+  backupVoice?: string | null;
   kokoroEnabled: boolean;
-  usePCAudio: boolean;
   carButtons?: CarButtons;
   /** Listen player: speed 0.5–2.5 and "Voice volume" 0–1.5 (persisted, every voice). */
   speed?: number;
   volume?: number;
   speedPresets?: number[];
-  narrator?: NarratorInfo;
   /** The narrator voice that reads chapters and how it reads (natural delivery). */
   delivery?: DeliveryInfo;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
@@ -211,6 +175,8 @@ export interface VoiceSettingsInfo {
   /** With pluginId/novelPath: the novel's own choice (null = the default) and the voice it uses. */
   novelVoice?: string | null;
   effectiveVoice?: string;
+  /** Developer options (dev-flags.ts; DeveloperOptions.swift). Older builds: absent. */
+  developer?: { on?: boolean; playerDetails?: boolean; phonemes?: boolean };
 }
 
 /** Listen › the narrator voice: which engine reads chapters (null = Kokoro) and natural delivery's switches. */
@@ -230,6 +196,13 @@ export interface DeliveryInfo {
   systemTone: boolean;
   /** Which Pocket TTS voice reads: the original Narrator, or Nephis (v2: deeper and clearer, one read for everything). */
   pocketVoice?: 'narrator' | 'nephis';
+  /** Read only: Nephis was switched off after real crashes of her model (her backup voice reads); absent in older builds. */
+  nephisOff?: boolean;
+  /** Read only: why, in plain words ("Nephis was switched off after crashing twice in a row, last at 2:32 PM, …"). */
+  nephisOffLine?: string | null;
+  /** More › Developer › Voice extras: Nephis's lead-ins, extra takes and speech checks (on by default; absent in older
+   *  builds). Off = one plain take per call: less phone work, the same voice. */
+  extras?: boolean;
 }
 
 /** One "Prepare for the drive" request. */
@@ -242,15 +215,29 @@ export interface DriveJobInfo {
   count: number;
   done: number;
   titles: string[];
-  when: 'now' | 'chargingOrWifi';
+  when: AudioWhen;
   voice: string;
-  state: 'running' | 'waiting' | 'queued' | 'done' | 'failed';
+  state: 'running' | 'waiting' | 'queued' | 'paused' | 'done' | 'failed';
   /** Why it waits (charging/Wi-Fi, live narration, heat). */
   reason?: string;
   error?: string;
-  /** The chapter being rendered: sentences done of all. */
-  current?: { chapterPath: string; title: string; sentence: number; sentences: number };
+  /** The chapter being rendered: sentences done of all, her calls so far, seconds of audio made, and the step
+   * ('director': her moods for the chapter, 'rendering', 'waiting': for her studio or memory, 'encoding': the file). */
+  current?: { chapterPath: string; title: string; sentence: number; sentences: number; calls?: number; seconds?: number; step?: AudioStep };
+  /** Audio downloads (build 373+): the request's key (novel + kind), kind, paused, and its chapters in order (a list request). */
+  key?: string;
+  kind?: AudioKind;
+  paused?: boolean;
+  chapters?: string[];
+  /** The cover given when it was queued (audio downloads, build 375+). */
+  coverUrl?: string;
 }
+
+/** When a request may render: right away, only while charging, or while charging or on Wi-Fi. */
+export type AudioWhen = 'now' | 'charging' | 'chargingOrWifi';
+/** Downloads stay until deleted; drive audio goes after listening. */
+export type AudioKind = 'download' | 'drive';
+export type AudioStep = 'director' | 'rendering' | 'waiting' | 'encoding';
 
 export interface PreparedChapterInfo {
   novelKey: string;
@@ -260,6 +247,48 @@ export interface PreparedChapterInfo {
   bytes: number;
   durationSec: number;
   createdAt: number;
+  /** Audio downloads (build 373+): its kind, and whether it is in the voice that reads now (null: not checked yet).
+   * Audio of an older voice never plays: it is queued to render again. */
+  kind?: AudioKind;
+  fresh?: boolean | null;
+  /** The novel's title (audio downloads, build 375+). */
+  novelName?: string;
+}
+
+/** Audio downloads (the engine, build 373+): every request and every chapter's audio on this iPhone. */
+export interface AudioStatus {
+  jobs: DriveJobInfo[];
+  audio: PreparedChapterInfo[];
+  /** Bytes for the novel asked about (or all), and the totals. */
+  bytes: number;
+  totalBytes: number;
+  downloadBytes: number;
+  driveBytes: number;
+  /** Chapters being rendered (resumable work). */
+  workBytes: number;
+  /** Drive audio's cap (downloads have none). */
+  capBytes: number;
+  deleteAfterListening: boolean;
+  /** Settings › Downloads › Include Audio in Auto-Download (build 375+; made only while charging). */
+  autoDownloadAudio?: boolean;
+  /** Developer › Best of 2 Takes. */
+  bestOfTwo: boolean;
+  /** Her measured render speed (audio seconds per second), null until a chapter was rendered. */
+  speedX: number | null;
+  voice: 'nephis' | 'kokoro';
+}
+
+export interface AudioEstimate {
+  minutes: number;
+  megabytes: number;
+  /** At her measured speed (real time until measured). */
+  renderMinutes: number;
+  bitRate: number;
+  megabytesPerMinute: number;
+  speedX: number | null;
+  measured: boolean;
+  /** Free space on the iPhone (build 375+; null where iOS doesn't say). */
+  freeBytes?: number | null;
 }
 
 export interface DriveStatus {
@@ -285,30 +314,24 @@ export interface NarrationPlugin {
   state(): Promise<NarrationState>;
   /** Continue a novel where reading/listening stopped (audio first, system voice otherwise). */
   playNovel(opts: { pluginId: string; novelPath: string; novelName: string; coverUrl?: string }): Promise<void>;
-  audioFolder(): Promise<{ linked: boolean; name?: string | null }>;
-  /** Document picker for the iCloud Drive "TachiNovel Audio" folder (kept as a bookmark). */
-  pickAudioFolder(): Promise<{ linked: boolean; name?: string; cancelled?: boolean }>;
-  unlinkAudioFolder(): Promise<{ linked: boolean }>;
-  audioLibrary(opts?: { refresh?: boolean }): Promise<{ linked: boolean; novels: AudioNovelInfo[] }>;
-  /** Timestamp manifest JSON (v1 experiments/tts/manifest.ts) of a narrated chapter, or null. */
-  audioTiming(opts: { pluginId: string; novelPath: string; chapterPath: string }): Promise<{ hasAudio: boolean; json: string | null }>;
   /** Voices: Kokoro voices, defaults, per-novel choice, Apple fallback. */
   voiceSettings(opts?: { pluginId?: string; novelPath?: string }): Promise<VoiceSettingsInfo>;
   setVoiceSettings(opts: {
     defaultVoice?: string;
+    /** The backup voice (a voice or mix id); '' (or an unknown id): her matched voice again. */
+    backupVoice?: string;
     /** voice null = use the default for this novel. */
     novel?: { pluginId: string; novelPath: string; voice: string | null };
-    usePCAudio?: boolean;
     kokoroEnabled?: boolean;
     carButtons?: CarButtons;
     /** 0.5–2.5 (0.05 steps). */
     speed?: number;
     /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
     volume?: number;
-    /** Narrator mode: only the keys sent change. */
-    narrator?: Partial<NarratorInfo>;
     /** The narrator voice: only the keys sent change. */
     delivery?: Partial<DeliveryInfo>;
+    /** Developer options (dev-flags.ts): only the keys sent change. */
+    developer?: { on?: boolean; playerDetails?: boolean; phonemes?: boolean };
   }): Promise<void>;
   /** Voice mixer: save a new mix (no id) or change one. */
   saveCustomVoice(opts: { id?: string; name: string; a: string; b: string; percent: number }): Promise<{ mix: CustomVoiceInfo }>;
@@ -320,13 +343,12 @@ export interface NarrationPlugin {
    */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
-  /** Voice Lab › Test scene reading: the on-device AI director's moods for these sentences (null when unavailable). */
+  /** Developer › Scene-Reading Test, Mood Test: the on-device AI director's moods for these sentences (null when unavailable). */
   readScene(opts: { sentences: { text: string; kind: 'narration' | 'spoken' | 'system' }[] }): Promise<{ available: boolean; reason?: string; moods: string[] | null; ms: number }>;
-  /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
+  /** The voice's numbers (Kokoro, the session, the car): More › Developer's Voice Report and Now Playing. */
   voiceLab(): Promise<Record<string, unknown>>;
-  setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
-  /** Voice Lab: where Core ML runs each Kokoro stage on this device (per-operation plan, no synthesis). */
-  voicePlacement(): Promise<{ stages: { stage: string; configured: string; ane: number; cpu: number; gpu: number; error: string | null; summary: string }[] }>;
+  /** Simulator voice self-test (Debug builds): Kokoro made slow or failing; answers voiceLab's numbers. */
+  setVoiceLab(opts: { inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
   /** Simulator voice self-test only (-tachiVoiceSelfTest): write the report file. */
   selfTestReport(opts: { json: string }): Promise<{ path: string | null }>;
   /** "Prepare for the drive": render the next `chapters` chapters with Kokoro (from `startChapterPath`, else
@@ -337,6 +359,21 @@ export interface NarrationPlugin {
   driveStatus(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
   /** Delete prepared audio: one novel, or all (no args). */
   clearDrive(opts?: { pluginId?: string; novelPath?: string }): Promise<DriveStatus>;
+  /** Audio downloads: requests, audio (with `fresh`), storage, settings and render speed; one novel or all. */
+  audioStatus(opts?: { pluginId?: string; novelPath?: string }): Promise<AudioStatus>;
+  /** Render these chapters (paths, in order) into audio, kept until deleted; merged into the novel's download request. */
+  audioEnqueue(opts: { pluginId: string; novelPath: string; novelName: string; coverUrl?: string; chapters: string[]; when?: AudioWhen; notify?: boolean }): Promise<AudioStatus>;
+  audioPause(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  audioResume(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Drop a novel's requests (finished audio stays). */
+  audioCancel(opts: { pluginId: string; novelPath: string; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Delete audio: chapters of a novel, a novel's (of a kind), or all (no args). */
+  audioDelete(opts?: { pluginId?: string; novelPath?: string; chapterPaths?: string[]; kind?: AudioKind }): Promise<AudioStatus>;
+  /** Minutes, megabytes and render time for `chapters` chapters (`characters` of text when known). */
+  audioEstimate(opts: { pluginId?: string; novelPath?: string; chapters: number; characters?: number }): Promise<AudioEstimate>;
+  audioSetOptions(opts: { deleteAfterListening?: boolean; autoDownloadAudio?: boolean }): Promise<AudioStatus>;
+  /** The "audio is ready" notification's permission; `ask` shows the system prompt once (build 375+). */
+  audioNotifications(opts?: { ask?: boolean }): Promise<{ status: 'authorized' | 'provisional' | 'denied' | 'notDetermined'; asked: boolean }>;
   /** What the lock screen / car show now and which remote commands are offered (Voice Lab, self-test). */
   nowPlaying(): Promise<{ info: Record<string, unknown>; commands: Record<string, unknown>; state: NarrationState; carPlayTemplates: boolean; chapterGapsMs?: number[] }>;
   /** Simulator self-test only: a remote command through the handler MPRemoteCommandCenter calls. */
@@ -346,6 +383,7 @@ export interface NarrationPlugin {
   addListener(event: 'state', fn: (s: NarrationState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'progress', fn: (p: NarrationProgress) => void): Promise<PluginListenerHandle>;
   addListener(event: 'drive', fn: (s: DriveStatus) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'audio', fn: (s: AudioStatus) => void): Promise<PluginListenerHandle>;
 }
 
 export const Narration = registerPlugin<NarrationPlugin>('Narration');

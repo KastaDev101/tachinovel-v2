@@ -1,5 +1,5 @@
 //
-//  expressive-bench — benchmark ONE experimental expressive engine on a Mac (CI: workflow
+//  expressive-bench — benchmark the expressive engine (Pocket TTS) on a Mac (CI: workflow
 //  .github/workflows/expressive-bench.yml, macOS runner, a rough proxy for the iPhone).
 //
 //  1. Downloads the engine's pinned model files with the app's own downloader (ModelStore: pinned
@@ -13,7 +13,7 @@
 //     trip and the listening samples).
 //  Each engine runs in its own process (ci/expressive-bench.sh), so a crash in one doesn't hide the others.
 //
-//  Usage: expressive-bench --engine <chatterbox-nano|neutts-2e|pocket-tts> --fixtures <json> --out <dir>
+//  Usage: expressive-bench --engine pocket-tts --fixtures <json> --out <dir>
 //                          [--budget-seconds 900]
 //
 
@@ -180,11 +180,7 @@ struct ExpressiveBench {
         guard store.isInstalled(pinned) else { throw BenchFailure(description: "model not installed after download") }
         ExpressiveEngines.setOfflineMode(true)
 
-        guard let synth = ExpressiveEngines.make(engine) else {
-            problems.append("\(engine.title) needs macOS 15 / iOS 18")
-            try writeReport()
-            throw BenchFailure(description: "unsupported OS")
-        }
+        let synth = ExpressiveEngines.make()
 
         // 2. Cold load + every fixture line.
         let memBefore = footprintMB()

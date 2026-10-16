@@ -141,6 +141,17 @@ extension PocketTtsSynthesizer {
     /// uses the type-safe subscript accessor which handles conversion automatically.
     private static func readFloatArray(from array: MLMultiArray, count: Int) -> [Float] {
         if array.dataType == .float16 {
+            // TachiNovel: the samples straight from the fp16 buffer (heat batch 1, 2026-10-15): the same values (fp16 to
+            // fp32 is exact either way) without an NSNumber per sample, 1,920 of them per latent. Only for the
+            // [1, …, 1, count] layout Mimi gives with a unit last stride; anything else reads through the subscript.
+            #if arch(arm64)
+            let shape = array.shape.map(\.intValue)
+            if shape.last == count, shape.dropLast().allSatisfy({ $0 == 1 }), array.strides.last?.intValue == 1 {
+                // fp16 bit patterns (MLShapedArray's Float16 needs macOS 15): Float16 to Float is exact.
+                let p = array.dataPointer.assumingMemoryBound(to: UInt16.self)
+                return (0..<count).map { Float(Float16(bitPattern: p[$0])) }
+            }
+            #endif
             // Use subscript for correct float16 → float32 conversion
             return (0..<count).map { array[$0].floatValue }
         }

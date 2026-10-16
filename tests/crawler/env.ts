@@ -173,42 +173,17 @@ interface NarrationMockState {
 function defaultVoicePrefs(): {
   defaultVoice: string;
   kokoroEnabled: boolean;
-  usePCAudio: boolean;
   carButtons: string;
   novelVoices: Record<string, string>;
   /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
   customVoices: { id: string; name: string; a: string; b: string; percent: number }[];
-  /** Narrator mode (Settings › Voices › Narrator mode). */
-  narrator: {
-    enabled: boolean;
-    dialogueVoice: string | null;
-    secondDialogueVoice: string | null;
-    pacing: boolean;
-    jitter: boolean;
-    polish: boolean;
-    roomTone: boolean;
-    phraseBreaks: string;
-    pacingStyle: string;
-  };
 } {
   return {
     defaultVoice: 'af_heart',
     kokoroEnabled: true,
-    usePCAudio: false,
     carButtons: 'chapters',
     novelVoices: {},
     customVoices: [],
-    narrator: {
-      enabled: true,
-      dialogueVoice: null,
-      secondDialogueVoice: null,
-      pacing: true,
-      jitter: false,
-      polish: true,
-      roomTone: false,
-      phraseBreaks: 'clauses',
-      pacingStyle: 'relaxed',
-    },
   };
 }
 
@@ -233,7 +208,6 @@ export class CrawlEnv {
   /** Answers for the next native action sheets/alerts (FIFO); empty → cancel (-1). */
   readonly answers: number[] = [];
   narration: NarrationMockState = { status: 'idle' };
-  audioLinked = true;
   /** Settings › Voices (NarrationPlugin voiceSettings / setVoiceSettings); native state: reset per launch. */
   voicePrefs = defaultVoicePrefs();
   /** "Prepare for the drive" (NarrationPlugin prepareDrive / driveStatus / cancelDrive / clearDrive). */
@@ -504,46 +478,14 @@ export class CrawlEnv {
           };
         case 'requestPersonalVoice':
           return { status: 'denied' };
-        case 'audioFolder':
-          return this.audioLinked ? { linked: true, name: 'TachiNovel Audio' } : { linked: false, name: null };
-        case 'pickAudioFolder':
-          // Document picker: the user cancels.
-          this.nativeUi.push({ kind: 'pickFile', detail: 'audio folder (Narration.pickAudioFolder)' });
-          return { linked: this.audioLinked, cancelled: true };
-        case 'unlinkAudioFolder':
-          this.audioLinked = false;
-          return { linked: false };
-        case 'audioLibrary': {
-          if (!this.audioLinked) return { linked: false, novels: [] };
-          const alpha = this.web.demo[0];
-          return {
-            linked: true,
-            novels: alpha
-              ? [
-                  {
-                    key: `demo-library:novel/${alpha.slug}`,
-                    pluginId: 'demo-library',
-                    novelPath: `novel/${alpha.slug}`,
-                    name: alpha.name,
-                    chapters: [1, 2, 3].map((k) => ({ chapterPath: `novel/${alpha.slug}/${k}`, title: `Chapter ${k}`, number: k, hasTiming: true })),
-                    saved: { chapterPath: `novel/${alpha.slug}/2`, seconds: 95 },
-                  },
-                ]
-              : [],
-          };
-        }
-        case 'audioTiming':
-          return { hasAudio: false, json: null };
         case 'voiceSettings': {
           const v = this.voicePrefs;
           const key = typeof o.pluginId === 'string' && typeof o.novelPath === 'string' ? `${o.pluginId}:${o.novelPath}` : null;
           return {
             voices: KOKORO_VOICES,
             customVoices: v.customVoices,
-            narrator: { ...v.narrator },
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
-            usePCAudio: v.usePCAudio,
             carButtons: v.carButtons,
             kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: '006395f', bytes: 93_100_000 },
             apple: { id: 'com.apple.voice.premium.en-US.Zoe', name: 'Zoe (Premium)', language: 'en-US', quality: 'premium', onlyDefault: false },
@@ -554,15 +496,7 @@ export class CrawlEnv {
           const v = this.voicePrefs;
           if (typeof o.defaultVoice === 'string') v.defaultVoice = o.defaultVoice;
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
-          if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
           if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
-          if (o.narrator && typeof o.narrator === 'object') {
-            const n = o.narrator as Record<string, unknown>;
-            for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
-            for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
-            if (n.phraseBreaks === 'off' || n.phraseBreaks === 'clauses') v.narrator.phraseBreaks = n.phraseBreaks;
-            if (n.pacingStyle === 'relaxed' || n.pacingStyle === 'natural') v.narrator.pacingStyle = n.pacingStyle;
-          }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
             const key = `${novel.pluginId}:${novel.novelPath}`;
@@ -596,14 +530,7 @@ export class CrawlEnv {
             stats: { totalSentences: 0, failures: 0, firstAudio: [], sentences: [] },
             device: { model: 'iPhone17,3', os: 'Version 26.0', thermal: 'nominal', lowPower: false, memoryMB: 180, availableMB: 2600, computeDevices: ['CPU', 'GPU', 'Neural Engine (16 cores)'], battery: 0.8 },
             crashes: { total: 0, consecutive: 0, disabled: false },
-            placement: [],
-            routes: [
-              { id: 'ane-cpu', title: 'Neural Engine + CPU', gpu: false },
-              { id: 'cpu', title: 'CPU only', gpu: false },
-            ],
           };
-        case 'voicePlacement':
-          return { stages: [] };
         case 'prepareDrive': {
           const key = `${String(o.pluginId)}:${String(o.novelPath)}`;
           const count = Number(o.chapters) || 3;
@@ -648,26 +575,14 @@ export class CrawlEnv {
       if (method === 'products') return { products: [] };
       return {};
     }
-    // Settings › Voices › Expressive voices (ExpressiveVoicePlugin): two engines, not downloaded; the narrator
-    // voice list (personal flavor) with a shipped default voice and one imported voice. Every method answers with the status, like native;
-    // the Files picker of Import voice… is "cancelled".
+    // More › Developer › Voice Models and More › Voices' download row (ExpressiveVoicePlugin): her model, not downloaded.
+    // Every method answers with the status, like native.
     if (plugin === 'ExpressiveVoice') {
-      const status = {
-        engines: [
-          { id: 'chatterbox-nano', title: 'Chatterbox Nano', installed: false, supported: true, bytes: 700_000_000, download: { state: 'idle' } },
-          { id: 'neutts-2e', title: 'NeuTTS-2E', installed: false, supported: true, bytes: 1_400_000_000, download: { state: 'idle' } },
-        ],
+      return {
+        engines: [{ id: 'pocket-tts', title: 'Pocket TTS', installed: false, bytes: 367_000_000, download: { state: 'idle' } }],
         device: { memoryMB: 180, availableMB: 2600 },
         storage: { freeMB: 40_000 },
-        voices: {
-          engine: 'chatterbox-nano', engineTitle: 'Chatterbox Nano', importEnabled: true, default: 'b977be3f26cb8d509', selected: null, selectedMissing: false, loaded: null, note: null,
-          list: [
-            { id: 'b977be3f26cb8d509', name: 'Narrator', createdAt: '2026-10-07T07:00:00Z', hasPreview: true, bundled: true, isDefault: true },
-            { id: 'v0123456789abcdef', name: 'Synthetic narrator', createdAt: '2026-10-06T23:50:00Z', importedAt: '2026-10-07T08:00:00Z', hasPreview: true },
-          ],
-        },
       };
-      return method === 'importVoice' ? { cancelled: true, status } : status;
     }
     if (plugin === 'StatusBar' && method === 'getInfo') return { visible: true, style: 'DARK', overlays: true };
     return {};
@@ -678,7 +593,6 @@ export class CrawlEnv {
     const old = this.core as CoreHarness | undefined;
     this.listeners.clear();
     this.narration = { status: 'idle' };
-    this.audioLinked = true;
     this.voicePrefs = defaultVoicePrefs();
     this.answers.length = 0;
     const core = this.newCore();

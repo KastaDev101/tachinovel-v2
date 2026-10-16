@@ -13,6 +13,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
         for context in connectionOptions.urlContexts { DeepLinks.open(context.url) }
+        // Started from the app icon's long-press menu (DeveloperOptions.swift: "Voice Speed Test").
+        if let item = connectionOptions.shortcutItem { LaunchActions.perform(item) }
+    }
+
+    /// The app icon's long-press menu while the app was running.
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        completionHandler(LaunchActions.perform(shortcutItem))
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -27,12 +35,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 /// tachinovel://open?plugin=<id>&novel=<path>[&chapter=<path>] (widget, Shortcuts, notifications) →
 /// the core's `app.openLink`, which emits v1's `app.deepLink` event to the UI.
-/// A .tnvoice file opened with "Open in TachiNovel" (Files, share sheet) is an imported voice (VoiceImport.swift);
-/// a .tnmodel is Nephis's trained voice (NephisModelPack.swift).
+/// A .tnmodel opened with "Open in TachiNovel" (Files, share sheet) is Nephis's trained voice (NephisModelPack.swift).
 enum DeepLinks {
     static func open(_ url: URL) {
         if NephisModelPack.handles(url) { return NephisModelPack.open(url) }
-        if VoiceImportInbox.handles(url) { return VoiceImportInbox.open(url) }
         guard url.scheme == "tachinovel", let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return }
         var args: [String: Any] = [:]
         for item in items {

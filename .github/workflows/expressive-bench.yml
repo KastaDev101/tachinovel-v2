@@ -1,6 +1,5 @@
-# Expressive-voice benchmark (docs/expressive-tts.md): the EXPERIMENTAL expressive engines of the Voice Lab
-# (Chatterbox Nano, NeuTTS-2E) plus Pocket TTS, on the macOS runner (Apple Silicon VM: a rough proxy for
-# the iPhone, without the Neural Engine).
+# Expressive-voice benchmark (docs/expressive-tts.md): Pocket TTS (Nephis's engine, Kyutai's released model) on
+# the macOS runner (Apple Silicon VM: a rough proxy for the iPhone, without the Neural Engine).
 #
 #   - ExpressiveCore unit tests (swift test, release build shared with the benchmark binary);
 #   - per engine, in its own process: download the pinned model files with the app's downloader (Hugging
@@ -24,7 +23,7 @@ on:
       engines:
         description: Engines to benchmark (space-separated)
         type: string
-        default: chatterbox-nano neutts-2e pocket-tts
+        default: pocket-tts
       budget:
         description: Max seconds of rendering per engine
         type: string
@@ -50,7 +49,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 150
     env:
-      ENGINES: ${{ inputs.engines || 'chatterbox-nano neutts-2e pocket-tts' }}
+      ENGINES: ${{ inputs.engines || 'pocket-tts' }}
       BUDGET: ${{ inputs.budget || '900' }}
       KOKORO_BASELINE: ${{ github.event_name == 'pull_request' || inputs.kokoro_baseline }}
     steps:

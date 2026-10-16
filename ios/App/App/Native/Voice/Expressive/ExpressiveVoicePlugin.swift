@@ -1,30 +1,43 @@
 //
-//  ExpressiveVoicePlugin.swift — Capacitor plugin "ExpressiveVoice" (JS: src/ui/native/expressive-lab.ts).
-//  EXPERIMENTAL, Voice Lab only (Settings › About › tap the version 5 times › Experimental engines).
+//  ExpressiveVoicePlugin.swift — Capacitor plugin "ExpressiveVoice" (JS: src/ui/native/expressive-lab.ts): her model
+//  (More › Voices › Download Her Voice; More › Developer › Voice Models), her packs, studio and the voice tests.
 //
-//  status                         engines (size, license, installed, download/load state), device, crashes,
-//                                 the current lab session and speed test
+//  status                         the engine (Pocket TTS: size, license, installed, download/load state), device,
+//                                 crashes, the current sample and speed test
 //  download / cancelDownload      {engine}: pinned model files, Wi-Fi only (ExpressiveService)
 //  remove                         {engine}: delete the model files
 //  play                           {engine: id | "kokoro", sample, lines: [{text, emotion, style?, role}]}
 //  stop
 //  speedTest / cancelSpeedTest    {engine, sample, lines}: render without playing, measure
 //  unload                         free the loaded model now
-//  resetCrashes                   turn the experimental engines back on after the crash protection tripped
+//  resetCrashes                   "Turn Nephis back on" after the crash protection tripped; status().crashes says why in
+//                                 plain words (offLine, lastEnd, appLastEnd)
 //
-//  Imported voices (personal flavor, docs/voice-import.md; status() carries them as `voices`):
-//  importVoice                    Files picker for a .tnvoice → checked and kept → {voice, replaced, status} or
-//                                 {cancelled}; an invalid file is rejected with the reason (code INVALID_VOICE)
-//  selectVoice                    {id | null}: Chatterbox Nano's narrator voice, kept across launches: an imported
-//                                 or shipped voice's id, "builtin" (Chatterbox's own voice), null = the default
-//  renameVoice / deleteVoice      {id, name} / {id}: imported voices only (shipped ones can't be changed)
-//  playVoiceSample                {id | null}: the voice's preview, else Chatterbox Nano reads a line in that voice
-//  event "voiceImport"            {ok, message, id?}: a .tnvoice opened with "Open in TachiNovel" (SceneDelegate)
+//  Nephis model packs (personal flavor, NephisModelPack.swift; Settings › Voices › Voice packs). Each answers
+//  {packs: [{id, name, made, studio, bytes, active, role, dialogue}], active, dialogue, totalBytes} (role "narrator" or
+//  "dialogue"; `dialogue`: the pack she reads quoted dialogue with, NephisDialogue.swift):
+//  nephisPacks                    the packs on this iPhone, the most recently added first
+//  selectNephisPack               {id}: she reads with it from her next sentence (what installing one does)
+//  deleteNephisPack               {id}: deleting hers switches her to the next pack in the list, or to none
+//  setNephisPackRole              {id, role}: "narrator" or "dialogue" (over the pack's own pack.json "role")
+//  selectNephisDialogue           {id | null}: the dialogue pack she reads quoted dialogue with; null: the narrator reads it
+//  event "voiceImport"            {ok, message}: a .tnmodel installed ("Open in TachiNovel", SceneDelegate, or dropped into
+//                                 Documents) or refused
+//
+//  Voice speed test (VoiceSpeedTest.swift; src/ui/native/voice-speed.ts):
+//  voiceSpeedTest                 renders the test passage with her pack the way Listen does, without playing it, and
+//                                 answers the report (also saved to the Diagnostics folder); event "voiceSpeedTest"
+//                                 {step, text, done, total} as it goes; {ran: false, error} when it can't run
+//  voiceSpeedTestStop             {stopping}: no new call starts, the report then says "stopped"
+//  voiceSpeedTestPlay             {stop?}: plays the last rendered passage (or stops it) → {playing, seconds}
 //
 
 import Capacitor
+import Darwin
+import ExpressiveEngines
 import ExpressiveCore
 import Foundation
+import HDVoiceCore
 
 @objc(ExpressiveVoicePlugin)
 public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -45,22 +58,26 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "recordStart", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "recordStop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "shareRecording", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "importVoice", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "selectVoice", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "renameVoice", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "deleteVoice", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "playVoiceSample", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioTestStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "studioEnable", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "nephisPacks", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selectNephisPack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteNephisPack", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setNephisPackRole", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "selectNephisDialogue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTest", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTestStop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "voiceSpeedTestPlay", returnType: CAPPluginReturnPromise),
     ]
-
-    /// A line for hearing a voice that came without a preview.
-    static let voiceSampleLine = "The rain had stopped by the time we reached the old bridge, and for a moment the whole city held its breath."
 
     /// The plugin lives as long as the bridge; the observer holds it weakly.
     private var importObserver: NSObjectProtocol?
 
     override public func load() {
-        // "Open in TachiNovel": the result reaches the UI even if it isn't listening yet (cold start).
-        importObserver = NotificationCenter.default.addObserver(forName: VoiceImportInbox.didImport, object: nil, queue: .main) { [weak self] note in
+        // A pack installed ("Open in TachiNovel", Documents): the result reaches the UI even if it isn't listening yet
+        // (cold start).
+        importObserver = NotificationCenter.default.addObserver(forName: NephisModelPack.didImport, object: nil, queue: .main) { [weak self] note in
             var data: [String: Any] = [:]
             for (key, value) in note.userInfo ?? [:] {
                 if let key = key as? String { data[key] = value }
@@ -135,7 +152,6 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             ExpressiveService.shared.cancelSpeedTest(reason: "stopped: playback started")
             VoicePreviewPlayer.shared.stop()
-            ExpressiveService.shared.sampleVoice = nil // samples use the narrator voice
             ExpressiveLabPlayer.shared.play(primary: primary, sample: sample, lines: lines)
             call.resolve(Self.status())
         }
@@ -157,126 +173,8 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             ExpressiveLabPlayer.shared.stop()
             VoicePreviewPlayer.shared.stop()
-            ExpressiveService.shared.sampleVoice = nil
             ExpressiveService.shared.startSpeedTest(engine: id, sample: sample, lines: lines)
             call.resolve(Self.status())
-        }
-    }
-
-    // MARK: - Imported and shipped voices
-
-    /// A voice id from JS that exists: "builtin" (Chatterbox's own voice), a shipped voice or an imported one;
-    /// `.some(nil)` (the default voice) when `id` is null or absent and `anyVoice`. Only imported voices when
-    /// `anyVoice` is false (rename, delete). Rejects the call and returns nil otherwise.
-    private func voiceID(_ call: CAPPluginCall, anyVoice: Bool) -> String?? {
-        let svc = ExpressiveService.shared
-        guard let raw = call.getString("id") else {
-            if anyVoice { return .some(nil) }
-            call.reject("No voice", "INVALID_ARGS")
-            return nil
-        }
-        if !anyVoice, raw == ExpressiveService.builtInVoice || BundledVoices.isBundledID(raw) {
-            call.reject("Voices that come with TachiNovel can’t be renamed or deleted.", "INVALID_ARGS")
-            return nil
-        }
-        guard ImportedVoiceStore.isSelectable(raw), svc.voiceExists(raw) else {
-            call.reject("That voice isn’t on this iPhone any more.", "NOT_FOUND")
-            return nil
-        }
-        return .some(raw)
-    }
-
-    @objc func importVoice(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            guard ExpressiveService.voiceImportEnabled else { return call.reject("Importing voices isn’t part of this build.", "UNAVAILABLE") }
-            let inbox = VoiceImportInbox.directory()
-            NativeUI.shared.pickFile(types: [VoicePackFormat.typeIdentifier, VoicePackFormat.fileExtension], destDir: inbox.path) { path in
-                guard let path else { return call.resolve(["cancelled": true, "status": Self.status()]) }
-                let url = URL(fileURLWithPath: path)
-                ExpressiveService.shared.importVoice(from: url, sourceName: url.lastPathComponent) { result in
-                    try? FileManager.default.removeItem(at: url)
-                    switch result {
-                    case .success(let r):
-                        call.resolve(["voice": ExpressiveService.voiceJSON(r.voice), "replaced": r.replaced, "status": Self.status()])
-                    case .failure(let error):
-                        call.reject(error.localizedDescription, "INVALID_VOICE")
-                    }
-                }
-            }
-        }
-    }
-
-    @objc func selectVoice(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            guard let id = self.voiceID(call, anyVoice: true) else { return }
-            do {
-                if ExpressiveLabPlayer.shared.engine.primary == .chatterboxNano { ExpressiveLabPlayer.shared.stop() }
-                try ExpressiveService.shared.selectVoice(id)
-                call.resolve(Self.status())
-            } catch {
-                call.reject(error.localizedDescription, "IO_ERROR")
-            }
-        }
-    }
-
-    @objc func renameVoice(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            guard let id = self.voiceID(call, anyVoice: false), let voice = id else { return }
-            let name = call.getString("name") ?? ""
-            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return call.reject("Type a name.", "INVALID_ARGS") }
-            do {
-                try ExpressiveService.shared.renameVoice(voice, to: String(name.prefix(200)))
-                call.resolve(Self.status())
-            } catch {
-                call.reject(error.localizedDescription, "IO_ERROR")
-            }
-        }
-    }
-
-    @objc func deleteVoice(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            guard let id = self.voiceID(call, anyVoice: false), let voice = id else { return }
-            do {
-                if ExpressiveLabPlayer.shared.engine.primary == .chatterboxNano { ExpressiveLabPlayer.shared.stop() }
-                VoicePreviewPlayer.shared.stop()
-                try ExpressiveService.shared.deleteVoice(voice)
-                call.resolve(Self.status())
-            } catch {
-                call.reject(error.localizedDescription, "IO_ERROR")
-            }
-        }
-    }
-
-    @objc func playVoiceSample(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            guard let id = self.voiceID(call, anyVoice: true) else { return }
-            ExpressiveService.shared.cancelSpeedTest(reason: "stopped: playback started")
-            ExpressiveLabPlayer.shared.stop()
-            VoicePreviewPlayer.shared.stop()
-            // The preview made on the PC plays at once and needs no model.
-            let svc = ExpressiveService.shared
-            let target = id ?? svc.defaultVoice
-            let preview = svc.previewURL(target).map { VoicePreviewPlayer.Source.file($0) } ?? svc.shippedPreview(target).map { VoicePreviewPlayer.Source.data($0) }
-            if let preview {
-                NarrationController.shared.activateForSample()
-                do {
-                    try VoicePreviewPlayer.shared.play(preview)
-                    var out = Self.status()
-                    out["played"] = "preview"
-                    return call.resolve(out)
-                } catch {
-                    return call.reject("Couldn’t play the preview: \(error.localizedDescription)", "PLAYBACK")
-                }
-            }
-            // Otherwise Chatterbox Nano reads a line in that voice (Kokoro fills in while it loads, as in every lab sample).
-            guard ExpressiveService.shared.isInstalled(.chatterboxNano) else {
-                return call.reject("Download Chatterbox Nano below to hear this voice (it came without a preview).", "NO_MODEL")
-            }
-            svc.sampleVoice = target
-            ExpressiveLabPlayer.shared.play(primary: .chatterboxNano, sample: "voice", lines: [ExpressiveLine(text: Self.voiceSampleLine)])
-            var out = Self.status()
-            out["played"] = "chatterbox-nano"
-            call.resolve(out)
         }
     }
 
@@ -295,7 +193,329 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    // MARK: - Her studio (NephisStudio.swift, 2026-10-11 scaffold)
+
+    /// Settings › Voices › Voice test (studio speed test): loads the installed pack's studio (compiling it on first use), renders 10 s of
+    /// stand-in input twice (the first warms it up) and reports the second: × real time per step, and the thermal
+    /// state before and after. Stand-in input (noise and random sketch) costs the same as speech, so only the speed
+    /// is meaningful, not the sound.
+    /// It runs alone (crash plan a1: build 321 was closed by iOS for memory here, its studio loaded on top of Nephis):
+    /// the lab player and narration stop, Nephis and Kokoro are released and the test waits until their models are gone;
+    /// with less than ~1,000 MB free it refuses and says how much is free. Inside her crash sentinel (a kill during it is
+    /// noted); `memory`: used and free MB at each step (start, loaded, each render, released). The studio is freed
+    /// before the result goes back, and Nephis is warmed again first when she is Listen's voice (the listening test then
+    /// starts as Listen does). `placement: true`: only where Core ML runs each model (MLComputePlan), on its own. One at a
+    /// time: a second one while one runs is refused (`busy`).
+    /// Against the clock (StudioTestBudget, 2026-10-13: pack 7's full studio on a hot phone never finished): load and both
+    /// renders share 60 s, and the timed render stops once it projects under real time; then `gaveUp` with the reason
+    /// in `error` ("studio too slow: 0.3x real time", "timed out after 60 s"). `studioTestStop` cancels it (`stopped`).
+    @objc func studioTest(_ call: CAPPluginCall) {
+        guard let dir = NephisModelPack.active?.appendingPathComponent("Models/nephis-studio", isDirectory: true),
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("studio.json").path) else {
+            return call.resolve(["ran": false, "error": "The installed Nephis pack has no studio (Models/nephis-studio)."])
+        }
+        let placementOnly = call.getBool("placement") ?? false
+        DispatchQueue.main.async {
+            guard !ExpressiveService.shared.studioTestRunning else {
+                return call.resolve(["ran": false, "busy": true, "error": "The studio test is already running."])
+            }
+            ExpressiveLabPlayer.shared.stop()
+            VoicePreviewPlayer.shared.stop()
+            if NarrationController.shared.status == .playing { NarrationController.shared.pause() }
+            let sentinel = ExpressiveService.shared.sentinel
+            ExpressiveService.shared.clearForStudioTest {
+                let task = Task.detached(priority: .userInitiated) {
+                    let out = await Self.runStudioTest(dir: dir, placementOnly: placementOnly, sentinel: sentinel)
+                    DispatchQueue.main.async {
+                        ExpressiveService.shared.studioTestEnded { call.resolve(out) }
+                    }
+                }
+                ExpressiveService.shared.studioTestTask = task
+                // Stop came while the other models were still being released.
+                if ExpressiveService.shared.studioTestStopAsked { task.cancel() }
+            }
+        }
+    }
+
+    /// The Voice test's Stop during the studio speed test: cancels it (it stops between Core ML's models and pieces, and
+    /// answers `stopped`); `stopping` false when no studio test runs.
+    @objc func studioTestStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let service = ExpressiveService.shared
+            guard service.studioTestRunning else { return call.resolve(["stopping": false]) }
+            service.studioTestStopAsked = true
+            service.studioTestTask?.cancel()
+            call.resolve(["stopping": true])
+        }
+    }
+
+    /// Why the studio test stopped early: a verdict of StudioTestBudget at `step`, or a pack whose studio.json is gone.
+    private enum StudioTestEnd: Error {
+        case gaveUp(String, step: String)
+        case noStudio
+    }
+
+    /// One of the test's renders: its report (nil when the clock cut it off inside a piece), and why it gave up, if it did.
+    private struct TimedRender: Sendable {
+        let report: NephisStudio.Report?
+        let gaveUp: String?
+    }
+
+    /// The studio test itself, once nothing else holds a model (studioTest).
+    private static func runStudioTest(dir: URL, placementOnly: Bool, sentinel: CrashSentinel) async -> [String: Any] {
+        var memory: [[String: Any]] = []
+        func note(_ step: String) {
+            let free = ExpressiveService.freeMemoryMB()
+            memory.append(["step": step, "usedMB": ExpressiveService.r1(VoiceLab.memoryFootprintMB()),
+                           "freeMB": free.map { ExpressiveService.r1($0) } ?? NSNull()])
+        }
+        note("start")
+        if let free = ExpressiveService.freeMemoryMB(), NephisMemory.short(.studioTest, freeMB: free) {
+            return ["ran": false, "refused": true, "error": NephisMemory.refusal(.studioTest, freeMB: free), "memory": memory]
+        }
+        let system = ProcessInfo.processInfo.operatingSystemVersionString
+        if placementOnly {
+            sentinel.begin("studio placement \(system)")
+            let placement = await NephisStudio.placement(in: dir)
+            sentinel.end(success: true)
+            note("placement")
+            return ["placementOnly": true, "placement": placement, "memory": memory]
+        }
+        let thermalBefore = ProcessInfo.processInfo.thermalState.rawValue
+        var out: [String: Any]
+        var ok = false
+        var loaded = false
+        let t0 = Date()
+        let elapsed: @Sendable () -> Double = { Date().timeIntervalSince(t0) }
+        sentinel.begin("studio test \(system)")
+        do {
+            // The test's own studio lives in this block only: freed before the result goes back. Its load keeps to the
+            // budget too (Core ML only sees a stop between its models; past the budget the test stops waiting for it).
+            let made = try await Self.within(StudioTestBudget.left(elapsedSeconds: elapsed())) { () async throws -> NephisStudio in
+                guard let s = try await NephisStudio.load(from: dir) else { throw StudioTestEnd.noStudio }
+                return s
+            }
+            guard let studio = made else { throw StudioTestEnd.gaveUp(StudioTestBudget.timeoutWords, step: "load") }
+            loaded = true
+            let loadMs = elapsed() * 1000
+            note("loaded")
+            let seconds = 10
+            var rng = SystemRandomNumberGenerator()
+            let pcm = (0..<(NephisStudio.inputRate * seconds)).map { _ in Float.random(in: -0.05...0.05, using: &rng) }
+            let latents = (0..<(seconds * 25 / 2)).map { _ in (0..<32).map { _ in Float.random(in: -1...1, using: &rng) } }
+            // The warm-up's first run prepares the models: only the clock counts for it.
+            let warm = try await Self.timedRender(studio, pcm: pcm, latents: latents, paced: false, elapsed: elapsed)
+            note("render 1")
+            if let why = warm.gaveUp { throw StudioTestEnd.gaveUp(why, step: "warm-up") }
+            let timed = try await Self.timedRender(studio, pcm: pcm, latents: latents, paced: true, elapsed: elapsed)
+            note("render 2")
+            if let why = timed.gaveUp {
+                out = ["ran": false, "gaveUp": true, "step": "timed render", "error": why, "loadMs": loadMs,
+                       "timesRealTime": timed.report?.projectedX ?? NSNull(), "pieces": timed.report?.pieces ?? 0,
+                       "piecesPlanned": timed.report?.piecesPlanned ?? 0, "computeUnits": studio.computeUnits]
+            } else if let r = timed.report {
+                out = ["ran": true, "loadMs": loadMs, "audioSeconds": r.audioMs / 1000, "resampleMs": r.resampleMs,
+                       "blueprintMs": r.blueprintMs, "refinerMs": r.refinerMs, "vocoderMs": r.vocoderMs, "restMs": r.restMs, "bypassed": r.bypassed,
+                       "timesRealTime": r.timesRealTime, "pieces": r.pieces, "computeUnits": studio.computeUnits]
+                ok = true
+            } else {
+                out = ["ran": false, "gaveUp": true, "step": "timed render", "error": StudioTestBudget.timeoutWords]
+            }
+        } catch StudioTestEnd.gaveUp(let why, let step) {
+            out = ["ran": false, "gaveUp": true, "step": step, "error": why]
+        } catch StudioTestEnd.noStudio {
+            out = ["ran": false, "error": "studio.json is missing."]
+        } catch {
+            if error is CancellationError || Task.isCancelled {
+                out = ["ran": false, "stopped": true, "error": "stopped"]
+            } else if !loaded {
+                out = ["ran": false, "error": StudioTestBudget.loadFailure("\(error)", freeMB: ExpressiveService.freeMemoryMB())]
+            } else {
+                out = ["ran": false, "error": "\(error)"]
+            }
+        }
+        sentinel.end(success: ok)
+        _ = malloc_zone_pressure_relief(nil, 0)
+        note("released")
+        out["seconds"] = ExpressiveService.r1(elapsed())
+        out["memory"] = memory
+        out["thermalBefore"] = thermalBefore
+        out["thermalAfter"] = ProcessInfo.processInfo.thermalState.rawValue
+        out["enabled"] = NephisModelPack.studioOn
+        return out
+    }
+
+    /// One render of the speed test, against the budget: between pieces its check stops it (out of time; under real time
+    /// when `paced`), and a piece Core ML never returns from is cut off by the clock.
+    private static func timedRender(_ studio: NephisStudio, pcm: [Float], latents: [[Float]], paced: Bool,
+                                    elapsed: @escaping @Sendable () -> Double) async throws -> TimedRender {
+        let check: NephisStudio.Check = { x in StudioTestBudget.verdict(projectedX: x, elapsedSeconds: elapsed(), paced: paced) }
+        let rendered = try await Self.within(StudioTestBudget.left(elapsedSeconds: elapsed())) { () async throws -> NephisStudio.Report in
+            try await studio.renderReporting(pcm24: pcm, latents: latents, check: check).report
+        }
+        guard let report = rendered else { return TimedRender(report: nil, gaveUp: StudioTestBudget.timeoutWords) }
+        // Gave up mid-call: bypassed with the check's reason and its projected pace (a heat skip has no projection).
+        let gaveUp = report.bypassed && report.projectedX != nil ? (report.bypassReason ?? StudioTestBudget.timeoutWords) : nil
+        return TimedRender(report: report, gaveUp: gaveUp)
+    }
+
+    /// `work`'s value, or nil when `seconds` pass first. Then (or when the caller is cancelled: Stop, which throws
+    /// CancellationError) the work is cancelled and the caller waits up to StudioTestBudget.graceSeconds for it to wind
+    /// down, so its memory is gone before Nephis warms again; Core ML only sees a cancel between its models and pieces.
+    private static func within<T: Sendable>(_ seconds: Double, _ work: @escaping @Sendable () async throws -> T) async throws -> T? {
+        let first = RaceGate<Result<T?, Error>>()
+        let ended = RaceGate<Bool>()
+        let task = Task {
+            let r: Result<T?, Error>
+            do { r = .success(try await work()) } catch { r = .failure(error) }
+            first.finish(r)
+            ended.finish(true)
+        }
+        let clock = Task {
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+            first.finish(.success(nil))
+        }
+        let result = await withTaskCancellationHandler {
+            await first.value()
+        } onCancel: {
+            first.finish(.failure(CancellationError()))
+        }
+        clock.cancel()
+        if !ended.isFinished {
+            task.cancel()
+            let grace = Task {
+                try? await Task.sleep(nanoseconds: UInt64(StudioTestBudget.graceSeconds * 1_000_000_000))
+                ended.finish(false)
+            }
+            _ = await ended.value()
+            grace.cancel()
+        }
+        return try result.get()
+    }
+
+    /// Settings › Voices › Voice test › Her studio switch (on/off): her stream becomes 44.1 kHz from her next load. A read
+    /// plays at one rate (SessionRate), so a Listen read in progress starts its sentence again at the new one (as a
+    /// voice change does; reloadNephisModel asks for it, as it does for a pack swap); otherwise its next calls would come
+    /// at the other rate and go to Kokoro.
+    @objc func studioEnable(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? false
+        DispatchQueue.main.async {
+            NephisModelPack.studioOn = on
+            ExpressiveService.shared.reloadNephisModel()
+            call.resolve(["enabled": on])
+        }
+    }
+
+    // MARK: - Her model packs
+
+    private static func packs() -> [String: Any] {
+        let library = NephisModelPack.library
+        let active = library.activeID
+        let dialogue = library.dialogueID
+        let packs = library.list()
+        return [
+            "packs": packs.map { p -> [String: Any] in
+                ["id": p.id, "name": p.name, "made": p.made.map { $0 as Any } ?? NSNull(), "studio": p.studio,
+                 "bytes": Int(p.bytes), "active": p.id == active, "role": p.role.rawValue, "dialogue": p.id == dialogue]
+            },
+            "active": active.map { $0 as Any } ?? NSNull(),
+            "dialogue": dialogue.map { $0 as Any } ?? NSNull(),
+            "totalBytes": Int(packs.reduce(Int64(0)) { $0 + $1.bytes }),
+        ]
+    }
+
+    @objc func nephisPacks(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { call.resolve(Self.packs()) }
+    }
+
+    @objc func selectNephisPack(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("No pack", "INVALID_ARGS") }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.select(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func setNephisPackRole(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let role = call.getString("role").flatMap(NephisVoiceRole.init(rawValue:)) else {
+            return call.reject("No pack or role", "INVALID_ARGS")
+        }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.setRole(id, role)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func selectNephisDialogue(_ call: CAPPluginCall) {
+        let id = call.getString("id")
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.selectDialogue(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
+    @objc func deleteNephisPack(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { return call.reject("No pack", "INVALID_ARGS") }
+        DispatchQueue.main.async {
+            do {
+                try NephisModelPack.delete(id)
+                call.resolve(Self.packs())
+            } catch {
+                call.reject(error.localizedDescription, "IO_ERROR")
+            }
+        }
+    }
+
     /// Settings › Voices › Voice test: start counting Nephis's calls afresh (the report then covers the test only).
+    // MARK: - Voice speed test
+
+    @objc func voiceSpeedTest(_ call: CAPPluginCall) {
+        // {banked: 60}: the steady-state run (Developer › "Start with 60 s buffered"); absent = the usual run.
+        let banked = call.getDouble("banked") ?? 0
+        DispatchQueue.main.async {
+            VoiceSpeedTest.shared.start(banked: banked, progress: { [weak self] p in
+                self?.notifyListeners("voiceSpeedTest", data: p)
+            }, done: { report in
+                call.resolve(report)
+            })
+        }
+    }
+
+    @objc func voiceSpeedTestStop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["stopping": VoiceSpeedTest.shared.stop()])
+        }
+    }
+
+    @objc func voiceSpeedTestPlay(_ call: CAPPluginCall) {
+        let stop = call.getBool("stop") ?? false
+        DispatchQueue.main.async {
+            let test = VoiceSpeedTest.shared
+            if stop {
+                test.stopPlaying()
+                return call.resolve(["playing": false])
+            }
+            do {
+                guard try test.play() else { return call.reject("Run the speed test first: there is nothing to play yet.", "NO_RESULT") }
+                call.resolve(["playing": true, "seconds": (test.lastAudioSeconds * 10).rounded() / 10])
+            } catch {
+                call.reject("Couldn’t play the result: \(error.localizedDescription)", "PLAYBACK")
+            }
+        }
+    }
+
     @objc func resetStats(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             ExpressiveService.shared.resetFlowStats()
@@ -308,19 +528,28 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("voice-test.wav")
     }
 
+    /// The running recording is 32-bit float (main thread, like the recording itself).
+    private var recordingFloat32 = false
+
+    /// {float32?}: 16-bit WAV, or 32-bit float (the exact samples that played, for measuring on the PC).
     @objc func recordStart(_ call: CAPPluginCall) {
+        let float32 = call.getBool("float32") ?? false
         DispatchQueue.main.async {
             guard let url = Self.recordingURL else { return call.resolve(["recording": false]) }
-            NarrationController.shared.speechEngine.startRecording(to: url)
-            call.resolve(["recording": true])
+            self.recordingFloat32 = float32
+            NarrationController.shared.speechEngine.startRecording(to: url, float32: float32)
+            call.resolve(["recording": true, "float32": float32])
         }
     }
 
+    /// {saved, bytes, sampleRate, float32}: the WAV is at the rate of the read it holds (a read at another rate starts it
+    /// again: HybridSpeechEngine.useRate).
     @objc func recordStop(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            let url = NarrationController.shared.speechEngine.stopRecording()
+            let engine = NarrationController.shared.speechEngine
+            let url = engine.stopRecording()
             let bytes = url.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.size] as? NSNumber }?.intValue ?? 0
-            call.resolve(["saved": url != nil && bytes > 44, "bytes": bytes])
+            call.resolve(["saved": url != nil && bytes > 44, "bytes": bytes, "sampleRate": engine.sessionRate, "float32": self.recordingFloat32])
         }
     }
 
@@ -338,6 +567,46 @@ public class ExpressiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             ExpressiveService.shared.resetCrashes()
             call.resolve(Self.status())
+        }
+    }
+}
+
+/// The first of several racers to finish wins (a later `finish` is ignored); `value` waits for it. Any thread (the
+/// studio speed test's clock against its work, ExpressiveVoicePlugin.within).
+final class RaceGate<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: T?
+    private var waiters: [CheckedContinuation<T, Never>] = []
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return result != nil
+    }
+
+    func finish(_ value: T) {
+        lock.lock()
+        guard result == nil else {
+            lock.unlock()
+            return
+        }
+        result = value
+        let waiting = waiters
+        waiters = []
+        lock.unlock()
+        for c in waiting { c.resume(returning: value) }
+    }
+
+    func value() async -> T {
+        await withCheckedContinuation { (c: CheckedContinuation<T, Never>) in
+            lock.lock()
+            if let r = result {
+                lock.unlock()
+                c.resume(returning: r)
+                return
+            }
+            waiters.append(c)
+            lock.unlock()
         }
     }
 }

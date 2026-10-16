@@ -1,16 +1,15 @@
 /**
- * Test material for the EXPERIMENTAL expressive voices (Voice Lab › Experimental engines, and the CI
- * benchmark via tools/expressive-fixtures.ts). Plain data + a small heuristic, no DOM, so it is unit-tested
- * on the PC (tests/expressive.test.ts) and shared by the phone test and the macOS benchmark.
+ * Test material for the expressive voice (More › Developer › Voice Models' samples, and the CI benchmark via
+ * tools/expressive-fixtures.ts). Plain data + a small heuristic, no DOM, so it is unit-tested on the PC
+ * (tests/expressive.test.ts) and shared by the phone test and the macOS benchmark.
  *
- * A line carries what the expressive engines can act on:
- *  - `emotion`: one of NeuTTS-2E's seven emotions (Chatterbox Nano gets the matching style tag);
- *  - `style`: extra delivery only Chatterbox has a tag for ([whispering], [dramatic], [sarcastic], [narration]);
- *  - `role`: who speaks (narrator / a male / a female character), mapped to a voice per engine;
- *  - inline sound tags in the text ([laugh], [chuckle], [sigh], [gasp], …): Chatterbox Nano performs them,
- *    the other engines get the text with the tags removed.
- *  - `natural`: natural delivery (src/core/narration/delivery.ts): the director's mood, Nano's controls and the
- *    pause after the line; native uses it when Settings › Voices › Natural delivery is on (the default).
+ * A line carries what a line of a novel can ask for (Pocket TTS takes the text; its mood is in the voice prompt):
+ *  - `emotion`, `style`: the acting the line calls for (guessed for pasted text by `annotate`);
+ *  - `role`: who speaks (narrator / a male / a female character);
+ *  - inline sound tags in the text ([laugh], [chuckle], [sigh], [gasp], …): removed before Pocket reads (the
+ *    removed Chatterbox Nano performed them);
+ *  - `natural`: natural delivery (src/core/narration/delivery.ts): the director's mood, the model's controls and the
+ *    pause after the line.
  * All prose here is original (written for this test), not taken from a novel.
  */
 import { deliverLines, type LineDelivery } from '../../core/narration/delivery.ts';
@@ -21,7 +20,7 @@ export const STYLES = ['whisper', 'dramatic', 'sarcastic', 'narration'] as const
 export type Style = (typeof STYLES)[number];
 export type Role = 'narrator' | 'male' | 'female';
 
-/** Chatterbox Nano's sound-event tags (its tokenizer's added tokens), kept inline in the text. */
+/** Sound-event tags a line may carry inline ([laugh], …); removed before the voice reads (`plainText`). */
 export const SOUND_TAGS = ['laugh', 'chuckle', 'sigh', 'gasp', 'cough', 'sniff', 'groan', 'shush', 'clear throat'] as const;
 
 export interface ExpressiveLine {

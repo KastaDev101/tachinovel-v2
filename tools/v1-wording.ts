@@ -25,7 +25,6 @@ function text(s: string): string {
 
 const SETTINGS = 'ui/screens/settings.tsx';
 const HELP = 'ui/lib/help-data.ts';
-const NARRATION = 'ui/screens/narration.tsx';
 
 export function wordingPatches(): Patch[] {
   return [
@@ -64,7 +63,7 @@ export function wordingPatches(): Patch[] {
       file: HELP,
       find: /a: 'Yes, with your PC’s help\.[^'\n]*BookPlayer[^'\n]*',/,
       replace: text(
-        "a: 'Yes. Tap Listen in the reader and the chapter is read aloud. It keeps playing with the screen locked, through headphones or the car, and goes on to the next chapter. More › Listen in the Car has the full player.',",
+        "a: 'Yes. Tap Listen in the reader and the chapter is read aloud. It keeps playing with the screen locked, through headphones or the car, and goes on to the next chapter. More › Listen has the full player.',",
       ),
       why: 'Help: listening in the car is built in',
     },
@@ -75,36 +74,6 @@ export function wordingPatches(): Patch[] {
         "a: 'Listening goes on to the next chapter by itself. Chapters load as they’re needed, so for a drive without signal, download the next chapters first (novel page › Download).',",
       ),
       why: 'Help: next chapters while listening',
-    },
-    {
-      file: NARRATION,
-      find: literal("showToast('Couldn’t open Files. Find the audio in Files › iCloud Drive › TachiNovel Audio.');"),
-      replace: text("showToast('Couldn’t open Files. Find the audio in the Files app, in the TachiNovel Audio folder.');"),
-      why: 'Listen in the Car: no iCloud path',
-    },
-    {
-      file: NARRATION,
-      find: literal("'The audio shows up in Files › iCloud Drive › TachiNovel Audio.',"),
-      replace: text("'The audio shows up in the TachiNovel Audio folder in the Files app.',"),
-      why: 'Listen in the Car: how it works (folder)',
-    },
-    {
-      file: NARRATION,
-      find: literal("'Import the files into BookPlayer (free on the App Store). It plays them in CarPlay and remembers your place.',"),
-      replace: text("'Open the player below to listen: it plays in the car and remembers your place.',"),
-      why: 'Listen in the Car: how it works (player)',
-    },
-    {
-      file: NARRATION,
-      find: literal('audio appears in Files › iCloud Drive › TachiNovel Audio.</p>'),
-      replace: text('audio appears in the TachiNovel Audio folder in the Files app.</p>'),
-      why: 'Listen in the Car: intro',
-    },
-    {
-      file: NARRATION,
-      find: literal('is in Files › iCloud Drive › TachiNovel Audio › {audioFolderName(currentAudio.name)}. Open it there and share it to BookPlayer.'),
-      replace: text('is in the TachiNovel Audio folder › {audioFolderName(currentAudio.name)}. Open the player below to listen.'),
-      why: 'Listen in the Car: ready card',
     },
     {
       file: 'ui/lib/whats-new-data.ts',

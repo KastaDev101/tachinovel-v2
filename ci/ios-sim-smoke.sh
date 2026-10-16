@@ -94,7 +94,7 @@ shot 6b-webcontent-recovered $((WAIT + 12)) -tachiSmokeTab more -tachiSmokeKillW
 if [ "${SMOKE_SOURCE:-}" != "" ]; then
   shot 7-source-"$SMOKE_SOURCE" $((WAIT + 8)) -tachiSmokeTab browse -tachiSmokeSource "$SMOKE_SOURCE" || status=1
 fi
-# Native surfaces (docs/qa.md): document picker (Restore from Files…, Link audio folder), share sheet,
+# Native surfaces (docs/qa.md): document picker (Restore from Files…), share sheet,
 # Listen with the system voice, mini player and car player controls, brightness and keep-awake. The web
 # side (src/ui/native/smoke.ts) taps through them; SmokeResponder.swift cancels system sheets like a user.
 native_tour() {

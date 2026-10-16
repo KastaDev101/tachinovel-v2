@@ -6,10 +6,10 @@
 # Needs: `swift build -c release --package-path ios/App/ExpressiveVoice --product expressive-bench` and the
 # fixtures from `node tools/expressive-fixtures.ts .cache/expressive-fixtures.json`.
 #
-# Usage: ENGINES="chatterbox-nano neutts-2e pocket-tts" BUDGET=900 bash ci/expressive-bench.sh <out-dir>
+# Usage: ENGINES="pocket-tts" BUDGET=900 bash ci/expressive-bench.sh <out-dir>
 set -uo pipefail
 OUT="${1:?out dir}"
-ENGINES="${ENGINES:-chatterbox-nano neutts-2e pocket-tts}"
+ENGINES="${ENGINES:-pocket-tts}"
 BUDGET="${BUDGET:-900}"
 mkdir -p "$OUT"
 BIN="$(swift build -c release --package-path ios/App/ExpressiveVoice --show-bin-path)/expressive-bench"

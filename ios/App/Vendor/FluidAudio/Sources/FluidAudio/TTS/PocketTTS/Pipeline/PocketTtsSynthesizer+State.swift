@@ -21,14 +21,17 @@ extension PocketTtsSynthesizer {
     /// Frame metadata matches the session API (`utteranceIndex` is `0`
     /// rather than `nil`); samples, chunking, and EOS behavior are otherwise
     /// identical to the IO streaming path.
+    ///
+    /// TachiNovel: with the chunks' ends from the session (`StreamingRun`), and its end guard.
     static func synthesizeStreamingStateful(
         text: String,
         voiceData: PocketTtsVoiceData,
         temperature: Float,
         seed: UInt64?,
         maxTokensPerChunk: Int,
-        language: PocketTtsLanguage
-    ) async throws -> AsyncThrowingStream<AudioFrame, Error> {
+        language: PocketTtsLanguage,
+        endGuard: EndGuard = .off
+    ) async throws -> StreamingRun {
         let session = try await makeStateSession(
             voiceData: voiceData,
             temperature: temperature,
@@ -36,9 +39,10 @@ extension PocketTtsSynthesizer {
             language: language,
             maxTokensPerChunk: maxTokensPerChunk
         )
+        await session.setEndGuard(endGuard)
         session.enqueue(text)
         session.finish()
-        return session.frames
+        return StreamingRun(frames: session.frames, chunkEnds: { await session.chunkEnds })
     }
 
     /// Build a `.aneState` session: only the multifunction state models,

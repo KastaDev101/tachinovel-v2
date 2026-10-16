@@ -32,10 +32,11 @@ function swiftPluginMethods(rel: string): string[] {
 export const PLUGINS: Record<string, Record<string, Rtype>> = {
   Core: { call: 'promise' },
   TachiNative: { setKeepAwake: 'promise', consumeRecovery: 'promise' },
-  DiagFolder: { status: 'promise', menu: 'promise' },
+  // Exactly the methods DiagFolderPlugin.swift registers (status, menu, storage, cleanStorage).
+  DiagFolder: Object.fromEntries(swiftPluginMethods('Shell/DiagFolderPlugin.swift').map((m) => [m, 'promise'])),
   // Exactly the methods NarrationPlugin.swift registers (read from the Swift source, so they can't drift).
   Narration: Object.fromEntries(swiftPluginMethods('Narration/NarrationPlugin.swift').map((m) => [m, 'promise'])),
-  // Voice Lab › Experimental engines (ExpressiveVoicePlugin.swift).
+  // Her model, packs and voice tests (ExpressiveVoicePlugin.swift).
   ExpressiveVoice: Object.fromEntries(swiftPluginMethods('Voice/Expressive/ExpressiveVoicePlugin.swift').map((m) => [m, 'promise'])),
   Haptics: { impact: 'promise', notification: 'promise', vibrate: 'promise', selectionStart: 'promise', selectionChanged: 'promise', selectionEnd: 'promise' },
   Store: { products: 'promise', purchase: 'promise', restore: 'promise', entitlements: 'promise', manageSubscriptions: 'promise', redeemOfferCode: 'promise' },
@@ -75,7 +76,19 @@ export interface PcShell {
   emitPluginEvent(plugin: string, event: string, data: Record<string, unknown>): void;
   /** Canned answers for non-Core plugin methods (default: {}); a canned function that throws rejects the call. */
   readonly pluginReplies: Map<string, (options: Record<string, unknown>) => unknown>;
+  /**
+   * Developer options as native keeps them (DeveloperOptions.swift): null until set here or by the page
+   * (Narration.setVoiceSettings {developer}); while set, every Narration.voiceSettings answer carries them.
+   */
+  developer: DeveloperOptions | null;
   close(): Promise<void>;
+}
+
+/** Developer options as native keeps them (DeveloperOptions.swift; src/ui/native/dev-flags.ts). */
+export interface DeveloperOptions {
+  on: boolean;
+  playerDetails: boolean;
+  phonemes: boolean;
 }
 
 export async function startPcShell(opts: {
@@ -86,6 +99,7 @@ export async function startPcShell(opts: {
   initStorage?: Record<string, string>;
 }): Promise<PcShell> {
   let page: Page | null = null;
+  let developer: DeveloperOptions | null = null;
   const listeners = new Map<string, string>(); // `${plugin}:${event}` → callbackId
   const fromNative = (result: Record<string, unknown>): void => {
     void page?.evaluate((r) => (window as unknown as { Capacitor: { fromNative(x: unknown): void } }).Capacitor.fromNative(r), result).catch(() => undefined);
@@ -152,6 +166,12 @@ export async function startPcShell(opts: {
       return;
     }
     pluginCalls.push({ pluginId: msg.pluginId, methodName: msg.methodName, options: msg.options });
+    // Developer options, kept like native keeps them (only the keys sent change).
+    if (msg.pluginId === 'Narration' && msg.methodName === 'setVoiceSettings' && msg.options.developer && typeof msg.options.developer === 'object') {
+      developer = { ...(developer ?? { on: false, playerDetails: false, phonemes: true }), ...(msg.options.developer as Partial<DeveloperOptions>) };
+    }
+    const withDeveloper = (data: unknown): unknown =>
+      msg.pluginId === 'Narration' && msg.methodName === 'voiceSettings' && developer ? { ...(data as Record<string, unknown> | undefined), developer } : data;
     const canned = pluginReplies.get(`${msg.pluginId}.${msg.methodName}`);
     if (canned) {
       // A canned reply that throws is a rejected call, like CAPPluginCall.reject(message, code).
@@ -163,12 +183,11 @@ export async function startPcShell(opts: {
         fromNative({ callbackId: msg.callbackId, pluginId: msg.pluginId, methodName: msg.methodName, success: false, error: { message: err instanceof Error ? err.message : String(err), code } });
         return;
       }
-      return reply(true, data);
+      return reply(true, withDeveloper(data));
     }
     if (msg.pluginId === 'Narration' && msg.methodName === 'state') return reply(true, { status: 'idle' });
-    if (msg.pluginId === 'Narration' && msg.methodName === 'audioTiming') return reply(true, { hasAudio: false, json: null });
     if (msg.pluginId === 'Store' && msg.methodName === 'entitlements') return reply(true, { pro: false, source: null });
-    reply(true, {});
+    reply(true, withDeveloper({}));
   });
   // Same injection order as CAPBridgeViewController: Capacitor global → native bridge → plugin headers.
   await page.addInitScript(`window.Capacitor={DEBUG:false,isLoggingEnabled:false,Plugins:{}};window.WEBVIEW_SERVER_URL=location.origin;` +
@@ -182,13 +201,19 @@ export async function startPcShell(opts: {
   await page.addInitScript(headersScript());
   await page.goto(`http://127.0.0.1:${port}/`);
 
-  return {
+  const shell: PcShell = {
     page,
     core,
     pluginCalls,
     pageErrors,
     consoleErrors,
     pluginReplies,
+    get developer() {
+      return developer;
+    },
+    set developer(d: DeveloperOptions | null) {
+      developer = d;
+    },
     emitPluginEvent(plugin, event, data) {
       const id = listeners.get(`${plugin}:${event}`);
       if (id) fromNative({ callbackId: id, pluginId: plugin, methodName: 'addListener', success: true, data, save: true });
@@ -199,4 +224,22 @@ export async function startPcShell(opts: {
       core.dispose();
     },
   };
+  return shell;
+}
+
+/**
+ * Turns Developer options on (or as given) the way native would answer them (shell.developer), and has the page read
+ * its voice settings again, so More › Developer, About's switch and the player's voice details follow at once. Call
+ * after the page has booted.
+ */
+export async function setDeveloperOptions(shell: PcShell, developer: Partial<DeveloperOptions> = {}): Promise<void> {
+  shell.developer = { ...(shell.developer ?? { on: true, playerDetails: false, phonemes: true }), on: true, ...developer };
+  await shell.page.evaluate(() => window.dispatchEvent(new Event('tn-voice-settings')));
+}
+
+/** More › Developer, from any tab (Developer options must be on). */
+export async function openDeveloper(shell: PcShell): Promise<void> {
+  await shell.page.getByTestId('tab-more').click();
+  await shell.page.getByTestId('more-developer-options').click();
+  await shell.page.locator('[data-testid="screen-developer"]:not([inert])').waitFor({ timeout: 5000 });
 }

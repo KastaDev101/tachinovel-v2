@@ -17,7 +17,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { packagesFromInputs, readNotices, reflow } from './third-party.ts';
-import { corePatches, licensesPatch, phoneClientPlugin, root, v1AliasPlugin, v1PatchPlugin, v1Root, v1Src } from './v1.ts';
+import { corePatches, licensesPatch, PC_NARRATOR_PATCHES, phoneClientPlugin, root, v1AliasPlugin, v1PatchPlugin, v1Root, v1Src } from './v1.ts';
+import { audioPatches } from './v1-audio.ts';
 import { otaPatches } from './v1-ota.ts';
 import { qaPatches } from './v1-qa.ts';
 import { wordingPatches } from './v1-wording.ts';
@@ -42,7 +43,22 @@ const BUDGETS_KB: Record<string, number> = {
   // (src/core/narration/delivery.ts, ~8 KB) so they sound like Listen; the settings screen for it comes next.
   // 740 → 760 (2026-10-07, narrator-moods): Settings › Voices rebuilt around the Narrator (who reads, its settings,
   // Kokoro's three backups, sub-pages) plus the Voice Lab scene-reading test; Kasta asked for the cleanup.
-  'index.html': 760,
+  // 760 → 770 (2026-10-12, nephis-studio): the raw text form (src/core/narration/raw-text.ts, ~5.7 KB) runs in the
+  // UI's speech script so a pack can read the text as written (lab Q1: 0 vs 6 of 147 last words lost).
+  // 770 → 780 (2026-10-13, pack-picker): Settings › Voices › Voice packs (src/ui/native/voice-packs.ts, ~5.4 KB),
+  // several Nephis packs side by side; main was at 767.7 KB.
+  // 780 → 800 (2026-10-13, narration-follow): the reader follows the narration and jumps to the spoken sentence
+  // back in the app after CarPlay / a locked phone (src/ui/native/narration-follow.ts + overlay, ~8 KB); 786.7 KB.
+  // 800 → 815 (2026-10-14, name-pronunciations): "Pronounce" on a selected name in the reader and its panel
+  // (src/ui/native/pronounce-ui.ts, ~8 KB) and stress respellings for every engine (user-pronunciations.ts, ~5 KB).
+  // 815 → 825 (2026-10-16, cleanup 2): the Backup Voice list is reachable again (its Kokoro voice list, Your Mixes and
+  // the mixer from it were tree-shaken while unlinked) and Download Her Voice is inline with its progress (~7 KB);
+  // the shared panel kit (src/ui/native/panel.ts) replaced the two labs' own dark stylesheets (-4 KB). Personal
+  // flavor 819.5 KB, store 811.7 KB.
+  // Removals (2026-10-16: Nano/NeuTTS, .tnvoice import, the Kokoro Voice Lab, the PC narrator and v1's Listen in the Car
+  // screen, stubbed in tools/v1.ts): personal 820.3 → 784.4 KB, store 812.4 → 782.9 KB. The budget stays for the audio
+  // download screens next.
+  'index.html': 825,
   'core/core.js': 900,
   'core/lib/declarative-host.js': 700,
   'core/lib/plugin-host.js': 1200,
@@ -116,7 +132,11 @@ export async function buildUi(info: BuildInfo, opts: BuildOptions, packages?: Se
     legalComments: 'eof',
     define: defines(info, opts.dev),
     loader: { '.svg': 'text', '.png': 'dataurl', '.woff2': 'dataurl' },
-    plugins: [v1AliasPlugin(), phoneClientPlugin(), v1PatchPlugin([licensesPatch(licenses), ...wordingPatches(), ...qaPatches(), ...(opts.flavor === 'personal' ? otaPatches() : [])])],
+    plugins: [
+      v1AliasPlugin(),
+      phoneClientPlugin(),
+      v1PatchPlugin([licensesPatch(licenses), ...wordingPatches(), ...PC_NARRATOR_PATCHES, ...qaPatches(), ...audioPatches(), ...(opts.flavor === 'personal' ? otaPatches() : [])]),
+    ],
     jsx: 'automatic',
     jsxImportSource: 'preact',
     logLevel: 'silent',

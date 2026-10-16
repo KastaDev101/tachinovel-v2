@@ -23,15 +23,17 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 | Piece | Where |
 |---|---|
 | Sentence script: v1's narration front-end (the PC narrator's normalization, pauses and pronunciation lexicon), one item per sentence with its place in the chapter (for highlighting) and lexicon phonemes for Kokoro | `src/core/narration/speech-script.ts`; UI `src/ui/native/speech-dom.ts`; core `narration.chapterText` → `script` |
-| Pronunciations: global + per novel, the v1 lexicon format (paste a PC-narrator lexicon to import it) | core `narration.lexicon.get/set` (synced store `narration-lexicons.json`); editor in `voices-ui.ts` |
+| Pronunciations: global + per novel (the novel's entry wins), the v1 lexicon format (paste a PC-narrator lexicon to import it). Set from the reader: select a name → Pronounce (respelling, ▶ with the novel's voice, All novels) | core `narration.lexicon.get/set` (synced store `narration-lexicons.json`); editor in `voices-ui.ts`; reader panel `pronounce-ui.ts` |
+| Stress respellings ("NEF-iss", "say-SHAHN") for every engine: plain lower-case form for Nephis/Pocket, Apple and Kokoro's text, misaki phonemes with the stress for Kokoro. Applied first in `speechScript()` (`withUserPronunciations`), so user entries win over the front-end's rules and native's heteronyms and respell lists; the displayed text never changes | `src/core/narration/user-pronunciations.ts` (`tests/user-pronunciations.test.ts`) |
 | Which voice speaks each sentence; render-ahead; fallback and return | `ios/App/HDVoice/Sources/HDVoiceCore/HybridScheduler.swift` (XCTest) |
 | Kokoro: bundled model loaded read-only, lexicon phoneme splicing | `HDVoiceKokoro/KokoroRuntime.swift` (shared by the app and CI) |
 | Audio: Kokoro buffers (trimmed, loudness-matched, faded, pause appended) and the Apple voice (rendered with `AVSpeechSynthesizer.write`, converted to 24 kHz mono) on one AVAudioEngine player node, gapless; gain stage + peak limiter; shared audio session. A voice that can't render to buffers speaks directly (no volume above 100 % for it) | `ios/App/App/Native/Voice/HybridSpeechEngine.swift` |
 | Files (PC-narrated, prepared): AVAudioEngine file player with time-pitch for speed, the same gain + limiter | `ios/App/App/Native/Narration/AudioChapterPlayer.swift` |
 | Listen player: speed 0.5–2.5× (0.05 steps, chips 0.9/1/1.1/1.25/1.5/2) and "Voice volume" 0–150 %, saved natively, every voice | `HDVoiceCore/ListenControls.swift`, `src/ui/native/listen-controls.ts`, `car-mode.ts` |
 | Load/release, memory pressure, idle release, warm-up, crash containment | `Native/Voice/KokoroService.swift`, `HDVoiceCore/CrashSentinel.swift` |
-| Preferences: default voice, per-novel voice, Kokoro on/off, "Use PC audio when available" (off) | `HDVoiceCore/VoiceCatalog.swift`, `Native/Voice/VoiceSettings.swift` |
-| UI: "Listen" in the reader's bottom bar (shows and hides with the bars, like the mini player in the reader), More › Voices, voice picker per novel (Listen player › Voice), pronunciations, hidden Voice Lab. The mini player says "Kokoro · Heart", or "System voice (fallback) · why" | `src/ui/native/narration-overlay.ts`, `voices-ui.ts`, `voice-lab.ts`, `v1-hooks.ts`, `car-mode.ts` |
+| How the last run ended (closed, swiped away, updated or refreshed, idle in the background, closed for memory, the phone restarted), the crash signal it died of (SIGSEGV/SIGBUS off the main thread = a voice's model; a Swift trap, abort() or a main-thread fault = an app bug; none = iOS closed it) and a 10 s heartbeat while a voice works, so only real crashes of a voice's model count | `Native/Voice/VoiceRun.swift`, `HDVoiceCore/RunJournal.swift`, `HDVoiceCore/CrashSignals.swift` |
+| Preferences: default voice, per-novel voice, Kokoro on/off, the backup voice | `HDVoiceCore/VoiceCatalog.swift`, `Native/Voice/VoiceSettings.swift` |
+| UI: "Listen" in the reader's bottom bar (shows and hides with the bars, like the mini player in the reader), More › Voices, voice picker per novel (Listen player › Voice), pronunciations, More › Developer's voice tools. The mini player says "Nephis" or "Backup voice" (the engine and why with Developer options' voice details) | `src/ui/native/narration-overlay.ts`, `voices-ui.ts`, `developer-ui.ts`, `v1-hooks.ts`, `car-mode.ts` |
 
 ### When the Apple voice speaks
 
@@ -43,7 +45,7 @@ sentence, and Kokoro takes over again at a sentence boundary once it is ahead.
 | Phone thermally throttled (serious or critical) | No new Kokoro renders. Already-rendered sentences still play, then Apple until the phone cools down |
 | One sentence fails to synthesize | Apple reads that sentence; Kokoro continues with the next. Three failures in a row: Apple for the rest of the chapter |
 | Memory warning | The model is released, Apple covers, and the model reloads after 60 s (backing off to 10 min) |
-| Kokoro crashed the app twice in a row (a known iOS Core ML bug, below) | Kokoro is turned off; Settings › Voices shows "Turn it back on" |
+| Kokoro crashed the app twice in a row (a known iOS Core ML bug, below) | Kokoro is turned off; Settings › Voices shows "Turn it back on". Only a memory fault off the main thread during its call counts; app bugs, swipe-aways, updates and AltStore refreshes, restarts, and iOS closing the app for memory or in the background never do (`RunJournal`); a new build starts the count over |
 | Kokoro turned off in Settings › Voices | Apple always |
 
 Apple voice choice: an explicitly chosen system voice if there is one, else the best installed English
@@ -57,26 +59,53 @@ parameter (no pitch shift), and pauses scale with it.
 
 ### Battery and heat
 
-Kokoro renders at most 3 sentences ahead (Voice Lab: 2 or 3), one at a time, and stops rendering while
+Kokoro renders at most 3 sentences ahead, one at a time, and stops rendering while
 playback is paused or the phone is throttled. The model is released 5 minutes after narration stops, and
 right away on a memory warning. Compute placement (`KokoroRoute`): the RNN/attention stages on the
 **Neural Engine**, and the fp32 noise + iSTFT stages on the **CPU**. The GPU is never used, because iOS
-doesn't allow GPU work in the background and narration must keep rendering on the lock screen. The Voice
-Lab can switch to FluidAudio's GPU placement for a foreground-only speed comparison.
+doesn't allow GPU work in the background and narration must keep rendering on the lock screen.
+
+## Where the settings are (cleanup 1, 2026-10-15; cleanup 2, 2026-10-16)
+
+- **More › Voices** (everyone), in v1's grouped-list look (`src/ui/native/panel.ts`: v1's tokens, light and dark,
+  SF Symbols, v1's toast, the native alert for every delete):
+  - **Nephis**: Narrator (her pack, "· Studio" with its studio on) and Dialogue (her dialogue pack, or "Uses the
+    narrator") in the personal build, Turn Nephis Back On, **Download Her Voice** (~370 MB, confirmed with the native
+    alert; the row shows the progress, ExpressiveVoice.status() is read once a second only while it downloads), **Voice
+    Settings** (Scene Moods, the [System] message chime and voice, and a footer saying whether scene moods use Apple
+    Intelligence or the built-in rules);
+  - **Backup Voice**: the Kokoro voice that reads only when Nephis can't (her matched voice `af_nephis` until another
+    is picked; `VoicePreferences.backupVoice`, used by `NarrationController.kokoroVoiceForSpeech` while she reads):
+    the three best first with ▶ samples, then All Voices (and Your Mixes; Mix a Voice and Edit with Developer options);
+  - **Pronunciations**: Names & Made-Up Words (every novel); from a novel's Voice panel the editor switches between
+    All Novels and This Novel;
+  - **In the Car**: Car Buttons (segmented), Prepared Audio (Remove All asks first).
+- Natural delivery, studio sound and her studio are automatic; the AI scene reading is on wherever Apple Intelligence
+  is available. `DeliverySettings` version 4 turns an "off" saved before back on once (HDVoiceCore `Delivery.swift`);
+  the studio's per-pack offs are cleared once (`DeveloperOptions.migrateOnce`).
+- **Developer options** (`src/ui/native/dev-flags.ts`, `Native/Shell/DeveloperOptions.swift`): tap the version in
+  More › About 7 times; the switch at the bottom of About turns them off. Kept natively (the Narration plugin's
+  voiceSettings / setVoiceSettings `developer`), on by default in the personal build. **More › Developer**
+  (`developer-ui.ts`) holds the Voice Speed Test, Voice Test, 15-Minute Test, Voice Packs, Studio (Automatic / Off) and
+  where it runs, the delivery internals (Natural Delivery, AI Scene Reading, Studio Sound, Reset to Defaults), the
+  Scene-Reading and Mood tests, the Voice Report, Now Playing, Voice Models, "Show Voice Details in the Player", Mix a
+  Voice and the pronunciation editor's phonemes and JSON paste (Use PC Audio and the Kokoro Voice Lab went on
+  2026-10-16). While they are on,
+  the app icon's long-press menu offers "Voice Speed Test" (`LaunchActions` → TachiNative `launchAction`).
 
 ## In the car
 
-Kokoro, the Apple fallback, prepared chapters and PC audio all show in CarPlay's Now Playing screen and
+Nephis, Kokoro, the Apple fallback and chapters with audio on the iPhone all show in CarPlay's Now Playing screen and
 answer the car's buttons and Siri. Before a drive, a novel's **Prepare for the drive** renders the next
 chapters with Kokoro into local audio, so playback never waits on synthesis or the network. Details,
 settings and the on-phone car checklist: docs/car.md.
 
 ## Voice mixer
 
-More › Voices › **Mix a voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
-a name. Saved mixes are listed under **Your mixes**, after the voices: in Settings › Voices (with Edit and
-Delete) and in a novel's voice picker (Listen player › Voice). So a mix can be the default voice or one
-novel's voice.
+More › Developer › **Mix a Voice**: pick two voices and a blend (0–100 %), tap ▶ to listen, and save it under
+a name. Saved mixes are listed under **Your Mixes** in More › Voices › Backup Voice › All Voices (with Edit and
+Delete while Developer options are on), so a mix can be the backup voice. Deleting the one in use sends the backup
+voice back to her matched voice.
 
 - **How it blends:** each Kokoro voice is a style pack of 510 rows (one per phoneme-count bucket), each
   128 timbre + 128 prosody values. A mix interpolates the two packs value by value, (1 − t)·A + t·B,
@@ -96,8 +125,10 @@ novel's voice.
 
 ## Narrator mode
 
-Settings › Voices › **Narrator mode** (on by default, with Kasta's picks from the PC tuning rounds: one narrator voice, relaxed pauses, phrase breaks, light studio sound at 1.5:1, no variation, no room tone). Each piece has its own switch, and **▶ Without /
-▶ With** reads a short test passage both ways. The Voice Lab has the same A/B with the switches.
+Narrator mode shapes how Kokoro reads (now her backup voice): on, with Kasta's picks from the PC tuning rounds: one
+narrator voice, relaxed pauses, phrase breaks, light studio sound at 1.5:1, no variation, no room tone
+(`HDVoiceCore/Narrator.swift`, `NarratorSettings`). Its switches and the A/B went with the Kokoro Voice Lab on
+2026-10-16; the app reads with the saved settings (these defaults unless an older build changed them). The pieces:
 
 - **Dialogue voice (Advanced, off by default: one narrator voice reads the whole story):** words in quotation
   marks can be read in another voice (a voice or a mix). A sentence
@@ -194,7 +225,7 @@ lower than on the phone.
 | IPA (download) / installed app | 96.7 MB / 115.4 MB (model 93.1 MB, app binary 18.3 MB incl. FluidAudio + NeMo text normalization) |
 | Kokoro on the CI Mac (VM, no Neural Engine: CPU) | model load 4.8 s cold, first audio 6.4–7.7 s (load + the first sentence, which also warms the G2P), **median 6.3–8.4× real time** over 36 sentences (6 voices × 6 fixtures), 0 NaN or clipped samples, RMS 0.04–0.10, 119–239 words per minute |
 | ASR round trip (whisper.cpp base.en) | 3/3 sentences transcribed word for word (WER 0%) |
-| Memory | 318 MB with the model loaded. About 80% stays counted after the model is released (Core ML keeps compiled stages cached; iOS can reclaim them under pressure). Watch the Voice Lab's memory line on the phone |
+| Memory | 318 MB with the model loaded. About 80% stays counted after the model is released (Core ML keeps compiled stages cached; iOS can reclaim them under pressure). Watch the memory in More › Developer › Voice Report on the phone |
 
 The phone has a Neural Engine and a faster CPU, so expect faster than this.
 
@@ -240,8 +271,8 @@ report from an iPhone running ≥ 0.17.0 yet, either way.
 | FluidAudio **0.17.5** (includes the 0.17.0 padding fix) | The only fix that addresses the root cause. No routing avoids BNNS |
 | GPU-free placement (Neural Engine + CPU) | Keeps the RNN stages off the GPU (the GPU RNN JIT abort, #667), and works on the lock screen, where iOS forbids GPU work. iOS 26's FluidAudio default (`aneTailGpu`) crashed the same way in #844 anyway |
 | Warm-up only **loads** the model (Neural Engine compile), it never synthesizes | A Core ML crash can't happen right after launch, only while you listen |
-| Crash sentinel (a file written before each synthesis, checked at launch) | Two crashes in a row → Kokoro off, Apple voice, a "Turn it back on" button in Settings › Voices |
-| Voice Lab: "Safety fallback" (tripped or not, crash count, what was being synthesized) and "Where each stage runs" (Core ML's per-operation plan: Neural Engine / CPU / GPU ops per stage) | So tonight's test tells us whether it held, and how much of each stage runs on the CPU (where BNNS lives) |
+| Crash sentinel (a file written before each synthesis, checked at launch with the run journal: only a call in flight when the process died of a memory fault off the main thread, same install, not closed properly, counts) | Two crashes in a row → Kokoro off, Apple voice, a "Turn it back on" button in Settings › Voices |
+| More › Developer › Voice Report: Kokoro's safety fallback (tripped or not, crash count, what was being synthesized); the CI voice check (kokoro-check) prints where each stage runs (Core ML's per-operation plan) | So a test tells us whether it held, and how much of each stage runs on the CPU (where BNNS lives) |
 
 Not available, considered and rejected: forcing a stage onto the Neural Engine only (Core ML still sends
 unsupported ops to BNNS); `.cpuAndGPU` (no GPU in the background, and it doesn't remove BNNS); an older
@@ -255,7 +286,7 @@ that thread's stack. The sentinel covers it too.
 
 ## Known risks (watch these on the phone)
 
-1. **The Core ML crash above.** If it happens, note the time and the Voice Lab "Safety fallback" lines.
+1. **The Core ML crash above.** If it happens, note the time and copy More › Developer › Voice Report (`crashes`).
 2. **First compile:** the first load after install/update compiles the model for the Neural Engine (tens
    of seconds). The app warms it up in the background ~6 s after launch.
 3. **Memory:** about 300–900 MB while loaded (FluidAudio's Mac peak 881 MB). It is released when idle or on
@@ -281,10 +312,6 @@ model. Anything above ~2× keeps the queue full.
 4. **Lock the phone for 2 minutes**. Audio keeps going, the lock-screen player works (play/pause, next
    chapter), and there are no gaps between sentences. Unlock and check the mini player label: "Apple
    voice · … Kokoro catching up" means a fallback happened.
-5. **Voice Lab** (More › About › tap the version 5 times): note **Safety fallback** (should say "not
-   tripped"), **Where each stage runs** (how many ops of each stage Core ML puts on the Neural Engine, the
-   CPU and the GPU), **time to first audio**, **speed (× real time)** and slowest 5%, model load
-   (cold/warm), **Kokoro / Apple sentences**, **Queue ran dry**, memory and thermal state. Then tap **Copy
-   report** and paste it to Claude.
-6. Optional: Voice Lab › "Neural Engine + GPU (foreground only)" › Speak test paragraph, to compare speed;
-   switch back to the default afterwards.
+5. **Voice Report** (Developer options: More › About › tap the version 7 times; then More › Developer › Voice Report):
+   it copies Kokoro's numbers (safety fallback, time to first audio, × real time, model load, Kokoro / Apple sentences,
+   queue ran dry, memory, thermal state) with hers. Paste it to Claude.

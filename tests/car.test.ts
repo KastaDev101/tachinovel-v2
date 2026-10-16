@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { HelpTopic } from '@v1/ui/lib/help-data.ts';
-import { driveLine, formatBytes, formatDuration, jobProgress, normalizeDriveStatus, storageLine } from '../src/ui/native/drive-status.ts';
+import { formatBytes, formatDuration, jobProgress, normalizeDriveStatus, storageLine } from '../src/ui/native/drive-status.ts';
 import type { DriveJobInfo, DriveStatus } from '../src/ui/native/narration.ts';
 import { CAR_HELP, installCarHelp } from '../src/ui/native/help-car.ts';
 
@@ -36,23 +36,15 @@ describe('Prepare for the drive: status words', () => {
     expect(jobProgress(job({ count: 0 }))).toBe(0);
   });
 
-  it('says what is happening for one novel', () => {
-    const running = status({ jobs: [job({ current: { chapterPath: 'c2', title: 'Two', sentence: 30, sentences: 60 } })] });
-    expect(driveLine(running, KEY)).toBe('Preparing 2 of 5 · 30%');
-    expect(driveLine(status({ jobs: [job({ state: 'waiting', reason: 'Waiting for charging or Wi-Fi', done: 2 })] }), KEY)).toBe('Waiting for charging or Wi-Fi · 2 of 5 ready');
-    expect(driveLine(status({ jobs: [job({ state: 'failed', error: 'offline' })] }), KEY)).toBe('Stopped: offline');
+  it('More › Voices › In the Car: audio prepared by older builds in one line', () => {
     const ready = status({
-      jobs: [job({ state: 'done', done: 2, count: 2 })],
       prepared: [
         { novelKey: KEY, chapterPath: 'c1', title: 'One', voice: 'af_heart', bytes: 7_000_000, durationSec: 900, createdAt: 1 },
-        { novelKey: KEY, chapterPath: 'c2', title: 'Two', voice: 'af_heart', bytes: 8_000_000, durationSec: 950, createdAt: 2 },
         { novelKey: 'other:n', chapterPath: 'x', title: 'X', voice: 'af_heart', bytes: 9_000_000, durationSec: 950, createdAt: 3 },
       ],
-      totalBytes: 24_000_000,
+      totalBytes: 16_000_000,
     });
-    expect(driveLine(ready, KEY)).toBe('2 chapters ready · 15 MB');
-    expect(driveLine(ready, 'nothing:here')).toMatch(/^Kokoro reads the next chapters ahead/);
-    expect(storageLine(ready)).toBe('3 chapters · 24 MB');
+    expect(storageLine(ready)).toBe('2 chapters · 16 MB');
     expect(storageLine(normalizeDriveStatus({}))).toBe('Nothing prepared');
   });
 
@@ -93,8 +85,9 @@ describe('Help › Listening › the car', () => {
 
   it('mentions the settings it points to', () => {
     const text = CAR_HELP.map((i) => i.a).join(' ');
-    expect(text).toContain('Prepare for the drive');
-    expect(text).toContain('More › Voices › In the car › Car buttons');
+    expect(text).toContain('Download with Audio');
+    expect(text).not.toContain('Prepare for the Drive');
+    expect(text).toContain('More › Voices › In the Car › Car Buttons');
     expect(text).toMatch(/Hey Siri/);
   });
 });
@@ -114,7 +107,8 @@ describe('native wiring', () => {
   it('the Narration plugin registers the car methods the UI calls', () => {
     const swift = readFileSync(path.join(root, 'ios', 'App', 'App', 'Native', 'Narration', 'NarrationPlugin.swift'), 'utf8');
     const methods = [...swift.matchAll(/CAPPluginMethod\(name: "([A-Za-z]+)"/g)].map((m) => m[1]);
-    for (const m of ['prepareDrive', 'cancelDrive', 'driveStatus', 'clearDrive', 'nowPlaying', 'remoteCommand', 'selfTestChapters']) {
+    const audio = ['audioStatus', 'audioEnqueue', 'audioPause', 'audioResume', 'audioCancel', 'audioDelete', 'audioEstimate', 'audioSetOptions', 'audioNotifications'];
+    for (const m of ['prepareDrive', 'cancelDrive', 'driveStatus', 'clearDrive', 'nowPlaying', 'remoteCommand', 'selfTestChapters', ...audio]) {
       expect(methods, m).toContain(m);
       expect(swift, m).toContain(`@objc func ${m}(_ call: CAPPluginCall)`);
     }

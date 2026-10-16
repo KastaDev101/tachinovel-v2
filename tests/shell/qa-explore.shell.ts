@@ -33,10 +33,8 @@ const settings = (o: Record<string, unknown>): unknown => {
   return {
     voices,
     customVoices: [],
-    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: false, polish: true, roomTone: false, phraseBreaks: 'clauses', pacingStyle: 'relaxed' },
     defaultVoice: 'af_heart',
     kokoroEnabled: true,
-    usePCAudio: false,
     carButtons: 'chapters',
     delivery: { ...delivery },
     kokoro: { bundled: true, status: 'Ready', ready: true, crashDisabled: false, crashes: 0, revision: 'abc', bytes: 108_900_000 },
@@ -122,12 +120,22 @@ describe('QA walk', () => {
     await scr.locator('[data-act="narrator-settings"]').click();
     await shot('narrator-settings');
     await shell.page.locator('[data-testid="narrator-settings"] [data-act="close"]').click();
-    await scr.locator('[data-act="kokoro-all"]').click();
-    await shot('kokoro-all');
-    await shell.page.locator('[data-testid="kokoro-voices"] [data-act="close"]').click();
-    await scr.locator('[data-act="expressive"]').click();
-    await shot('voice-models');
+    // Nephis is the one voice: no Kokoro list or voice models on the menu any more.
+    expect(await scr.locator('[data-act="kokoro-all"]').count()).toBe(0);
     console.log('page errors', shell.pageErrors);
+  });
+
+  it('walks More › Developer (on by default in the personal flavor)', async () => {
+    await shell.page.locator('[data-testid="screen-voices"] [data-act="close"]').click().catch(() => undefined);
+    await shell.page.getByTestId('tab-more').click();
+    await shell.page.getByTestId('more-developer-options').click();
+    const dev = shell.page.locator('[data-testid="screen-developer"]:not([inert])');
+    await dev.locator('[data-testid="dev-nephis"]').waitFor({ timeout: 5000 });
+    await shot('developer-top');
+    await dev.evaluate((e) => e.querySelector('.body')?.scrollTo(0, 99999));
+    await shot('developer-bottom');
+    await dev.locator('[data-act="close"]').click();
+    expect(shell.pageErrors).toEqual([]);
   });
 
   it('walks the Listen player while Nephis reads', async () => {
@@ -143,11 +151,8 @@ describe('QA walk', () => {
     await shot('listen-playing');
     await shell.page.getByTestId('car-player').locator('[data-act="voice"]').click();
     const picker = shell.page.locator('[data-testid="voice-picker"]:not([inert])');
-    await picker.locator('[data-act="novel-kokoro"]').waitFor({ timeout: 5000 });
+    await picker.locator('[data-act="lexicon"]').waitFor({ timeout: 5000 });
     await shot('voice-picker');
-    await picker.locator('[data-act="novel-kokoro"]').click();
-    await shot('novel-kokoro');
-    await shell.page.locator('[data-testid="novel-kokoro"] [data-act="close"]').click();
     await picker.locator('[data-act="narrator-settings"]').click();
     await shot('narrator-settings-nephis');
     expect(shell.pageErrors).toEqual([]);

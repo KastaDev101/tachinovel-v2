@@ -6,7 +6,7 @@
  *
  *  - `-tachiSmokeTab <tab>` / `-tachiSmokeSource <id>`: open a tab (and a source).
  *  - `-tachiSmokeTour native`: tap through the native-only surfaces (docs/qa.md): the document picker
- *    (Restore from Files…, Link audio folder), the share sheet, Listen (system voice), the mini player
+ *    (Restore from Files…), the share sheet, Listen (system voice), the mini player
  *    and the car player controls, the reader's brightness and keep-awake settings. The native side
  *    (SmokeResponder.swift, Debug) cancels system sheets after a few seconds like a user tapping Cancel.
  *    Every step logs "smoke: …" through the core (os_log subsystem app.tachinovel), ending with
@@ -110,20 +110,10 @@ async function nativeTour(): Promise<void> {
     await back();
   }
 
-  // 2. The Listen player: More › Listen (Kokoro builds), or Listen in the Car › Open the player when PC
-  //    audio is on; with PC audio, its Link folder button opens the folder picker too (cancelled).
-  const listenRow = await waitFor('[data-testid="more-listen"]', 3000);
-  if (listenRow) {
-    await tap('[data-testid="more-listen"]', 'open the Listen player');
-  } else if (await tap('[data-testid="more-narration"]', 'open Listen in the Car')) {
-    await tap('[data-testid="open-car-player"]', 'Open the player');
-  }
-  if (await waitFor('.tn-car.is-open', 5000)) {
-    const pick = await waitFor('.tn-car [data-act="pick"]', 2000);
-    if (pick && (await tap('.tn-car [data-act="pick"]', 'Link audio folder (document picker)'))) await sleep(NATIVE_SHEET_MS);
+  // 2. The Listen player: More › Listen.
+  if ((await tap('[data-testid="more-listen"]', 'open the Listen player', 3000)) && (await waitFor('.tn-car.is-open', 5000))) {
     await tap('.tn-car [data-act="close"]', 'close the car player');
   }
-  if (!listenRow) await back();
 
   // 3. A novel from the built-in source (network): share sheet, then the reader.
   await tap('[data-testid="tab-browse"]', 'tab browse');

@@ -87,7 +87,7 @@ Apple voices as the fallback.
 | 6 | Lock the phone | Lock-screen player with title and cover; play/pause and next chapter work; audio keeps going |
 | 7 | Let a chapter end (or skip to its last paragraphs) | It continues into the next chapter by itself |
 | 8 | Pause, swipe the app away, reopen the novel | The reader opens where listening stopped |
-| 9 | More › **Listen in the Car** › **Open the player** › Continue reading aloud › the novel | Listening resumes at that paragraph; with the Apple voice the ↺15/15↻ buttons step a paragraph back/forward; the speed buttons work |
+| 9 | More › **Listen** › Continue listening › the novel | Listening resumes at that paragraph; with the Apple voice the ↺15/15↻ buttons step a paragraph back/forward; the speed buttons work |
 | 10 | Bluetooth or the car | Steering-wheel next/previous and play/pause work; after a call or Siri it resumes only if it was playing |
 
 **In the car** (with the car-audio PR): docs/car.md has a 10-minute car checklist. In short, CarPlay's
@@ -100,22 +100,14 @@ full log is also in Files › On My iPhone › TachiNovel › logs. A screenshot
 
 **Let Claude read the phone's diagnostics (once, recommended):** More › About › Diagnostics ›
 **Diagnostics Folder** › Choose Folder… → iCloud Drive › TachiNovel-Builds › make a folder
-`diagnostics` › Open. From then on the app copies its log, crash/hang reports, the Voice Lab numbers and
+`diagnostics` › Open. From then on the app copies its log, crash/hang reports, the voice's numbers and
 a short list of the last screens there every few minutes and when you leave the app; iCloud syncs it to the PC. When
 something goes wrong, **shake the phone** (or the same row › Report a Problem…), type one line and Save:
 a report with a screenshot lands in `diagnostics/reports/`. Nothing about your library or reading
 leaves the app except novel titles in the screen list.
 
-### Optional (advanced): PC-narrated audio files
-
-Parked for now (the PC narrator is sidelined). The player can still play chapters the PC narrator wrote to
-iCloud Drive › **TachiNovel Audio** (`<Novel>/manifest.json` + `NNNN - title.m4a` + `.json` timestamps):
-More › Listen in the Car › Open the player › **Link “TachiNovel Audio” folder** → pick that folder (with
-the Kokoro PR: first turn on More › Voices › Advanced › **Use PC audio when available**; the folder link
-appears there). Those
-chapters then play the file (subtitle "Narrated audio") with the spoken sentence highlighted in the
-reader; chapters without a file, or files that can't be read, use the Apple voice. Skip this tonight
-unless you already have narrated files.
+(The PC-narrated audio player, "TachiNovel Audio" folder, was removed on 2026-10-16: chapters downloaded with
+Nephis's voice play from files instead, docs/car.md.)
 
 ## 4. Known limits of this build
 

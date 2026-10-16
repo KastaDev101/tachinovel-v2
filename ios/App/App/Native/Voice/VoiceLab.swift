@@ -1,10 +1,10 @@
 //
-//  VoiceLab.swift — numbers for the hidden Voice Lab (Settings › About › tap the version 5 times) and the
-//  simulator voice self-test.
+//  VoiceLab.swift — the voice's numbers for More › Developer (Voice Report, Now Playing) and the simulator voice
+//  self-test.
 //
-//  Voice Lab: time to first audio, per-sentence real-time factor, model load (cold/warm), compute units
-//  (configured per stage + what the device offers), memory, thermal state, fallbacks and crashes, so a
-//  listening session on the phone can be reported with one "Copy report".
+//  Snapshot: Kokoro's time to first audio, per-sentence real-time factor, model load (cold/warm), compute units
+//  (configured per stage + what the device offers), memory, thermal state, fallbacks and crashes, and what the car
+//  shows, so a listening session on the phone can be reported with one copy.
 //
 //  NarrationSelfTest: CI launches the Debug app in the simulator with `-tachiVoiceSelfTest 1`;
 //  src/ui/native/voice-selftest.ts plays a synthetic chapter, injects a slow Kokoro to force the Apple
@@ -41,16 +41,16 @@ enum VoiceLab {
             ] as [String: Any],
             "stats": k.stats.dictionary(),
             "device": device(),
-            "crashes": crashes(k.sentinel.current),
-            "placement": k.lastPlacement.map { ["stage": $0.stage, "configured": $0.configured, "ane": $0.neuralEngine, "cpu": $0.cpu, "gpu": $0.gpu,
-                                                "error": $0.error ?? NSNull(), "summary": $0.summary] as [String: Any] },
-            "routes": KokoroRoute.allCases.map { ["id": $0.rawValue, "title": $0.title, "gpu": $0.usesGPU] as [String: Any] },
+            "crashes": crashes(k.sentinel),
             "car": [
                 "nowPlaying": NowPlayingCenter.shared.snapshot(),
                 "commands": RemoteCommandHub.shared.snapshot(),
                 "carPlayTemplates": CarPlayFeature.templatesEnabled,
-                "preparedBytes": DriveCache.shared.index.totalBytes,
-                "preparedChapters": DriveCache.shared.index.chapters.count,
+                "preparedBytes": NarrationAudioStore.shared.index.totalBytes,
+                "preparedChapters": NarrationAudioStore.shared.index.entries.count,
+                // Audio downloads: the queue's requests (state, reason, progress) and her measured render speed.
+                "audioJobs": DrivePrep.shared.audioStatus(novelKey: nil)["jobs"] ?? [Any](),
+                "audioSpeedX": DrivePrep.shared.speedX ?? 0,
                 "chapterGapsMs": NarrationController.shared.chapterGapsMs,
             ] as [String: Any],
         ]
@@ -134,13 +134,17 @@ enum VoiceLab {
         return kr == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
     }
 
-    private static func crashes(_ r: CrashRecord) -> [String: Any] {
-        [
+    private static func crashes(_ s: CrashSentinel) -> [String: Any] {
+        let r = s.current
+        return [
             "total": r.total,
             "consecutive": r.consecutive,
             "disabled": r.disabled,
             "lastAt": r.lastCrashAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
             "lastContext": r.lastContext ?? NSNull(),
+            // Ends with a Kokoro call in flight that weren't its crash (updates, swipe-aways, memory), and the last one.
+            "notCounted": r.notCounted,
+            "lastEnd": s.lastEndLine() ?? NSNull(),
         ]
     }
 }

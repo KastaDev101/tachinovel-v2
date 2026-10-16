@@ -1,19 +1,19 @@
 //
-//  ExpressiveSpeechEngine.swift — an EXPERIMENTAL expressive engine behind the narration engine protocol
-//  (SpeechEngine), with Kokoro as the per-sentence safety net. Used only by the Voice Lab for now
-//  (ExpressiveLabPlayer below); NarrationController still uses HybridSpeechEngine.
+//  ExpressiveSpeechEngine.swift — the expressive engine (Pocket TTS) behind the narration engine protocol
+//  (SpeechEngine), with Kokoro as the per-sentence safety net. Used only by More › Developer › Voice Models' samples
+//  (ExpressiveLabPlayer below); NarrationController uses HybridSpeechEngine.
 //
 //  The same render-ahead state machine as the main engine (HDVoiceCore.HybridScheduler), with the roles
 //  shifted: the scheduler's primary voice is the expressive engine (or Kokoro itself, for the "as today"
 //  side of an A/B), and its fallback is Kokoro instead of the Apple voice:
 //    - the expressive model is still loading (first load compiles it), failed, or was released,
 //    - the next sentence isn't rendered when the current one ends (the device can't keep up),
-//    - the app left the foreground (Chatterbox Nano and NeuTTS-2E run on the GPU, which iOS forbids in the
-//      background) or the phone is thermally throttled,
+//    - the phone is thermally throttled,
 //    - one sentence failed to synthesize.
 //  Switches happen only at sentence boundaries; the expressive engine takes over again once it is two
-//  sentences ahead. A crash inside an experimental engine is contained by ExpressiveService's own sentinel.
-//  Main thread only.
+//  sentences ahead. A crash inside the expressive engine is contained by ExpressiveService's own sentinel.
+//  One rate per run (SessionRate): 24 kHz as always, or her studio's 44.1 kHz when Nephis reads with her studio pack
+//  (Kokoro's 24 kHz fallback is resampled to it). Main thread only.
 //
 
 import AVFoundation
@@ -50,7 +50,11 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
 
     private var audioEngine = AVAudioEngine()
     private var player = AVAudioPlayerNode()
-    private let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+    /// The run's format (`useRate`): the graph and every buffer at its rate.
+    private var format = AVAudioFormat(standardFormatWithSampleRate: Double(SessionRate.standard), channels: 1)!
+    private var sessionRate: Int { Int(format.sampleRate) }
+    /// Her studio's run: audio at any other rate is resampled to it (a 24 kHz run takes 24 kHz only, as before).
+    private var studioRead: Bool { sessionRate != SessionRate.standard }
     private var graphReady = false
 
     private var segments: [SpeechSegment] = []
@@ -75,8 +79,6 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
         super.init()
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(environmentChanged), name: ProcessInfo.thermalStateDidChangeNotification, object: nil)
-        nc.addObserver(self, selector: #selector(environmentChanged), name: UIApplication.willResignActiveNotification, object: nil)
-        nc.addObserver(self, selector: #selector(environmentChanged), name: UIApplication.didBecomeActiveNotification, object: nil)
         nc.addObserver(self, selector: #selector(primaryStatusChanged), name: KokoroService.statusChanged, object: nil)
     }
 
@@ -91,6 +93,8 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     func enqueue(_ segs: [SpeechSegment]) {
         stop()
         gen += 1
+        // Her studio's 44.1 kHz when Nephis reads with it (else 24 kHz), picked before anything renders.
+        useRate(SessionRate.forRead(primary))
         segments = segs
         paused = false
         loudness = LoudnessMatcher()
@@ -162,7 +166,7 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
             }
         }
         let svc = ExpressiveService.shared
-        if svc.crashDisabled || !ExpressiveService.supported(id) || !svc.isInstalled(id) { return .unavailable }
+        if svc.crashDisabled || !svc.isInstalled(id) { return .unavailable }
         switch svc.loadState(id) {
         case .ready: return svc.loadedID == id ? .ready : .loading
         case .loading, .unloaded: return .loading
@@ -171,7 +175,6 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     }
 
     private func throttleReason() -> String? {
-        if primary?.usesGPU == true, UIApplication.shared.applicationState != .active { return "background (GPU not allowed)" }
         if ThermalPolicy.throttled(rawState: ProcessInfo.processInfo.thermalState.rawValue) { return "thermal" }
         return nil
     }
@@ -269,7 +272,14 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     private func rendered(_ i: Int, gen g: Int, result: Result<Rendered, Error>) {
         guard g == gen, scheduler != nil else { return }
         switch result {
-        case .success(let audio) where audio.sampleRate == 24_000 && !audio.samples.isEmpty:
+        case .success(let made) where !made.samples.isEmpty && (made.sampleRate == sessionRate || (studioRead && made.sampleRate > 0)):
+            // Her studio's audio is at the run's rate; anything else in her studio's run is resampled to it first. A
+            // 24 kHz run takes 24 kHz audio only, as before.
+            guard let audio = atSessionRate(made) else {
+                log.error("expressive: sentence \(i) audio couldn't be converted to \(self.sessionRate) Hz")
+                scheduler?.renderDone(i, ok: false)
+                break
+            }
             scheduler?.renderDone(i, ok: true)
             if scheduler?.isReady(i) == true {
                 let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: segments[i].pauseAfter, loudness: &loudness)
@@ -325,9 +335,11 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
             self.renderKokoro(i) { result in
                 guard g == self.gen, self.fallbackSegment == i else { return }
                 switch result {
-                case .success(let audio):
+                case .success(let made):
+                    // At the run's rate: Kokoro's 24 kHz resampled in her studio's run (as it is in a 24 kHz run).
+                    let audio = self.atSessionRate(made) ?? made
                     let frames = PCM.prepareSentence(audio.samples, sampleRate: audio.sampleRate, pause: self.segments[i].pauseAfter, loudness: &self.loudness)
-                    guard audio.sampleRate == 24_000, let buf = self.makeBuffer(frames), self.startOutput() else {
+                    guard audio.sampleRate == self.sessionRate, let buf = self.makeBuffer(frames), self.startOutput() else {
                         return self.skipFallback(i, why: "Kokoro audio unusable")
                     }
                     self.records[i]?.synthMs = Date().timeIntervalSince(start) * 1000
@@ -355,6 +367,29 @@ final class ExpressiveSpeechEngine: NSObject, SpeechEngine {
     }
 
     // MARK: - Playback
+
+    /// `audio` at the run's rate: as it is when it already is (always, in a 24 kHz run), else resampled
+    /// (SessionRate.resample; a lab run, so on the main thread). nil if it couldn't be converted.
+    private func atSessionRate(_ audio: Rendered) -> Rendered? {
+        guard audio.sampleRate != sessionRate else { return audio }
+        guard let samples = SessionRate.resample(audio.samples, from: audio.sampleRate, to: sessionRate) else { return nil }
+        return Rendered(samples: samples, sampleRate: sessionRate, synthMs: audio.synthMs)
+    }
+
+    /// The graph at `rate` (enqueue, right after stop(): nothing is queued). A different rate rebuilds it.
+    private func useRate(_ rate: Int) {
+        guard rate != sessionRate, let f = AVAudioFormat(standardFormatWithSampleRate: Double(rate), channels: 1) else { return }
+        if graphReady {
+            NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: audioEngine)
+            player.stop()
+            audioEngine.stop()
+        }
+        audioEngine = AVAudioEngine()
+        player = AVAudioPlayerNode()
+        graphReady = false
+        epoch += 1
+        format = f
+    }
 
     private func makeBuffer(_ frames: [Float]) -> AVAudioPCMBuffer? {
         guard !frames.isEmpty, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames.count)),
@@ -513,13 +548,6 @@ final class ExpressiveLabPlayer: SpeechEngineDelegate {
         ]
         if let f = engine.firstAudio {
             out["firstAudio"] = ["ms": ExpressiveService.r1(f.ms), "source": f.source, "includedLoad": f.includedLoad] as [String: Any]
-        }
-        if engine.primary == .chatterboxNano {
-            // Which voice Chatterbox Nano speaks with (imported or built-in), and why not the chosen one if it fell back.
-            let svc = ExpressiveService.shared
-            let loaded = svc.loadedID == .chatterboxNano && svc.loadState(.chatterboxNano) == .ready
-            let using = loaded ? (svc.loadedVoiceUsed ?? ExpressiveService.builtInVoice) : (svc.sampleVoice ?? svc.selectedVoice ?? svc.defaultVoice)
-            out["voice"] = ["id": using, "name": svc.voiceName(using), "loaded": loaded, "note": svc.voiceNote ?? NSNull()] as [String: Any]
         }
         return out
     }

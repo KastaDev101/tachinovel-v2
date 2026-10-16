@@ -14,9 +14,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // A launch straight into the background is a BGAppRefreshTask (or CarPlay/audio relaunch); the
         // first start() wins, so pass the reason here (logged and reported by v2.info).
         CoreHost.shared.start(launchReason: application.applicationState == .background ? "background-refresh" : "ui")
+        // Voice defaults made automatic (once; DeveloperOptions.swift).
+        DeveloperOptions.migrateOnce()
         DeviceSnapshot.shared.start()
         // Crash/hang reports from MetricKit, kept on the device (Settings › Diagnostics).
         MetricDiagnostics.shared.start()
+        // How this run goes (foreground, playing, clean ends, a heartbeat while a voice works), so the next launch can
+        // tell a crash of a voice's model from a swipe-away, an update or iOS closing the app. Before the voices' checks.
+        VoiceRun.shared.start(foreground: application.applicationState != .background)
         // Bundled Kokoro voice: crash check from the last run, memory-pressure handling, one-time warm-up.
         KokoroService.shared.start()
         // "Prepare for the drive": the background task must be registered before launch finishes; pending
@@ -33,7 +38,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // still fires when the app as a whole goes to the background.
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground),
                                                name: UIApplication.didEnterBackgroundNotification, object: nil)
+        // A Nephis pack copied into Documents while the app sat in the background installs on return, not only at launch.
+        NotificationCenter.default.addObserver(self, selector: #selector(didBecomeActive),
+                                               name: UIApplication.didBecomeActiveNotification, object: nil)
         return true
+    }
+
+    @objc private func didBecomeActive() {
+        NephisModelPack.installFromDocuments()
     }
 
     @objc private func didEnterBackground() {
@@ -47,6 +59,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
         }
         BackgroundRefresh.schedule()
+        // The app icon's "Voice Speed Test" while Developer options are on.
+        DeveloperOptions.applyShortcuts()
     }
 
     private func endBackgroundTask() {

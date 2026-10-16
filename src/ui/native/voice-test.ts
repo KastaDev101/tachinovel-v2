@@ -1,23 +1,44 @@
 /**
- * Settings › Voices › Voice test (Kasta, 2026-10-08: "an easily understandable testing section … so I can send you
- * back the report"). One button reads a fixed passage aloud with the voice chosen for Listen, through the real Listen
- * path (speech script → Narration.play → HybridSpeechEngine → the voice, its finishing chain, playback), then shows
- * the result in plain words and a "Copy report" with everything a developer needs:
- *   - start: tap → her first word;
- *   - breaks: times the read had to wait for the voice, and for how long (the goal is none: an audiobook never stops);
- *   - other voice: sentences another voice read (the goal is none);
- *   - speed: × real time of the voice's work (the goal is 8×), stage by stage for Nephis;
- *   - phone heat at the start and the end, crashes, memory;
- *   - the listener's own notes (noises, wrong words), typed into the report;
- *   - a recording of what played (after the volume stage and limiter), shared to the PC to compare with its renders.
+ * More › Developer › Voice Test: the one page for testing Nephis (Kasta, 2026-10-12: "everything in one page …
+ * run the test, then copy report. Something super simple"). More › Developer › 15-Minute Test opens it in its long mode.
+ *   - Top (personal flavor): which Nephis pack she reads with (More › Developer › Voice Packs), whether it has her
+ *     studio and whether the studio is on (its switch is More › Developer › Studio since cleanup 1, 2026-10-15).
+ *   - Her voice model (every flavor, when there is something to say): Nephis switched off after real crashes of her
+ *     model and why, with "Turn Nephis back on" (ExpressiveVoice.resetCrashes); the last time the app ended while her
+ *     model worked and whether it counted; how the app last closed (native's run journal, HDVoiceCore RunJournal).
+ *   - Run the test: her studio's speed test (ExpressiveVoice.studioTest, only when her studio is switched on; it runs
+ *     alone, refuses with too little memory free, keeps to a 60 s budget and stops once it can't reach real time, frees
+ *     its own studio and warms Nephis again as Listen has her; Stop cancels it: studioTestStop), then a fixed
+ *     passage read aloud through the real Listen path (speech script → Narration.play → HybridSpeechEngine → the voice,
+ *     its finishing chain, playback). runParts keeps that order (crash plan 2026-10-12, a1/a2).
+ *   - The result in plain words, then one "Copy report" with everything a developer needs (combinedReport):
+ *     - studio: × real time against live reading's 1.5×, memory used and free at each step, heat before → after; which
+ *       chip runs each part on its own button ("Where her studio runs": studioTest({placement: true}));
+ *     - start: tap → her first word;
+ *     - breaks: times the read had to wait for the voice, and for how long (the goal is none: an audiobook never stops);
+ *     - other voice: sentences another voice read (the goal is none);
+ *     - speed: × real time of the voice's work (the goal is 8×), stage by stage for Nephis;
+ *     - her studio, call by call (flow.studio, flow.callLog): which calls it rendered, why it stepped aside for the
+ *       others, at what rate and in which mood, so the recording can be lined up with it;
+ *     - endings (flow.endings): her pieces still audible when the voice stopped, a cut-off (the goal is under 2%), and
+ *       the endings her studio's reads let fade out instead;
+ *     - phone heat at the start and the end, crashes, memory; the app, the device and the pack;
+ *     - the listener's own notes (noises, wrong words), typed into the report;
+ *     - a recording of what played (after the volume stage and limiter, at the read's rate; 32-bit float when her
+ *       studio reads, else 16-bit as before), shared to the PC to compare with its renders.
  * The passage is long paragraphs (Pocket's ~50-token seams), dialogue, a pause after "…", a system line and numbers.
  */
+import { callCore } from '../capacitor-client.ts';
 import { ExpressiveVoice } from './expressive-lab.ts';
 import { Narration, type NarrationState } from './narration.ts';
 import { domSpeechScript } from './speech-dom.ts';
-import { esc, panel } from './voices-ui.ts';
+import { openVoiceSpeedTest } from './voice-speed.ts';
+import { esc, panel, toast, verdict } from './panel.ts';
 
 type Obj = Record<string, unknown>;
+type Line = { ok: boolean; text: string };
+/** ExpressiveVoice.recordStop's answer (sampleRate and float32 from builds that report them). */
+type Recording = { saved: boolean; bytes: number; sampleRate?: number; float32?: boolean };
 
 export const TEST_PASSAGE = [
   'Chapter 7 - The Lantern Road',
@@ -32,7 +53,7 @@ export const TEST_PASSAGE = [
 ];
 
 /** The result in plain words: each line is good (✓) or worth a look (⚠). */
-export function summarize(r: Obj): { ok: boolean; text: string }[] {
+export function summarize(r: Obj): Line[] {
   const listen = (r.listen as Obj | undefined) ?? {};
   const flow = (r.flow as Obj | undefined) ?? {};
   const breaks = Number(listen.breaks ?? 0);
@@ -43,13 +64,18 @@ export function summarize(r: Obj): { ok: boolean; text: string }[] {
   const call = Number(per.call ?? 0);
   const speed = call > 0 ? 1 / call : Number(flow.renderX ?? 0);
   const crashes = Number(r.crashesDuringTest ?? 0);
-  const lines: { ok: boolean; text: string }[] = [
+  const lines: Line[] = [
     { ok: breaks === 0, text: breaks === 0 ? 'No breaks: it never stopped to wait for the voice.' : `${breaks} break${breaks === 1 ? '' : 's'} (${breakSeconds.toFixed(1)} s of waiting).` },
     { ok: other === 0, text: other === 0 ? 'One voice from start to end.' : `Another voice read ${other} sentence${other === 1 ? '' : 's'}.` },
   ];
   if (speed > 0) lines.push({ ok: speed >= 8, text: `Speed: ${speed.toFixed(1)}× real time (goal 8×).` });
+  lines.push(...studioCallLines(flow));
+  lines.push(...pacingLines(flow));
   if (Number.isFinite(start)) lines.push({ ok: start <= 2000, text: `Started ${(start / 1000).toFixed(1)} s after the tap.` });
   lines.push({ ok: crashes === 0, text: crashes === 0 ? 'No crashes.' : `${crashes} crash${crashes === 1 ? '' : 'es'} during the test.` });
+  // Her model not loaded for lack of free memory (native's flow.memory), in its own plain words.
+  const memory = (flow.memory as Obj | undefined) ?? {};
+  if (Number(memory.refusals ?? 0) > 0 && typeof memory.lastRefusal === 'string') lines.push({ ok: false, text: memory.lastRefusal });
   const word = (v: unknown): string => (typeof v === 'string' ? v : '?');
   const heat = `${word(r.thermalStart)} → ${word(r.thermalEnd)}`;
   lines.push({ ok: r.thermalEnd === 'nominal' || r.thermalEnd === 'fair', text: `Phone heat: ${heat}.` });
@@ -57,34 +83,371 @@ export function summarize(r: Obj): { ok: boolean; text: string }[] {
   return lines;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
+/**
+ * Her render pacing in plain words (native's flow.pacing, heat plan 2026-10-13; nothing in builds that don't report
+ * it): seconds of her audio made against seconds played, the share of the time she was working (duty cycle) and the
+ * cushion she renders to. Worth a look when she made more than the cushion (plus a paragraph) beyond what played.
+ */
+export function pacingLines(flow: Obj): Line[] {
+  const p = (flow.pacing as Obj | undefined) ?? {};
+  const made = Number(p.generatedSeconds ?? NaN);
+  const played = Number(p.playedSeconds ?? NaN);
+  const cushion = Number(p.cushionSeconds ?? NaN);
+  if (!Number.isFinite(made) || !Number.isFinite(played) || !Number.isFinite(cushion) || made <= 0) return [];
+  const duty = Math.round(Number(p.dutyCycle ?? 0) * 100);
+  const holds = Number(p.holds ?? 0);
+  const rests = `${holds} rest${holds === 1 ? '' : 's'} at the cushion`;
+  return [{
+    ok: made - played <= cushion + 15,
+    text: `Pacing: ${made.toFixed(0)} s of her audio made for ${played.toFixed(0)} s played; working ${duty}% of the time (cushion ${cushion.toFixed(0)} s, ${rests}).`,
+  }];
+}
 
-/** Settings › Voices › Voice test. */
-export function openVoiceTest(): void {
-  const p = panel('Voice test', 'voice-test');
+/** Why her studio stepped aside for a call (NephisStudio's bypass reasons), in plain words. */
+const STUDIO_REASON: Record<string, string> = {
+  hurry: 'short of audio', heat: 'phone too hot', failed: 'failed', empty: 'empty', memory: 'low memory', loading: 'still loading',
+  slow: 'too slow', 'studio too slow': 'switched off as too slow',
+};
+
+/**
+ * Her studio and her endings in plain words (native's flow.studio and flow.endings; nothing in builds that don't
+ * report them): how many of her calls her studio rendered and why it stepped aside for the others; how many of her
+ * pieces were cut off while still audible (the goal is under 2%) and how many endings were let fade out instead.
+ */
+export function studioCallLines(flow: Obj): Line[] {
+  const lines: Line[] = [];
+  const studio = (flow.studio as Obj | undefined) ?? {};
+  const calls = Number(studio.calls ?? 0);
+  if (calls > 0) {
+    const used = Number(studio.used ?? 0);
+    const why = Object.entries((studio.reasons as Obj | undefined) ?? {})
+      .filter(([, n]) => Number(n) > 0)
+      .map(([reason, n]) => `${Number(n)} ${STUDIO_REASON[reason] ?? reason}`)
+      .join(', ');
+    lines.push(
+      used >= calls
+        ? { ok: true, text: `Her studio rendered all ${calls} of her calls.` }
+        : { ok: false, text: `Her studio rendered ${used} of ${calls} calls; ${calls - used} were her plain sound${why ? ` (${why})` : ''}.` },
+    );
+  }
+  // Its speed on her calls (native gives up on a call it can't finish at `minimumX`, and switches it off for the read
+  // after a few such calls in a row), and the compute units its models were loaded with.
+  const last = Number(studio.lastX ?? NaN);
+  if (Number.isFinite(last)) {
+    const slowest = Number(studio.slowestX ?? last);
+    const minimum = Number(studio.minimumX ?? 1);
+    const units = typeof studio.units === 'string' ? `, on ${studio.units}` : '';
+    lines.push({ ok: slowest >= minimum, text: `Studio speed: ${last.toFixed(1)}× real time last, ${slowest.toFixed(1)}× slowest (needs ${minimum.toFixed(1)}×${units}).` });
+  }
+  if (typeof studio.off === 'string') lines.push({ ok: false, text: `Her studio was switched off for the rest of the read (${studio.off}).` });
+  const endings = (flow.endings as Obj | undefined) ?? {};
+  const pieces = Number(endings.pieces ?? 0);
+  if (pieces > 0) {
+    const cut = Number(endings.endedAudible ?? 0);
+    const pct = (cut / pieces) * 100;
+    lines.push({
+      ok: pct < 2,
+      text:
+        cut === 0
+          ? `Endings: none of ${pieces} was cut off.`
+          : `Endings: ${cut} of ${pieces} ${cut === 1 ? 'was' : 'were'} cut off while still audible (${pct.toFixed(1)}%; goal under 2%).`,
+    });
+    const faded = Number(endings.tailsExtended ?? 0);
+    if (faded > 0) lines.push({ ok: true, text: `${faded} ending${faded === 1 ? ' was' : 's were'} let fade out instead of being cut.` });
+  }
+  return lines;
+}
+
+/**
+ * What native says about the installed Nephis pack (ExpressiveVoice.status().nephisPack): pack.json's name and date,
+ * whether it has her studio, whether the studio is on. Undefined in builds that don't report it; null: no pack.
+ */
+export interface PackInfo {
+  name?: unknown;
+  made?: unknown;
+  studio?: unknown;
+  studioOn?: unknown;
+}
+
+/** Her studio as far as this page knows (null: unknown). */
+export interface StudioKnown {
+  has: boolean | null;
+  on: boolean | null;
+}
+
+/** Native's word wins; else what the last test or switch on this phone found. */
+export function studioKnown(pack: unknown, remembered: StudioKnown): StudioKnown {
+  if (pack === null) return { has: false, on: null };
+  const p = (pack && typeof pack === 'object' ? pack : {}) as PackInfo;
+  return { has: typeof p.studio === 'boolean' ? p.studio : remembered.has, on: typeof p.studioOn === 'boolean' ? p.studioOn : remembered.on };
+}
+
+/**
+ * The read goes through her studio, as native decides it (SessionRate.forRead): Nephis reads with Pocket TTS (Listen's
+ * delivery) and her pack's studio is known to be there and on. Unknown counts as no: only her studio's reads are
+ * recorded as 32-bit float; every other read (v4.2 Nephis, Kokoro, Apple voices) stays the 16-bit WAV it always was.
+ */
+export function studioReads(k: StudioKnown, delivery: unknown): boolean {
+  const d = (delivery && typeof delivery === 'object' ? delivery : {}) as { listenEngine?: unknown; pocketVoice?: unknown };
+  return k.has === true && k.on === true && d.listenEngine === 'pocket-tts' && d.pocketVoice === 'nephis';
+}
+
+/** The status block at the top, one plain line each. */
+export function statusLines(pack: unknown, k: StudioKnown): string[] {
+  const p = pack && typeof pack === 'object' ? (pack as PackInfo) : null;
+  const made = typeof p?.made === 'string' && p.made ? ` (made ${p.made})` : '';
+  const lines = [
+    pack === undefined
+      ? 'Nephis pack: this app version doesn’t say which.'
+      : p
+        ? `Nephis pack in use: ${typeof p.name === 'string' && p.name ? p.name : 'unnamed'}${made}.`
+        : 'Nephis pack: none installed (she reads with the voice the app came with).',
+    k.has === null ? 'Her studio: the test checks whether this pack has one.' : k.has ? 'Her studio: in this pack.' : 'Her studio: not in this pack.',
+  ];
+  if (k.has) lines.push(k.on === null ? 'Studio: on or off shows after the test.' : k.on ? 'Studio: on (she reads at 44.1 kHz).' : 'Studio: off.');
+  return lines;
+}
+
+/** How the app last closed, worth a look (native's RunEndKind): an app crash, iOS stopping it while in use, memory. */
+const TROUBLE_ENDS = new Set(['appError', 'fault', 'stopped', 'unexpected', 'memory']);
+
+/**
+ * Her safety switch (ExpressiveVoice.status().crashes) in plain words: whether Nephis is switched off and why, the last
+ * time the app ended while her model worked (counted as her crash, or why not: an update, a swipe-away, iOS closing the
+ * app for memory, an app bug), and how the app's last run ended. Older builds say nothing.
+ */
+export function safetyLines(crashes: unknown): { off: string | null; lines: Line[] } {
+  const c = (crashes && typeof crashes === 'object' ? crashes : {}) as Obj;
+  const off = c.disabled === true ? (typeof c.offLine === 'string' && c.offLine ? c.offLine : 'Nephis was switched off after crashing twice in a row.') : null;
+  const lines: Line[] = [];
+  const last = (c.lastEnd && typeof c.lastEnd === 'object' ? c.lastEnd : {}) as Obj;
+  if (typeof last.line === 'string' && last.line) lines.push({ ok: last.counted !== true, text: `Her last cut-off: ${last.line}` });
+  const app = (c.appLastEnd && typeof c.appLastEnd === 'object' ? c.appLastEnd : {}) as Obj;
+  if (typeof app.line === 'string' && app.line) {
+    lines.push({ ok: typeof app.kind !== 'string' || !TROUBLE_ENDS.has(app.kind), text: `Last time the app closed: ${app.line}` });
+  }
+  return { off, lines };
+}
+
+/** Live reading needs the studio at least this fast (× real time). */
+export const LIVE_X = 1.5;
+const HEAT = ['nominal', 'fair', 'serious', 'critical'];
+/** Native's thermal state: a number (ProcessInfo.ThermalState) or already a word. */
+const heat = (v: unknown): string => (typeof v === 'number' ? (HEAT[v] ?? '?') : typeof v === 'string' ? v : '?');
+const CHIP: Record<string, string> = { ane: 'Neural Engine', gpu: 'GPU', cpu: 'CPU' };
+
+/** Which chip runs each part, from Core ML's op counts like {"vocoder.ane": 120, "vocoder.cpu": 4}. */
+export function chipSummary(placement: unknown): string {
+  const parts = new Map<string, [string, number][]>();
+  for (const [key, n] of Object.entries(placement && typeof placement === 'object' ? placement : {})) {
+    const [part = key, chip = 'other'] = key.split('.');
+    if (typeof n === 'number' && n > 0) parts.set(part, [...(parts.get(part) ?? []), [chip, n]]);
+  }
+  return [...parts]
+    .map(([part, chips]) => {
+      const total = chips.reduce((a, [, n]) => a + n, 0);
+      const shares = chips.sort((a, b) => b[1] - a[1]).map(([c, n]) => `${Math.round((n / total) * 100)}% ${CHIP[c] ?? c}`);
+      return `${part} ${shares.join(', ')}`;
+    })
+    .join('; ');
+}
+
+/** The studio speed test (ExpressiveVoice.studioTest) in plain words. */
+export function studioLines(r: Obj): Line[] {
+  // The studio switch is off: Listen doesn't use her studio, so there is nothing to time (2026-10-13).
+  if (r.skipped === 'off') return [{ ok: true, text: 'Studio off: speed test skipped.' }];
+  if (r.stopped === true) return [{ ok: false, text: 'Studio speed test stopped.' }];
+  // Native's budget (StudioTestBudget): too slow for real time, out of time, short of memory.
+  if (r.gaveUp === true) {
+    const why = typeof r.error === 'string' ? r.error : 'timed out';
+    return [{ ok: false, text: `Studio speed test stopped early: ${why}. With the studio on, Listen uses her plain sound when it can’t keep up.` }];
+  }
+  if (r.ran !== true) {
+    const why = typeof r.error === 'string' ? r.error : 'not available';
+    if (/has no studio/.test(why)) return [{ ok: true, text: 'Studio: this pack has none, nothing to time.' }];
+    // Refused before it loaded anything (too little memory free): not a failure of her studio.
+    return [{ ok: false, text: `Studio test ${r.refused === true ? 'not run' : 'failed'}: ${why}` }];
+  }
+  const x = Number(r.timesRealTime);
+  const fast = x >= LIVE_X;
+  const lines: Line[] = [
+    { ok: fast, text: `Studio: ${Number.isFinite(x) ? x.toFixed(1) : '?'}× real time — ${fast ? 'fast enough for live reading.' : `too slow for live reading (needs ${LIVE_X}×).`}` },
+  ];
+  if (r.bypassed === true) lines.push({ ok: false, text: 'The phone was too hot, so the studio stepped aside.' });
+  const chips = chipSummary(r.placement);
+  if (chips) lines.push({ ok: true, text: `Chips: ${chips}.` });
+  const after = heat(r.thermalAfter);
+  lines.push({ ok: after === 'nominal' || after === 'fair', text: `Studio heat: ${heat(r.thermalBefore)} → ${after}.` });
+  lines.push({ ok: true, text: r.enabled === true ? 'Studio is on for Nephis.' : 'Studio is off: Listen doesn’t use it.' });
+  return lines;
+}
+
+/** The one report to paste: app, device and pack, the studio (state and test) and the listening test, with notes. */
+export function combinedReport(o: { status: Obj; studio: StudioKnown; studioTest: Obj | null; voiceTest: Obj | null; notes: string; at?: string }): Obj {
+  return {
+    kind: 'nephis-test',
+    at: o.at ?? new Date().toISOString(),
+    app: o.status.app ?? null,
+    device: o.status.device ?? null,
+    pack: o.status.nephisPack === undefined ? 'not reported' : o.status.nephisPack,
+    // Her safety switch: crashes counted, ends not counted and the last one in plain words.
+    safety: o.status.crashes ?? null,
+    studio: { has: o.studio.has, on: o.studio.on, test: o.studioTest },
+    voiceTest: o.voiceTest,
+    notes: o.notes.trim() || null,
+  };
+}
+
+/**
+ * What Run does with her studio's speed test (2026-10-13: with the switch off it still loaded pack 7's full studio,
+ * which never finished): 'run' only when her studio is on; 'off' when the pack has one that is switched off (skipped,
+ * and the result says so); 'none' when there is no studio, or it isn't known to be there.
+ */
+export function studioTestPlan(k: StudioKnown, studioFlavor: boolean): 'run' | 'off' | 'none' {
+  if (!studioFlavor || k.has === false) return 'none';
+  if (k.on === true) return 'run';
+  return k.has === true ? 'off' : 'none';
+}
+
+/** No answer from native's studio test this long (its own budget is 60 s, then Nephis warms again): stop waiting. */
+export const STUDIO_WAIT_MS = 120_000;
+
+/**
+ * `work`, unless `stopped` resolves first (Stop) or `ms` pass (a native test that never answers can't hold the Voice
+ * test): then how it ended, and the work is left to finish on its own.
+ */
+export async function settle<T>(work: Promise<T>, o: { stopped: Promise<void>; ms: number }): Promise<{ how: 'done'; value: T } | { how: 'stopped' | 'timeout' }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ how: 'timeout' }>((res) => (timer = setTimeout(() => res({ how: 'timeout' }), o.ms)));
+  try {
+    return await Promise.race([work.then((value) => ({ how: 'done' as const, value })), o.stopped.then(() => ({ how: 'stopped' as const })), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The test's parts in order: her studio's speed test, then the listening test, unless the test was stopped. True when
+ * the listening test ran. Nothing is released between them (crash plan a2): native's studio test frees its own studio
+ * and returns with Nephis warm again, so the listening test starts as Listen does, never on top of the test's studio.
+ */
+export async function runParts(p: { studio: boolean; studioTest(): Promise<void>; listen(): Promise<void>; going(): boolean }): Promise<boolean> {
+  if (p.studio) await p.studioTest();
+  if (!p.going()) return false;
+  await p.listen();
+  return true;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
+const clock = (ms: number): string => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/** Her studio pieces exist in the personal flavor only (the store flavor's bundle compiles them out). */
+const STUDIO = __FLAVOR__ === 'personal';
+const KNOWN_KEY = 'tachinovel.voiceTest.studio';
+
+function rememberedStudio(): StudioKnown {
+  try {
+    const o = JSON.parse(localStorage.getItem(KNOWN_KEY) ?? '{}') as Partial<StudioKnown>;
+    return { has: typeof o.has === 'boolean' ? o.has : null, on: typeof o.on === 'boolean' ? o.on : null };
+  } catch {
+    return { has: null, on: null };
+  }
+}
+
+function rememberStudio(k: StudioKnown): void {
+  try {
+    localStorage.setItem(KNOWN_KEY, JSON.stringify(k));
+  } catch {
+    // Private mode or blocked storage: native is asked again next time.
+  }
+}
+
+/** Clipboard first; else the share sheet (it has Copy), like Diagnostics. */
+export async function copyText(text: string): Promise<string> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return 'Copied';
+  } catch {
+    await callCore('native.share', { text });
+    return 'Copy Report';
+  }
+}
+
+/** More › Developer › Voice Test, or (`long`) its 15-Minute Test. */
+export function openVoiceTest(opts: { long?: boolean } = {}): void {
+  const long = opts.long === true;
+  const p = panel(long ? '15-Minute Test' : 'Voice Test', long ? 'voice-test-long' : 'voice-test');
   let running = false;
+  let listening = false;
+  // "Where her studio runs" checking: no other studio test meanwhile (native refuses a second one too).
+  let checking = false;
   let report: Obj | null = null;
-  let status = '';
+  let studioTest: Obj | null = null;
+  let status: Obj = {};
+  let known = rememberedStudio();
+  let progress = '';
   let notes = '';
   let recorded = false;
+  // Ends the wait for the studio speed test (Stop), while it runs.
+  let stopStudio: (() => void) | null = null;
+
+  const row = (l: Line): string => `<div class="row">${verdict(l.ok)}<span class="main">${esc(l.text)}</span></div>`;
 
   const render = (): void => {
-    const result = report
-      ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${summarize(report)
-          .map((l) => `<div class="row"><span aria-hidden="true">${l.ok ? '✓' : '⚠'}</span><div class="main">${esc(l.text)}</div></div>`)
-          .join('')}</div>
-         <div class="sec">What did you hear?</div>
-         <div class="card" style="padding:4px 14px 14px"><textarea data-f="notes" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div>
-         <button type="button" class="btn" data-act="copy">Copy report</button>
-         ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the recording</button>' : ''}
-         <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
+    const nephis = STUDIO
+      ? `<div class="sec">Nephis</div><div class="card" data-testid="voice-test-pack">${statusLines(status.nephisPack, known)
+          .map((t) => `<div class="row"><span class="main">${esc(t)}</span></div>`)
+          .join('')}</div>`
       : '';
-    p.body.innerHTML = `
-      <p class="note">Reads a 2-minute test passage aloud with the voice you listen with, exactly like Listen does, then says how it went: breaks, voice switches, speed and phone heat.</p>
-      <button type="button" class="btn" data-act="${running ? 'stop' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the test' : report ? 'Run it again' : 'Start the test'}</button>
-      ${running ? '' : '<button type="button" class="btn alt" data-act="long" data-testid="voice-test-long">15-minute test with your own chapter</button>'}
-      ${status ? `<p class="note" data-testid="voice-test-status">${esc(status)}</p>` : ''}
-      ${result}`;
+    const safety = safetyLines(status.crashes);
+    const safetyCard =
+      safety.off || safety.lines.length
+        ? `<div class="sec">Her voice model</div><div class="card" data-testid="voice-test-safety">${
+            safety.off ? row({ ok: false, text: `${safety.off} Her backup voice reads meanwhile.` }) : ''
+          }${safety.lines.map(row).join('')}</div>${
+            safety.off ? `<button type="button" class="btn" data-act="nephis-on" data-testid="voice-test-nephis-on" ${running ? 'disabled' : ''}>Turn Nephis Back On</button>` : ''
+          }`
+        : '';
+    const lines = running ? [] : [...(studioTest ? studioLines(studioTest) : []), ...(report ? summarize(report) : [])];
+    const result = lines.length
+      ? `<div class="sec">Result</div><div class="card" data-testid="voice-test-result">${lines.map(row).join('')}</div>
+         ${STUDIO && studioTest?.ran === true && !studioTest.placement ? '<button type="button" class="link" data-act="placement" data-testid="voice-test-placement">Where Her Studio Runs</button>' : ''}
+         <div class="sec">What Did You Hear?</div>
+         <div class="card"><div class="form"><textarea data-f="notes" aria-label="What did you hear?" placeholder="Noises, wrong words, odd pauses, anything off (optional)">${esc(notes)}</textarea></div></div>
+         <button type="button" class="btn" data-act="copy" data-testid="voice-test-copy">Copy Report</button>
+         ${recorded ? '<button type="button" class="btn alt" data-act="share">Share the Recording</button>' : ''}
+         <p class="note">Paste the report to your developer: it has every number behind these lines.${recorded ? ' The recording is the test exactly as your phone played it: Share › Save to Files › iCloud Drive.' : ''}</p>`
+      : running
+        ? ''
+        : // No finished test (it never played, or the app was closed mid-test): the report still has the voice's state.
+          '<button type="button" class="btn alt" data-act="copy" data-testid="voice-test-copy">Copy Report</button>';
+    const about = long
+      ? 'Records 15 minutes of what plays while you listen to any chapter the usual way, and notes the phone’s heat, the voice’s speed and every break. Keep TachiNovel open.'
+      : `${STUDIO ? 'Times her studio when it’s on, then reads' : 'Reads'} a 2-minute passage aloud exactly like Listen does. Listen for noises, cut words or odd pauses.`;
+    p.body.innerHTML = `${nephis}${safetyCard}
+      <div class="sec">Test</div>
+      <div class="card"><div class="row"><span class="main sub">${about}</span></div></div>
+      <button type="button" class="btn" data-act="${running ? 'stop' : long ? 'long' : 'run'}" data-testid="voice-test-run">${running ? 'Stop the Test' : lines.length ? 'Run It Again' : long ? 'Start Recording' : 'Run the Test'}</button>
+      <p class="note" data-testid="voice-test-progress">${esc(progress)}</p>
+      ${result}
+      ${running || long ? '' : '<button type="button" class="btn alt" data-act="long" data-testid="voice-test-long">15-Minute Test With Your Own Chapter</button>'}
+      ${running || long ? '' : '<button type="button" class="btn alt" data-act="speed" data-testid="voice-test-speed">Voice Speed Test (45 s, Not Played Aloud)</button>'}`;
+  };
+
+  /** Only the progress line changes while a test runs (the buttons keep their place and focus). */
+  const say = (text: string): void => {
+    progress = text;
+    const el = p.body.querySelector('[data-testid="voice-test-progress"]');
+    if (el) el.textContent = text;
+  };
+
+  const loadStatus = async (): Promise<void> => {
+    status = await ExpressiveVoice.status().catch((): Obj => status);
+    known = studioKnown(status.nephisPack, known);
+    if (!running) render();
   };
 
   /**
@@ -95,6 +458,8 @@ export function openVoiceTest(): void {
   const runLong = async (): Promise<void> => {
     running = true;
     report = null;
+    studioTest = null;
+    render();
     const timeline: Obj[] = [];
     const t0 = Date.now();
     const before = await ExpressiveVoice.resetStats().catch((): Obj => ({}));
@@ -116,10 +481,10 @@ export function openVoiceTest(): void {
         breaks: listen.breaks ?? null,
         otherVoice: listen.otherVoiceSentences ?? null,
         audioSeconds: flow.audioSeconds ?? null,
+        // Her pacing (heat plan 2026-10-13): made vs played, duty cycle, the cushion for the heat now.
+        pacing: flow.pacing ?? null,
       });
-      const left = Math.max(0, minutes * 60 - Math.round((Date.now() - t0) / 1000));
-      status = `Recording: ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left. Play any chapter with Listen and keep TachiNovel open.`;
-      render();
+      say(`Recording: ${clock(minutes * 60_000 - (Date.now() - t0))} left. Play any chapter with Listen and keep TachiNovel open.`);
       for (let i = 0; i < 50 && running; i++) await sleep(300);
     }
     const rec = await ExpressiveVoice.recordStop().catch(() => ({ saved: false, bytes: 0 }));
@@ -144,15 +509,42 @@ export function openVoiceTest(): void {
       recordingBytes: rec.bytes,
     };
     running = false;
-    status = 'Done.';
+    progress = 'Done.';
     render();
   };
 
-  const run = async (): Promise<void> => {
-    running = true;
-    report = null;
-    status = 'Starting… listen for anything that sounds off.';
-    render();
+  /** Her studio's speed test; what it finds also says whether the pack has a studio and whether it is on. */
+  const runStudio = async (): Promise<void> => {
+    const t0 = Date.now();
+    // Native's own budget is 60 s; then it frees its studio and warms Nephis again before it answers.
+    const tick = (): void => {
+      const ms = Date.now() - t0;
+      say(ms < 62_000 ? `Running studio speed test… ${clock(ms)} (it gives up by itself after 1:00).` : `Studio speed test ending: getting Nephis ready again… ${clock(ms)}`);
+    };
+    tick();
+    const ticker = setInterval(tick, 1000);
+    const stopped = new Promise<void>((res) => (stopStudio = res));
+    const work = ExpressiveVoice.studioTest().catch((err: unknown): Obj => ({ ran: false, error: err instanceof Error ? err.message : String(err) }));
+    const end = await settle(work, { stopped, ms: STUDIO_WAIT_MS });
+    clearInterval(ticker);
+    stopStudio = null;
+    // Stopped, or no answer: native's test is cancelled (older builds without studioTestStop: it ends on its own).
+    if (end.how !== 'done') void ExpressiveVoice.studioTestStop().catch(() => undefined);
+    const r: Obj =
+      end.how === 'done'
+        ? end.value
+        : end.how === 'stopped'
+          ? { ran: false, stopped: true, error: 'stopped' }
+          : { ran: false, gaveUp: true, error: `no answer after ${STUDIO_WAIT_MS / 1000} s` };
+    studioTest = r;
+    if (r.ran === true) known = { has: true, on: r.enabled === true };
+    else if (typeof r.error === 'string' && /has no studio/.test(r.error)) known = { has: false, on: null };
+    rememberStudio(known);
+  };
+
+  /** The listening test: the passage through the real Listen path. */
+  const runListen = async (): Promise<void> => {
+    say('Listening test: starting…');
     const body = document.createElement('div');
     body.className = 'rd-body tn-voicetest';
     body.setAttribute('aria-hidden', 'true');
@@ -169,11 +561,7 @@ export function openVoiceTest(): void {
         state = { ...state, ...s };
       }),
       await Narration.addListener('progress', () => {
-        if (firstAudioMs === null) {
-          firstAudioMs = Date.now() - t0;
-          status = 'Playing. Listen for noises, cut words or odd pauses.';
-          render();
-        }
+        if (firstAudioMs === null) firstAudioMs = Date.now() - t0;
       }),
     ];
     const before = await ExpressiveVoice.resetStats().catch((): Obj => ({}));
@@ -181,13 +569,18 @@ export function openVoiceTest(): void {
     const thermalStart = ((before.device as Obj | undefined) ?? {}).thermal ?? null;
     const settings = await Narration.voiceSettings().catch(() => null);
     recorded = false;
-    await ExpressiveVoice.recordStart().catch(() => undefined);
+    // Her studio's reads: 32-bit float, the exact samples that played, to measure against the PC's renders (2 min ≈
+    // 21 MB at 44.1 kHz). Every other read: the 16-bit WAV as before (any PC tool opens it; half the size).
+    const float32 = STUDIO && studioReads(known, (settings as { delivery?: unknown } | null)?.delivery);
+    await ExpressiveVoice.recordStart(float32 ? { float32: true } : undefined).catch(() => undefined);
+    let failed = '';
+    listening = true;
     try {
       await Narration.play({
         pluginId: 'voice-lab',
         novelPath: 'voice-test',
         chapterPath: 'voice-test/lantern-road',
-        novelName: 'Voice test',
+        novelName: 'Voice Test',
         chapterName: 'The Lantern Road',
         script: dom.script,
         start: { paragraph: 0 },
@@ -195,16 +588,24 @@ export function openVoiceTest(): void {
         engine: 'speech',
       });
       const deadline = Date.now() + 6 * 60_000;
-      while (running && Date.now() < deadline && state.status !== 'ended' && state.status !== 'error') await sleep(300);
+      while (running && Date.now() < deadline && state.status !== 'ended' && state.status !== 'error') {
+        await sleep(300);
+        if (firstAudioMs !== null) say(`Listening test: ${clock(Date.now() - t0 - firstAudioMs)} / 2:00`);
+      }
     } catch (err) {
-      status = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
+      failed = `Couldn't start: ${err instanceof Error ? err.message : String(err)}`;
     }
+    listening = false;
     const ended = state.status === 'ended';
     if (!ended) await Narration.stop().catch(() => undefined);
     for (const h of handles) void h.remove();
-    const rec = await ExpressiveVoice.recordStop().catch(() => ({ saved: false, bytes: 0 }));
+    const rec: Recording = await ExpressiveVoice.recordStop().catch((): Recording => ({ saved: false, bytes: 0 }));
     recorded = rec.saved;
     const after = await ExpressiveVoice.status().catch((): Obj => ({}));
+    if (Object.keys(after).length) {
+      status = after;
+      known = studioKnown(after.nephisPack, known);
+    }
     const crashesAfter = Number(((after.crashes as Obj | undefined) ?? {}).total ?? 0);
     report = {
       kind: 'voice-test',
@@ -220,34 +621,90 @@ export function openVoiceTest(): void {
       thermalEnd: ((after.device as Obj | undefined) ?? {}).thermal ?? null,
       crashesDuringTest: crashesAfter - crashesBefore,
       lastCrash: crashesAfter > crashesBefore ? after.crashes : null,
-      flow: ((after.flow) ?? null),
-      listen: (((after.flow as Obj | undefined) ?? {}).listen) ?? null,
+      flow: after.flow ?? null,
+      listen: ((after.flow as Obj | undefined) ?? {}).listen ?? null,
       error: state.status === 'error' ? (state.error ?? 'error') : null,
       recordingBytes: rec.bytes,
+      recordingRate: rec.sampleRate ?? null,
+      recordingFloat32: rec.float32 ?? null,
     };
+    progress = failed || (ended ? 'Done. Copy the report below.' : 'Stopped.');
+  };
+
+  /** Run the test: her studio's speed test when the studio is on, then the listening test. */
+  const run = async (): Promise<void> => {
+    running = true;
+    report = null;
+    studioTest = null;
+    progress = '';
+    render();
+    // The switch as native has it now: the speed test runs only with her studio on.
+    status = await ExpressiveVoice.status().catch((): Obj => status);
+    known = studioKnown(status.nephisPack, known);
+    const plan = studioTestPlan(known, STUDIO);
+    if (plan === 'off') studioTest = { ran: false, skipped: 'off' };
+    const listened = await runParts({
+      studio: plan === 'run',
+      studioTest: runStudio,
+      listen: runListen,
+      going: () => running,
+    });
+    if (!listened) progress = 'Stopped.';
     running = false;
-    status = ended ? 'Done.' : 'Stopped.';
     render();
   };
+
+  const stop = (): void => {
+    running = false;
+    stopStudio?.();
+    if (listening) void Narration.stop().catch(() => undefined);
+  };
+  // Leaving the page ends the test (the panel's Back closes it).
+  p.root.addEventListener('click', (ev) => {
+    if ((ev.target as Element).closest('[data-act="close"]')) stop();
+  });
 
   p.body.addEventListener('click', (ev) => {
     const el = (ev.target as Element).closest<HTMLElement>('[data-act]');
     if (!el) return;
-    if (el.dataset.act === 'run' && !running) void run();
-    if (el.dataset.act === 'long' && !running) void runLong();
-    if (el.dataset.act === 'stop') {
-      running = false;
-      void Narration.stop().catch(() => undefined);
+    const act = el.dataset.act;
+    if (act === 'run' && !running && !checking) void run();
+    if (act === 'long' && !running && !checking) void runLong();
+    if (act === 'speed' && !running && !checking) openVoiceSpeedTest();
+    if (act === 'stop') stop();
+    if (act === 'nephis-on' && !running) {
+      void ExpressiveVoice.resetCrashes()
+        .then((st) => {
+          status = st;
+          known = studioKnown(st.nephisPack, known);
+          toast('Nephis is back on: she reads from the next sentence.');
+        })
+        .catch((err: unknown) => toast(`Couldn’t turn her back on: ${err instanceof Error ? err.message : String(err)}`, true))
+        .finally(render);
     }
-    if (el.dataset.act === 'share') {
+    if (act === 'placement' && !running && !checking) {
+      // Where Core ML runs her studio's models: its own check now (crash plan a1), never inside the speed test.
+      checking = true;
+      el.textContent = 'Checking…';
+      void ExpressiveVoice.studioTest({ placement: true })
+        .then((r) => {
+          if (r.placement && studioTest) studioTest = { ...studioTest, placement: r.placement, placementMemory: r.memory };
+          else toast(typeof r.error === 'string' ? r.error : 'Couldn’t check where her studio runs.');
+        })
+        .catch((err: unknown) => toast(err instanceof Error ? err.message : String(err)))
+        .finally(() => {
+          checking = false;
+          render();
+        });
+    }
+    if (act === 'share') {
       void ExpressiveVoice.shareRecording().catch((err: unknown) => (el.textContent = err instanceof Error ? err.message : 'Couldn’t share'));
     }
-    if (el.dataset.act === 'copy' && report) {
-      const text = JSON.stringify({ ...report, notes: notes.trim() || null }, null, 2);
-      void navigator.clipboard
-        .writeText(text)
-        .then(() => (el.textContent = 'Copied'))
-        .catch(() => (el.textContent = 'Copy failed'));
+    if (act === 'copy') {
+      const text = JSON.stringify(combinedReport({ status, studio: known, studioTest, voiceTest: report, notes }), null, 2);
+      void copyText(text)
+        .then((label) => (el.textContent = label))
+        .catch(() => (el.textContent = 'Copy Failed'));
     }
   });
   p.body.addEventListener('input', (ev) => {
@@ -255,4 +712,6 @@ export function openVoiceTest(): void {
     if (el.dataset.f === 'notes') notes = el.value;
   });
   render();
+  // Her pack and studio (personal flavor) and her safety switch (every flavor).
+  void loadStatus();
 }

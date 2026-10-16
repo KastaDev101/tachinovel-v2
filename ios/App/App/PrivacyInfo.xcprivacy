@@ -32,13 +32,25 @@
 			</array>
 		</dict>
 		<dict>
-			<!-- UserDefaults read and written only by this app (CA92.1): narration listening positions, the
-			     audio folder bookmark, voice settings, debug-only smoke-test flags. -->
+			<!-- UserDefaults read and written only by this app (CA92.1): voice settings, the Diagnostics
+			     folder bookmark, her studio's measured speed, audio download options, debug-only smoke-test flags. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<!-- Free space (volumeAvailableCapacityForImportantUsage), only before an audio download the user asked
+			     for: the download sheet refuses when the audio and 1 GB wouldn't fit (E174.1) and says how much is
+			     free (85F4.1). Never sent anywhere. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+				<string>85F4.1</string>
 			</array>
 		</dict>
 		<dict>

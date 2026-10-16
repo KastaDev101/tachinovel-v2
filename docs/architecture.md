@@ -72,8 +72,8 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
    script), `updates.backgroundCheck` (BGAppRefreshTask, 25 s budget), `app.background` (flush),
    `app.openLink` (deep links → v1's `app.deepLink` event).
 4. **Plugin JS APIs:** `Narration` (src/ui/native/narration.ts), `Store` (src/ui/monetization/entitlements.ts),
-   `TachiNative.setKeepAwake`, `ExpressiveVoice` (src/ui/native/expressive-lab.ts: the experimental expressive
-   engines and, personal flavor, imported voices — docs/voice-import.md).
+   `TachiNative.setKeepAwake`, `ExpressiveVoice` (src/ui/native/expressive-lab.ts: Nephis's model, Pocket TTS, her
+   packs and studio, the voice tests; docs/expressive-tts.md).
 
 ### v1 Scriptable → v2 mapping
 | v1 (Scriptable) | v2 |
@@ -117,6 +117,11 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   Diagnostics "Recent problems" and in the sent/copied diagnostics. A "Share Crash & Hang Reports" button
   on that screen (`src/ui/native/diagnostics-overlay.ts`) shares the full reports as one JSON file. Nothing
   is uploaded.
+- **Diagnostics folder (opt-in, personal):** `DiagnosticsFolder.swift` mirrors `logs/` and the app's own os_log
+  lines (read incrementally, `NativeLogCache`) into a folder the user picked: at launch, every 5 minutes (every 10
+  while a voice works), when a voice stops and when the app leaves. Each Listen session ends with a small
+  `listen-<date>-<time>.json` (`ListenReport.swift`: time heard, voice and pack, her calls' work, breaks, heat,
+  battery), and the Voice Speed Test writes `speedtest-…json/.wav`.
 
 ## 4. Security model
 - **UI:** v1's strict CSP (script hash, `connect-src 'none'`, no frames/objects) plus `capacitor:` images;
@@ -130,10 +135,10 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
   the web bundle and covers by flat file name; `openUrl` and web-view navigations leaving the app accept
   http(s) only; deep links are validated by the core (installed sources only, paths on the source's own
   site); the web view is inspectable in Debug builds only.
-- **Imported voices** (personal flavor): `.tnvoice` files from Files/the share sheet are untrusted data,
-  checked in Swift before anything is kept (size caps before decompressing, ZIP entry allow-list, manifest
-  schema + SHA-256 per part, safetensors header bounds and the exact tensor layout); nothing in them is
-  executed (docs/voice-import.md).
+- **Nephis model packs** (personal flavor): `.tnmodel` files from Files/the share sheet or Documents are untrusted
+  data: unpacked with entry names checked (no absolute paths, no `..`), checked complete before they are kept, her
+  voice files checked by size, shape and SHA-256; nothing in them is executed (Core ML models are data the system
+  compiles). The `.tnvoice` import for Chatterbox Nano was removed on 2026-10-16.
 - **Review:** OWASP Mobile Top 10 findings and their status: [security-review.md](security-review.md).
 
 ## 5. Reusing v1
@@ -163,7 +168,7 @@ which @capacitor/filesystem doesn't support — https://capacitorjs.com/docs/api
 | Sources | Built-in Stonescape, LNReader repo seeded, JS plugins + declarative specs | Declarative specs only; nothing bundled or seeded |
 | JS plugin host | `www/core/lib/plugin-host.js` | Not built; `importLazy` refuses |
 | Ads | never | only with `--ads` |
-| Imported voices (`.tnvoice`, docs/voice-import.md) | Settings › Voices › Expressive voices › Import voice…, Open in TachiNovel | compiled out; native ignores opened files (shipped voices still apply to Chatterbox Nano) |
+| Nephis model packs (`.tnmodel`, NephisModelPack.swift) | Open in TachiNovel, Documents, Developer › Voice Packs | compiled out of the UI; her rows show the voice the app came with |
 
 ## 7. Build, test, run (Windows)
 
@@ -223,7 +228,8 @@ What the tests prove without a Mac:
   https://capacitorjs.com/docs/ios/custom-code) and installs `TachiRouter`.
 - `Info.plist`: background modes `audio` + `fetch`, BG task id, `tachinovel://` URL scheme,
   `ITSAppUsesNonExemptEncryption = false`, iCloud container folder "TachiNovel".
-- `PrivacyInfo.xcprivacy`: FileTimestamp `C617.1`, UserDefaults `CA92.1`, no tracking
+- `PrivacyInfo.xcprivacy`: FileTimestamp `C617.1`, UserDefaults `CA92.1`, SystemBootTime `35F9.1`, DiskSpace `E174.1` +
+  `85F4.1` (the audio download's space check), no tracking
   (https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api).
 - `App.entitlements` is empty on purpose (CI can sign without extra capabilities);
   `App.full.entitlements.example` adds iCloud Documents and CarPlay audio once the App ID has them.
@@ -275,6 +281,12 @@ Build numbers come from `GITHUB_RUN_NUMBER`.
   https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app)
   runs v1's update check with a 22–25 s budget and posts a local notification (provisional
   authorization: quiet delivery, no prompt). Capacitor's notification delegate is left alone.
+- **Chapter audio (audio downloads, "Prepare for the drive"):** `BGProcessingTask` `app.tachinovel.drive-prep`
+  (Native/Narration/DrivePrep.swift). It needs external power when every request waits for charging, and the network
+  only while a chapter's text still has to be fetched (texts are saved with the render's work). Renders are resumable
+  (NarrationAudio/work/<chapter>/checkpoint.json) and yield to live reading at the next call. A finished download the
+  user asked for posts a local notification (AudioReadyNotice.swift; permission asked once, at the first audio download).
+  See docs/car.md.
 - **WebContent crash:** Capacitor reloads the WebView; the UI rebuilds from `app.boot` (core state lives
   natively, so nothing is lost).
 

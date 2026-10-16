@@ -16,6 +16,9 @@ extension PocketTtsSynthesizer {
         /// streaming pipeline which doesn't surface per-chunk EOS through
         /// its frame stream. Retained for source-compatibility.
         public let eosStep: Int?
+        /// TachiNovel: how each text chunk ended, in order (its end-of-speech step, the latents after it, its last
+        /// latent's level, whether the end guard ran it on past the usual stop).
+        public let chunkEnds: [ChunkEnd]
     }
 
     /// CoreML output key names for the conditioning and generation step models

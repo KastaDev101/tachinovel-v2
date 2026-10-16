@@ -11,7 +11,7 @@
 //      known length): estimated from the text, refined with every sentence actually spoken;
 //    - NowPlayingSmoother: keeps the shown time and length steady while estimates move (no jumps, no
 //      flicker of the length on every sentence);
-//    - NowPlayingMetadata: the fields, the same for Kokoro, the Apple voice, prepared audio and PC audio.
+//    - NowPlayingMetadata: the fields, the same for Nephis, Kokoro, the Apple voice and prepared audio.
 //
 
 import Foundation

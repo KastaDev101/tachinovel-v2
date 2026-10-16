@@ -199,12 +199,13 @@ extension VoicePreferences {
         return mix
     }
 
-    /// Delete a mix; the default and any novel using it go back to Heart / the default, and narrator mode
-    /// stops using it for dialogue.
+    /// Delete a mix; the default and any novel using it go back to Heart / the default, the backup voice to her
+    /// matched voice, and narrator mode stops using it for dialogue.
     public mutating func deleteCustomVoice(id: String) throws {
         guard let i = customVoices.firstIndex(where: { $0.id == id }) else { throw CustomVoiceError.notFound }
         customVoices.remove(at: i)
         if defaultVoice == id { defaultVoice = VoiceCatalog.defaultVoiceId }
+        if backupVoice == id { backupVoice = nil }
         novelVoices = novelVoices.filter { $0.value != id }
         if narrator.dialogueVoice == id { narrator.dialogueVoice = nil }
         if narrator.secondDialogueVoice == id { narrator.secondDialogueVoice = nil }

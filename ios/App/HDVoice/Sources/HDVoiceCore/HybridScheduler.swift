@@ -101,7 +101,8 @@ public struct HybridScheduler: Sendable {
         case claimed
     }
 
-    public let count: Int
+    /// Sentences in the read: the chapter's, plus the next chapter's once they are appended (`append`).
+    public private(set) var count: Int
     public var config: Config
     var slots: [Slot]
     /// Next segment not yet handed to a voice.
@@ -166,6 +167,15 @@ public struct HybridScheduler: Sendable {
     /// start rendering ahead).
     public var allRendered: Bool { rendering == nil && !slots.contains(.pending) }
 
+    /// `n` more sentences after the last one: the next chapter, appended while this one plays (car ride 2026-10-13: the
+    /// next chapter only began rendering once this one had ended, a long silence between chapters). They are pending
+    /// like any other: rendered ahead within the window and handed out in order, so the read runs on into them.
+    public mutating func append(_ n: Int) {
+        guard n > 0 else { return }
+        slots += Array(repeating: .pending, count: n)
+        count += n
+    }
+
     /// The next segment to render, marked as rendering; nil when nothing should be rendered now.
     public mutating func nextRender() -> Int? {
         guard kokoro == .ready, !throttled || config.patient, !paused, rendering == nil, cursor < count else { return nil }
@@ -201,6 +211,38 @@ public struct HybridScheduler: Sendable {
     public mutating func releaseRender(_ j: Int) {
         guard slots.indices.contains(j), slots[j] == .rendering, rendering != j else { return }
         slots[j] = .pending
+    }
+
+    /// The sentences one model call reads, from `i` (of `count`): `i`, then each next sentence `joins` lets into the call
+    /// (`joins(j)`: j may follow j - 1 in it) while the text stays within `limit` characters (`length`, a space between
+    /// sentences). Only when the call's audio can be cut back into one buffer per sentence (`canCut`: natural delivery's
+    /// cutter); otherwise one sentence per call. Uncut, the whole call became its first sentence's buffer and the rest
+    /// were rendered again from the next sentence on, so each buffer replayed the rest of its group (Voice test
+    /// 2026-10-13, Nephis with Natural delivery off: every passage heard again, one sentence later each time).
+    /// `continues(j)`: sentence j - 1 ended mid-sentence (the script split a very long sentence there): j stays in the
+    /// call past `limit` (up to twice it), so a call never ends inside a sentence (car ride 2026-10-13: a call boundary
+    /// there put her full sentence pause, and any wait for the next call, in the middle of the sentence).
+    public static func callGroup(from i: Int, count: Int, limit: Int, canCut: Bool, length: (Int) -> Int, joins: (Int) -> Bool,
+                                 continues: (Int) -> Bool = { _ in false }) -> [Int] {
+        guard canCut else { return [i] }
+        var out = [i]
+        var total = length(i)
+        var j = i + 1
+        while j < count, joins(j) {
+            let next = length(j)
+            guard total + 1 + next <= limit || (continues(j) && total + 1 + next <= 2 * limit) else { break }
+            total += 1 + next
+            out.append(j)
+            j += 1
+        }
+        return out
+    }
+
+    /// A sentence of the script that ends mid-sentence: the front-end split a very long one there (frontend.ts
+    /// `wasSplit`: no sentence mark, closing quote or bracket at its end), and the next one carries on with it.
+    public static func endsMidSentence(_ text: String) -> Bool {
+        guard let last = text.trimmingCharacters(in: .whitespacesAndNewlines).last else { return false }
+        return !".!?…\"'”’)]】".contains(last)
     }
 
     /// A render finished. A segment Apple took in the meantime stays taken (the audio is discarded).

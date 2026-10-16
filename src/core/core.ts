@@ -13,8 +13,10 @@ import { type App, createApp } from '@v1/script/app.ts';
 import { errorMessage, toBridgeError } from '@v1/script/lib/errors.ts';
 import { novelKeyString, type ChapterMeta } from '@v1/shared/contracts/domain.ts';
 import type { MethodHandlers, RequestEnvelope, ResponseEnvelope } from '@v1/shared/contracts/protocol.ts';
+import { reportAutoDownloads } from './auto-audio.ts';
 import { deepLinkProblem } from './deep-link.ts';
 import { clearReports, type DiagnosticSummary, exportReports, listReports, recordPayload } from './diagnostics/metrickit.ts';
+import { voiceEndEntry, type VoiceEndLevel } from './diagnostics/voice-end.ts';
 import type { NativeHost } from './native-api.ts';
 import { htmlToBlocks, validateLexicon, type Lexicon } from '@v1tts/frontend.ts';
 import { emptyLexiconStore, lexiconsFor, paragraphMapper, speechScript, type LexiconStore, type SpeechScript } from './narration/speech-script.ts';
@@ -56,6 +58,8 @@ export interface V2Methods {
   'app.openLink': { args: { pluginId: string; novelPath: string; chapterPath?: string }; result: { delivered: boolean } };
   /** MetricKit payload JSON from MetricDiagnostics.swift: stored on the device and logged (diagnostics/metrickit.ts). */
   'diagnostics.metricPayload': { args: { json: string }; result: { added: number } };
+  /** How the last run ended, in plain words (VoiceRun.swift, the voices' crash sentinels): one log line (diagnostics/voice-end.ts). */
+  'diagnostics.voiceEnd': { args: { message: string; level?: VoiceEndLevel }; result: void };
   /** Stored crash/hang reports, newest first. */
   'diagnostics.reports': { args: void; result: DiagnosticSummary[] };
   /** Share every stored report as one JSON file through the share sheet (nothing is uploaded). */
@@ -131,6 +135,8 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
     flushLogs: () => platform.flushLogs({ mirror: false }),
   });
   app.attachEvents((event, payload) => host.emit(event, JSON.stringify(payload ?? null)));
+  // "Include Audio in Auto-Download": native hears which chapters v1's smart downloads queued (auto-audio.ts).
+  reportAutoDownloads(app, (event, payload) => host.emit(event, JSON.stringify(payload)));
 
   // Web updates: personal flavor only; the store flavor compiles all of it out (App Store rules).
   const ota =
@@ -259,6 +265,12 @@ export async function startCore(host: NativeHost, opts: { build: string }): Prom
       const added = await recordPayload(platform.local, args.json, platform.now(), (level, message) => platform.log(level, message));
       if (added > 0) await platform.flushLogs({ mirror: false });
       return { added };
+    },
+    'diagnostics.voiceEnd': async (args) => {
+      const entry = voiceEndEntry(args);
+      if (!entry) throw Object.assign(new Error('message is required'), { code: 'INVALID_ARGS' });
+      platform.log(entry.level, entry.message);
+      await platform.flushLogs({ mirror: false });
     },
     'diagnostics.reports': () => listReports(platform.local),
     'diagnostics.shareReports': async () => {

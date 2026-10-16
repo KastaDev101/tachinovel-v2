@@ -367,7 +367,7 @@ jobs:
         with:
           path: ios/App/ExpressiveVoice/.build
           key: expressive-spm-${{ runner.os }}-${{ hashFiles('ios/App/ExpressiveVoice/Package.swift') }}
-      - name: ExpressiveCore unit tests (imported voices - .tnvoice checks, store, voice slot; chunking, pinned models)
+      - name: ExpressiveCore unit tests (Nephis's flow, studio and packs; storage map, pinned models)
         run: swift test --package-path ios/App/ExpressiveVoice --filter ExpressiveCoreTests
       - name: Build kokoro-check
         run: swift build -c release --package-path ios/App/HDVoice --product kokoro-check

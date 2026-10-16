@@ -28,11 +28,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "state", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seek", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "playNovel", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "audioFolder", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "pickAudioFolder", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "unlinkAudioFolder", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "audioLibrary", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "audioTiming", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "voiceSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "readScene", returnType: CAPPluginReturnPromise),
@@ -43,11 +38,19 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "voiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "voicePlacement", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "prepareDrive", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelDrive", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "driveStatus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearDrive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioStatus", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioEnqueue", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioPause", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioResume", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioCancel", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioDelete", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioEstimate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioSetOptions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "audioNotifications", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "nowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remoteCommand", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestChapters", returnType: CAPPluginReturnPromise),
@@ -61,10 +64,15 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async {
             self.n.onState = { [weak self] s in self?.notifyListeners("state", data: s) }
             self.n.onProgress = { [weak self] p in self?.notifyListeners("progress", data: p) }
-            // "Prepare for the drive" progress and storage (all novels; the UI filters).
-            for name in [DrivePrep.changed, DriveCache.changed] {
+            // "Prepare for the drive" and audio downloads: progress and storage (all novels; the UI filters).
+            for name in [DrivePrep.changed, NarrationAudioStore.changed] {
+                // A queue change or progress reuses the audio list for a while; the store's own change reads it again.
+                let progress = name == DrivePrep.changed
                 self.driveObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    self?.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil))
+                    guard let self else { return }
+                    // Only for a page that listens (the UI listens only while a screen shows the audio).
+                    if self.hasListeners("drive") { self.notifyListeners("drive", data: DrivePrep.shared.status(novelKey: nil)) }
+                    if self.hasListeners("audio") { self.notifyListeners("audio", data: DrivePrep.shared.audioStatus(novelKey: nil, cached: progress)) }
                 })
             }
         }
@@ -82,20 +90,11 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let startSentence = (start["sentence"] as? NSNumber)?.intValue ?? 0
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
-        // Voice Lab A/B: "on" / "off" overrides narrator mode for this play (the saved pieces either way).
-        let narratorOverride: Bool? = call.getString("narrator").flatMap { $0 == "on" ? true : $0 == "off" ? false : nil }
         let raw = call.getArray("paragraphs")
         let script = NarrationController.ScriptItem.parse(call.getObject("script"))
-        // PC-narrated audio for this chapter (only with Settings › Voices › Advanced › "Use PC audio when
-        // available", off by default) wins over speech, unless the caller asks for speech.
-        let preferAudio = call.getString("engine") != "speech" && VoiceSettings.shared.prefs.usePCAudio
-        let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
-            self.n.narratorOverride = narratorOverride
-            if let audioChapter {
-                self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
-            } else if raw != nil || script != nil {
+            if raw != nil || script != nil {
                 let paragraphs: [NarrationController.Paragraph] = (raw ?? []).compactMap { v in
                     guard let o = v as? JSObject else { return nil }
                     let text = (o["text"] as? String) ?? ""
@@ -105,7 +104,12 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 let ch = NarrationController.Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath,
                                                      novelName: novelName, chapterName: chapterName, coverUrl: coverUrl,
                                                      paragraphs: paragraphs, nextPath: nil, nextName: nil, script: script)
-                self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
+                // Speech asked for explicitly (a voice test) reads live; Listen plays the chapter's audio first.
+                if call.getString("engine") == "speech" {
+                    self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
+                } else {
+                    self.n.playPreferringAudio(ch, startParagraph: startParagraph, startSentence: startSentence)
+                }
             } else {
                 self.n.playFromCore(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath, novelName: novelName, startParagraph: startParagraph)
             }
@@ -190,72 +194,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         onMain(call) { $0.playNovel(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover) }
     }
 
-    // MARK: PC-narrated audio folder
-
-    @objc func audioFolder(_ call: CAPPluginCall) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let name = AudioLibrary.shared.folderName
-            call.resolve(["linked": name != nil, "name": name ?? NSNull()])
-        }
-    }
-
-    @objc func pickAudioFolder(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            AudioLibrary.shared.pickFolder { result in
-                switch result {
-                case .success(let name): call.resolve(["linked": true, "name": name])
-                case .failure(let error):
-                    if case AudioLibrary.AudioError.cancelled = error { call.resolve(["linked": AudioLibrary.shared.folderName != nil, "cancelled": true]) } else {
-                        call.reject(error.localizedDescription, "AUDIO_FOLDER")
-                    }
-                }
-            }
-        }
-    }
-
-    @objc func unlinkAudioFolder(_ call: CAPPluginCall) {
-        AudioLibrary.shared.unlink()
-        call.resolve(["linked": false])
-    }
-
-    /// Novels with narrated chapters in the linked folder.
-    @objc func audioLibrary(_ call: CAPPluginCall) {
-        let refresh = call.getBool("refresh", false)
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                let novels = try AudioLibrary.shared.scan(refresh: refresh)
-                let out: [[String: Any]] = novels.map { nv in
-                    [
-                        "key": nv.key, "pluginId": nv.pluginId, "novelPath": nv.novelPath, "name": nv.name,
-                        "chapters": nv.chapters.map { c in
-                            ["chapterPath": c.chapterPath, "title": c.title, "number": c.number.isFinite && c.number < 1e12 ? c.number : NSNull(),
-                             "hasTiming": c.timingURL != nil] as [String: Any]
-                        },
-                        "saved": NarrationController.savedPosition(novelKey: nv.key).map { ["chapterPath": $0.chapterPath, "seconds": $0.seconds] as [String: Any] } ?? NSNull(),
-                    ]
-                }
-                call.resolve(["linked": true, "novels": out])
-            } catch AudioLibrary.AudioError.notLinked {
-                call.resolve(["linked": false, "novels": [] as [Any]])
-            } catch {
-                call.reject(error.localizedDescription, "AUDIO_FOLDER")
-            }
-        }
-    }
-
-    /// The sentence-timestamp manifest (JSON text) of a narrated chapter, for highlighting in the reader.
-    @objc func audioTiming(_ call: CAPPluginCall) {
-        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath"),
-              let chapterPath = call.getString("chapterPath") else {
-            return call.reject("pluginId, novelPath and chapterPath are required", "INVALID_ARGS")
-        }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let ac = AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath)
-            let json = ac.flatMap { AudioLibrary.shared.timingJSON($0) }
-            call.resolve(["hasAudio": ac != nil, "json": json ?? NSNull()])
-        }
-    }
-
     // MARK: Voices (Kokoro on device + Apple fallback)
 
     /// Voice settings for Settings › Voices and the Listen player. Optional pluginId/novelPath add that
@@ -275,23 +213,13 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     ["id": m.id, "name": m.name, "a": m.a, "b": m.b, "percent": m.percent] as [String: Any]
                 },
                 "defaultVoice": prefs.choice(forNovel: nil),
+                // More › Voices › Backup Voice; null: her matched voice (af_nephis).
+                "backupVoice": prefs.backupVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
                 "kokoroEnabled": prefs.kokoroEnabled,
-                "usePCAudio": prefs.usePCAudio,
                 "carButtons": prefs.carButtonsChoice.rawValue,
                 "speed": prefs.speed,
                 "volume": prefs.volume,
                 "speedPresets": SpeechSpeed.presets,
-                "narrator": [
-                    "enabled": prefs.narrator.enabled,
-                    "dialogueVoice": prefs.narrator.dialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
-                    "secondDialogueVoice": prefs.narrator.secondDialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
-                    "pacing": prefs.narrator.pacing,
-                    "jitter": prefs.narrator.jitter,
-                    "polish": prefs.narrator.polish,
-                    "roomTone": prefs.narrator.roomTone,
-                    "phraseBreaks": prefs.narrator.phraseBreaks,
-                    "pacingStyle": prefs.narrator.pacingStyle,
-                ] as [String: Any],
                 "delivery": [
                     "listenEngine": prefs.delivery.listenEngine ?? NSNull(),
                     "natural": prefs.delivery.natural,
@@ -305,6 +233,12 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "systemChime": prefs.delivery.systemChime,
                     "systemTone": prefs.delivery.systemTone,
                     "pocketVoice": prefs.delivery.pocketVoice,
+                    // Developer › Voice extras (her lead-ins, extra takes and speech checks; on by default).
+                    "extras": prefs.delivery.extras,
+                    // Nephis switched off after real crashes of her model, and why in plain words (Settings › Voices
+                    // shows "Turn Nephis back on").
+                    "nephisOff": ExpressiveService.shared.crashDisabled,
+                    "nephisOffLine": ExpressiveService.shared.sentinel.offLine() ?? NSNull(),
                 ] as [String: Any],
                 "kokoro": [
                     "bundled": k.isBundled,
@@ -316,6 +250,8 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     "bytes": k.modelInfo["bytes"] ?? NSNull(),
                 ] as [String: Any],
                 "apple": VoiceSettings.appleSummary(kokoroVoice: prefs.voice(forNovel: nil)),
+                // More › Developer (DeveloperOptions.swift): on, playerDetails, phonemes.
+                "developer": DeveloperOptions.snapshot,
             ]
             if let pluginId, let novelPath {
                 let key = VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)
@@ -328,42 +264,28 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
 
     @objc func setVoiceSettings(_ call: CAPPluginCall) {
         let defaultVoice = call.getString("defaultVoice")
-        let usePCAudio = call.getBool("usePCAudio")
+        // The backup voice: a voice or mix id; "" (or an unknown id) goes back to her matched voice.
+        let backupVoice = call.getString("backupVoice")
         let kokoroEnabled = call.getBool("kokoroEnabled")
         let carButtons = call.getString("carButtons").flatMap { CarButtons(rawValue: $0) }
         let speed = call.getDouble("speed")
         let volume = call.getDouble("volume")
         DispatchQueue.main.async {
             let novel = call.getObject("novel")
-            let narrator = call.getObject("narrator")
             let delivery = call.getObject("delivery")
+            // The app icon's quick action follows when the app goes to the background (AppDelegate).
+            if let developer = call.getObject("developer") { DeveloperOptions.update(developer) }
             let before = VoiceSettings.shared.prefs
             VoiceSettings.shared.update { p in
                 if let carButtons { p.carButtons = carButtons.rawValue }
                 if let speed { p.speed = SpeechSpeed.clamp(speed) }
                 if let volume { p.volume = VoiceVolume.clamp(volume) }
                 if let defaultVoice, p.isChoice(defaultVoice) { p.defaultVoice = defaultVoice }
+                if let backupVoice { p.backupVoice = p.isChoice(backupVoice) ? backupVoice : nil }
                 if let novel, let pid = novel["pluginId"] as? String, let path = novel["novelPath"] as? String {
                     p.setVoice(novel["voice"] as? String, forNovel: VoiceSettings.novelKey(pluginId: pid, novelPath: path))
                 }
-                if let usePCAudio { p.usePCAudio = usePCAudio }
                 if let kokoroEnabled { p.kokoroEnabled = kokoroEnabled }
-                if let narrator {
-                    // Narrator mode: only the keys sent change; a voice of null (or unknown) means none.
-                    var n = p.narrator
-                    if let v = narrator["enabled"] as? Bool { n.enabled = v }
-                    if narrator.keys.contains("dialogueVoice") { n.dialogueVoice = (narrator["dialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil } }
-                    if narrator.keys.contains("secondDialogueVoice") {
-                        n.secondDialogueVoice = (narrator["secondDialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil }
-                    }
-                    if let v = narrator["pacing"] as? Bool { n.pacing = v }
-                    if let v = narrator["jitter"] as? Bool { n.jitter = v }
-                    if let v = narrator["polish"] as? Bool { n.polish = v }
-                    if let v = narrator["roomTone"] as? Bool { n.roomTone = v }
-                    if let v = narrator["phraseBreaks"] as? String { n.phraseBreaks = v == "off" ? "off" : "clauses" }
-                    if let v = narrator["pacingStyle"] as? String { n.pacingStyle = v == "natural" ? "natural" : "relaxed" }
-                    p.narrator = n
-                }
                 if let delivery {
                     // The narrator voice: only the keys sent change; listenEngine null = Kokoro.
                     var d = p.delivery
@@ -379,6 +301,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                     if let v = delivery["systemChime"] as? Bool { d.systemChime = v }
                     if let v = delivery["systemTone"] as? Bool { d.systemTone = v }
                     if let v = delivery["pocketVoice"] as? String, DeliverySettings.pocketVoices.contains(v) { d.pocketVoice = v }
+                    if let v = delivery["extras"] as? Bool { d.extras = v }
                     p.delivery = d
                 }
             }
@@ -465,20 +388,11 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { call.resolve(VoiceLab.snapshot()) }
     }
 
-    /// Voice Lab controls: compute route, render-ahead, reset counters; test injection (debug/self-test).
+    /// Test injection for the simulator voice self-test (Debug builds): Kokoro made slow or failing, so the Apple voice
+    /// has to take over (voice-selftest.ts).
     @objc func setVoiceLab(_ call: CAPPluginCall) {
-        let route = call.getString("route")
-        let ahead = call.getInt("ahead")
-        let reset = call.getBool("resetStats") ?? false
         DispatchQueue.main.async {
             let inject = call.getObject("inject")
-            let before = VoiceSettings.shared.prefs
-            VoiceSettings.shared.update { p in
-                if let route, KokoroRoute(rawValue: route) != nil { p.route = route }
-                if let ahead { p.ahead = min(3, max(2, ahead)) }
-            }
-            if VoiceSettings.shared.prefs.route != before.route { KokoroService.shared.settingsChanged() }
-            if reset { KokoroService.shared.stats.reset() }
             #if DEBUG
             if let inject, let runtime = KokoroService.shared.runtime {
                 let delay = ((inject["delayMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
@@ -489,18 +403,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             _ = inject
             #endif
             call.resolve(VoiceLab.snapshot())
-        }
-    }
-
-    /// Voice Lab: where Core ML runs each Kokoro stage on this device (MLComputePlan, no synthesis).
-    @objc func voicePlacement(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            KokoroService.shared.analyzePlacement { result in
-                call.resolve(["stages": result.map { p in
-                    ["stage": p.stage, "configured": p.configured, "ane": p.neuralEngine, "cpu": p.cpu, "gpu": p.gpu,
-                     "error": p.error ?? NSNull(), "summary": p.summary] as [String: Any]
-                }])
-            }
         }
     }
 
@@ -527,7 +429,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
         }
         DispatchQueue.main.async {
-            DrivePrep.shared.cancel(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath))
+            DrivePrep.shared.cancel(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath), kind: .drive)
             call.resolve()
         }
     }
@@ -542,10 +444,121 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     @objc func clearDrive(_ call: CAPPluginCall) {
         let key = call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
         DispatchQueue.main.async {
-            if let key { DrivePrep.shared.cancel(novelKey: key) } else { DrivePrep.shared.jobs.forEach { DrivePrep.shared.cancel(novelKey: $0.novelKey) } }
-            DriveCache.shared.remove(novelKey: key)
+            if let key {
+                DrivePrep.shared.cancel(novelKey: key, kind: .drive)
+            } else {
+                DrivePrep.shared.jobs.filter { $0.audioKind == .drive }.forEach { DrivePrep.shared.cancel(novelKey: $0.novelKey, kind: .drive) }
+            }
+            NarrationAudioStore.shared.remove(novelKey: key, kind: .drive)
             call.resolve(DrivePrep.shared.status(novelKey: key))
         }
+    }
+
+    // MARK: Audio downloads (part 1: the engine; the screens come in part 2)
+
+    private func novelKey(_ call: CAPPluginCall) -> String? {
+        call.getString("pluginId").flatMap { p in call.getString("novelPath").map { VoiceSettings.novelKey(pluginId: p, novelPath: $0) } }
+    }
+
+    private func kind(_ call: CAPPluginCall) -> NarrationAudioKind? {
+        call.getString("kind").flatMap(NarrationAudioKind.init(rawValue:))
+    }
+
+    /// Every request, every chapter's audio (with whether it is in the current voice), storage, settings, render speed.
+    @objc func audioStatus(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        DispatchQueue.main.async { call.resolve(DrivePrep.shared.audioStatus(novelKey: key)) }
+    }
+
+    /// Render these chapters of a novel into audio: `chapters` (paths, in order), `when` "now", "charging" or
+    /// "chargingOrWifi" (default "charging").
+    @objc func audioEnqueue(_ call: CAPPluginCall) {
+        guard let pluginId = call.getString("pluginId"), let novelPath = call.getString("novelPath") else {
+            return call.reject("pluginId and novelPath are required", "INVALID_ARGS")
+        }
+        let chapters = (call.getArray("chapters") ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
+        guard !chapters.isEmpty else { return call.reject("chapters is required", "INVALID_ARGS") }
+        let name = call.getString("novelName") ?? ""
+        let cover = call.getString("coverUrl")
+        let when = DrivePrepWhen(rawValue: call.getString("when") ?? "") ?? .charging
+        let notify = call.getBool("notify") ?? false
+        DispatchQueue.main.async {
+            DrivePrep.shared.enqueue(pluginId: pluginId, novelPath: novelPath, novelName: name, coverUrl: cover, chapters: chapters, when: when,
+                                     notify: notify)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: VoiceSettings.novelKey(pluginId: pluginId, novelPath: novelPath)))
+        }
+    }
+
+    @objc func audioPause(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.pause(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    @objc func audioResume(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.resume(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Drop a novel's requests (of one kind, or both); its finished audio stays.
+    @objc func audioCancel(_ call: CAPPluginCall) {
+        guard let key = novelKey(call) else { return call.reject("pluginId and novelPath are required", "INVALID_ARGS") }
+        let kind = kind(call)
+        DispatchQueue.main.async {
+            DrivePrep.shared.cancel(novelKey: key, kind: kind)
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Delete audio: some chapters of a novel (`chapterPaths`), a novel's (of one kind or both), or all (no novel).
+    @objc func audioDelete(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        let kind = kind(call)
+        let paths = (call.getArray("chapterPaths") ?? []).compactMap { $0 as? String }
+        DispatchQueue.main.async {
+            let store = NarrationAudioStore.shared
+            if let key, !paths.isEmpty {
+                for p in paths { store.remove(novelKey: key, chapterPath: p) }
+            } else {
+                store.remove(novelKey: key, kind: kind)
+            }
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: key))
+        }
+    }
+
+    /// Minutes, megabytes (128 kbps ≈ 0.96 MB a minute) and render time for `chapters` chapters (`characters` of text when
+    /// known), from this novel's audio so far and her measured render speed.
+    @objc func audioEstimate(_ call: CAPPluginCall) {
+        let key = novelKey(call)
+        let chapters = max(0, call.getInt("chapters") ?? 1)
+        let characters = call.getInt("characters")
+        DispatchQueue.main.async { call.resolve(DrivePrep.shared.estimate(novelKey: key, chapters: chapters, characters: characters)) }
+    }
+
+    /// `deleteAfterListening` (downloads; off by default), `autoDownloadAudio` (audio for auto-downloaded chapters, while
+    /// charging; off by default).
+    @objc func audioSetOptions(_ call: CAPPluginCall) {
+        let deleteAfter = call.getBool("deleteAfterListening")
+        let autoAudio = call.getBool("autoDownloadAudio")
+        DispatchQueue.main.async {
+            if let deleteAfter { NarrationAudioStore.deleteAfterListening = deleteAfter }
+            if let autoAudio { NarrationAudioStore.autoDownloadAudio = autoAudio }
+            call.resolve(DrivePrep.shared.audioStatus(novelKey: nil))
+        }
+    }
+
+    /// The "audio is ready" notification's permission: {status, asked}; `ask` shows the system prompt once (the UI explains
+    /// first). A denial is kept: never asked again.
+    @objc func audioNotifications(_ call: CAPPluginCall) {
+        let done: @Sendable ([String: Any]) -> Void = { result in DispatchQueue.main.async { call.resolve(result) } }
+        if call.getBool("ask") == true { AudioReadyNotice.ask(done) } else { AudioReadyNotice.status(done) }
     }
 
     /// What the lock screen and the car show now, and which remote commands are offered.

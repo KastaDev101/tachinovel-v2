@@ -1,63 +1,25 @@
 //
-//  ExpressiveCatalog.swift — the experimental engines, what each can act on, and how a line of a novel
-//  (text + emotion + style + speaker role, see src/ui/native/expressive-samples.ts) becomes engine input.
+//  ExpressiveCatalog.swift — the expressive engine (Pocket TTS: Nephis's voice) and how a line of a novel
+//  (text + emotion + style + speaker role, see src/ui/native/expressive-samples.ts) becomes its input.
 //
-//  Chatterbox Nano   inline tags in the text: style/emotion tags at the start ([angry], [whispering], …)
-//                    and sound events where they occur ([laugh], [sigh], [gasp], …). One built-in voice.
-//                    ≤ 9.9 s of audio per call → lines are cut into ≤ 120-character chunks.
-//  NeuTTS-2E         an emotion per call (angry, disgusted, fearful, happy, neutral, sad, surprised) and one
-//                    of four speakers (emily, paul, sophie, steven): narrator and characters get different
-//                    voices. Tags are removed from the text.
-//  Pocket TTS        plain text, one voice per call (voice prompt "alba"), streaming; no emotion control.
+//  Pocket TTS        plain text, one voice per call (a voice prompt), streaming; the mood is in the voice prompt.
 //
 
 import Foundation
 
 public enum ExpressiveEngineID: String, CaseIterable, Sendable, Codable {
-    case chatterboxNano = "chatterbox-nano"
-    case neutts2e = "neutts-2e"
     case pocketTts = "pocket-tts"
 
     public var pinned: PinnedEngineModel? { PinnedModels.model(rawValue) }
 
-    public var title: String {
-        switch self {
-        case .chatterboxNano: return "Chatterbox Nano"
-        case .neutts2e: return "NeuTTS-2E"
-        case .pocketTts: return "Pocket TTS"
-        }
-    }
+    public var title: String { "Pocket TTS" }
 
-    public var blurb: String {
-        switch self {
-        case .chatterboxNano: return "Resemble AI, 110M. Acts on tags: [angry], [whispering], [laugh], [sigh], [gasp]… One voice."
-        case .neutts2e: return "Neuphonic, 236M. Seven emotions, four speakers (narrator and characters get their own voice)."
-        case .pocketTts: return "Kyutai, 100M. Natural, streaming, voice cloning; no emotion control."
-        }
-    }
+    public var blurb: String { "Kyutai, 100M. Natural, streaming, voice cloning; Nephis reads with it." }
 
-    /// Core ML puts (part of) the model on the GPU, which iOS forbids in the background: such an engine only
-    /// renders while the app is in the foreground (the lab falls back to Kokoro on the lock screen).
-    public var usesGPU: Bool {
-        switch self {
-        case .chatterboxNano, .neutts2e: return true
-        case .pocketTts: return false
-        }
-    }
-
-    /// Longest text per synthesis call (characters); longer lines are chunked (TextChunker).
-    public var maxCharactersPerCall: Int {
-        switch self {
-        case .chatterboxNano: return 120 // ≤ 247 speech tokens ≈ 9.9 s of audio with the built-in voice
-        case .neutts2e: return 220 // 768-token prefill window incl. the speaker reference
-        case .pocketTts: return 400 // FluidAudio chunks internally as well
-        }
-    }
+    /// Longest text per synthesis call (characters); FluidAudio chunks inside a call as well.
+    public var maxCharactersPerCall: Int { 400 }
 
     public var sampleRate: Int { 24_000 }
-
-    /// Chatterbox Nano and NeuTTS-2E keep their KV cache in Core ML MLState (iOS 18 / macOS 15).
-    public var needsIOS18: Bool { self != .pocketTts }
 }
 
 /// One line to speak, as the Voice Lab sends it.
@@ -65,7 +27,7 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var text: String
     /// neutral, happy, sad, angry, fearful, surprised, disgusted
     public var emotion: String
-    /// whisper, dramatic, sarcastic, narration (Chatterbox tags only)
+    /// whisper, dramatic, sarcastic, narration (the samples carry it; Pocket TTS reads the mood from its voice prompt)
     public var style: String?
     /// narrator, male, female; "performed" = the narrator voice performing (dialogue, thoughts; Pocket TTS)
     public var role: String
@@ -82,6 +44,32 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     public var flowLast: Bool?
     public var takes: Int?
     public var leadIn: Bool?
+    /// Nephis flow with her studio (NephisStudio): false = playback is short of audio, skip the studio for this call
+    /// (her sound stays 44.1 kHz, just without the polish); nil = use it.
+    public var studio: Bool?
+    /// Nephis flow, raw text form (a pack whose chain says "text": "raw", NephisFlow.Chain.text): the call's text as
+    /// written (the script's `delivery.raw` per sentence, else its text); nil = `text`. Only such a pack reads it.
+    public var raw: String?
+    /// Nephis flow: dialogue across the pause before this call (the script's, after the sentence before it): the same
+    /// speaker goes on, another one replies, or dialogue turns into narration or back; nil = none known (the engine then
+    /// reads it from the quotation marks). She takes her own pause there (NephisFlow.Chain.callPause).
+    public var handover: NephisFlow.Handover?
+    /// Nephis flow: the first call of the next chapter, read on in the same read (HybridSpeechEngine.append): her pause
+    /// before it is the chapter break (NephisFlow.chapterPause); nil = none.
+    public var chapterStart: Bool?
+    /// Nephis flow: render at background priority (heat batch 1: playback has plenty banked, RenderPacer.relaxed), so the
+    /// phone runs it on its efficient cores and clocks; nil = user-initiated, as always. The sound is the same.
+    public var relaxed: Bool?
+    /// Nephis flow with a dialogue pack (NephisDialogue.swift): false = the narrator pack reads the whole call (nil: its
+    /// quoted dialogue goes to the dialogue pack). Without a dialogue pack these are never read.
+    public var dialogue: Bool?
+    /// The chapter's curly single quotes: "thought" (it quotes speech with double quotes) or "dialogue" (British style);
+    /// nil = guessed from the call (QuoteRouter.Context).
+    public var singleQuotes: String?
+    /// The rest of the call's paragraph after it (nil: the call ends its paragraph), and whether the next paragraph opens
+    /// with a quotation mark: a quotation left open at the call's end is speech only when one of them carries it on.
+    public var restOfParagraph: String?
+    public var nextOpensQuote: Bool?
 
     public init(text: String, emotion: String = "neutral", style: String? = nil, role: String = "narrator") {
         self.text = text
@@ -91,12 +79,19 @@ public struct ExpressiveLine: Sendable, Equatable, Codable {
     }
 }
 
-public enum StyleMapper {
-    /// Chatterbox Nano's sound-event tags (tokenizer added tokens); kept inline for Chatterbox, removed otherwise.
-    public static let soundTags = ["laugh", "chuckle", "sigh", "gasp", "cough", "sniff", "groan", "shush", "clear throat"]
+/// Which text Pocket TTS gets (StyleMapper.pocketText). `app`: the app's spoken form, ellipses turned into commas and
+/// periods, "Hmm" into "Hm" (every voice, and every Nephis pack that doesn't ask otherwise). `raw`: the text as written,
+/// for a Nephis pack whose chain says "text": "raw" (tachinovel-tts-lab Q1, 2026-10-12: read as written, her model lost
+/// no last word and kept her timing after "..."; see src/core/narration/raw-text.ts for what the script leaves as is).
+public enum PocketTextForm: String, Sendable, Codable, Equatable {
+    case app
+    case raw
+}
 
-    public static let neuttsEmotions = ["angry", "disgusted", "fearful", "happy", "neutral", "sad", "surprised"]
-    public static let neuttsSpeakers = ["emily", "paul", "sophie", "steven"]
+public enum StyleMapper {
+    /// Sound-event tags a line may carry ([laugh], [sigh], …: the lab's samples, pasted text); Pocket reads none, so
+    /// they are removed before it reads.
+    public static let soundTags = ["laugh", "chuckle", "sigh", "gasp", "cough", "sniff", "groan", "shush", "clear throat"]
 
     /// Text without sound tags and without the spaces they leave behind.
     public static func plainText(_ text: String) -> String {
@@ -114,7 +109,9 @@ public enum StyleMapper {
     /// comma 0 of 10). So a trailing-off "…" inside a line becomes a comma, at the end of a line or quote a period,
     /// and a leading one goes. The hesitation comes back afterwards: NaturalFinish stretches the pause at each
     /// ellipsis the director marked (350–450 ms).
-    public static func pocketText(_ text: String) -> String {
+    /// `form: .raw` (a Nephis pack that asks for the text as written): `rawPocketText` instead.
+    public static func pocketText(_ text: String, form: PocketTextForm = .app) -> String {
+        if form == .raw { return rawPocketText(text) }
         let dots = #"(?:\.\s?\.\s?\.|…)"#
         // "Hmm"/"Hmmm" come out erratic, sometimes almost silent (0.09–0.62 s voiced over 4 renders); "Hm" holds a
         // proper hum (0.66–0.81 s in 3 of 4). Measured 2026-10-07.
@@ -135,6 +132,31 @@ public enum StyleMapper {
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Pocket's text in the raw form (Q1, tachinovel-tts-lab 2026-10-12, c7-1500: read as written she lost 0 of 147
+    /// last words and never ran away, against 6 and 3 with the app's text; her pauses after "..." followed hers
+    /// better). Kept as written: every ellipsis (as "...", never a comma or a period, a leading one too), "Hmm" and
+    /// "Hmmm" (no "Hm"), and capitals: a word in capitals is spelled out only when it is one of the acronyms the app's
+    /// text keeps in capitals (`keptCapitals`) or has two letters, which are exactly the capitals `spokenCodes` spells in
+    /// the app's form, so "NPC" is still "N P C" and "OPEN IT", "KAI", "DID" stay words. Still done, as a book needs it:
+    /// numbers in words, codes ("L0-49"), a word broken by "..." joined ("Damna... tion").
+    static func rawPocketText(_ text: String) -> String {
+        var out = text.replacingOccurrences(of: "…+", with: "...", options: .regularExpression)
+            .replacingOccurrences(of: #"\.{3,}|\.(?: \.){2,}"#, with: "...", options: .regularExpression)
+        out = spokenNumbers(spokenCodes(joinBrokenWords(out), acronymsOnly: true))
+        out = out.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The capitals the app's text keeps (src/core/narration/delivery.ts ACRONYMS: nanoText lower-cases every other word
+    /// of three capitals or more before `spokenCodes` sees it). The raw form keeps capitals as written, so it spells out
+    /// only these among words of three or more.
+    static let keptCapitals: Set<String> = [
+        "HP", "MP", "SP", "XP", "EXP", "NPC", "PVP", "PVE", "RPG", "MMO", "MMORPG", "AI", "OK", "TV", "CEO", "FBI", "CIA", "USA", "UK",
+        "EU", "UN", "DNA", "ID", "IQ", "GPS", "CPU", "GPU", "STR", "AGI", "DEX", "INT", "WIS", "VIT", "END", "LUK", "CHA", "DEF",
+        "ATK", "SSS", "SS", "RIP", "LOL", "DIY", "ASAP", "NASA", "SWAT", "POV", "UFO", "ATM", "MVP", "AOE", "DPS", "DOT", "II",
+        "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII",
+    ]
+
     /// Capitals shouted as words, never spelled out ("NO!", "RUN"), and everyday short words.
     static let shoutedWords: Set<String> = [
         "I", "A", "OK", "NO", "YES", "GO", "NOW", "STOP", "RUN", "HELP", "WHAT", "WHY", "WHO", "HOW", "HEY", "OH", "AH",
@@ -148,7 +170,9 @@ public enum StyleMapper {
     /// letters stuck to digits come apart ("L0" → "L 0"), a dash between digit groups becomes a space, and a short
     /// all-capitals word that isn't a shouted everyday word is spelled out ("APC" → "A P C"), unless the whole
     /// sentence is in capitals (shouting). The novel's Pronunciations entries still win: they reach this text first.
-    public static func spokenCodes(_ text: String) -> String {
+    /// `acronymsOnly` (the raw form, which keeps shouted capitals as written): a word of three capitals or more is
+    /// spelled out only when it is in `keptCapitals`.
+    public static func spokenCodes(_ text: String, acronymsOnly: Bool = false) -> String {
         var out = text
         let rules: [(String, String)] = [
             (#"(?<=\b[A-Za-z]{1,4})(?=\d)"#, " "), // "L0" → "L 0"
@@ -167,6 +191,7 @@ public enum StyleMapper {
             let word = ns.substring(with: m.range)
             // Shouted words, and sounds in capitals ("HMM", "AAAH", "SHH": a letter doubled) stay words.
             guard !shoutedWords.contains(word), word.range(of: #"(.)\1"#, options: .regularExpression) == nil else { continue }
+            if acronymsOnly, word.count > 2, !keptCapitals.contains(word) { continue }
             spelled = spelled.replacingCharacters(in: m.range, with: word.map(String.init).joined(separator: " ")) as NSString
         }
         return spelled as String
@@ -218,108 +243,5 @@ public enum StyleMapper {
             out.replaceSubrange(whole, with: String(out[head]) + fragment)
         }
         return out
-    }
-
-    /// The tag Chatterbox Nano gets in front of a line (style first, else the emotion), or nil.
-    public static func chatterboxLeadTag(_ line: ExpressiveLine) -> String? {
-        switch line.style ?? "" {
-        case "whisper": return "[whispering]"
-        case "dramatic": return "[dramatic]"
-        case "sarcastic": return "[sarcastic]"
-        case "narration": return "[narration]"
-        default: break
-        }
-        switch line.emotion {
-        case "angry": return "[angry]"
-        case "fearful": return "[fear]"
-        case "surprised": return "[surprised]"
-        case "happy": return "[happy]"
-        default: return nil // neutral, sad (carried by [sigh]/[crying] in the text if wanted), disgusted
-        }
-    }
-
-    /// Chatterbox input chunks: the lead tag in front of every chunk, sound tags left where they are.
-    public static func chatterboxChunks(_ line: ExpressiveLine, limit: Int) -> [String] {
-        let prefix = chatterboxLeadTag(line).map { "\($0) " } ?? ""
-        let room = max(20, limit - prefix.count)
-        let body = line.text.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return TextChunker.chunks(body, limit: room).map { prefix + $0 }
-    }
-
-    public static func neuttsEmotion(_ line: ExpressiveLine) -> String {
-        if neuttsEmotions.contains(line.emotion) { return line.emotion }
-        return "neutral"
-    }
-
-    /// Narrator and characters get distinct NeuTTS speakers (the narrator's can be chosen).
-    public static func neuttsSpeaker(role: String, narrator: String = "emily") -> String {
-        let n = neuttsSpeakers.contains(narrator) ? narrator : "emily"
-        switch role {
-        case "male": return n == "paul" ? "steven" : "paul"
-        case "female": return n == "sophie" ? "emily" : "sophie"
-        default: return n
-        }
-    }
-}
-
-public enum TextChunker {
-    /// Split `text` into pieces of at most `limit` characters: at sentence ends if possible, else at
-    /// ; : , or a dash, else at a space. A [tag] is never cut. Pieces are trimmed and never empty.
-    public static func chunks(_ text: String, limit: Int) -> [String] {
-        let limit = max(8, limit)
-        var rest = Array(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        var out: [String] = []
-        while rest.count > limit {
-            let cut = splitIndex(rest, limit: limit)
-            let piece = String(rest[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !piece.isEmpty { out.append(piece) }
-            rest = Array(String(rest[cut...]).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        let last = String(rest).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !last.isEmpty { out.append(last) }
-        return out
-    }
-
-    /// Index to cut at (exclusive end of the first piece), 1...limit.
-    static func splitIndex(_ chars: [Character], limit: Int) -> Int {
-        var inTag = [Bool](repeating: false, count: chars.count)
-        var open = false
-        for (i, c) in chars.enumerated() {
-            if c == "[" { open = true }
-            inTag[i] = open
-            if c == "]" { open = false }
-        }
-        let minPiece = limit / 3
-        func best(_ isBreak: (Int) -> Bool) -> Int? {
-            var i = min(limit, chars.count) - 1
-            while i >= minPiece {
-                if !inTag[i], isBreak(i) { return i + 1 }
-                i -= 1
-            }
-            return nil
-        }
-        let sentenceEnd: Set<Character> = [".", "!", "?", "…"]
-        let closers: Set<Character> = ["\"", "”", "’", ")"]
-        let clause: Set<Character> = [";", ":", ",", "—", "–"]
-        let atSentenceEnd: (Int) -> Bool = { k in
-            sentenceEnd.contains(chars[k]) && (k + 1 >= chars.count || chars[k + 1] == " " || closers.contains(chars[k + 1]))
-        }
-        if let end = best(atSentenceEnd) {
-            // Keep a closing quote with its sentence.
-            var j = end
-            while j < chars.count, j < limit, closers.contains(chars[j]) { j += 1 }
-            return j
-        }
-        if let cut = best({ clause.contains(chars[$0]) }) { return cut }
-        if let cut = best({ chars[$0] == " " }) { return cut }
-        // No break at all (one huge word): hard cut, outside a tag if possible.
-        var i = min(limit, chars.count)
-        while i > 1, inTag[i - 1], chars[i - 1] != "]" { i -= 1 }
-        if i <= 1, inTag[0], let close = chars.firstIndex(of: "]") {
-            // The piece starts with a tag longer than the limit: keep the tag whole (a slightly long piece).
-            return close + 1
-        }
-        return max(1, i)
     }
 }

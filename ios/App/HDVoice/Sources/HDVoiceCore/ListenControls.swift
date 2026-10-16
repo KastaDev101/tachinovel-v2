@@ -1,6 +1,6 @@
 //
 //  ListenControls.swift — the Listen player's "Voice volume" and speed: app-level, persisted, the same for
-//  every voice (Kokoro, the Apple voice, prepared and PC-narrated audio), since all of them play through
+//  every voice (Nephis, Kokoro, the Apple voice, prepared audio), since all of them play through
 //  the app's own audio graph (gain stage + peak limiter; HybridSpeechEngine, AudioChapterPlayer).
 //
 

@@ -1,6 +1,6 @@
 //
-//  AudioChapterPlayer.swift — plays one chapter audio file (AAC .m4a, or a chapter inside an .m4b bundle):
-//  PC-narrated chapters (and, with the car-audio work, chapters prepared on the iPhone).
+//  AudioChapterPlayer.swift — plays one chapter audio file (AAC .m4a, or a chapter inside an .m4b bundle): the
+//  chapters with audio on the iPhone (audio downloads, "Prepare for the drive").
 //
 //  Played through the app's own audio graph, like Kokoro and the Apple voice (HybridSpeechEngine), so the
 //  Listen player's speed and "Voice volume" apply the same way to every voice:

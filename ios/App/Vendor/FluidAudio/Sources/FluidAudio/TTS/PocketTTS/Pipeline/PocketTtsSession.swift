@@ -78,6 +78,20 @@ public actor PocketTtsSession {
     private var rng: SeededRNG
     /// TachiNovel: false = frames carry latents only (no Mimi decode here; the caller decodes them).
     private var decodesAudio = true
+    /// TachiNovel: true = a run of sentence marks ("...", "?!") ends one sentence when text is chunked
+    /// (`PocketTtsSynthesizer.splitSentences(keepsRuns:)`); false = FluidAudio's own split.
+    private var keepsPunctuationRuns = false
+    /// TachiNovel: the text enqueued is part of a longer sentence (`setKeepsSentenceOpen`): every chunk is normalized
+    /// as mid-sentence (no capital, no full stop added, no padding).
+    private var keepsSentenceOpen = false
+    /// TachiNovel: how each chunk ends (`setEndGuard`); `.off` = FluidAudio's own stop.
+    private var endGuard = PocketTtsSynthesizer.EndGuard.off
+    /// TachiNovel: the levels the guard needs when this session yields latents only.
+    private var levelProbe: PocketTtsSynthesizer.TailLevelProbe?
+    /// TachiNovel: how each chunk generated so far ended, oldest first (the last `maxChunkEnds`). Complete once
+    /// `frames` has finished.
+    public private(set) var chunkEnds: [PocketTtsSynthesizer.ChunkEnd] = []
+    private static let maxChunkEnds = 256
 
     /// TachiNovel: the pieces `enqueue(text)` would generate one after the other, each from a fresh cache that
     /// starts again from the voice prompt (so a caller can generate them as pieces of its own instead).
@@ -86,12 +100,51 @@ public actor PocketTtsSession {
             text.trimmingCharacters(in: .whitespacesAndNewlines), tokenizer: constants.tokenizer,
             maxTokens: maxTokensPerChunk,
             preferredMaxTokens: min(PocketTtsConstants.preferredTokensPerChunk, maxTokensPerChunk),
-            voiceCachePosition: voiceCachePosition, language: language)
+            voiceCachePosition: voiceCachePosition, language: language, keepsPunctuationRuns: keepsPunctuationRuns)
     }
 
     /// TachiNovel: latents only, from now on (call before enqueueing text).
     public func setDecodesAudio(_ on: Bool) {
         decodesAudio = on
+    }
+
+    /// TachiNovel: a run of sentence marks ("...", "?!") stays one sentence end when text is chunked, from now on
+    /// (call before enqueueing text), as in Kyutai's pocket_tts; off (the default) is FluidAudio's own split.
+    public func setKeepsPunctuationRuns(_ on: Bool) {
+        keepsPunctuationRuns = on
+    }
+
+    /// TachiNovel: the text enqueued from now on is part of a longer sentence that the caller generates in pieces (call
+    /// before enqueueing text): each chunk is normalized as a mid-sentence one (`normalizeText(isMidSentence: true)`: its
+    /// casing and trailing comma kept, no full stop or padding added), so a clause isn't spoken as a sentence of its own.
+    /// Off (the default): FluidAudio's own normalization.
+    public func setKeepsSentenceOpen(_ on: Bool) {
+        keepsSentenceOpen = on
+    }
+
+    /// TachiNovel: how each chunk ends, from now on (call before enqueueing text; `PocketTtsSynthesizer.EndGuard`).
+    /// The guard needs a latent's decoded level only where it decides: at the chunk's usual stop and at each latent
+    /// past it. A session that decodes audio reads it from the audio it decoded anyway; one that yields latents only
+    /// asks `levelProbe` (see `PocketTtsSynthesizer.levelProbe(decoder:warmUp:)`), and without one ends every chunk at
+    /// its usual stop.
+    public func setEndGuard(
+        _ endGuard: PocketTtsSynthesizer.EndGuard, levelProbe: PocketTtsSynthesizer.TailLevelProbe? = nil
+    ) {
+        self.endGuard = endGuard
+        self.levelProbe = levelProbe
+    }
+
+    /// TachiNovel: keeps a chunk's end for `chunkEnds`, and logs one that ran past its usual stop.
+    private func noteChunkEnd(_ end: PocketTtsSynthesizer.ChunkEnd) {
+        if end.tailExtended {
+            Self.logger.info(
+                "Session chunk \(end.chunkIndex) still audible at its usual stop: "
+                    + "\(end.extraLatents) more latent(s), ended at \(Int((end.lastLatentDB ?? -120).rounded())) dB")
+        }
+        chunkEnds.append(end)
+        if chunkEnds.count > Self.maxChunkEnds {
+            chunkEnds.removeFirst(chunkEnds.count - Self.maxChunkEnds)
+        }
     }
 
     // Stateful (`.aneState`) path — mobius Trial 23 MLState pipeline.
@@ -255,7 +308,8 @@ public actor PocketTtsSession {
                     preferredMaxTokens: min(
                         PocketTtsConstants.preferredTokensPerChunk, maxTokensPerChunk),
                     voiceCachePosition: voiceCachePosition,
-                    language: language
+                    language: language,
+                    keepsPunctuationRuns: keepsPunctuationRuns  // TachiNovel
                 )
                 Self.logger.info(
                     "Session enqueued '\(trimmed)', \(chunks.count) chunk(s)")
@@ -265,7 +319,7 @@ public actor PocketTtsSession {
 
                     try await generateChunk(
                         text: chunk.text,
-                        isMidSentence: chunk.isMidSentence,
+                        isMidSentence: chunk.isMidSentence || keepsSentenceOpen,  // TachiNovel
                         chunkIndex: chunkIndex,
                         chunkCount: chunks.count,
                         utteranceIndex: utteranceIndex
@@ -329,11 +383,17 @@ public actor PocketTtsSession {
         let cachePosition = try PocketTtsSynthesizer.kvCachePosition(in: kvState)
         let maxGenLen = PocketTtsSynthesizer.boundedGenerationFrameCount(
             text: text, cachePosition: cachePosition)
-        var eosStep: Int?
         var sequence = try PocketTtsSynthesizer.createBosStartSequence(
             bosEmbedding: constants.bosEmbedding,
             splitKV: flowlmLayerKeys.isSplitKV)
         let totalFramesAfterEos = framesAfterEos + PocketTtsConstants.extraFramesAfterDetection
+        // TachiNovel: the chunk's end (EndGuard; `.off` stops exactly where FluidAudio always did). Without a decode
+        // here, the guard's levels come from the probe, which gets the chunk's latents (kept only for it).
+        var end = PocketTtsSynthesizer.ChunkEndTracker(
+            endGuard: endGuard, usualFramesAfterEos: totalFramesAfterEos)
+        let probe: PocketTtsSynthesizer.TailLevelProbe? =
+            decodesAudio || !end.endGuard.extendsTails ? nil : levelProbe
+        var chunkLatents: [[Float]] = []
 
         for step in 0..<maxGenLen {
             if Task.isCancelled { break }
@@ -349,11 +409,18 @@ public actor PocketTtsSession {
             )
 
             // EOS detection
-            if eosLogit > PocketTtsConstants.eosThreshold && eosStep == nil {
-                eosStep = step
+            if end.noteEos(step: step, logit: eosLogit) {
                 Self.logger.info("Session chunk \(chunkIndex) EOS at step \(step)")
             }
-            if let eos = eosStep, step >= eos + totalFramesAfterEos {
+            if let probe, end.needsLevel(before: step),
+                let level = await probe(
+                    PocketTtsSynthesizer.TailLevelRequest(
+                        latents: chunkLatents, chunkIndex: chunkIndex,
+                        utteranceIndex: utteranceIndex, first: !end.extending))
+            {
+                end.record(level: level)
+            }
+            if end.shouldStop(before: step) {
                 break
             }
 
@@ -389,19 +456,22 @@ public actor PocketTtsSession {
                     chunkCount: chunkCount,
                     utteranceIndex: utteranceIndex,
                     latent: latent,
-                    afterEos: eosStep.map { step > $0 } ?? false
+                    afterEos: end.eosStep.map { step > $0 } ?? false
                 )
             )
+            end.kept(level: PocketTtsSynthesizer.latentLevel(frameSamples))
+            if probe != nil { chunkLatents.append(latent) }
 
             // Autoregressive feedback
             sequence = try PocketTtsSynthesizer.createSequenceFromLatent(latent)
         }
+        noteChunkEnd(end.summary(chunkIndex: chunkIndex, utteranceIndex: utteranceIndex))
 
         if !Task.isCancelled {
             try PocketTtsSynthesizer.validateGenerationCompleted(
                 generatedFrameLimit: maxGenLen,
                 cachePosition: cachePosition,
-                eosStep: eosStep,
+                eosStep: end.eosStep,
                 framesAfterEos: totalFramesAfterEos)
         }
     }
@@ -515,9 +585,12 @@ public actor PocketTtsSession {
         // rank-4 `.ane` models).
         let maxGenLen = PocketTtsSynthesizer.boundedGenerationFrameCount(
             text: text, cachePosition: Int(prefilledPosition))
-        var eosStep: Int?
         var sequence = constants.bosEmbedding
         let totalFramesAfterEos = framesAfterEos + PocketTtsConstants.extraFramesAfterDetection
+        // TachiNovel: the chunk's end (EndGuard); this path decodes every latent, so the guard reads the levels it
+        // needs from that audio.
+        var end = PocketTtsSynthesizer.ChunkEndTracker(
+            endGuard: endGuard, usualFramesAfterEos: totalFramesAfterEos)
 
         for step in 0..<maxGenLen {
             if Task.isCancelled { break }
@@ -536,11 +609,10 @@ public actor PocketTtsSession {
                 sequence: sequence, noise: noise)
 
             // EOS detection
-            if eosLogit > PocketTtsConstants.eosThreshold && eosStep == nil {
-                eosStep = step
+            if end.noteEos(step: step, logit: eosLogit) {
                 Self.logger.info("Session chunk \(chunkIndex) (state) EOS at step \(step)")
             }
-            if let eos = eosStep, step >= eos + totalFramesAfterEos {
+            if end.shouldStop(before: step) {
                 break
             }
 
@@ -564,16 +636,18 @@ public actor PocketTtsSession {
                     utteranceIndex: utteranceIndex
                 )
             )
+            end.kept(level: PocketTtsSynthesizer.latentLevel(frameSamples))
 
             // Autoregressive feedback
             sequence = latent
         }
+        noteChunkEnd(end.summary(chunkIndex: chunkIndex, utteranceIndex: utteranceIndex))
 
         if !Task.isCancelled {
             try PocketTtsSynthesizer.validateGenerationCompleted(
                 generatedFrameLimit: maxGenLen,
                 cachePosition: Int(prefilledPosition),
-                eosStep: eosStep,
+                eosStep: end.eosStep,
                 framesAfterEos: totalFramesAfterEos)
         }
     }

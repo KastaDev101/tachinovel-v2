@@ -34,7 +34,7 @@ Status: **ok** = same as v1 · **better** = v2 does more · **fixed** = gap clos
 | Deep links | `scriptable:///run/TachiNovel?…` | `tachinovel://open?…` (retained until the UI listens, so cold starts work) | ok |
 | Background update checks | the widget checked; the app merged `widget-updates.json` | `BGAppRefreshTask` + quiet local notification | better |
 | Narration | PC narrator only (settings screen "Listen in the Car") | in-app Apple voices with lock screen, CarPlay list, Now Playing; Kokoro in progress (voice-spike) | better |
-| PC narrator settings + status ("Listen in the Car" screen) | config and status files in iCloud Drive › Scriptable › TachiNovel, shared with the PC narrator | v2's own store: the narrator can't see v2's choices, and v2 can't see its status | gap (parked: narrator sidelined) |
+| PC narrator settings + status ("Listen in the Car" screen) | config and status files in iCloud Drive › Scriptable › TachiNovel, shared with the PC narrator | removed (2026-10-16): the screen is stubbed out at build time (tools/v1.ts); Nephis renders audio on the iPhone | dropped |
 | Backup & Restore | backups in iCloud Drive › Scriptable › TachiNovel › backups (visible in Files and on the PC) | Restore from Files works with v1 backups (tested with a real one). New backups: with the iCloud entitlement in iCloud Drive › TachiNovel › backups; in the **free sideload** (no iCloud) inside the app container, reachable only through Share | **fixed** (#24: Documents, shown in Files) |
 | Logs for Claude on the PC | `TachiNovel/logs/` mirrored to iCloud | sideload: device only (Copy Full Diagnostics / Send a Problem Report still work through the share sheet) | partly (#24: the log mirror is in Files on the phone, but nothing syncs it to the PC without iCloud) |
 | Same library as v1 | — | separate apps and stores; move with a backup | by design (decision: no live sharing) |
@@ -58,7 +58,7 @@ Status: **ok** = same as v1 · **better** = v2 does more · **fixed** = gap clos
    files is too risky; moving data stays backup → restore. **Parked idea:** a read-only "Import from
    the v1 folder" (pick iCloud Drive › Scriptable › TachiNovel once, read its state files like a backup
    preview, merge; never write there).
-5. **PC narrator integration**: parked with the narrator.
+5. **PC narrator integration**: dropped (2026-10-16); audio downloads replace it.
 
 Verify on the phone (not testable in CI): haptics trick, keyboard with `resize: native`, Cloudflare
 "Verification Needed" flow (`solveChallenge`), brightness restore when leaving the reader.

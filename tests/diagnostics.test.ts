@@ -8,6 +8,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FileStore } from '@v1/shared/contracts/platform.ts';
 import { clearReports, EXPORT_FILE, exportReports, hash, listReports, logLine, MAX_REPORTS, parsePayload, recordPayload, REPORTS_DIR, topFrames } from '../src/core/diagnostics/metrickit.ts';
+import { VOICE_END_MAX, voiceEndEntry } from '../src/core/diagnostics/voice-end.ts';
 import { buildAll } from '../tools/build.ts';
 import { startCoreInVm } from './helpers/native-mock.ts';
 
@@ -138,6 +139,25 @@ describe('MetricKit report store', () => {
   });
 });
 
+describe('how the last run ended, from native (diagnostics/voice-end.ts)', () => {
+  it('one log line in plain words: a crash of her model is an error, an unexplained end a warning, a swipe-away info', () => {
+    expect(voiceEndEntry({ message: 'Nephis crashed at 2:32 PM, chapter 1026, phone warm.', level: 'error' })).toEqual({
+      level: 'error',
+      message: 'Last run: Nephis crashed at 2:32 PM, chapter 1026, phone warm.',
+    });
+    expect(voiceEndEntry({ message: 'The app was closed at 2:21 PM (swiped away, or closed by iOS).', level: 'info' })?.level).toBe('info');
+    // Anything else (or nothing) is a warning; whitespace is folded; a runaway line is cut.
+    expect(voiceEndEntry({ message: '  Closed in the background\n  for memory at 2:32 PM.  ', level: 'fatal' })).toEqual({
+      level: 'warn',
+      message: 'Last run: Closed in the background for memory at 2:32 PM.',
+    });
+    const long = voiceEndEntry({ message: 'x'.repeat(1000) });
+    expect(long?.message.length).toBe('Last run: '.length + VOICE_END_MAX);
+    expect(long?.message.endsWith('…')).toBe(true);
+    for (const bad of [undefined, null, {}, { message: '   ' }, { message: 3 }, 'text']) expect(voiceEndEntry(bad)).toBeNull();
+  });
+});
+
 describe('diagnostics.* in the built core', () => {
   it('stores, logs, lists, shares and clears MetricKit reports', async () => {
     const outDir = path.join(root, '.cache', 'test-www-diagnostics');
@@ -160,6 +180,14 @@ describe('diagnostics.* in the built core', () => {
       expect(existsSync(path.join(core.localAppDir, 'logs', 'metrickit-export.json'))).toBe(true);
       await expect(core.call('diagnostics.clearReports')).resolves.toEqual({ removed: 5 });
       await expect(core.call('diagnostics.shareReports')).resolves.toEqual({ shared: 0 });
+
+      // How the last run ended (VoiceRun.swift): a line in Recent problems.
+      await core.call('diagnostics.voiceEnd', { message: 'Closed in the background for memory at 2:32 PM, chapter 1026, phone warm. Not counted against Nephis.', level: 'warn' });
+      const lines = await core.call<{ level: string; message: string }[]>('app.logs', { level: 'warn', limit: 50 });
+      expect(lines.some((p) => p.level === 'warn' && p.message.startsWith('Last run: Closed in the background for memory at 2:32 PM'))).toBe(true);
+      const bad = await core.callRaw('diagnostics.voiceEnd', { level: 'warn' });
+      expect(bad.ok).toBe(false);
+      expect(bad.error?.code).toBe('INVALID_ARGS');
     } finally {
       core.dispose();
     }

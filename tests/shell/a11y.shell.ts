@@ -75,9 +75,6 @@ describe('VoiceOver names on the main screens (PC shell)', () => {
       },
       initStorage: { 'tachinovel.tips.reader': '1' },
     });
-    // The car player lists PC-narrated audio (none linked here).
-    shell.pluginReplies.set('Narration.audioLibrary', () => ({ linked: false, novels: [] }));
-    shell.pluginReplies.set('Narration.audioFolder', () => ({ linked: false, name: null }));
   });
 
   afterAll(async () => {
@@ -102,26 +99,11 @@ describe('VoiceOver names on the main screens (PC shell)', () => {
       await audit(tab);
     }
 
-    // The Listen player: More › Listen opens it directly where that row exists (on-device voices);
-    // otherwise through v1's Listen in the Car screen › Open the player.
-    const listenRow = page.getByTestId('more-listen');
-    const viaCarScreen = !(await listenRow.isVisible());
-    if (viaCarScreen) {
-      await page.getByTestId('more-narration').click();
-      await waitStack(2);
-      await page.getByTestId('open-car-player').waitFor({ state: 'visible', timeout: 5000 });
-      await audit('Listen in the Car');
-      await page.getByTestId('open-car-player').click();
-    } else {
-      await listenRow.click();
-    }
+    // The Listen player: More › Listen.
+    await page.getByTestId('more-listen').click();
     await page.getByTestId('car-player').waitFor({ state: 'visible', timeout: 5000 });
     await audit('Listen player');
     await page.getByTestId('car-player').locator('[data-act="close"]').click();
-    if (viaCarScreen) {
-      await top().getByTestId('nav-back').click();
-      await waitStack(1);
-    }
 
     await page.getByTestId('tab-browse').click();
     await audit('browse');

@@ -50,6 +50,9 @@ final class KokoroService: @unchecked Sendable {
     private var reloadItem: DispatchWorkItem?
     private var idleItem: DispatchWorkItem?
     private var releasedForMemory = false
+    /// The studio speed test runs alone (crash plan a1): loads asked for meanwhile wait for its end (`studioTestEnded`).
+    private var heldForStudioTest = false
+    private var afterStudioTest: [((Status) -> Void)?] = []
     private let log = Logger(subsystem: "app.tachinovel", category: "voice")
 
     /// model-info.json written by tools/fetch-voices.ts (revision, voices, size).
@@ -64,7 +67,7 @@ final class KokoroService: @unchecked Sendable {
         runtime = dir.map { KokoroRuntime(modelsDirectory: $0) }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice", isDirectory: true))
+        sentinel = CrashSentinel(directory: support.appendingPathComponent("TachiNovel/voice", isDirectory: true), name: "Kokoro")
         if let dir, let data = try? Data(contentsOf: dir.appendingPathComponent("model-info.json")),
            let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             modelInfo = info
@@ -75,8 +78,18 @@ final class KokoroService: @unchecked Sendable {
 
     /// Call once at launch (AppDelegate).
     func start() {
-        if sentinel.checkAtLaunch() {
-            log.error("voice: the previous run crashed during Kokoro synthesis (\(self.sentinel.current.lastContext ?? "", privacy: .public))")
+        // How the last run ended (VoiceRun's journal): only a real crash of Kokoro's model counts against it.
+        VoiceRun.shared.watch(sentinel)
+        let check = sentinel.checkAtLaunch(VoiceRun.shared.journal)
+        if check.turnedBackOn { log.info("voice: Kokoro turned back on: a new build of the app") }
+        if let note = check.note {
+            let line = RunEndWords.line(note, voice: "Kokoro")
+            if note.counted {
+                log.error("voice: \(line, privacy: .public) (\(note.context ?? "", privacy: .public))")
+            } else {
+                log.info("voice: \(line, privacy: .public)")
+            }
+            VoiceRun.shared.postVoice(line, counted: note.counted, quiet: note.isQuiet)
         }
         if runtime == nil { status = .unavailable("Kokoro isn't included in this build") }
         else if sentinel.current.disabled { status = .unavailable("Turned off after crashing twice") }
@@ -108,6 +121,11 @@ final class KokoroService: @unchecked Sendable {
         }
         if status == .ready || releasedForMemory {
             completion?(status)
+            return
+        }
+        // The studio test runs alone: this load starts when it ends (a chapter being prepared waits instead of failing).
+        if heldForStudioTest {
+            afterStudioTest.append(completion)
             return
         }
         let wasLoading = status == .loading
@@ -166,6 +184,31 @@ final class KokoroService: @unchecked Sendable {
     func cancelIdleRelease() {
         idleItem?.cancel()
         idleItem = nil
+    }
+
+    /// The studio speed test runs alone (crash plan a1): free the model now and call back once it is gone
+    /// (KokoroRuntime.release waits for a load in progress first); loads asked for until `studioTestEnded` wait for it.
+    /// Completion on main.
+    func holdForStudioTest(_ completion: @escaping () -> Void) {
+        cancelIdleRelease()
+        dropWarm()
+        heldForStudioTest = true
+        guard let runtime, status == .ready || status == .loading else { return completion() }
+        log.info("voice: releasing the Kokoro model (studio test)")
+        status = .unloaded
+        let done = MainBound(completion)
+        Task.detached {
+            await runtime.release()
+            DispatchQueue.main.async { done.value() }
+        }
+    }
+
+    /// The studio test ended: the loads asked for meanwhile start now.
+    func studioTestEnded() {
+        heldForStudioTest = false
+        let waiting = afterStudioTest
+        afterStudioTest = []
+        for completion in waiting { ensureLoaded(completion) }
     }
 
     private func releaseNow(reason: String) {
@@ -280,10 +323,13 @@ final class KokoroService: @unchecked Sendable {
         let sentinel = self.sentinel
         let context = "\(voice) \(route.rawValue) \(text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
         let done = MainBound(completion)
+        // Heteronyms its lexicon says one way only ("she had read it", "they live here", "wind the clock") as phoneme
+        // runs in their sense (HDVoiceCore Heteronyms; every Kokoro sentence passes here, the warm cache's too).
+        let spoken = Heteronyms.kokoroRuns(text: text, runs: runs)
         Task.detached(priority: .userInitiated) {
             sentinel.begin(context)
             let result: Result<KokoroAudio, Error>
-            do { result = .success(try await runtime.synthesize(text: text, runs: runs, voice: voice, speed: speed)) } catch { result = .failure(error) }
+            do { result = .success(try await runtime.synthesize(text: text, runs: spoken, voice: voice, speed: speed)) } catch { result = .failure(error) }
             if case .success = result { sentinel.end(success: true) } else { sentinel.end(success: false) }
             DispatchQueue.main.async {
                 if case .success = result { self.backoff.reset() }
@@ -336,24 +382,6 @@ final class KokoroService: @unchecked Sendable {
         }
     }
 
-    // MARK: - Placement (Voice Lab)
-
-    /// Where Core ML runs each stage on this device with the current route (MLComputePlan), last result.
-    private(set) var lastPlacement: [StagePlacement] = []
-
-    func analyzePlacement(completion: @escaping ([StagePlacement]) -> Void) {
-        guard let dir = modelsDirectory else { return completion([]) }
-        let route = self.route
-        let done = MainBound(completion)
-        Task.detached(priority: .utility) {
-            let result = await KokoroPlacement.analyze(modelsDirectory: dir, route: route)
-            DispatchQueue.main.async {
-                self.lastPlacement = result
-                done.value(result)
-            }
-        }
-    }
-
     // MARK: - Warm-up
 
     private func scheduleWarmUp() {
@@ -369,13 +397,19 @@ final class KokoroService: @unchecked Sendable {
         // Load only (Core ML compiles the stages for the Neural Engine here, the slow part): no synthesis,
         // so the known iOS 26 Core ML crash can never hit right after launch, only while listening.
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-            guard self.usable, self.status == .unloaded else { return }
-            self.ensureLoaded { status in
-                guard status == .ready else { return }
-                UserDefaults.standard.set(true, forKey: key)
-                // Don't hold the model for nothing: release unless narration started meanwhile.
-                if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
+            let warmUp: () -> Void = {
+                guard self.usable, self.status == .unloaded else { return }
+                self.ensureLoaded { status in
+                    guard status == .ready else { return }
+                    UserDefaults.standard.set(true, forKey: key)
+                    // Don't hold the model for nothing: release unless narration started meanwhile.
+                    if !NarrationController.shared.wantsKokoro { self.scheduleIdleRelease(after: 30) }
+                }
             }
+            // Nephis reads (crash plan a6): her model and then her studio's load, and compile once per build, at launch
+            // (warmNephis); Kokoro's compile runs after them, never at the same time, and not on her first Listen.
+            guard HybridSpeechEngine.nephisCanReadAlone(NarrationController.listenEngine()) else { return warmUp() }
+            ExpressiveService.shared.whenSettled(warmUp)
         }
     }
 }

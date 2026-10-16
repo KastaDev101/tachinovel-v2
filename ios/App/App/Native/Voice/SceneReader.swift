@@ -122,8 +122,9 @@ final class SceneReader {
         "close": Homograph(question: "does \"close\" mean near (ends in an s sound, not z)", yes: "klohss", no: "klohz"),
     ]
 
-    /// The homographs of `sentences` (index → text) and how to say them: index → [word: respelling], read with the
-    /// sentence and the one before it; empty when none or the model isn't available. Main queue.
+    /// The homographs of `sentences` (index → text) and how to say them: index → [word: respelling, "" = as written],
+    /// read with the sentence and the one before it; empty when none or the model isn't available. Main queue.
+    /// HybridSpeechEngine hands them to Heteronyms.pocketText, which uses them where its rules only guessed.
     func senses(_ sentences: [(index: Int, text: String, before: String)], completion: @escaping ([Int: [String: String]]) -> Void) {
         var asks: [(index: Int, word: String, text: String, before: String)] = []
         for s in sentences {
@@ -132,9 +133,11 @@ final class SceneReader {
         }
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), available, !asks.isEmpty {
+            // Through MainBound (used on main only): Swift 6.3.3 crashed diagnosing the bare capture (CI 2026-10-13).
+            let done = MainBound(completion)
             Task.detached(priority: .utility) {
                 let out = await Self.askSenses(asks)
-                DispatchQueue.main.async { completion(out) }
+                DispatchQueue.main.async { done.value(out) }
             }
             return
         }
@@ -142,10 +145,10 @@ final class SceneReader {
         DispatchQueue.main.async { completion([:]) }
     }
 
-    /// `text` with the sense respellings applied (whole words; a capitalized word keeps its capital).
+    /// `text` with the sense respellings applied (whole words; a capitalized word keeps its capital; "" = as written).
     static func respell(_ text: String, _ senses: [String: String]) -> String {
         var out = text
-        for (word, said) in senses {
+        for (word, said) in senses where !said.isEmpty {
             guard let rx = try? NSRegularExpression(pattern: "\\b\(word)\\b", options: .caseInsensitive) else { continue }
             for m in rx.matches(in: out, range: NSRange(out.startIndex..., in: out)).reversed() {
                 guard let r = Range(m.range, in: out) else { continue }
@@ -185,7 +188,8 @@ final class SceneReader {
             var out: [Int: [String: String]] = [:]
             for r in reply.content.answers where r.number >= 1 && r.number <= asks.count {
                 let a = asks[r.number - 1]; let h = homographs[a.word]!
-                if let said = r.yes ? h.yes : h.no { out[a.index, default: [:]][a.word] = said }
+                // "" = as written: the answer still counts (it overrides a guess of the heteronym rules).
+                out[a.index, default: [:]][a.word] = (r.yes ? h.yes : h.no) ?? ""
             }
             return out
         } catch {

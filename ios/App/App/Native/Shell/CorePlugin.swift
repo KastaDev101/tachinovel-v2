@@ -70,6 +70,17 @@ public class TachiNativePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// The app icon's quick action (LaunchActions): "launchAction" {action}, kept until the page listens.
+    override public func load() {
+        NotificationCenter.default.addObserver(self, selector: #selector(launchActionQueued), name: LaunchActions.queued, object: nil)
+        launchActionQueued()
+    }
+
+    @objc private func launchActionQueued() {
+        guard Thread.isMainThread, let action = MainActor.assumeIsolated({ LaunchActions.take() }) else { return }
+        notifyListeners("launchAction", data: ["action": action], retainUntilConsumed: true)
+    }
+
     /// navigator.wakeLock shim (src/ui/native/prelude.ts) → idle timer.
     @objc func setKeepAwake(_ call: CAPPluginCall) {
         let on = call.getBool("on", false)

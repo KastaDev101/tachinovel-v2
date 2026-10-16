@@ -1,9 +1,10 @@
 /**
  * Phone QA loop (opt-in, personal use): More › About › Diagnostics › "Diagnostics Folder" lets the user
- * pick a folder once (e.g. iCloud Drive › TachiNovel-Builds › diagnostics; a security-scoped bookmark, no
+ * pick a folder once (e.g. iCloud Drive › TachiNovel-Diagnostics; a security-scoped bookmark, no
  * iCloud entitlement needed). The native side (DiagnosticsFolder.swift) then mirrors the app log, MetricKit
- * crash/hang reports and this module's short UI event trail there every few minutes and when the app
- * goes to the background, so they sync to the PC. "Report a Problem" (the same row's menu, or shaking
+ * crash/hang reports and this module's short UI event trail there at launch, every few minutes (every 10 minutes
+ * while a voice works), when a voice stops and when the app goes to the background, so they sync to the PC. A folder that can't
+ * be reached any more shows "Disconnected – tap to reconnect" on the row, and a toast once per launch. "Report a Problem" (the same row's menu, or shaking
  * the phone) writes a small bundle: a description, a screenshot, the log tail, versions and the route.
  *
  * The trail is tiny on purpose: screen names with novel titles, tab changes and JS errors, 60 entries.
@@ -12,25 +13,11 @@
  * The Diagnostics row comes from a build-time patch of v1's screen (tools/v1-qa.ts) that reads
  * `globalThis.__TN_QA__` (set here, before v1's UI loads).
  */
-import { registerPlugin } from '@capacitor/core';
 import { effect, signal, type Signal } from '@preact/signals';
 import { activeTab, stack } from '@v1/ui/state/nav.ts';
+import { showToast } from '@v1/ui/state/toast.ts';
+import { DiagFolder, folderLabel, type DiagFolderStatus } from './diag-folder.ts';
 import { describeRoute, pushTrail } from './qa-trail.ts';
-
-export interface DiagFolderStatus {
-  linked: boolean;
-  name?: string | null;
-  /** Epoch ms of the last mirror, or null. */
-  lastMirror?: number | null;
-}
-
-interface DiagFolderPlugin {
-  status(): Promise<DiagFolderStatus>;
-  /** Native action sheet: choose/change the folder, mirror now, report a problem, stop. */
-  menu(): Promise<DiagFolderStatus>;
-}
-
-export const DiagFolder = registerPlugin<DiagFolderPlugin>('DiagFolder');
 
 interface QaGlobal {
   /** Row value: the folder's name, or "Off". */
@@ -45,8 +32,21 @@ declare global {
 
 export function installQaFolder(): void {
   const label = signal('Off');
+  let warned = false;
   const apply = (s: DiagFolderStatus): void => {
-    label.value = s.linked ? (s.name ?? 'On') : 'Off';
+    label.value = folderLabel(s);
+    // Once per launch: a folder that stopped working says so instead of failing silently (Kasta 2026-10-13).
+    if (s.linked && s.state === 'disconnected' && !warned) {
+      warned = true;
+      showToast('Diagnostics folder disconnected – reconnect it in More › About › Diagnostics', { tone: 'error', durationMs: 6000 });
+    } else if (s.linked && s.upload && !warned) {
+      // Copies are written, but iCloud doesn't take them: the PC sees nothing (2026-10-15).
+      warned = true;
+      showToast('Diagnostics aren’t reaching iCloud – see More › About › Diagnostics', { tone: 'error', durationMs: 6000 });
+    }
+  };
+  const refresh = (): void => {
+    void DiagFolder.status().then(apply).catch(() => undefined);
   };
   globalThis.__TN_QA__ = {
     label,
@@ -54,7 +54,12 @@ export function installQaFolder(): void {
       void DiagFolder.menu().then(apply).catch(() => undefined);
     },
   };
-  void DiagFolder.status().then(apply).catch(() => undefined);
+  refresh();
+  // The native side copies 8 s after launch and on every return to the app: read how it went.
+  setTimeout(refresh, 15_000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') setTimeout(refresh, 3000);
+  });
 
   // The trail: screens pushed and tabs chosen (deduplicated), and uncaught errors.
   let last = '';
