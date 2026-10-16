@@ -382,24 +382,6 @@ final class KokoroService: @unchecked Sendable {
         }
     }
 
-    // MARK: - Placement (Voice Lab)
-
-    /// Where Core ML runs each stage on this device with the current route (MLComputePlan), last result.
-    private(set) var lastPlacement: [StagePlacement] = []
-
-    func analyzePlacement(completion: @escaping ([StagePlacement]) -> Void) {
-        guard let dir = modelsDirectory else { return completion([]) }
-        let route = self.route
-        let done = MainBound(completion)
-        Task.detached(priority: .utility) {
-            let result = await KokoroPlacement.analyze(modelsDirectory: dir, route: route)
-            DispatchQueue.main.async {
-                self.lastPlacement = result
-                done.value(result)
-            }
-        }
-    }
-
     // MARK: - Warm-up
 
     private func scheduleWarmUp() {

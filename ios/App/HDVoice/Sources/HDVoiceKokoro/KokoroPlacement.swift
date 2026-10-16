@@ -4,7 +4,7 @@
 //  The route (KokoroRoute) only states preferences per stage; Core ML decides per operation which device
 //  runs it (an ANE-preferred stage can still have ops on the CPU, which is where Apple's BNNS crash on
 //  iOS 26.4+ lives, FluidAudio #817/#844). MLComputePlan (iOS 17.4+) reports that decision without
-//  running the model. Shown in the Voice Lab and printed by the CI voice check.
+//  running the model. Printed by the CI voice check (kokoro-check).
 //
 
 import CoreML

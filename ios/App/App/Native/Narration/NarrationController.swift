@@ -153,15 +153,12 @@ final class NarrationController: NSObject, SpeechEngineDelegate, @unchecked Send
         var pacedAfter: TimeInterval? = nil
     }
 
-    /// Narrator mode for this session: the saved settings, or the Voice Lab's A/B override.
+    /// Narrator mode for this session (pauses, phrase breaks, polish): the saved settings, which are its defaults since
+    /// its switches went with the Kokoro Voice Lab (2026-10-16).
     private var narrator = NarratorSettings()
-    /// Voice Lab A/B ("off" / "on" with the saved pieces); nil = the saved settings. Set by Narration.play.
-    var narratorOverride: Bool?
 
     private func refreshNarrator() {
-        var n = VoiceSettings.shared.prefs.narrator
-        if let on = narratorOverride { n.enabled = on }
-        narrator = n
+        narrator = VoiceSettings.shared.prefs.narrator
     }
 
     /// The pause after an item: narrator mode's smarter pause when Pacing is on.

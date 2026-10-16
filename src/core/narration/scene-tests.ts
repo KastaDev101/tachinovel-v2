@@ -1,8 +1,8 @@
 /**
  * Scene-reading test scenes (original, written for TachiNovel): the paragraphs and, per sentence of the script built
  * from them, every read of the narrator voice that would be acceptable (n narrator, p performed, t tense, s sad,
- * d tender). tests/scene-reading.test.ts holds the rules to 95 %; the Voice Lab scores the on-device AI director on
- * the phone with the same scenes.
+ * d tender). tests/scene-reading.test.ts holds the rules to 95 %; More › Developer › Scene-Reading Test scores the
+ * on-device AI director on the phone with the same scenes.
  */
 import type { NarratorVoice, SpeechItem } from './speech-script.ts';
 

@@ -1,6 +1,6 @@
 /**
  * Dynamic Type and VoiceOver on v2's own overlays (PC shell): the mini player, the Listen player, the
- * Voices screen and the Voice Lab size their text with fs() (src/ui/native/type.ts), so at the largest
+ * Voices screen, Developer and Voice Models size their text with fs() (src/ui/native/type.ts), so at the largest
  * text size the app follows (root 1.6 × 17 px; on the phone html's `font: -apple-system-body` sets it)
  * their text grows like v1's and nothing that holds text clips. The mini player's title button tells
  * VoiceOver what is playing. Screenshots: .cache/shell-shots/large-text-*.png.
@@ -98,7 +98,7 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
     await voices.locator('[data-act="close"]').click();
   });
 
-  it('More › Developer and the Voice Lab at the largest text size', async () => {
+  it('More › Developer and Voice Models at the largest text size', async () => {
     const page = shell.page;
     await page.getByTestId('more-about').click();
     const version = page.locator('[data-testid="screen-about"] .about-version');
@@ -110,17 +110,17 @@ describe('Dynamic Type on the v2 overlays (PC shell)', () => {
     await page.locator('.nav-root > .layer').last().getByTestId('nav-back').click();
     await page.getByTestId('more-developer-options').click();
     const dev = page.locator('[data-testid="screen-developer"]:not([inert])');
-    await dev.locator('[data-testid="dev-legacy"]').waitFor({ timeout: 5000 });
+    await dev.locator('[data-testid="dev-diagnostics"]').waitFor({ timeout: 5000 });
     await page.waitForTimeout(400);
     expect((await measure('.tn-v .hd h1')).font).toBeCloseTo(20 * LARGEST, 1);
     expect((await measure('.tn-v .hd, .tn-v .row')).clipped).toEqual([]);
     await page.screenshot({ path: path.join(shots, 'large-text-developer.png') });
-    await dev.getByTestId('dev-lab').click();
-    const lab = page.getByTestId('voice-lab');
+    await dev.getByTestId('dev-models').click();
+    const lab = page.getByTestId('expressive-lab');
     await lab.waitFor({ state: 'visible', timeout: 5000 });
     expect((await measure('.tn-v.lab .body')).font).toBeCloseTo(14 * LARGEST, 1);
     expect((await measure('.tn-v.lab .hd, .tn-v.lab .kv')).clipped).toEqual([]);
-    await page.screenshot({ path: path.join(shots, 'large-text-voice-lab.png') });
+    await page.screenshot({ path: path.join(shots, 'large-text-voice-models.png') });
     expect(shell.pageErrors).toEqual([]);
   });
 });

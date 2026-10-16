@@ -10,13 +10,13 @@
  *     (expressive-lab.ts: download, delete, free memory), Show Voice Details in the Player;
  *   - Backup Voice: Mix a Voice (voices-ui.ts openMixer);
  *   - Pronunciations: the phonemes field and JSON paste in the pronunciation editor;
- *   - Legacy: Use PC Audio and its Audio Folder, the Kokoro Voice Lab.
+ *   - Legacy: Use PC Audio and its Audio Folder.
  * Nothing here polls: each number is read when the screen opens or when its row is tapped.
  */
 import { developer, normalizeDeveloper, noteDeveloper, setDeveloper } from './dev-flags.ts';
 import { ExpressiveVoice, openExpressiveLab } from './expressive-lab.ts';
 import { Narration, type VoiceSettingsInfo } from './narration.ts';
-import { chapterMoodTest, openVoiceLab, sceneReadingTest } from './voice-lab.ts';
+import { chapterMoodTest, sceneReadingTest } from './voice-lab.ts';
 import { normalizePacks, openVoicePacks, packsSummary } from './voice-packs.ts';
 import { openVoiceSpeedTest } from './voice-speed.ts';
 import { chipSummary, copyText, openVoiceTest } from './voice-test.ts';
@@ -151,7 +151,6 @@ export function openDeveloperScreen(): void {
       <div class="card" data-testid="dev-legacy">
         ${toggle('pcaudio', 'Use PC Audio', 'Chapters narrated on the PC (“TachiNovel Audio” folder) play instead of her voice', info.usePCAudio)}
         ${info.usePCAudio ? row('folder', 'Audio Folder', folder || '…') : ''}
-        ${row('lab', 'Kokoro Voice Lab', 'Her backup voice’s live numbers')}
       </div>
       <p class="note">Turn Developer options off at the bottom of More › About.</p>`;
     if (info.usePCAudio && !folder) {
@@ -267,8 +266,6 @@ export function openDeveloperScreen(): void {
           return load();
         });
         return;
-      case 'lab':
-        return openVoiceLab();
       default:
     }
   });

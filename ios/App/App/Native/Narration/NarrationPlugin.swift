@@ -43,7 +43,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         CAPPluginMethod(name: "voiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setVoiceLab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "selfTestReport", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "voicePlacement", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "prepareDrive", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelDrive", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "driveStatus", returnType: CAPPluginReturnPromise),
@@ -93,8 +92,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let startSentence = (start["sentence"] as? NSNumber)?.intValue ?? 0
         let autoContinue = call.getBool("autoContinue", true)
         let coverUrl = call.getString("coverUrl")
-        // Voice Lab A/B: "on" / "off" overrides narrator mode for this play (the saved pieces either way).
-        let narratorOverride: Bool? = call.getString("narrator").flatMap { $0 == "on" ? true : $0 == "off" ? false : nil }
         let raw = call.getArray("paragraphs")
         let script = NarrationController.ScriptItem.parse(call.getObject("script"))
         // PC-narrated audio for this chapter (only with Settings › Voices › Advanced › "Use PC audio when
@@ -103,7 +100,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let audioChapter = preferAudio ? AudioLibrary.shared.chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath) : nil
         DispatchQueue.main.async {
             self.n.autoContinue = autoContinue
-            self.n.narratorOverride = narratorOverride
             if let audioChapter {
                 self.n.playAudio(audioChapter, startParagraph: startParagraph, startTime: nil, coverUrl: coverUrl)
             } else if raw != nil || script != nil {
@@ -116,7 +112,7 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 let ch = NarrationController.Chapter(pluginId: pluginId, novelPath: novelPath, chapterPath: chapterPath,
                                                      novelName: novelName, chapterName: chapterName, coverUrl: coverUrl,
                                                      paragraphs: paragraphs, nextPath: nil, nextName: nil, script: script)
-                // Speech asked for explicitly (the Voice Lab, a voice test) reads live; Listen plays the chapter's audio first.
+                // Speech asked for explicitly (a voice test) reads live; Listen plays the chapter's audio first.
                 if call.getString("engine") == "speech" {
                     self.n.play(ch, startParagraph: startParagraph, startSentence: startSentence)
                 } else {
@@ -299,17 +295,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 "speed": prefs.speed,
                 "volume": prefs.volume,
                 "speedPresets": SpeechSpeed.presets,
-                "narrator": [
-                    "enabled": prefs.narrator.enabled,
-                    "dialogueVoice": prefs.narrator.dialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
-                    "secondDialogueVoice": prefs.narrator.secondDialogueVoice.flatMap { prefs.isChoice($0) ? $0 : nil } ?? NSNull(),
-                    "pacing": prefs.narrator.pacing,
-                    "jitter": prefs.narrator.jitter,
-                    "polish": prefs.narrator.polish,
-                    "roomTone": prefs.narrator.roomTone,
-                    "phraseBreaks": prefs.narrator.phraseBreaks,
-                    "pacingStyle": prefs.narrator.pacingStyle,
-                ] as [String: Any],
                 "delivery": [
                     "listenEngine": prefs.delivery.listenEngine ?? NSNull(),
                     "natural": prefs.delivery.natural,
@@ -361,7 +346,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         let volume = call.getDouble("volume")
         DispatchQueue.main.async {
             let novel = call.getObject("novel")
-            let narrator = call.getObject("narrator")
             let delivery = call.getObject("delivery")
             // The app icon's quick action follows when the app goes to the background (AppDelegate).
             if let developer = call.getObject("developer") { DeveloperOptions.update(developer) }
@@ -377,22 +361,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 }
                 if let usePCAudio { p.usePCAudio = usePCAudio }
                 if let kokoroEnabled { p.kokoroEnabled = kokoroEnabled }
-                if let narrator {
-                    // Narrator mode: only the keys sent change; a voice of null (or unknown) means none.
-                    var n = p.narrator
-                    if let v = narrator["enabled"] as? Bool { n.enabled = v }
-                    if narrator.keys.contains("dialogueVoice") { n.dialogueVoice = (narrator["dialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil } }
-                    if narrator.keys.contains("secondDialogueVoice") {
-                        n.secondDialogueVoice = (narrator["secondDialogueVoice"] as? String).flatMap { p.isChoice($0) ? $0 : nil }
-                    }
-                    if let v = narrator["pacing"] as? Bool { n.pacing = v }
-                    if let v = narrator["jitter"] as? Bool { n.jitter = v }
-                    if let v = narrator["polish"] as? Bool { n.polish = v }
-                    if let v = narrator["roomTone"] as? Bool { n.roomTone = v }
-                    if let v = narrator["phraseBreaks"] as? String { n.phraseBreaks = v == "off" ? "off" : "clauses" }
-                    if let v = narrator["pacingStyle"] as? String { n.pacingStyle = v == "natural" ? "natural" : "relaxed" }
-                    p.narrator = n
-                }
                 if let delivery {
                     // The narrator voice: only the keys sent change; listenEngine null = Kokoro.
                     var d = p.delivery
@@ -494,20 +462,11 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { call.resolve(VoiceLab.snapshot()) }
     }
 
-    /// Voice Lab controls: compute route, render-ahead, reset counters; test injection (debug/self-test).
+    /// Test injection for the simulator voice self-test (Debug builds): Kokoro made slow or failing, so the Apple voice
+    /// has to take over (voice-selftest.ts).
     @objc func setVoiceLab(_ call: CAPPluginCall) {
-        let route = call.getString("route")
-        let ahead = call.getInt("ahead")
-        let reset = call.getBool("resetStats") ?? false
         DispatchQueue.main.async {
             let inject = call.getObject("inject")
-            let before = VoiceSettings.shared.prefs
-            VoiceSettings.shared.update { p in
-                if let route, KokoroRoute(rawValue: route) != nil { p.route = route }
-                if let ahead { p.ahead = min(3, max(2, ahead)) }
-            }
-            if VoiceSettings.shared.prefs.route != before.route { KokoroService.shared.settingsChanged() }
-            if reset { KokoroService.shared.stats.reset() }
             #if DEBUG
             if let inject, let runtime = KokoroService.shared.runtime {
                 let delay = ((inject["delayMs"] as? NSNumber)?.doubleValue ?? 0) / 1000
@@ -518,18 +477,6 @@ public class NarrationPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
             _ = inject
             #endif
             call.resolve(VoiceLab.snapshot())
-        }
-    }
-
-    /// Voice Lab: where Core ML runs each Kokoro stage on this device (MLComputePlan, no synthesis).
-    @objc func voicePlacement(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            KokoroService.shared.analyzePlacement { result in
-                call.resolve(["stages": result.map { p in
-                    ["stage": p.stage, "configured": p.configured, "ane": p.neuralEngine, "cpu": p.cpu, "gpu": p.gpu,
-                     "error": p.error ?? NSNull(), "summary": p.summary] as [String: Any]
-                }])
-            }
         }
     }
 

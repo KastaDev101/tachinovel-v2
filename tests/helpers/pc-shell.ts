@@ -36,7 +36,7 @@ export const PLUGINS: Record<string, Record<string, Rtype>> = {
   DiagFolder: Object.fromEntries(swiftPluginMethods('Shell/DiagFolderPlugin.swift').map((m) => [m, 'promise'])),
   // Exactly the methods NarrationPlugin.swift registers (read from the Swift source, so they can't drift).
   Narration: Object.fromEntries(swiftPluginMethods('Narration/NarrationPlugin.swift').map((m) => [m, 'promise'])),
-  // Voice Lab › Experimental engines (ExpressiveVoicePlugin.swift).
+  // Her model, packs and voice tests (ExpressiveVoicePlugin.swift).
   ExpressiveVoice: Object.fromEntries(swiftPluginMethods('Voice/Expressive/ExpressiveVoicePlugin.swift').map((m) => [m, 'promise'])),
   Haptics: { impact: 'promise', notification: 'promise', vibrate: 'promise', selectionStart: 'promise', selectionChanged: 'promise', selectionEnd: 'promise' },
   Store: { products: 'promise', purchase: 'promise', restore: 'promise', entitlements: 'promise', manageSubscriptions: 'promise', redeemOfferCode: 'promise' },

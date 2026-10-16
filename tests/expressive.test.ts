@@ -195,9 +195,8 @@ describe('wiring', () => {
     expect(read('ios/App/App/Native/Shell/MainViewController.swift')).toContain('registerPluginInstance(ExpressiveVoicePlugin())');
   });
 
-  it('keeps the experimental engines in the Voice Lab and More › Developer (and her download row), nowhere else', () => {
-    const lab = read('src/ui/native/voice-lab.ts');
-    expect(lab).toContain("import { openExpressiveLab } from './expressive-lab.ts'");
+  it('keeps Voice Models in More › Developer (and her download row in More › Voices), nowhere else', () => {
+    expect(read('src/ui/native/voice-lab.ts')).not.toContain('expressive-lab');
     expect(read('src/ui/native/developer-ui.ts')).toMatch(/case 'models':\s+return openExpressiveLab\(\);/);
     const voices = read('src/ui/native/voices-ui.ts');
     // Nephis is the one voice (2026-10-09): More › Voices opens the models screen only to download her model.

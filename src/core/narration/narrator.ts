@@ -1,6 +1,7 @@
 /**
  * Narrator mode, the script side (pure ES2023; core and UI). speechScript adds these to every sentence and
- * native uses each one only when its Narrator-mode switch is on (Settings › Voices › Narrator mode), so the
+ * native uses each one only when its narrator-mode piece is on (HDVoiceCore NarratorSettings: Kokoro's pacing, phrase
+ * breaks and polish at their defaults; their switches went with the Kokoro Voice Lab on 2026-10-16), so the
  * sentence list itself (resume points, highlighting) never changes:
  *
  *  - dialogue: `role: 'dialogue'` for a sentence spoken inside quotation marks; a sentence that mixes

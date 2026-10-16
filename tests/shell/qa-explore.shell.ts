@@ -33,7 +33,6 @@ const settings = (o: Record<string, unknown>): unknown => {
   return {
     voices,
     customVoices: [],
-    narrator: { enabled: false, dialogueVoice: null, secondDialogueVoice: null, pacing: true, jitter: false, polish: true, roomTone: false, phraseBreaks: 'clauses', pacingStyle: 'relaxed' },
     defaultVoice: 'af_heart',
     kokoroEnabled: true,
     usePCAudio: false,

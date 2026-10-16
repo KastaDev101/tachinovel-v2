@@ -35,8 +35,6 @@ export interface PlayOptions {
   autoContinue?: boolean;
   /** 'speech' forces speech even when a narrated file exists (PC audio is used only when enabled). */
   engine?: 'audio' | 'speech';
-  /** Voice Lab A/B: narrator mode off, or on with the saved pieces, for this play only. */
-  narrator?: 'on' | 'off';
 }
 
 export interface NarrationVoice {
@@ -162,23 +160,6 @@ export interface KokoroVoiceInfo {
   gradeRank?: number;
 }
 
-/** Narrator mode (HDVoiceCore Narrator.swift): each piece has its own switch; off by default. */
-export interface NarratorInfo {
-  enabled: boolean;
-  /** Quoted speech in this voice (a voice or mix id); null = the narrator's voice. */
-  dialogueVoice: string | null;
-  /** The other speaker of an exchange; null = one dialogue voice. */
-  secondDialogueVoice: string | null;
-  pacing: boolean;
-  jitter: boolean;
-  polish: boolean;
-  roomTone: boolean;
-  /** Short pauses between phrases: 'clauses' (the default) or 'off'. */
-  phraseBreaks: 'off' | 'clauses';
-  /** Pause lengths with pacing on: 'relaxed' (the default) or 'natural'. */
-  pacingStyle: 'relaxed' | 'natural';
-}
-
 /** "Your mixes": a named blend of two voices (HDVoiceCore VoiceMix.swift). */
 export interface CustomVoiceInfo {
   /** "mix_" + 8 hex digits. */
@@ -205,7 +186,6 @@ export interface VoiceSettingsInfo {
   speed?: number;
   volume?: number;
   speedPresets?: number[];
-  narrator?: NarratorInfo;
   /** The narrator voice that reads chapters and how it reads (natural delivery). */
   delivery?: DeliveryInfo;
   kokoro: { bundled: boolean; status: string; ready: boolean; crashDisabled: boolean; crashes: number; revision: string | null; bytes: number | null };
@@ -364,8 +344,6 @@ export interface NarrationPlugin {
     speed?: number;
     /** 0–1.5 ("Voice volume"; above 1 a limiter keeps it clean). */
     volume?: number;
-    /** Narrator mode: only the keys sent change. */
-    narrator?: Partial<NarratorInfo>;
     /** The narrator voice: only the keys sent change. */
     delivery?: Partial<DeliveryInfo>;
     /** Developer options (dev-flags.ts): only the keys sent change. */
@@ -381,13 +359,12 @@ export interface NarrationPlugin {
    */
   sampleVoice(opts: { voice: string; text?: string; runs?: { t?: string; p?: string }[] }): Promise<{ ms: number; source: VoiceSource }>;
   stopSample(): Promise<void>;
-  /** Voice Lab › Test scene reading: the on-device AI director's moods for these sentences (null when unavailable). */
+  /** Developer › Scene-Reading Test, Mood Test: the on-device AI director's moods for these sentences (null when unavailable). */
   readScene(opts: { sentences: { text: string; kind: 'narration' | 'spoken' | 'system' }[] }): Promise<{ available: boolean; reason?: string; moods: string[] | null; ms: number }>;
-  /** Voice Lab numbers (hidden: Settings › About › tap the version 5 times). */
+  /** The voice's numbers (Kokoro, the session, the car): More › Developer's Voice Report and Now Playing. */
   voiceLab(): Promise<Record<string, unknown>>;
-  setVoiceLab(opts: { route?: string; ahead?: number; resetStats?: boolean; inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
-  /** Voice Lab: where Core ML runs each Kokoro stage on this device (per-operation plan, no synthesis). */
-  voicePlacement(): Promise<{ stages: { stage: string; configured: string; ane: number; cpu: number; gpu: number; error: string | null; summary: string }[] }>;
+  /** Simulator voice self-test (Debug builds): Kokoro made slow or failing; answers voiceLab's numbers. */
+  setVoiceLab(opts: { inject?: { delayMs?: number; fail?: boolean } }): Promise<Record<string, unknown>>;
   /** Simulator voice self-test only (-tachiVoiceSelfTest): write the report file. */
   selfTestReport(opts: { json: string }): Promise<{ path: string | null }>;
   /** "Prepare for the drive": render the next `chapters` chapters with Kokoro (from `startChapterPath`, else

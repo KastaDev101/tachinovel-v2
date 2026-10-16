@@ -178,18 +178,6 @@ function defaultVoicePrefs(): {
   novelVoices: Record<string, string>;
   /** Voice mixer: saved mixes (NarrationPlugin saveCustomVoice / deleteCustomVoice). */
   customVoices: { id: string; name: string; a: string; b: string; percent: number }[];
-  /** Narrator mode (Settings › Voices › Narrator mode). */
-  narrator: {
-    enabled: boolean;
-    dialogueVoice: string | null;
-    secondDialogueVoice: string | null;
-    pacing: boolean;
-    jitter: boolean;
-    polish: boolean;
-    roomTone: boolean;
-    phraseBreaks: string;
-    pacingStyle: string;
-  };
 } {
   return {
     defaultVoice: 'af_heart',
@@ -198,17 +186,6 @@ function defaultVoicePrefs(): {
     carButtons: 'chapters',
     novelVoices: {},
     customVoices: [],
-    narrator: {
-      enabled: true,
-      dialogueVoice: null,
-      secondDialogueVoice: null,
-      pacing: true,
-      jitter: false,
-      polish: true,
-      roomTone: false,
-      phraseBreaks: 'clauses',
-      pacingStyle: 'relaxed',
-    },
   };
 }
 
@@ -540,7 +517,6 @@ export class CrawlEnv {
           return {
             voices: KOKORO_VOICES,
             customVoices: v.customVoices,
-            narrator: { ...v.narrator },
             defaultVoice: v.defaultVoice,
             kokoroEnabled: v.kokoroEnabled,
             usePCAudio: v.usePCAudio,
@@ -556,13 +532,6 @@ export class CrawlEnv {
           if (typeof o.kokoroEnabled === 'boolean') v.kokoroEnabled = o.kokoroEnabled;
           if (typeof o.usePCAudio === 'boolean') v.usePCAudio = o.usePCAudio;
           if (o.carButtons === 'chapters' || o.carButtons === 'skip15') v.carButtons = o.carButtons;
-          if (o.narrator && typeof o.narrator === 'object') {
-            const n = o.narrator as Record<string, unknown>;
-            for (const k of ['enabled', 'pacing', 'jitter', 'polish', 'roomTone'] as const) if (typeof n[k] === 'boolean') v.narrator[k] = n[k];
-            for (const k of ['dialogueVoice', 'secondDialogueVoice'] as const) if (k in n) v.narrator[k] = typeof n[k] === 'string' ? n[k] : null;
-            if (n.phraseBreaks === 'off' || n.phraseBreaks === 'clauses') v.narrator.phraseBreaks = n.phraseBreaks;
-            if (n.pacingStyle === 'relaxed' || n.pacingStyle === 'natural') v.narrator.pacingStyle = n.pacingStyle;
-          }
           const novel = o.novel as { pluginId?: unknown; novelPath?: unknown; voice?: unknown } | undefined;
           if (novel && typeof novel.pluginId === 'string' && typeof novel.novelPath === 'string') {
             const key = `${novel.pluginId}:${novel.novelPath}`;
@@ -596,14 +565,7 @@ export class CrawlEnv {
             stats: { totalSentences: 0, failures: 0, firstAudio: [], sentences: [] },
             device: { model: 'iPhone17,3', os: 'Version 26.0', thermal: 'nominal', lowPower: false, memoryMB: 180, availableMB: 2600, computeDevices: ['CPU', 'GPU', 'Neural Engine (16 cores)'], battery: 0.8 },
             crashes: { total: 0, consecutive: 0, disabled: false },
-            placement: [],
-            routes: [
-              { id: 'ane-cpu', title: 'Neural Engine + CPU', gpu: false },
-              { id: 'cpu', title: 'CPU only', gpu: false },
-            ],
           };
-        case 'voicePlacement':
-          return { stages: [] };
         case 'prepareDrive': {
           const key = `${String(o.pluginId)}:${String(o.novelPath)}`;
           const count = Number(o.chapters) || 3;

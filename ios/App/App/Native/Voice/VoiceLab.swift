@@ -1,10 +1,10 @@
 //
-//  VoiceLab.swift — numbers for the hidden Voice Lab (Settings › About › tap the version 5 times) and the
-//  simulator voice self-test.
+//  VoiceLab.swift — the voice's numbers for More › Developer (Voice Report, Now Playing) and the simulator voice
+//  self-test.
 //
-//  Voice Lab: time to first audio, per-sentence real-time factor, model load (cold/warm), compute units
-//  (configured per stage + what the device offers), memory, thermal state, fallbacks and crashes, so a
-//  listening session on the phone can be reported with one "Copy report".
+//  Snapshot: Kokoro's time to first audio, per-sentence real-time factor, model load (cold/warm), compute units
+//  (configured per stage + what the device offers), memory, thermal state, fallbacks and crashes, and what the car
+//  shows, so a listening session on the phone can be reported with one copy.
 //
 //  NarrationSelfTest: CI launches the Debug app in the simulator with `-tachiVoiceSelfTest 1`;
 //  src/ui/native/voice-selftest.ts plays a synthetic chapter, injects a slow Kokoro to force the Apple
@@ -42,9 +42,6 @@ enum VoiceLab {
             "stats": k.stats.dictionary(),
             "device": device(),
             "crashes": crashes(k.sentinel),
-            "placement": k.lastPlacement.map { ["stage": $0.stage, "configured": $0.configured, "ane": $0.neuralEngine, "cpu": $0.cpu, "gpu": $0.gpu,
-                                                "error": $0.error ?? NSNull(), "summary": $0.summary] as [String: Any] },
-            "routes": KokoroRoute.allCases.map { ["id": $0.rawValue, "title": $0.title, "gpu": $0.usesGPU] as [String: Any] },
             "car": [
                 "nowPlaying": NowPlayingCenter.shared.snapshot(),
                 "commands": RemoteCommandHub.shared.snapshot(),

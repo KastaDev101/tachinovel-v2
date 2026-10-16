@@ -34,7 +34,6 @@ import {
   type DeliveryInfo,
   type KokoroVoiceInfo,
   type NarrationState,
-  type NarratorInfo,
   type VoiceSettingsInfo,
 } from './narration.ts';
 import { check, chevron, confirmStep, esc, icon, panel, segmented, skeleton, switchInput, toast, unavailable, type Panel } from './panel.ts';
@@ -62,36 +61,6 @@ export function voiceLabel(s: Pick<NarrationState, 'engine' | 'voice' | 'status'
   return describeVoice(s, details);
 }
 
-const NARRATOR_OFF: NarratorInfo = {
-  enabled: false,
-  dialogueVoice: null,
-  secondDialogueVoice: null,
-  pacing: true,
-  jitter: false,
-  polish: true,
-  roomTone: false,
-  phraseBreaks: 'clauses',
-  pacingStyle: 'relaxed',
-};
-
-/** Narrator settings from native (absent in older builds: off). Unknown voices read as none. */
-export function normalizeNarrator(raw: unknown, isChoice: (id: unknown) => boolean): NarratorInfo {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof NarratorInfo, unknown>>;
-  const flag = (k: 'pacing' | 'jitter' | 'polish' | 'roomTone'): boolean => (typeof r[k] === 'boolean' ? r[k] : NARRATOR_OFF[k]);
-  const voice = (v: unknown): string | null => (typeof v === 'string' && isChoice(v) ? v : null);
-  return {
-    enabled: r.enabled === true,
-    dialogueVoice: voice(r.dialogueVoice),
-    secondDialogueVoice: voice(r.secondDialogueVoice),
-    pacing: flag('pacing'),
-    jitter: flag('jitter'),
-    polish: flag('polish'),
-    roomTone: flag('roomTone'),
-    phraseBreaks: r.phraseBreaks === 'off' ? 'off' : 'clauses',
-    pacingStyle: r.pacingStyle === 'natural' ? 'natural' : 'relaxed',
-  };
-}
-
 /** A usable answer from Narration.voiceSettings, or null (no voices: an older build, a mock, an error). */
 export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -112,7 +81,6 @@ export function normalizeVoiceSettings(raw: unknown): VoiceSettingsInfo | null {
     usePCAudio: r.usePCAudio === true,
     carButtons: r.carButtons === 'skip15' ? 'skip15' : 'chapters',
     speed: typeof r.speed === 'number' && Number.isFinite(r.speed) ? r.speed : 1,
-    narrator: normalizeNarrator(r.narrator, (id) => isChoice(id)),
     volume: typeof r.volume === 'number' && Number.isFinite(r.volume) ? r.volume : 1,
     kokoro: {
       bundled: k.bundled === true,
