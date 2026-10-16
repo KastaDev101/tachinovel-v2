@@ -147,9 +147,9 @@ extension PocketTtsSynthesizer {
             #if arch(arm64)
             let shape = array.shape.map(\.intValue)
             if shape.last == count, shape.dropLast().allSatisfy({ $0 == 1 }), array.strides.last?.intValue == 1 {
-                return array.withUnsafeBufferPointer(ofType: Float16.self) { p in
-                    (0..<count).map { Float(p[$0]) }
-                }
+                // fp16 bit patterns (MLShapedArray's Float16 needs macOS 15): Float16 to Float is exact.
+                let p = array.dataPointer.assumingMemoryBound(to: UInt16.self)
+                return (0..<count).map { Float(Float16(bitPattern: p[$0])) }
             }
             #endif
             // Use subscript for correct float16 → float32 conversion
