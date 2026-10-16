@@ -872,7 +872,7 @@ final class ExpressiveService {
         let context = "nephis \(line.text.count) chars \(ProcessInfo.processInfo.operatingSystemVersionString)"
         // Background priority while playback has plenty banked (ExpressiveLine.relaxed, RenderPacer.relaxed): the same
         // work on the efficient cores and clocks. The call's own tasks (generation, decode, studio, de-wind) inherit it.
-        Task.detached(priority: line.relaxed == true ? .utility : .userInitiated) { [weak self] in
+        Task.detached(priority: line.relaxed == true ? TaskPriority.utility : TaskPriority.userInitiated) { [weak self] in
             sentinel.begin(context)
             let result: Result<ExpressiveAudio, Error>
             // This call's own report (the Voice test's log: studio used or why not, rate, mood, endings). Read from

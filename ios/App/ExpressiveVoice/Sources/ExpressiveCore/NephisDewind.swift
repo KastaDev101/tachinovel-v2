@@ -598,8 +598,10 @@ public enum NephisDewind {
                         enhanced(produced + i, gains: g, g0: i * erbBands, coefs: c, c0: i * dfBins * 2 * dfOrder)
                         synthesise(dft: dft, into: &out)
                         if trace != nil {
-                            trace?.enhanced.append(Spectrum(re: work.yRe, im: work.yIm))
-                            trace?.synthesised.append(Array(out.suffix(hop)))
+                            // Read first, then written: the trace is a property of the pass, like what it records.
+                            let y = Spectrum(re: work.yRe, im: work.yIm), s = Array(out.suffix(hop))
+                            trace?.enhanced.append(y)
+                            trace?.synthesised.append(s)
                         }
                     }
                 }
@@ -614,10 +616,14 @@ public enum NephisDewind {
             analyse(x, at: at, dft: dft)
             features(row: blockCount)
             if trace != nil {
-                trace?.spectra.append(Spectrum(re: work.specRe, im: work.specIm))
-                trace?.erb.append(Array(blockErb[(blockCount * erbBands)..<((blockCount + 1) * erbBands)]))
-                trace?.specRe.append(Array(blockSpec[(blockCount * dfBins)..<((blockCount + 1) * dfBins)]))
-                trace?.specIm.append(Array(blockSpec[((frames + blockCount) * dfBins)..<((frames + blockCount + 1) * dfBins)]))
+                let x = Spectrum(re: work.specRe, im: work.specIm)
+                let erb = Array(blockErb[(blockCount * erbBands)..<((blockCount + 1) * erbBands)])
+                let re = Array(blockSpec[(blockCount * dfBins)..<((blockCount + 1) * dfBins)])
+                let im = Array(blockSpec[((frames + blockCount) * dfBins)..<((frames + blockCount + 1) * dfBins)])
+                trace?.spectra.append(x)
+                trace?.erb.append(erb)
+                trace?.specRe.append(re)
+                trace?.specIm.append(im)
             }
             analysed += 1
             // Frames 0 and 1 only warm up the norms (DFN's pad_feat drops their features).

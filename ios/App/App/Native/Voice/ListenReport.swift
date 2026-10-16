@@ -112,11 +112,12 @@ final class ListenReport {
     }
 
     private func note() {
-        guard session != nil else { return }
+        guard var s = session else { return }
         let info = ProcessInfo.processInfo
-        session?.thermalMax = max(session?.thermalMax ?? 0, info.thermalState.rawValue)
-        if info.isLowPowerModeEnabled { session?.lowPowerSeen = true }
-        if let voice = NarrationController.shared.runLabels.voice { session?.voices.insert(voice) }
+        s.thermalMax = max(s.thermalMax, info.thermalState.rawValue)
+        if info.isLowPowerModeEnabled { s.lowPowerSeen = true }
+        if let voice = NarrationController.shared.runLabels.voice { s.voices.insert(voice) }
+        session = s
     }
 
     private func end(_ reason: String) {
