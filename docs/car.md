@@ -15,7 +15,7 @@ how it works. Help › Listening in the app has the short version.
   - The time in the chapter, its length, and the speed.
   - For chapters read live by Kokoro or the Apple voice, the length is estimated from the text and
     refined with every sentence spoken. It moves only in real steps, so it doesn't flicker.
-  - Prepared chapters and PC audio show their exact length.
+  - Chapters with audio on the iPhone (downloaded, prepared) show their exact length.
 - **Buttons.** Play/pause, plus one pair of side buttons. Choose which in More › Voices › In the car ›
   **Car buttons**:
   - *Chapters* (the default): ⏮ ⏭ go to the previous or next chapter. ⏮ goes back to the start of the
@@ -31,9 +31,9 @@ how it works. Help › Listening in the app has the short version.
   - the next chapter's text is fetched while the current one plays;
   - Kokoro renders its first sentences before the current chapter ends.
 
-  The Voice Lab shows the measured silence between chapters ("chapter gaps").
+  More › Developer › Voice Report shows the measured silence between chapters (`car.chapterGapsMs`).
 - **Calls and directions.** Narration pauses for a call, Siri or a spoken navigation prompt and then
-  continues by itself. Prepared and PC audio pick up 2 seconds early. If you paused it yourself, it stays
+  continues by itself. Downloaded and prepared audio pick up 2 seconds early. If you paused it yourself, it stays
   paused. Disconnecting from the car, Bluetooth or headphones pauses it until you press play.
 - **Locked screen.** Everything keeps running with the iPhone locked and the app in the background:
   synthesis, playback, the chapter changes and progress saving. (This uses the audio background mode and
@@ -135,8 +135,8 @@ either way.
 | Files, voice key now, freshness | `ios/App/App/Native/Narration/NarrationAudioStore.swift` |
 | One chapter into a file (Nephis resumable, Kokoro) | `ios/App/App/Native/Narration/ChapterAudioRenderer.swift` |
 | Her one render pipeline, the shared director | `ios/App/App/Native/Voice/NephisRenderPipeline.swift`, `ExpressiveCore/NephisCallPlan.swift` |
-| Timestamp manifest (same format as PC audio, plus previous chapter and reader paragraph) | `HDVoiceCore/NarrationManifest.swift` |
-| Playback order (prepared → PC audio if enabled → speech), prefetch, chapter changes, interruptions | `ios/App/App/Native/Narration/NarrationController.swift` |
+| Timestamp manifest (v1's narration manifest format, plus previous chapter and reader paragraph) | `HDVoiceCore/NarrationManifest.swift` |
+| Playback order (the chapter's audio in the voice that reads now → speech), prefetch, chapter changes, interruptions | `ios/App/App/Native/Narration/NarrationController.swift` |
 | Novel page card and sheet, Settings › Voices › In the car, Help | `src/ui/native/drive-ui.ts`, `drive-status.ts`, `voices-ui.ts`, `help-car.ts` |
 
 ## Tests
@@ -179,4 +179,4 @@ either way.
 7. On a novel: Prepare for the drive › 3 › Prepare now. Watch the progress, then turn on airplane mode
    and listen: the prepared chapters play, and each is deleted afterwards (More › Voices › In the car ›
    Prepared audio).
-8. More › Developer › Now Playing (Developer options: About › tap the version 7 times), or the Kokoro Voice Lab (More › Developer › Legacy) › the car section: commands, chapter gaps.
+8. More › Developer › Now Playing (Developer options: About › tap the version 7 times), and Voice Report's `car` section: commands, chapter gaps.

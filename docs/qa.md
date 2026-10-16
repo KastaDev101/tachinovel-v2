@@ -69,7 +69,7 @@ launch of the seeded app followed by the state's path, and records what happened
 | Check | Fails when |
 |---|---|
 | Errors | an uncaught error or unhandled rejection, a `console.error`, v1's red crash box, or a "Something Went Wrong" state appears |
-| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing). Before failing, it tries five quick taps (a hidden gesture, like the About version's Voice Lab) and a mouse click (desktop WebKit's tap emulation); either one working makes it a warning |
+| Dead control | nothing happened: no navigation, no visible change, no sheet or native popup, no core or native call, no scroll, focus or copy (re-tapping the current choice may do nothing). Before failing, it tries five quick taps (a hidden gesture, like the About version's Developer options) and a mouse click (desktop WebKit's tap emulation); either one working makes it a warning |
 | Time | a core call is still pending 5 s after the tap (warning when the UI takes longer than 1.5 s to settle) |
 | Back | the nav bar Back button doesn't leave the screen, or the screen it lands on is blank or broken |
 | Layout | the page scrolls sideways, an element sticks out of the screen unclipped, the end of a tab's content stays behind the tab bar, a fixed control sits under the status bar or on the home indicator, or a fixed control is covered by another element |
@@ -116,8 +116,7 @@ screenshots of each tab, `-tachiSmokeTour native` runs `src/ui/native/smoke.ts`,
 
 1. More › Backup & Restore › **Restore from Files…** twice (document picker): the first one is swiped away
    (UIKit calls no delegate method then), the second cancelled; both times the row must come back;
-2. More › **Listen** (the Listen player; with PC audio on: Listen in the Car › **Open the player** ›
-   **Link audio folder**) › close;
+2. More › **Listen** (the Listen player) › close;
 3. Browse › the built-in source › the first novel › **Share** (share sheet) › start reading;
 4. reader settings: **brightness** slider (`native.setBrightness`) and **Keep screen awake**
    (`TachiNative.setKeepAwake`);
@@ -151,8 +150,7 @@ report as an artifact):
 Every tab, pushed screen and settings page that is reachable without a real network was visited: Library
 (categories, select mode, sort/filter/display), Updates, Browse (sources, extensions, languages, genres,
 Latest, For You, source pages and filters), History, More and all its pages, novel page (chapter filter,
-jump, categories, migrate), reader (bars, find, chapter list, appearance, auto-scroll), Listen in the Car
-and the car player, Voices (voice picker, pronunciations), global search, genre search, Reading Insights,
+jump, categories, migrate), reader (bars, find, chapter list, appearance, auto-scroll), the Listen player, Voices (voice picker, pronunciations), global search, genre search, Reading Insights,
 Migrate, Text Cleanup, Diagnostics. v2's full-screen overlays (car player, Voices panels) are crawled as
 modal states like v1's sheets.
 

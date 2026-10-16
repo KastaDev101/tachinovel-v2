@@ -1,33 +1,28 @@
-# Expressive voices on the iPhone (spike)
+# Expressive voices on the iPhone
 
-Status 2026-10-06: research done, two engines in the test build behind the hidden Voice Lab, macOS
-benchmark in CI. **Phone numbers still needed** (checklist at the end). Narration is unchanged: chapters
-are still read by Kokoro with the Apple voice as the fallback (docs/voices.md).
+**Status 2026-10-16:** Pocket TTS (Kyutai, CC-BY-4.0) is the one expressive engine: Nephis reads with it (her trained
+model from a `.tnmodel` pack, or Kyutai's released model downloaded once), with her flow engine and studio below, and
+Kokoro as her backup voice (docs/voices.md). **Chatterbox Nano and NeuTTS-2E were removed** (Kasta's decision 4,
+2026-10-16), with Nano's `.tnvoice` narrator voices (shipped and imported), the Kokoro Voice Lab and the PC narrator.
+Settings › Storage lists a removed engine's downloaded model and imported `.tnvoice` voices under Leftovers, so Clean
+Up frees them. The research and the 2026-10-06 phone plan below are kept as the record of how Pocket TTS was chosen.
 
-The question (Kasta): can voices that *act* — emotion, laughs and sighs, distinct character voices,
+The question (Kasta, 2026-10-06): can voices that *act* — emotion, laughs and sighs, distinct character voices,
 audiobook-narrator delivery instead of an even read — run on an iPhone 16 (A18, 8 GB, iOS 26.6.1,
 sideloaded with a free Apple ID)? Don't assume they can't; measure.
 
-## Bottom line
+## Bottom line (2026-10-06, before Pocket TTS was chosen)
 
-1. **Yes, plausibly, in the foreground.** Two expressive models now have Core ML ports that load in
-   our existing dependency (FluidAudio 0.17.5) and run several times faster than real time on Apple
-   Silicon Macs: **Chatterbox Nano** (MIT; acts on tags like `[angry]`, `[whispering]`, `[laugh]`,
-   `[sigh]`, `[gasp]`) and **NeuTTS-2E** (seven emotions × four speakers; free commercial use below
-   $5M annual revenue). Both are in the test build. Expected on the A18: Chatterbox Nano around 1–2×
-   real time, NeuTTS-2E around real time (borderline). The phone checklist decides.
-2. **Not on the lock screen (yet).** Both run on the GPU through Core ML, and iOS refuses GPU work from
-   a background app. In the test build Kokoro (Neural Engine + CPU) reads every sentence while the app
-   is in the background. Ways around it, in order: render the next chapter ahead while the app is open;
-   switch to a Neural-Engine build of Chatterbox Nano (two exist, see the table); Pocket TTS (Neural
-   Engine, natural but no emotion control).
-3. **The bigger expressive models don't fit the phone.** Orpheus/Maya1 (3B, the best emotion tags),
-   Qwen3-TTS (instructions, voice design), CSM-1B, Dia: all below real time even on Macs. They belong on
-   the PC narrator, if anywhere.
-4. **Acting needs direction.** These models act on what they are told. The test build sends each line
-   with an emotion, a style and a speaker (hand-written for the samples, guessed from cue words for
-   pasted text). Doing that for real chapters needs a better tagger (rules + the lexicon, or a small
-   classifier on the PC); that is the next step if the voices pass the listening test.
+1. Two expressive models had Core ML ports in FluidAudio 0.17.5 that ran several times faster than real time on Apple
+   Silicon Macs: **Chatterbox Nano** (MIT; tags like `[angry]`, `[whispering]`, `[laugh]`) and **NeuTTS-2E** (seven
+   emotions × four speakers; free commercial use below $5M annual revenue). Both went into the test build.
+2. Both ran on the GPU, which iOS refuses to a background app: no lock screen, no CarPlay. **Pocket TTS** (Neural
+   Engine + CPU) keeps reading with the screen locked; Kasta preferred its voice in the A/B (2026-10-07), so it became
+   the narrator engine and the other two stayed experiments until their removal.
+3. The bigger expressive models don't fit the phone (Orpheus/Maya1, Qwen3-TTS, CSM-1B, Dia: below real time even on
+   Macs).
+4. Acting needs direction: the director (src/core/narration/delivery.ts, rules + Apple Intelligence) picks the mood
+   of every sentence, and her mood reads and dialogue pack carry it.
 
 ## Research: candidates (verified 2026-10-06 against model cards, LICENSE files and READMEs)
 
@@ -36,10 +31,10 @@ keeps up with playback). Speeds are as published, on the hardware named; none is
 
 | # | Model | Weights license (commercial?) | Size (params / download) | iOS runtime | Published speed on Apple hardware | Expressiveness | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1 | **Chatterbox Nano** (Resemble AI, 2026-04) | MIT ✅ | 110M T3 (GPT-2 small) + S3Gen meanflow + HiFT; Core ML fp16 **746 MB** | FluidAudio `ChatterboxNanoManager` (Core ML, CPU+GPU, iOS 18); also ANE builds: iliasaz/chatterbox-nano-coreml (751 MB, Swift package, cloning), seanll95/chatterbox-nano-coreml | 5.4–6.0× M5 Pro (FluidAudio); 6.4× M5 (iliasaz); seanll95: "faster than real time on an iPhone" | 19 tags: sounds `[laugh] [chuckle] [sigh] [gasp] [cough] [sniff] [groan] [shush] [clear throat]`, styles `[angry] [fear] [surprised] [whispering] [dramatic] [narration] [happy] [sarcastic] [crying]`; one built-in voice in FluidAudio | **In the test build** |
-| 2 | **NeuTTS-2E** (Neuphonic, 2026-07) | NeuTTS Open License v1.0 ⚠️ free commercial use below **$5M annual revenue**, paid license above; upstream repo gated | Qwen3 236M (125M active) + NeuCodec; Core ML fp16 **1.37 GB** | FluidAudio `NeuTtsManager` (LM on GPU, codec on Neural Engine, iOS 18) | M5 Pro: 7–9 ms/token (needs 20 ms/token), batch ≈2×, streaming 1.6× with ~550 ms to first audio | 7 emotions (angry, disgusted, fearful, happy, neutral, sad, surprised) × 4 speakers (narrator and characters can differ) | **In the test build** (license caveat) |
+| 1 | **Chatterbox Nano** (Resemble AI, 2026-04; removed 2026-10-16) | MIT ✅ | 110M T3 (GPT-2 small) + S3Gen meanflow + HiFT; Core ML fp16 **746 MB** | FluidAudio `ChatterboxNanoManager` (Core ML, CPU+GPU, iOS 18); also ANE builds: iliasaz/chatterbox-nano-coreml (751 MB, Swift package, cloning), seanll95/chatterbox-nano-coreml | 5.4–6.0× M5 Pro (FluidAudio); 6.4× M5 (iliasaz); seanll95: "faster than real time on an iPhone" | 19 tags: sounds `[laugh] [chuckle] [sigh] [gasp] [cough] [sniff] [groan] [shush] [clear throat]`, styles `[angry] [fear] [surprised] [whispering] [dramatic] [narration] [happy] [sarcastic] [crying]`; one built-in voice in FluidAudio | Was in the test build (removed) |
+| 2 | **NeuTTS-2E** (Neuphonic, 2026-07; removed 2026-10-16) | NeuTTS Open License v1.0 ⚠️ free commercial use below **$5M annual revenue**, paid license above; upstream repo gated | Qwen3 236M (125M active) + NeuCodec; Core ML fp16 **1.37 GB** | FluidAudio `NeuTtsManager` (LM on GPU, codec on Neural Engine, iOS 18) | M5 Pro: 7–9 ms/token (needs 20 ms/token), batch ≈2×, streaming 1.6× with ~550 ms to first audio | 7 emotions (angry, disgusted, fearful, happy, neutral, sad, surprised) × 4 speakers (narrator and characters can differ) | Was in the test build (removed) |
 | 3 | Chatterbox Turbo (2025-12) | MIT ✅ | 350M; Core ML 1.03 GB (iliasaz), MLX 4-bit 415 MB | iliasaz Swift package (ANE); mlx-audio (Python) | iPhone 17 Pro Max decode 29–35 ms/token on the ANE ≈ 0.75–0.9× (needs 40 ms/token), one-time 30 s ANE compile | Same tags as Nano, better quality ("excels at narration") | Next if Nano sounds too thin; pre-render only on an A18 |
-| 4 | Pocket TTS (Kyutai, 2026-01) | CC-BY-4.0 ✅ (attribution; gated with an acceptable-use prompt). Voices `cosette`, `jean` are NC: don't use | 100M; Core ML `.ane` set 368 MB | FluidAudio `PocketTtsManager` (Neural Engine placement, streaming); mlx-audio-swift; sherpa-onnx | 6.5× M5 Pro, first frame 26 ms; **iPhone 17 Pro Max 2.5×** (FluidAudio) / 7.8× (Core AI, iOS 27) | Voice cloning from a clip (narrator and character voices from prompts); no emotion control; issue #115 "prosody worse than Kokoro" with default voices | Benchmarked; the background-capable fallback idea |
+| 4 | Pocket TTS (Kyutai, 2026-01) | CC-BY-4.0 ✅ (attribution; gated with an acceptable-use prompt). Voices `cosette`, `jean` are NC: don't use | 100M; Core ML `.ane` set 368 MB | FluidAudio `PocketTtsManager` (Neural Engine placement, streaming); mlx-audio-swift; sherpa-onnx | 6.5× M5 Pro, first frame 26 ms; **iPhone 17 Pro Max 2.5×** (FluidAudio) / 7.8× (Core AI, iOS 27) | Voice cloning from a clip (narrator and character voices from prompts); no emotion control; issue #115 "prosody worse than Kokoro" with default voices | **Nephis's engine** (2026-10-07: chosen; her own trained model in packs) |
 | 5 | Supertonic 3 (Supertone, 2026-04) | OpenRAIL-M ⚠️ commercial OK with use-based restrictions; upstream archived | 99M; Core ML int4 0.10 GB | FluidAudio, speech-swift | **iPhone 16 Pro RTF 0.15 (6.7×)**, 956 MB peak (speech-swift) | 10 preset voices, a few tags (`<laugh>`, `<breath>`, `<sigh>`), 44.1 kHz | Fast "expressive-lite"; not acting |
 | 6 | Qwen3-TTS 0.6B / 1.7B (2026-01) | Apache-2.0 ✅ | 0.9B / 1.9B + 682 MB codec; MLX 4-bit 1.0–1.6 GB | mlx-audio-swift, speech-swift (MLX, macOS-only per their FAQ) | M4 Pro (MLX Swift): 0.6B 8-bit 8.4 tok/s vs 12.5 needed → **below real time on a Mac** | Natural-language emotion/style instructions (1.7B), voice design, cloning | PC narrator / design character voices |
 | 7 | Fun-CosyVoice3 0.5B | Apache-2.0 ✅ | ~1.2–1.7 GB MLX | speech-swift (MLX) | none published | Instruction emotions (fixed list), `[breath]`, dialogue tags | Later, if ever |
@@ -61,26 +56,26 @@ license: revenue/MAU caps, no training other models), Higgs Audio v2 (5.8B, 100k
 Notes that matter for a commercial build later:
 - Resemble's Python package watermarks every output (Perth); the MIT license doesn't require it and the
   Core ML ports don't do it. Decide deliberately (it is inaudible and marks AI audio).
-- NeuTTS-2E's license must travel with the weights (the downloader fetches its LICENSE file too).
-- espeak-ng (GPL-3.0) is used by Kitten, NeuTTS Air, Zonos and StyleTTS2 front-ends; neither engine in
-  the test build uses it (BPE text input).
+- espeak-ng (GPL-3.0) is used by Kitten, NeuTTS Air, Zonos and StyleTTS2 front-ends; Pocket TTS doesn't use it.
 
 ## What the test build does
 
-More › Developer › Voice Models (Developer options: More › About › tap the version 7 times), also the Kokoro Voice Lab › **Experimental engines**:
+More › Developer › Voice Models (Developer options: More › About › tap the version 7 times); More › Voices › Download Her
+Voice downloads the same model:
 
 | Piece | Where |
 |---|---|
 | Pinned model files (repo, commit, path, size, SHA-256) | `ios/expressive-models.lock.json` ⇄ `ios/App/ExpressiveVoice/Sources/ExpressiveCore/PinnedModels.generated.swift` (`node tools/expressive-models.ts --update-lock / --check`) |
 | Downloader: Wi-Fi only, free-space check, resumable, SHA-256 per file, excluded from backups, delete | `ExpressiveCore/ModelStore.swift` (the app and the CI benchmark use the same code) |
-| Engines behind one protocol (`ExpressiveSynthesizer`): Chatterbox Nano, NeuTTS-2E, Pocket TTS (CI only) | `ios/App/ExpressiveVoice/Sources/ExpressiveEngines/` (FluidAudio 0.17.5, the same pin as HDVoice) |
-| Per-engine direction: tags for Chatterbox (`[angry] …` in front, sound tags inline), emotion + speaker for NeuTTS, tags stripped for Kokoro; chunking to each model's per-call limit | `ExpressiveCore/ExpressiveCatalog.swift` |
+| The engine behind one protocol (`ExpressiveSynthesizer`): Pocket TTS (`PocketTtsSynth`), and her flow engine (`NephisFlowSynth`) | `ios/App/ExpressiveVoice/Sources/ExpressiveEngines/` (FluidAudio 0.17.5, the same pin as HDVoice) |
+| Pocket's text: sound tags stripped, numbers and codes spoken, ellipses kept from ending a call (the app's form) or as written (a pack's raw form); 400 characters per call | `ExpressiveCore/ExpressiveCatalog.swift` |
 | Engine behind the narration protocol (`SpeechEngine`): renders 3 sentences ahead, plays gaplessly, **Kokoro reads a sentence whenever the expressive engine can't deliver it** (still loading, queue ran dry, app in background, thermal serious, sentence failed, model released) and the expressive engine takes over again once 2 sentences ahead (HDVoiceCore's `HybridScheduler`, roles shifted) | `ios/App/App/Native/Voice/Expressive/ExpressiveSpeechEngine.swift` |
-| Model lifecycle: one engine loaded at a time, unloaded on memory warnings and after 3 minutes idle (a release cancels the load and calls still running, a load released while it waits never starts, and the next load waits until the models are gone and any load still running has ended; after a memory warning no expressive model loads for 60 s, doubling until she has read 5 minutes without one, and Nephis refuses to load with less than ~700 MB free; her studio's models load in the background behind Pocket's with ~1,000 MB free (her calls play her plain sound until they are up, never waiting for them) and are dropped under ~500 MB free; the studio speed test runs alone, refusing under ~1,000 MB free, Kokoro loads asked for meanwhile wait for it and Nephis is warmed again after it; Kokoro's once-per-build warm-up runs after hers: crash plan 2026-10-12, `ExpressiveCore/NephisGuards.swift`); its own crash sentinel, judged with the run journal (`VoiceRun.swift`, `HDVoiceCore/RunJournal.swift`): only real crashes of her model count, two in a row → Nephis and the experimental engines off until "Turn Nephis back on" (Settings › Voices, the Voice test) or a new build | `Native/Voice/Expressive/ExpressiveService.swift` |
-| Plugin `ExpressiveVoice` and the Voice Lab screen; samples (calm narration, emotional dialogue, a ~3-minute passage) and the cue-word tagger for pasted text | `ExpressiveVoicePlugin.swift`, `src/ui/native/expressive-lab.ts`, `src/ui/native/expressive-samples.ts` |
-| Narrator voices for Chatterbox Nano: `.tnvoice` files made on the PC (`tachinovel-narrator/py/export_voice.py`), shipped in the app (`BuiltInVoices/`, one of them the default; `tools/built-in-voices.ts`) or imported (personal flavor), checked, chosen as the narrator voice, the default and then Chatterbox's own voice as the fallback | `ExpressiveCore/VoicePack.swift`, `ImportedVoices.swift`, `VoiceImport.swift`, `src/ui/native/voice-import.ts`, `tools/voice-pack.ts`; docs/voice-import.md |
+| Model lifecycle: one engine loaded at a time, unloaded on memory warnings and after 3 minutes idle (a release cancels the load and calls still running, a load released while it waits never starts, and the next load waits until the models are gone and any load still running has ended; after a memory warning no expressive model loads for 60 s, doubling until she has read 5 minutes without one, and Nephis refuses to load with less than ~700 MB free; her studio's models load in the background behind Pocket's with ~1,000 MB free (her calls play her plain sound until they are up, never waiting for them) and are dropped under ~500 MB free; the studio speed test runs alone, refusing under ~1,000 MB free, Kokoro loads asked for meanwhile wait for it and Nephis is warmed again after it; Kokoro's once-per-build warm-up runs after hers: crash plan 2026-10-12, `ExpressiveCore/NephisGuards.swift`); its own crash sentinel, judged with the run journal (`VoiceRun.swift`, `HDVoiceCore/RunJournal.swift`): only real crashes of her model count, two in a row → Nephis off until "Turn Nephis back on" (Settings › Voices, the Voice test) or a new build | `Native/Voice/Expressive/ExpressiveService.swift` |
+| Plugin `ExpressiveVoice` and the Voice Models screen; samples (calm narration, emotional dialogue, a ~3-minute passage) and the cue-word tagger for pasted text | `ExpressiveVoicePlugin.swift`, `src/ui/native/expressive-lab.ts`, `src/ui/native/expressive-samples.ts` |
+| Her model packs (`.tnmodel`, personal flavor): "Open in TachiNovel" or dropped into Documents, unpacked into the pack library, the result shown in Voice Models (the plugin's `voiceImport` event) | `Native/Voice/Expressive/NephisModelPack.swift`, `ExpressiveCore/NephisPackLibrary.swift` |
+| Voice files that ship in the app: the Pocket TTS voices and speaker projection (`BuiltInVoices/pocket/`), breaths (`BuiltInVoices/breaths/`) | `tools/built-in-voices.ts` checks them |
 
-The screen shows, per engine: size and license, download progress, load time (cold/warm); for the last
+The screen shows her model: size and license, download progress, load time (cold/warm); for the last
 playback: time to first audio (and whether it included the model load), which voice read each line,
 synthesis time and × real time per line, Kokoro fallback lines and why, queue-ran-dry count, throttling;
 for the speed test: load, first audio, × real time (all / median / slowest 10%), memory before / loaded /
@@ -327,50 +322,16 @@ Kokoro check on the same runner. Artifact `expressive-bench`: `summary.md`, `rep
 
 RESULTS_PLACEHOLDER
 
-## Expected on the iPhone 16 (A18)
+## Phone check (Pocket TTS)
 
-The A18 has a 5-core GPU and ~60 GB/s of memory bandwidth, against 16–20 cores and ~300 GB/s on the M5
-Pro behind FluidAudio's numbers, and a 16-core Neural Engine the CI runner lacks.
-- **Chatterbox Nano**: the token generator is small (193 MB of fp16 weights per step, 25 steps per second
-  of audio needed): fine. The flow + vocoder run on a fixed 10-second bucket per call (0.47 s on the M5
-  Pro), so they cost the same for a short line as for a long one: expect roughly **1–2× real time** and
-  **1.5–3 s to the first line**, better on long sentences than short ones.
-- **NeuTTS-2E**: each step reads ~470 MB of weights; at the A18's bandwidth that is ≥ 8 ms per step
-  before overhead, against a 20 ms budget: expect **0.6–1.2×**, so live playback may hand lines to Kokoro;
-  the speed test shows whether rendering ahead would cover it.
-- **Memory**: Chatterbox ~0.8–1.1 GB, NeuTTS ~1.5–1.9 GB, plus Kokoro (0.3–0.9 GB) for the fallback. No
-  increased-memory entitlement with a free Apple ID; the Voice Lab shows what iOS still allows.
-- **Heat**: sustained GPU decoding will warm the phone; the long-passage speed test shows the thermal state.
-- **Lock screen**: GPU engines stop; Kokoro continues (by design in this build).
+1. More › About › tap the version 7 times (Developer options), then More › Developer › **Voice Models**.
+2. **Pocket TTS** › Download 368 MB (Wi-Fi; not needed with a Nephis pack installed). Sample **Emotional dialogue** ›
+   ▶ Play Sample, then **Same Sample With Kokoro** for the A/B with her backup voice.
+3. Sample **Long passage** › **Speed Test**: × real time (all / slowest 10%), memory max, thermal before → after.
+4. **Copy Report** and paste it to Claude. The Voice Speed Test (More › About › Diagnostics) measures her pack the way
+   Listen reads, which is the number that matters for listening.
 
-## 5-minute phone checklist
-
-Downloads take a few extra minutes on Wi-Fi (0.75 GB + 1.37 GB); keep the app open while they run.
-
-1. Install the IPA from the PR's `ios-ipa` artifact with AltStore. Connect to Wi-Fi.
-2. More › About › tap the version 7 times (Developer options), then More › Developer › **Voice Models**.
-3. **Chatterbox Nano** › Download 746 MB (tap twice). Then sample **Emotional dialogue** › ▶ Play
-   sample. Listen for the anger, the whisper, the chuckle/gasp/sigh/laugh. Note *Time to first audio* and
-   *Expressive / Kokoro lines*.
-4. **▶ Same sample with Kokoro (as today)**: the A/B. Which one would you listen to for an hour?
-5. Sample **Long passage** › **Speed test** (Chatterbox Nano): note × real time (all / slowest 10%),
-   memory max and thermal before → after.
-6. **NeuTTS-2E** › Download 1.37 GB, then repeat 3 and 5 with it (its narrator and characters use
-   different voices).
-7. Lock test: Long passage › ▶ Play sample with Chatterbox Nano, lock the phone for 30 s. Audio continues
-   (Kokoro takes over: the lines show `kokoro` with `thermal`, which here means background); unlock and the
-   expressive voice comes back after two sentences. No crash.
-8. **Copy report**, paste it to Claude, and say which voice you preferred and why. Then delete the models
-   (2.1 GB) unless you want to keep testing.
-
-## Next steps (depending on the phone results)
-
-- Expressive and ≥ 1.5× on the phone → wire the engine into narration as a per-novel "Expressive (beta)"
-  voice that renders the next chapter ahead while the app is open, with Kokoro on the lock screen.
-- Good but too slow or foreground-only → try the Neural-Engine builds of Chatterbox Nano (iliasaz, seanll95;
-  ANE also works in the background on iOS 26) and Chatterbox Turbo for quality.
-- Direction for real chapters: a better line tagger (dialogue attribution, cue words, the per-novel
-  lexicon for character → voice), tested on the PC like the narration front-end.
+(The 2026-10-06 expectations and checklist for Chatterbox Nano and NeuTTS-2E are in git history before 2026-10-16.)
 
 ## Sources
 

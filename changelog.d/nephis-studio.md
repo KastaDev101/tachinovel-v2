@@ -38,7 +38,7 @@
   grouped list: Voice Speed Test, Voice Test, 15-Minute Test, Voice Packs, her Studio (Automatic / Off) and where it
   runs; Natural Delivery, AI Scene Reading, Studio Sound and Reset to Defaults; the Scene-Reading and Mood tests, a
   copied Voice Report, Now Playing, Voice Models and "Show Voice Details in the Player"; Mix a Voice; the phonemes field
-  and JSON paste of the pronunciation editor; Use PC Audio and the Kokoro Voice Lab. A "Developer Options" switch at the
+  and JSON paste of the pronunciation editor. A "Developer Options" switch at the
   bottom of About turns them off. They are kept natively (a page reload keeps them); the personal build starts with
   them on. The old 5-tap Voice Lab gesture is gone.
 - Long-press the app icon for "Voice Speed Test" (while Developer options are on): it opens the speed test directly.
@@ -162,7 +162,7 @@
 
 - More › Voices is tidy: the Nephis card (her pack and "Studio" in the personal build), Voice Settings (Scene Moods,
   [System] messages, and a line saying whether scene moods use Apple Intelligence or the built-in rules),
-  Pronunciations and In the Car. The test tools, voice packs, her studio switch, delivery internals and PC audio moved
+  Pronunciations and In the Car. The test tools, voice packs, her studio switch and delivery internals moved
   to More › Developer; the Voice test no longer has the "Her studio" switch.
 - Natural delivery, studio sound and her studio are automatic (AI scene reading wherever Apple Intelligence is
   available): an "off" saved with the old switches goes back on once; only More › Developer switches them off now.
@@ -197,3 +197,18 @@
 - Pronunciations has one title and an "All Novels | This Novel" switch when opened for a novel.
 - The Voice models lab reads its numbers only while something runs (a download, a sample, a speed test), the Kokoro
   Voice Lab only while narration plays (both read every second before).
+
+### Removed
+
+- Chatterbox Nano and NeuTTS-2E (Kasta's decision 4, 2026-10-16): Voice Models offers only Pocket TTS, her engine. A
+  phone that still had Nano chosen reads with Pocket TTS.
+- The .tnvoice voice import (Import voice…, "Open in TachiNovel" for .tnvoice, the Narrator voice section) and the
+  shipped Nano Narrator voice (604 KB). Nephis packs (.tnmodel) install as before.
+- The Kokoro Voice Lab (its route and Ahead buttons, Check Placement, the narrator-mode switches and A/B). Kokoro stays
+  her backup voice and reads with the narrator-mode settings it had; the Scene-Reading and Mood tests, Voice Report and
+  Now Playing stay in More › Developer.
+- The PC narrator: Use PC Audio and its Audio Folder, the "TachiNovel Audio" list in the Listen player, and v1's
+  "Listen in the Car" screen and novel-page card. The Listen player lists the novels you read last; downloaded and
+  prepared chapters play from their files as before. More › Developer's Legacy section is gone with them.
+- Together these free about 36 KB of the app's web bundle. Settings › Storage › Leftovers lists the removed engines'
+  downloaded models and the imported .tnvoice voices, so Clean Up can free them.
